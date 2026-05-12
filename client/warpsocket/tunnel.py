@@ -205,6 +205,10 @@ class TunnelManager:
         with self._lock:
             return self._state
 
+    @property
+    def config(self) -> ClientConfig:
+        return self._config
+
     def add_listener(self, callback: StateListener) -> None:
         with self._lock:
             self._listeners.append(callback)

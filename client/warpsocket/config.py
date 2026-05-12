@@ -85,6 +85,9 @@ class ClientConfig:
             encoding="utf-8",
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        return _to_dict(self)
+
 
 def default_config_path() -> Path:
     return Path(user_config_dir(_APP_NAME)) / "config.json"
