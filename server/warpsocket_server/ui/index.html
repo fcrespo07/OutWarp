@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WarpSocket Server — placeholder UI</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; padding: 24px; max-width: 960px; margin: 0 auto; }
+    h1 { margin: 0 0 4px; font-size: 22px; }
+    .sub { color: #888; margin-bottom: 24px; font-size: 13px; }
+    section { border: 1px solid #ccc4; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    section h2 { margin: 0 0 12px; font-size: 15px; }
+    button { padding: 8px 14px; border-radius: 6px; border: 1px solid #888; background: #fff2; cursor: pointer; margin-right: 6px; margin-bottom: 6px; }
+    button:hover { background: #8884; }
+    .danger { border-color: #c0392b; color: #c0392b; }
+    pre { background: #0001; padding: 10px; border-radius: 6px; overflow: auto; max-height: 240px; font-size: 12px; margin: 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ccc4; }
+    input, button { font-size: 13px; }
+    label { display: inline-block; min-width: 170px; font-size: 13px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    .form-row { margin-bottom: 6px; }
+    .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #888; vertical-align: middle; margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <h1>WarpSocket Server</h1>
+  <div class="sub">UI provisional. El diseño final llega en la siguiente iteración (Claude Design).</div>
+
+  <section>
+    <h2><span class="status-dot" id="dot"></span><span id="status-label">cargando…</span></h2>
+    <div id="status-detail" class="sub"></div>
+    <div class="row">
+      <button id="btn-start">Iniciar</button>
+      <button id="btn-stop">Parar</button>
+      <button id="btn-restart">Reiniciar</button>
+    </div>
+  </section>
+
+  <section id="setup-section" hidden>
+    <h2>Wizard de configuración inicial</h2>
+    <div class="form-row"><label>Endpoint (IP o dominio)</label><input id="f-endpoint" /></div>
+    <div class="form-row"><label>Puerto WSS</label><input id="f-port" value="443" /></div>
+    <div class="form-row"><label>Puerto WireGuard (loopback)</label><input id="f-wg-port" value="51820" /></div>
+    <div class="form-row"><label>Subred WireGuard (CIDR)</label><input id="f-subnet" value="10.0.0.0/24" /></div>
+    <div class="form-row"><label>Dirección del servidor WG</label><input id="f-srv-addr" value="10.0.0.1/24" /></div>
+    <button id="btn-setup">Instalar</button>
+    <button id="btn-detect-ip">Detectar IP pública</button>
+    <div id="setup-result" class="sub" style="margin-top:8px"></div>
+  </section>
+
+  <section id="clients-section" hidden>
+    <h2>Clientes</h2>
+    <div class="row">
+      <input id="new-client-name" placeholder="Nombre del nuevo cliente" />
+      <button id="btn-add-client">Añadir</button>
+    </div>
+    <table>
+      <thead><tr><th>Nombre</th><th>IP</th><th>Estado</th><th>Endpoint</th><th>Acciones</th></tr></thead>
+      <tbody id="clients-tbody"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Logs</h2>
+    <pre id="logs"></pre>
+  </section>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get("token") || "";
+const authHeaders = { "Authorization": `Bearer ${TOKEN}` };
+
+const STATE_COLORS = { no_config: "#888", stopped: "#888", starting: "#FFC800", running: "#00C800", error: "#DC0000" };
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { ...authHeaders, ...(opts.headers || {}) } });
+  if (!r.ok && r.status !== 202) {
+    let detail = "";
+    try { detail = (await r.json()).detail || (await r.text()); } catch (e) {}
+    throw new Error(`${r.status} ${r.statusText} — ${detail}`);
+  }
+  if (r.status === 202 || r.status === 201) {
+    try { return await r.json(); } catch (e) { return null; }
+  }
+  return r.json();
+}
+
+async function refreshStatus() {
+  try {
+    const s = await api("/api/status");
+    document.getElementById("dot").style.background = STATE_COLORS[s.state] || "#888";
+    document.getElementById("status-label").textContent = s.state;
+    document.getElementById("status-detail").textContent = s.config_present
+      ? `${s.endpoint}:${s.port} · subred ${s.subnet} · ${s.clients_count} clientes`
+      : "Sin configurar";
+    document.getElementById("setup-section").hidden = s.config_present;
+    document.getElementById("clients-section").hidden = !s.config_present;
+    if (s.config_present) await refreshClients();
+  } catch (e) {
+    document.getElementById("status-label").textContent = "error";
+    document.getElementById("status-detail").textContent = e.message;
+  }
+}
+
+async function refreshClients() {
+  try {
+    const { clients } = await api("/api/clients");
+    const tbody = document.getElementById("clients-tbody");
+    tbody.innerHTML = "";
+    for (const c of clients) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${c.name}</td><td>${c.address}</td><td>${c.status}</td><td>${c.endpoint || ""}</td><td><button data-name="${c.name}" class="revoke danger">Revocar</button></td>`;
+      tbody.appendChild(tr);
+    }
+    for (const b of tbody.querySelectorAll(".revoke")) {
+      b.onclick = async () => { await api(`/api/clients/${encodeURIComponent(b.dataset.name)}`, { method: "DELETE" }); await refreshClients(); };
+    }
+  } catch (e) {}
+}
+
+document.getElementById("btn-start").onclick = () => api("/api/start", { method: "POST" }).then(refreshStatus);
+document.getElementById("btn-stop").onclick = () => api("/api/stop", { method: "POST" }).then(refreshStatus);
+document.getElementById("btn-restart").onclick = () => api("/api/restart", { method: "POST" }).then(refreshStatus);
+
+document.getElementById("btn-detect-ip").onclick = async () => {
+  const r = await api("/api/detect-ip");
+  if (r.ip) document.getElementById("f-endpoint").value = r.ip;
+};
+
+document.getElementById("btn-setup").onclick = async () => {
+  const body = {
+    endpoint: document.getElementById("f-endpoint").value.trim(),
+    port: parseInt(document.getElementById("f-port").value, 10),
+    wg_listen_port: parseInt(document.getElementById("f-wg-port").value, 10),
+    subnet: document.getElementById("f-subnet").value.trim(),
+    server_address: document.getElementById("f-srv-addr").value.trim(),
+  };
+  try {
+    const r = await api("/api/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    document.getElementById("setup-result").textContent = `Instalado. Fingerprint: ${r.fingerprint.slice(0, 23)}…`;
+    await refreshStatus();
+  } catch (e) {
+    document.getElementById("setup-result").textContent = `Error: ${e.message}`;
+  }
+};
+
+document.getElementById("btn-add-client").onclick = async () => {
+  const name = document.getElementById("new-client-name").value.trim();
+  if (!name) return;
+  try {
+    const r = await api("/api/clients", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const blob = new Blob([Uint8Array.from(atob(r.warpcfg_base64), c => c.charCodeAt(0))]);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${name}.warpcfg`;
+    a.click();
+    document.getElementById("new-client-name").value = "";
+    await refreshClients();
+  } catch (e) {
+    alert(`Error: ${e.message}`);
+  }
+};
+
+const logsBox = document.getElementById("logs");
+const ws = new WebSocket(`ws://${location.host}/api/ws/logs?token=${encodeURIComponent(TOKEN)}`);
+ws.onmessage = (ev) => {
+  const data = JSON.parse(ev.data);
+  logsBox.textContent += data.line + "\n";
+  logsBox.scrollTop = logsBox.scrollHeight;
+};
+
+refreshStatus();
+setInterval(refreshStatus, 2500);
+</script>
+</body>
+</html>
