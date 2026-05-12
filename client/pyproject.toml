@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "warpsocket-client"
+name = "outwarp-client"
 version = "0.0.1"
 description = "Cliente de bandeja multiplataforma para tuneles WireGuard sobre WebSocket (wstunnel)"
 requires-python = ">=3.11"
@@ -24,9 +24,9 @@ classifiers = [
 ]
 dependencies = [
     "pystray>=0.19",
-    "customtkinter>=5.2",
     "Pillow>=10.0",
     "platformdirs>=4.0",
+    "pywebview>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -40,13 +40,13 @@ build = [
 ]
 
 [project.gui-scripts]
-warpsocket = "warpsocket.app:main"
+outwarp = "outwarp.app:main"
 
 [project.scripts]
-warpsocket-uninstall = "warpsocket.uninstall:main"
+outwarp-uninstall = "outwarp.uninstall:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["warpsocket"]
+packages = ["outwarp"]
 
 [tool.ruff]
 line-length = 100

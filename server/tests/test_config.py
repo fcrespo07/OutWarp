@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from warpsocket_server.config import (
+from outwarp_server.config import (
     ClientEntry,
     ConfigError,
     ServerConfig,
@@ -17,8 +17,8 @@ VALID: dict = {
     "endpoint": "203.0.113.42",
     "port": 443,
     "http_upgrade_path_prefix": "s3cr3t-path",
-    "cert_path": "/etc/warpsocket/cert.pem",
-    "key_path": "/etc/warpsocket/key.pem",
+    "cert_path": "/etc/outwarp/cert.pem",
+    "key_path": "/etc/outwarp/key.pem",
     "cert_fingerprint_sha256": "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89",
     "wg_private_key": "cHJpdmF0ZWtleQ==",
     "wg_public_key": "cHVibGlja2V5",

@@ -3,14 +3,14 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from warpsocket.logs import MemoryLogHandler, default_log_path, setup_logging
+from outwarp.logs import MemoryLogHandler, default_log_path, setup_logging
 
 
 def test_default_log_path_is_absolute_under_app_dir():
     p = default_log_path()
     assert p.is_absolute()
-    assert "WarpSocket" in str(p)
-    assert p.name == "warpsocket.log"
+    assert "OutWarp" in str(p)
+    assert p.name == "outwarp.log"
 
 
 def test_setup_logging_creates_log_file(tmp_path):
@@ -65,8 +65,8 @@ def test_setup_logging_replaces_existing_handlers(tmp_path):
 def test_log_format_includes_level_and_logger_name(tmp_path):
     log_path = tmp_path / "log"
     setup_logging(log_path=log_path)
-    logging.getLogger("warpsocket.test").info("hello world")
+    logging.getLogger("outwarp.test").info("hello world")
     content = log_path.read_text(encoding="utf-8")
     assert "INFO" in content
-    assert "warpsocket.test" in content
+    assert "outwarp.test" in content
     assert "hello world" in content

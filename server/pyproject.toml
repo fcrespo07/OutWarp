@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "warpsocket-server"
+name = "outwarp-server"
 version = "0.0.1"
 description = "Servidor CLI para tuneles WireGuard sobre WebSocket (wstunnel)"
 requires-python = ">=3.11"
@@ -28,9 +28,9 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = [
-    "customtkinter>=5.2",
     "pillow>=10.0",
     "pystray>=0.19",
+    "pywebview>=5.0",
 ]
 dev = [
     "ruff>=0.5",
@@ -39,11 +39,11 @@ dev = [
 ]
 
 [project.scripts]
-warpsocket-server = "warpsocket_server.cli:main"
-warpsocket-server-gui = "warpsocket_server.server_app:main"
+outwarp-server = "outwarp_server.cli:main"
+outwarp-server-gui = "outwarp_server.server_app:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["warpsocket_server"]
+packages = ["outwarp_server"]
 
 [tool.ruff]
 line-length = 100
