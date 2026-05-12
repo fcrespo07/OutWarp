@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import queue
 from pathlib import Path
 from typing import Callable
 
@@ -65,12 +64,10 @@ class ServerTrayApp:
     def __init__(
         self,
         manager: ServerManager | None,
-        ui_queue: queue.Queue[Callable[[], None]],
         on_show: Callable[[], None],
         on_quit: Callable[[], None],
     ) -> None:
         self._manager = manager
-        self._ui_queue = ui_queue
         self._on_show = on_show
         self._on_quit = on_quit
         self._icon = None
@@ -100,12 +97,18 @@ class ServerTrayApp:
         self._on_state_change(state)
 
     def _open_window(self, icon, item) -> None:
-        self._ui_queue.put(self._on_show)
+        try:
+            self._on_show()
+        except Exception:
+            log.exception("on_show raised")
 
     def _quit(self, icon, item) -> None:
         if self._icon is not None:
             self._icon.stop()
-        self._ui_queue.put(self._on_quit)
+        try:
+            self._on_quit()
+        except Exception:
+            log.exception("on_quit raised")
 
     def stop(self) -> None:
         if self._icon is not None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 import sys
 import tempfile
 from pathlib import Path
@@ -12,6 +13,7 @@ from warpsocket.logs import setup_logging
 log = logging.getLogger(__name__)
 
 _LOCK_NAME = "warpsocket-client.lock"
+_PORT = 7171
 
 
 class _SingleInstanceLock:
@@ -86,7 +88,7 @@ def _try_load_config() -> ClientConfig | None:
     try:
         return ClientConfig.load(path)
     except ConfigError as exc:
-        log.warning("Config file corrupt: %s — showing import screen", exc)
+        log.warning("Config file corrupt: %s — falling back to import screen", exc)
         return None
 
 
@@ -121,34 +123,30 @@ def main() -> int:
     lock = _SingleInstanceLock()
     if not lock.acquire():
         log.error("Another instance is already running — exiting")
-        from tkinter import messagebox
-        messagebox.showwarning(
-            "WarpSocket",
-            "Ya hay otra instancia de WarpSocket ejecutándose.",
-        )
         return 1
 
     try:
-        config = _try_load_config()
-
-        from warpsocket.main_window import MainWindow
+        from warpsocket.api import create_app
         from warpsocket.tray import TrayApp
         from warpsocket.tunnel import TunnelManager
+        from warpsocket.webview import show_window, start
 
-        manager: TunnelManager | None = TunnelManager(config) if config else None
+        config = _try_load_config()
+        manager_ref: list[TunnelManager | None] = [
+            TunnelManager(config) if config else None
+        ]
+        token = secrets.token_urlsafe(32)
 
-        # These are filled in before the lambdas are called.
-        window: MainWindow
         tray: TrayApp
 
         def on_import(cfg: ClientConfig) -> None:
-            nonlocal manager
-            if manager:
-                manager.stop()
-            manager = TunnelManager(cfg)
-            window.set_manager(manager)
-            tray.update_manager(manager)
-            manager.start()
+            existing = manager_ref[0]
+            if existing is not None:
+                existing.stop()
+            new_manager = TunnelManager(cfg)
+            manager_ref[0] = new_manager
+            tray.update_manager(new_manager)
+            new_manager.start()
             log.info(
                 "Config imported: server=%s:%d tunnel=%s",
                 cfg.server.endpoint,
@@ -156,14 +154,7 @@ def main() -> int:
                 cfg.wireguard.tunnel_name,
             )
 
-        def on_quit() -> None:
-            """Full shutdown — always runs on the tkinter main thread."""
-            log.info("Shutting down WarpSocket")
-            window.stop_log_refresh()
-            if manager:
-                manager.stop()
-            tray.stop()
-            window.quit()
+        api_app = create_app(manager_ref, memory_handler, on_import, token)
 
         if config:
             log.info(
@@ -173,28 +164,28 @@ def main() -> int:
                 config.wireguard.tunnel_name,
             )
 
-        window = MainWindow(
-            config=config,
-            manager=manager,
-            memory_handler=memory_handler,
-            on_import=on_import,
-            on_quit=on_quit,
-        )
+        session = start(api_app, _PORT, token)
+
+        def on_quit() -> None:
+            log.info("Shutting down WarpSocket")
+            m = manager_ref[0]
+            if m is not None:
+                m.stop()
+            tray.stop()
+            session.shutdown()
 
         tray = TrayApp(
-            manager=manager,
-            ui_queue=window.ui_queue,
-            on_show=window.show_from_tray,
-            # TrayApp._quit pushes this to ui_queue so it runs on the main thread.
+            manager=manager_ref[0],
+            on_show=show_window,
             on_quit=on_quit,
         )
 
-        if manager:
-            manager.start()
+        if manager_ref[0] is not None:
+            manager_ref[0].start()
 
         tray.run()
-        log.info("Tray running — entering UI event loop")
-        window.mainloop()
+        log.info("Tray running — entering pywebview loop on http://127.0.0.1:%d", _PORT)
+        session.run("WarpSocket")
 
         log.info("WarpSocket shut down cleanly")
         return 0

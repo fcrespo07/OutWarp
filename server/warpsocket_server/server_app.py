@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 import sys
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from warpsocket_server.logs import setup_logging
 log = logging.getLogger(__name__)
 
 _MUTEX_NAME = "Global\\WarpSocketServer"
+_PORT = 7172
 
 
 class _SingleInstanceLock:
@@ -32,7 +34,7 @@ class _SingleInstanceLock:
         import ctypes
         handle = ctypes.windll.kernel32.CreateMutexW(None, True, _MUTEX_NAME)
         last_error = ctypes.windll.kernel32.GetLastError()
-        if last_error == 183:  # ERROR_ALREADY_EXISTS
+        if last_error == 183:
             if handle:
                 ctypes.windll.kernel32.CloseHandle(handle)
             return False
@@ -47,7 +49,8 @@ class _SingleInstanceLock:
             self._handle = None
 
     def _acquire_posix(self) -> bool:
-        import fcntl, tempfile
+        import fcntl
+        import tempfile
         self._lock_path = Path(tempfile.gettempdir()) / "warpsocket-server.lock"
         try:
             self._handle = open(self._lock_path, "w")  # noqa: SIM115
@@ -76,10 +79,6 @@ def _ensure_elevated() -> None:
     import ctypes
     if ctypes.windll.shell32.IsUserAnAdmin():
         return
-    # For a frozen PyInstaller binary sys.executable is the .exe.
-    # For a pip console_scripts entry point sys.argv[0] is the .exe wrapper — NOT the
-    # Python interpreter (sys.executable).  Re-launching sys.executable as Python with
-    # the .exe path as a "script" argument would fail with a SyntaxError.
     if getattr(sys, "frozen", False):
         exe = sys.executable
         extra = sys.argv[1:]
@@ -98,7 +97,7 @@ def _try_load_config() -> ServerConfig | None:
     try:
         return ServerConfig.load(path)
     except ConfigError as exc:
-        log.warning("Server config corrupt: %s — showing setup wizard", exc)
+        log.warning("Server config corrupt: %s — falling back to setup wizard", exc)
         return None
 
 
@@ -110,65 +109,55 @@ def main() -> int:
     lock = _SingleInstanceLock()
     if not lock.acquire():
         log.error("Another instance is already running")
-        from tkinter import messagebox
-        messagebox.showwarning(
-            "WarpSocket Server",
-            "Ya hay otra instancia de WarpSocket Server ejecutándose.",
-        )
         return 1
 
     try:
-        import customtkinter as ctk
-        ctk.set_appearance_mode("system")
-        ctk.set_default_color_theme("blue")
-
-        config = _try_load_config()
-
+        from warpsocket_server.api import create_app
         from warpsocket_server.server_manager import ServerManager
         from warpsocket_server.server_tray import ServerTrayApp
-        from warpsocket_server.server_window import ServerWindow
+        from warpsocket_server.webview import show_window, start
 
-        manager: ServerManager | None = ServerManager(config) if config else None
+        config = _try_load_config()
+        manager_ref: list[ServerManager | None] = [
+            ServerManager(config) if config else None
+        ]
+        token = secrets.token_urlsafe(32)
 
-        window: ServerWindow
         tray: ServerTrayApp
 
         def on_setup_complete(cfg: ServerConfig, mgr: ServerManager) -> None:
-            nonlocal manager
-            manager = mgr
+            manager_ref[0] = mgr
             tray.update_manager(mgr)
+            mgr.start()
             log.info("Setup complete: server=%s:%d", cfg.endpoint, cfg.port)
+
+        api_app = create_app(manager_ref, memory_handler, on_setup_complete, token)
+
+        session = start(api_app, _PORT, token)
 
         def on_quit() -> None:
             log.info("Shutting down WarpSocket Server")
-            window.stop_log_refresh()
-            if manager:
-                manager.stop()
+            m = manager_ref[0]
+            if m is not None:
+                m.stop()
             tray.stop()
-            window.quit()
-
-        window = ServerWindow(
-            config=config,
-            manager=manager,
-            memory_handler=memory_handler,
-            on_setup_complete=on_setup_complete,
-            on_quit=on_quit,
-        )
+            session.shutdown()
 
         tray = ServerTrayApp(
-            manager=manager,
-            ui_queue=window.ui_queue,
-            on_show=window.show_from_tray,
+            manager=manager_ref[0],
+            on_show=show_window,
             on_quit=on_quit,
         )
 
-        if manager:
-            manager.start()
+        if manager_ref[0] is not None:
+            manager_ref[0].start()
             log.info("Server manager started: server=%s:%d", config.endpoint, config.port)
 
         tray.run()
-        log.info("Tray running — entering UI event loop")
-        window.mainloop()
+        log.info(
+            "Tray running — entering pywebview loop on http://127.0.0.1:%d", _PORT
+        )
+        session.run("WarpSocket Server")
 
         log.info("WarpSocket Server shut down cleanly")
         return 0

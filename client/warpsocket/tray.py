@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import queue
 from pathlib import Path
 from typing import Callable
 
@@ -53,19 +52,17 @@ def icon_for_state(state: TunnelState | None, base: Image.Image) -> Image.Image:
 class TrayApp:
     """System tray icon.
 
-    Left-click (or 'Abrir WarpSocket'): shows the main window via ui_queue.
+    Left-click (or 'Abrir WarpSocket'): brings the pywebview window forward.
     'Parar y salir': full quit — stops tunnel and exits the process.
     """
 
     def __init__(
         self,
         manager: TunnelManager | None,
-        ui_queue: queue.Queue[Callable[[], None]],
         on_show: Callable[[], None],
         on_quit: Callable[[], None],
     ) -> None:
         self._manager = manager
-        self._ui_queue = ui_queue
         self._on_show = on_show
         self._on_quit = on_quit
         self._icon = None
@@ -75,7 +72,6 @@ class TrayApp:
             manager.add_listener(self._on_state_change)
 
     def update_manager(self, manager: TunnelManager) -> None:
-        """Wire a new TunnelManager (called after config import)."""
         self._manager = manager
         manager.add_listener(self._on_state_change)
 
@@ -89,14 +85,18 @@ class TrayApp:
             log.exception("Failed to update tray icon for state %s", state)
 
     def _open_window(self, icon, item) -> None:
-        self._ui_queue.put(self._on_show)
+        try:
+            self._on_show()
+        except Exception:
+            log.exception("on_show raised")
 
     def _quit(self, icon, item) -> None:
-        # Stop pystray first so the tray thread can clean up.
         if self._icon is not None:
             self._icon.stop()
-        # Push the actual quit work to the tkinter main thread.
-        self._ui_queue.put(self._on_quit)
+        try:
+            self._on_quit()
+        except Exception:
+            log.exception("on_quit raised")
 
     def stop(self) -> None:
         """Stop the tray icon (called during shutdown)."""
