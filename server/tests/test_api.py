@@ -276,9 +276,8 @@ def test_ws_logs_streams_lines():
 def test_ws_logs_rejects_bad_token():
     app, *_ = _make_app()
     c = TestClient(app)
-    with pytest.raises(Exception):
-        with c.websocket_connect("/api/ws/logs?token=nope"):
-            pass
+    with pytest.raises(Exception), c.websocket_connect("/api/ws/logs?token=nope"):
+        pass
 
 
 def test_static_ui_served(tmp_path):

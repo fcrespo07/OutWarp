@@ -5,10 +5,10 @@ from unittest.mock import MagicMock
 from PIL import Image
 
 from warpsocket.tray import (
+    _STATE_TOOLTIPS,
     TrayApp,
     icon_for_state,
     load_base_icon,
-    _STATE_TOOLTIPS,
 )
 from warpsocket.tunnel import TunnelState
 

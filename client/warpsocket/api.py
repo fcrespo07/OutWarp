@@ -5,8 +5,8 @@ import logging
 import secrets
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from fastapi import (
     Depends,
@@ -25,7 +25,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from warpsocket.config import ClientConfig, ConfigError, import_warpcfg
 from warpsocket.logs import MemoryLogHandler
-from warpsocket.tunnel import TunnelManager, TunnelState
+from warpsocket.tunnel import TunnelManager
 
 log = logging.getLogger(__name__)
 

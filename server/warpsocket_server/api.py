@@ -9,8 +9,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from fastapi import (
     Body,
@@ -27,14 +27,13 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from warpsocket_server.config import (
-    ConfigError,
     ServerConfig,
     default_config_dir,
     default_config_path,
 )
 from warpsocket_server.crypto import generate_tls_cert, generate_wg_keypair
 from warpsocket_server.logs import MemoryLogHandler
-from warpsocket_server.server_manager import ServerManager, ServerState
+from warpsocket_server.server_manager import ServerManager
 from warpsocket_server.wireguard import get_live_peers
 
 log = logging.getLogger(__name__)

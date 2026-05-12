@@ -11,7 +11,6 @@ from warpsocket.api import create_app
 from warpsocket.logs import MemoryLogHandler
 from warpsocket.tunnel import TunnelState
 
-
 _VALID_WARPCFG = {
     "schema_version": 1,
     "server": {
@@ -190,11 +189,11 @@ def test_ws_logs_streams_snapshot_then_new_lines():
 
 
 def test_ws_logs_rejects_bad_token():
+    from starlette.websockets import WebSocketDisconnect
     app, *_ = _make_app()
     c = TestClient(app)
-    with pytest.raises(Exception):
-        with c.websocket_connect("/api/ws/logs?token=wrong"):
-            pass
+    with pytest.raises(WebSocketDisconnect), c.websocket_connect("/api/ws/logs?token=wrong"):
+        pass
 
 
 def test_static_ui_is_served_when_present(tmp_path):
