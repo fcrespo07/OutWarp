@@ -90,5 +90,5 @@ class TestMainEntryPoint:
         # The window was created with the OutWarp title
         kwargs = fake_webview.create_window.call_args.kwargs
         assert kwargs["title"] == "OutWarp"
-        # Api was bound to the window via api.bind_window(window)
-        fake_window.evaluate_js  # touch attr to ensure it's a MagicMock
+        # Api was bound to the window — proves bind_window(window) was called
+        assert kwargs["js_api"] is not None

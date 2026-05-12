@@ -101,10 +101,7 @@ def _try_load_config() -> ServerConfig | None:
 
 
 def _resolve_ui_path() -> str:
-    if hasattr(sys, "_MEIPASS"):
-        base = Path(sys._MEIPASS) / "ui"
-    else:
-        base = Path(__file__).parent / "ui"
+    base = Path(sys._MEIPASS) / "ui" if hasattr(sys, "_MEIPASS") else Path(__file__).parent / "ui"
     return str(base / "index.html")
 
 

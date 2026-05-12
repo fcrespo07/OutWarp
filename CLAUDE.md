@@ -1,10 +1,10 @@
-# WarpSocket
+# OutWarp
 
 Herramienta multiplataforma (cliente + servidor) para levantar un túnel **WireGuard sobre WebSocket** usando [wstunnel](https://github.com/erebe/wstunnel) como transporte. Pensada para entornos donde UDP está bloqueado pero HTTPS/WebSocket pasa (redes corporativas, Wi-Fi cautivos, móvil tras CGNAT, etc.).
 
 ## Origen del proyecto
 
-Nace como reescritura de un script PowerShell portable (`C:\Users\ferra\Documents\wstunnel_10.5.2_windows_amd64.tar\script portable\`) que funcionaba solo en Windows y estaba atado al servidor personal del autor. Los problemas del script original que WarpSocket resuelve:
+Nace como reescritura de un script PowerShell portable (`C:\Users\ferra\Documents\wstunnel_10.5.2_windows_amd64.tar\script portable\`) que funcionaba solo en Windows y estaba atado al servidor personal del autor. Los problemas del script original que OutWarp resuelve:
 
 - **Valores hardcodeados en el código** (URL del servidor `vpn.fcrespo.tech`, IP interna `10.43.9.43`, secreto `ClaveSegura123`, IPs de Cloudflare, nombre del túnel WireGuard del autor).
 - **Solo Windows**, PowerShell + WinForms. Frágil y difícil de mantener.
@@ -15,7 +15,7 @@ El script original se mantiene intacto como referencia. **No lo modifiques** —
 
 ## Alcance
 
-WarpSocket es una herramienta **genérica**: cualquier persona con un servidor propio debe poder usarla. No está atada a ninguna infraestructura concreta.
+OutWarp es una herramienta **genérica**: cualquier persona con un servidor propio debe poder usarla. No está atada a ninguna infraestructura concreta.
 
 - **Cliente**: app de bandeja del sistema (tray) multiplataforma que lanza wstunnel y gestiona el túnel WireGuard asociado.
 - **Servidor**: wizard CLI que instala y configura wstunnel como servicio en cualquier OS.
@@ -38,60 +38,73 @@ Se valoró C# + WinForms (descartado: no cross-platform sin reescribir UI entera
 | Rol | Librería |
 |---|---|
 | Tray icon | `pystray` |
-| UI (wizard + diálogos) | `customtkinter` |
-| Packaging | `PyInstaller` |
+| UI (ventana principal + wizard) | HTML/CSS/React 18 + `pywebview` (bridge `window.pywebview.api`) |
+| Packaging | `PyInstaller` (one-folder) |
 | Installer Windows | Inno Setup → `.exe` wizard |
 | Installer Linux | `.deb` / AppImage / script |
 | Installer macOS | `.app` + `.dmg` |
+
+El HTML se sirve **desde el filesystem** (`file://…/ui/index.html`) directamente a la ventana pywebview, no por HTTP. La clase `Api` (`outwarp/api.py`) se expone con `js_api=api` al crear la ventana; el JS la invoca como `window.pywebview.api.<método>` y recibe eventos vía `window.addEventListener('outwarp:<name>', …)` (Python emite con `window.evaluate_js`). Sin FastAPI ni uvicorn — el JS bridge directo es el modelo definitivo.
 
 **Versión TUI futura**: hay un acuerdo de hacer una segunda versión del cliente como TUI (probablemente con [`textual`](https://textual.textualize.io/)) cuando la versión GUI sea estable. Encajaría como cliente alternativo del mismo `TunnelManager` — la lógica de túnel ya está separada de la UI y puede compartirse.
 
 ### Servidor
 
-- Wizard CLI interactivo (`questionary` o `rich` + `prompt_toolkit`).
+- Wizard CLI interactivo (`rich` + `prompt_toolkit`) — sigue siendo el flujo recomendado en VPS headless (`sudo outwarp-server setup`).
+- Wizard GUI con la misma estética que el cliente (pywebview + HTML) en `outwarp-server-gui` para administradores con escritorio.
 - Instalación como servicio nativo: **systemd** (Linux), **launchd** (macOS), **Windows Service Manager** (Windows).
-- Genera el `config.json` listo para pegar en el cliente.
+- Genera un `.owcfg` por cliente, listo para importar.
 
 ## Arquitectura
 
 ```
-WarpSocket/
+OutWarp/
 ├── client/
-│   ├── warpsocket/
-│   │   ├── app.py            # Entry point, event loop
+│   ├── outwarp/
+│   │   ├── app.py            # Entry point: crea Api, abre pywebview, arranca tray
+│   │   ├── api.py            # Clase Api expuesta como window.pywebview.api
 │   │   ├── tray.py           # pystray + menú contextual
-│   │   ├── wizard.py         # Wizard de configuración inicial (customtkinter)
 │   │   ├── tunnel.py         # Gestión del proceso wstunnel + watchdog + reconexión
 │   │   ├── wireguard.py      # Fachada WireGuard (delega en platforms/)
-│   │   ├── network.py        # Gestión de rutas (delega en platforms/)
-│   │   ├── config.py         # Lectura/escritura config.json
-│   │   ├── logs.py           # Logger + rotación + ventana de logs
+│   │   ├── network.py        # TCP probe + TLS fingerprint pinning
+│   │   ├── config.py         # Schema + I/O del .owcfg / config.json
+│   │   ├── logs.py           # Logger + rotación + MemoryLogHandler
+│   │   ├── uninstall.py      # outwarp-uninstall CLI
+│   │   ├── ui/               # HTML/JS de la UI (Claude Design)
+│   │   │   ├── index.html    # Carga react + babel + scripts
+│   │   │   ├── app.jsx       # Shell interactivo cableado al Api
+│   │   │   ├── var-a.jsx     # Variante "consumer" del diseño (referencia)
+│   │   │   ├── var-b.jsx     # Variante "developer/instrument" (referencia)
+│   │   │   ├── shared.jsx    # i18n (STR) + atoms (Btn/Pill/StatusDot/Toggle)
+│   │   │   ├── brand.jsx     # Logo + wordmark "OutWarp"
+│   │   │   └── styles.css    # Design tokens (light/dark)
+│   │   ├── resources/        # app_icon.{ico,png}
 │   │   └── platforms/
 │   │       ├── base.py       # Interfaz abstracta
 │   │       ├── windows.py
 │   │       ├── linux.py
 │   │       └── macos.py
-│   ├── resources/
-│   │   └── app_icon.{ico,png,icns}
 │   ├── requirements.txt
 │   └── pyproject.toml
 │
 ├── server/
-│   ├── warpsocket_server/
-│   │   ├── setup.py          # Wizard CLI
-│   │   ├── service.py        # Instalación como servicio (platform-specific)
-│   │   └── platforms/
-│   │       ├── linux.py      # systemd unit
-│   │       ├── macos.py      # launchd plist
-│   │       └── windows.py    # SCM via pywin32
-│   └── requirements.txt
+│   ├── outwarp_server/
+│   │   ├── cli.py            # outwarp-server (rich CLI)
+│   │   ├── server_app.py     # outwarp-server-gui (pywebview)
+│   │   ├── api.py            # Clase Api del lado servidor
+│   │   ├── server_manager.py # ServerManager (start/stop/add-client/revoke)
+│   │   ├── server_tray.py    # Tray del modo GUI
+│   │   ├── setup_wizard.py   # Wizard rich del CLI
+│   │   ├── owcfg.py          # build_owcfg / write_owcfg
+│   │   ├── ui/               # HTML/JS del servidor (Claude Design)
+│   │   └── platforms/        # systemd / launchd / SCM
+│   └── pyproject.toml
 │
 ├── installer/
-│   ├── windows/setup.iss     # Inno Setup
-│   ├── linux/install.sh
-│   └── macos/build_dmg.sh
+│   ├── windows/install.ps1
+│   └── linux/install.sh
 │
-├── config.example.json
+├── config.example.owcfg
 ├── README.md
 └── CLAUDE.md                 # (este archivo)
 ```
@@ -128,7 +141,7 @@ El servidor está pensado para correr **sin dominio**. Implicaciones:
 
 - El wizard del servidor **detecta la IP pública** (consultando un servicio tipo `api.ipify.org`), la propone como endpoint y permite override por si el usuario sí tiene dominio.
 - El servidor **genera un certificado TLS auto-firmado** durante la instalación. wstunnel sigue usando WSS (necesario para atravesar firewalls corporativos).
-- El cliente **no valida contra una CA**: hace **pinning del fingerprint SHA256** del cert, embebido en el `.warpcfg`. Cero dependencia de Let's Encrypt / DuckDNS / dominios.
+- El cliente **no valida contra una CA**: hace **pinning del fingerprint SHA256** del cert, embebido en el `.owcfg`. Cero dependencia de Let's Encrypt / DuckDNS / dominios.
 - Ramas Let's Encrypt + dynamic DNS pueden añadirse más adelante como opción del wizard, pero no son la vía por defecto.
 
 ## Bypass routing (¿necesario siempre?)
@@ -137,7 +150,7 @@ Sí. Cuando WireGuard captura todo el tráfico (`AllowedIPs = 0.0.0.0/0`), el pr
 
 - Si el servidor está detrás de Cloudflare/CDN, son las IPs del proxy (varias).
 - Si el servidor es directo, es **una sola IP** (la pública del servidor).
-- El servidor calcula sus propias IPs de bypass durante la instalación y las **embebe en el `.warpcfg`** — el cliente las aplica tal cual, sin pedirlas al usuario.
+- El servidor calcula sus propias IPs de bypass durante la instalación y las **embebe en el `.owcfg`** — el cliente las aplica tal cual, sin pedirlas al usuario.
 
 ## Apertura de puertos
 
@@ -151,7 +164,7 @@ Para usuarios sin homelab: necesitan VPS (Oracle Free Tier, Hetzner, etc.). No h
 
 ## Configuración
 
-El servidor genera **un fichero `.warpcfg` por cliente** (formato JSON). Cada `.warpcfg` contiene todo lo necesario para conectarse — el cliente solo importa el fichero y arranca, sin más preguntas.
+El servidor genera **un fichero `.owcfg` por cliente** (formato JSON). Cada `.owcfg` contiene todo lo necesario para conectarse — el cliente solo importa el fichero y arranca, sin más preguntas.
 
 ```json
 {
@@ -169,7 +182,7 @@ El servidor genera **un fichero `.warpcfg` por cliente** (formato JSON). Cada `.
     "remote_port": 51820
   },
   "wireguard": {
-    "tunnel_name": "WarpSocket",
+    "tunnel_name": "OutWarp",
     "client_address": "10.0.0.42/32",
     "client_private_key": "<base64>",
     "server_public_key": "<base64>",
@@ -185,18 +198,18 @@ El servidor genera **un fichero `.warpcfg` por cliente** (formato JSON). Cada `.
 }
 ```
 
-**El `.warpcfg` es sensible**: contiene la clave privada WireGuard del cliente. Quien tenga el fichero ES ese cliente. Tratarlo como una credencial.
+**El `.owcfg` es sensible**: contiene la clave privada WireGuard del cliente. Quien tenga el fichero ES ese cliente. Tratarlo como una credencial.
 
-El cliente, al importar el `.warpcfg`, lo guarda como `config.json` en la ruta de configuración del usuario (`%APPDATA%\WarpSocket\` en Windows, `~/.config/warpsocket/` en Linux/macOS).
+El cliente, al importar el `.owcfg`, lo guarda como `config.json` en la ruta de configuración del usuario (`%APPDATA%\OutWarp\` en Windows, `~/.config/outwarp/` en Linux/macOS).
 
 ### Comandos del servidor
 
 Tras la instalación, el ejecutable del servidor expone subcomandos:
 
-- `warpsocket-server add-client <nombre>` — genera nuevo par de claves WG, asigna IP del pool, escribe `<nombre>.warpcfg` en el directorio actual.
-- `warpsocket-server list-clients` — lista clientes registrados.
-- `warpsocket-server revoke-client <nombre>` — elimina cliente del peer-list de WireGuard.
-- `warpsocket-server status` — estado del servicio wstunnel y de WireGuard.
+- `outwarp-server add-client <nombre>` — genera nuevo par de claves WG, asigna IP del pool, escribe `<nombre>.owcfg` en el directorio actual.
+- `outwarp-server list-clients` — lista clientes registrados.
+- `outwarp-server revoke-client <nombre>` — elimina cliente del peer-list de WireGuard.
+- `outwarp-server status` — estado del servicio wstunnel y de WireGuard.
 
 ## Funcionalidades heredadas del script original (a mantener)
 
@@ -212,13 +225,13 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 ## Licencia
 
-**WarpSocket** se distribuye bajo **MIT**. Confirmar antes de publicar la primera versión estable.
+**OutWarp** se distribuye bajo **MIT**. Confirmar antes de publicar la primera versión estable.
 
 ### Dependencias y sus licencias
 
 | Componente | Licencia | Notas |
 |---|---|---|
-| wstunnel | BSD-3-Clause | Bundleable con atribución. No usar el nombre "wstunnel" para promover WarpSocket. |
+| wstunnel | BSD-3-Clause | Bundleable con atribución. No usar el nombre "wstunnel" para promover OutWarp. |
 | WireGuard (kernel/tools/Windows) | GPL-2.0 | Invocado vía subprocess, no linked → no contamina. Instalado por el OS package manager, no bundleado. Sin obligaciones GPL mientras no se incluya el binario en el instalador. |
 | Protocolo WireGuard | Sin patente | Libre. |
 | pystray | LGPL-3.0 | ⚠️ En binarios PyInstaller usar modo **one-folder** (no one-file) para que el usuario pueda reemplazar la lib. Incluir texto LGPL en `THIRD_PARTY_LICENSES`. |
@@ -230,7 +243,7 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 ### Marcas registradas
 
 - **"WireGuard"** es trademark de Jason Donenfeld. No usar en el nombre del proyecto ni para implicar endorsement.
-- **"wstunnel"** — misma restricción (BSD-3-Clause cláusula 3). Por eso el proyecto se llama WarpSocket.
+- **"wstunnel"** — misma restricción (BSD-3-Clause cláusula 3). Por eso el proyecto se llama OutWarp.
 
 ### Checklist antes de publicar la primera versión estable
 
@@ -251,31 +264,33 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 **Fase 0 — Planificación** ✅
 **Fase 1 — Scaffolding del cliente Python** ✅
-**Fase 2 — Schema y loader del `.warpcfg`** ✅
+**Fase 2 — Schema y loader del `.owcfg`** ✅
 **Fase 3 — Abstracción de plataforma** ✅
 **Fase 4a — Orquestador del túnel** ✅ (`wireguard.py`, `network.py`, `tunnel.py`: build de la conf WG, TLS pinning en Python, `Tunnel.connect()/disconnect()`)
 **Fase 4b — Watchdog y reconexión** ✅ (`TunnelManager` con thread de monitorización, backoff de la config, máquina de estados `DISCONNECTED/CONNECTING/CONNECTED/RECONNECTING/FAILED`, listeners para que el tray se enganche)
-**Fase 5a — Tray icon y logs** ✅ (`tray.py` con pystray: icono con punto de color por estado, menú contextual con Ver logs / Reconectar / Importar .warpcfg / Salir. `logs.py` con rotación 512 KB y `MemoryLogHandler` para ventana de logs en vivo)
-**Fase 5b — Wizard y app.py end-to-end** ✅ (`wizard.py`: ventana customtkinter para importar `.warpcfg` con validación y feedback. `app.py`: entry point real con mutex de instancia única — `CreateMutexW` en Windows, `fcntl.flock` en POSIX —, carga de config o wizard, instanciación de `TunnelManager` + `TrayApp`, visor de logs en vivo, cleanup al salir)
+**Fase 5a — Tray icon y logs** ✅ (`tray.py` con pystray: icono con punto de color por estado, menú contextual con Ver logs / Reconectar / Importar .owcfg / Salir. `logs.py` con rotación 512 KB y `MemoryLogHandler` para ventana de logs en vivo)
+**Fase 5b — Wizard y app.py end-to-end** ✅ (`app.py`: entry point real con mutex de instancia única — `CreateMutexW` en Windows, `fcntl.flock` en POSIX —, carga de config o flujo de import, instanciación de `TunnelManager` + `TrayApp`, cleanup al salir)
 
-**104 tests del cliente** pasando (subprocess/socket/ssl/tkinter mockeado; corren en cualquier OS).
+**Fase UI — Nueva UI OutWarp (Claude Design)** ✅ (rama `new-uidesign`: rebrand `WarpSocket`→`OutWarp` y `.warpcfg`→`.owcfg`. `customtkinter` reemplazado por HTML/React 18 + pywebview con JS bridge directo. `Api` class en `outwarp/api.py` y `outwarp_server/api.py`. Shell interactivo en `app.jsx` con VarA/VarB toggle vía `settings.advanced`. Wizard de setup del servidor reimplementado en la UI.)
 
-**Flujo end-to-end en Windows cerrado**: el usuario importa un `.warpcfg` → wizard valida y guarda como `config.json` → tray icon activo → `TunnelManager` conecta → icono refleja estado → menú permite reconectar, ver logs, re-importar config, salir.
+**~85 tests del cliente** pasando (subprocess/socket/ssl/pywebview mockeado; corren en cualquier OS).
+
+**Flujo end-to-end**: el usuario abre OutWarp → si no hay config, ve la pantalla "Importar perfil" → arrastra o selecciona el `.owcfg` → `Api.import_profile` lo valida, lo guarda y arranca un `TunnelManager` nuevo → tray icon refleja el estado en tiempo real → menú permite reconectar, ver logs, salir.
 
 ---
 
-**Fase Servidor S1 — Scaffolding + Config** ✅ (`server/`: pyproject.toml con entry point `warpsocket-server`, `config.py` con `ServerConfig` + `ClientEntry` dataclasses, `cli.py` con argparse + 5 subcomandos)
+**Fase Servidor S1 — Scaffolding + Config** ✅ (`server/`: pyproject.toml con entry point `outwarp-server`, `config.py` con `ServerConfig` + `ClientEntry` dataclasses, `cli.py` con argparse + 5 subcomandos)
 **Fase Servidor S2 — Crypto** ✅ (`crypto.py`: `generate_tls_cert` con EC P-256 self-signed + SAN automático IP/DNS, `compute_cert_fingerprint` SHA-256, `generate_wg_keypair` via `wg genkey`/`wg pubkey`)
 **Fase Servidor S3 — IP Pool + WG server config** ✅ (`ip_pool.py` con `next_available_ip` y `PoolExhaustedError`, `wireguard.py` con `build_server_wg_conf` + `add_peer_live`/`remove_peer_live` para hot-reload)
 **Fase Servidor S4 — warpcfg + comandos de gestión** ✅ (`warpcfg.py` que construye el dict compatible con `ClientConfig` del cliente; `add-client`, `list-clients`, `revoke-client` implementados con rich tables)
 **Fase Servidor S5 — Plataforma Linux + setup wizard** ✅ (`platforms/`: ABC `ServerPlatform` + `LinuxServerPlatform` con systemd unit + `wg-quick`/`wg syncconf`; macOS y Windows como stubs. `setup_wizard.py` interactivo con rich: detección de IP pública, generación de cert/keys, instalación de servicios, probe localhost)
-**Fase Servidor S6 — Status command** ✅ (`warpsocket-server status` con tabla rich mostrando endpoint, subnet, contador de clientes y estado de wstunnel/WG)
+**Fase Servidor S6 — Status command** ✅ (`outwarp-server status` con tabla rich mostrando endpoint, subnet, contador de clientes y estado de wstunnel/WG)
 
-**72 tests del servidor** pasando (cryptography real + subprocess/urllib mockeado; corren en cualquier OS).
+**~100 tests del servidor** pasando (cryptography real + subprocess/urllib/pywebview mockeado; corren en cualquier OS).
 
-**Siguiente**: pruebas manuales en una VM Linux real (Ubuntu/Debian) — `sudo warpsocket-server setup`, `add-client test`, copiar el `.warpcfg` al cliente Windows y validar el túnel end-to-end. Tras validar, implementar `LinuxPlatform` del cliente, luego macOS (cliente y servidor), luego Windows en el servidor.
+**Siguiente**: pruebas manuales en una VM Linux real (Ubuntu/Debian) — `sudo outwarp-server setup`, `add-client test`, copiar el `.owcfg` al cliente Windows y validar el túnel end-to-end. Tras validar, implementar `LinuxPlatform` del cliente, luego macOS (cliente y servidor), luego Windows en el servidor. La UI nueva (rama `new-uidesign`) debe validarse en Windows con `outwarp` (cliente GUI) y `outwarp-server-gui` (servidor GUI) — el JS bridge sólo se ha probado con pyteststub aquí.
 
-El repo está en GitHub como privado: https://github.com/fcrespo07/WarpSocket
+El repo está en GitHub como privado: https://github.com/fcrespo07/OutWarp
 
 ## Optimizaciones de rendimiento pendientes
 
@@ -283,7 +298,7 @@ El túnel funciona end-to-end (speed test: Download 34.76 Mbps / Upload 24.16 Mb
 
 ### 1. Connection pooling — `--connection-min-idle 3` en wstunnel
 
-**Archivo**: `client/warpsocket/tunnel.py` → `build_wstunnel_command()`
+**Archivo**: `client/outwarp/tunnel.py` → `build_wstunnel_command()`
 
 ```python
 return [
@@ -302,7 +317,7 @@ Sin esto, cada sesión UDP de WireGuard abre una conexión TCP+TLS+WebSocket nue
 
 ### 2. MTU correcto — `MTU = 1380` en el config WireGuard
 
-**Archivo**: `client/warpsocket/wireguard.py` → `build_wg_conf()`, sección `[Interface]`
+**Archivo**: `client/outwarp/wireguard.py` → `build_wg_conf()`, sección `[Interface]`
 
 ```
 [Interface]
@@ -318,72 +333,60 @@ Cálculo: 1500 (Ethernet) − 40 (IP/TCP) − 40 (TLS) − 8 (WebSocket frame) �
 
 ---
 
-## Pre-Plan nueva UI
+## Nueva UI (Claude Design) — implementada en la rama `new-uidesign`
 
-La UI actual (customtkinter) se sustituye por HTMLs exportados desde **Claude Design**. El backend Python no cambia — todo el trabajo es de integración entre la UI y la lógica existente.
+La UI customtkinter se sustituyó por los HTML/JSX exportados de **Claude Design**, con un rebrand del proyecto a **OutWarp** (`.warpcfg` → `.owcfg`). El backend Python (tunnel, wireguard, network, config, logs, platforms, server_manager, crypto) **no cambia** — los cambios se concentran en la capa de presentación.
 
-### Arquitectura objetivo
+### Arquitectura final
 
 ```
-cliente:  pystray (sin cambios) → abre pywebview → localhost:7171 → FastAPI → TunnelManager
-servidor: pywebview local  O  browser remoto    → localhost:7172 → FastAPI → ServerManager
+cliente:  pystray ── "Abrir" ──► pywebview window (file://ui/index.html)
+                                       │
+                                       │  window.pywebview.api.<método>
+                                       │  window.addEventListener('outwarp:<event>', …)
+                                       ▼
+                                  outwarp.api.Api ──► TunnelManager (tunnel.py)
+
+servidor: idéntico, con outwarp_server.api.Api ──► ServerManager (server_manager.py)
 ```
 
-Los HTMLs de Claude Design cubren 4 modos × 2 temas:
-- Cliente normal / cliente developer
-- Servidor normal / servidor developer
-- Dark mode en todos
+Sin FastAPI ni uvicorn: el JS bridge de pywebview es la integración Python ↔ JS. Esto reduce ~600 líneas de plumbing HTTP, elimina el token de auth y simplifica el packaging.
 
-### Qué cambia y qué no
+### Lo que se eliminó
 
-**No cambia**: `tunnel.py`, `wireguard.py`, `network.py`, `config.py`, `logs.py`, `tray.py`, `platforms/`, todos los tests.
+- `wizard.py` (ventana customtkinter de importación).
+- `main_window.py` / `server_window.py` (dashboards customtkinter).
+- Dependencias `customtkinter`, `fastapi`, `uvicorn[standard]`, `websockets`, `python-multipart`.
 
-**Se elimina**: `wizard.py` (reemplazado por el HTML de Claude Design).
+### Lo que se añadió
 
-**Se añade**:
-```
-client/warpsocket/
-├── api.py          # FastAPI app con los endpoints del cliente
-└── webview.py      # arranca uvicorn en thread + abre ventana pywebview
-
-server/warpsocket_server/
-├── api.py          # FastAPI app con los endpoints del servidor
-└── webview.py      # igual, opcional para acceso local
-
-ui/                 # HTMLs + assets exportados de Claude Design
-├── client.html
-├── server.html
-└── assets/
-```
-
-### Fases
-
-**UI-1 — FastAPI cliente** (~1 día)
-Endpoints REST: `GET /status`, `POST /connect`, `POST /disconnect`, `GET /config`, `POST /import-config`. WebSocket `GET /ws/logs` para streaming del `MemoryLogHandler` existente.
-
-**UI-2 — FastAPI servidor** (~1 día)
-Endpoints: `GET /status`, `POST /add-client`, `GET /list-clients`, `DELETE /revoke-client/{name}`, `POST /setup`. Misma lógica que los subcomandos CLI actuales, expuesta por HTTP.
-
-**UI-3 — Arranque, pywebview y seguridad** (~1 día)
-- Token aleatorio generado al arrancar; se pasa al HTML en la URL (`localhost:7171?token=xxx`); FastAPI lo valida en cada request.
-- `webview.py` espera a que FastAPI esté listo antes de abrir la ventana.
-- Al cerrar la ventana o hacer Quit en el tray, se para uvicorn y se limpia el estado (misma lógica de shutdown que hay ahora).
-
-**UI-4 — Cablear HTML de Claude Design** (~½-1 día)
-Sustituir los `fetch()` / WebSocket del HTML por llamadas a `localhost:PORT`. El HTML ya tiene los 4 modos y dark mode; solo hay que conectarlos a la API.
-
-**UI-5 — Packaging PyInstaller** (~1 día con margen)
-Actualizar el spec para incluir uvicorn, fastapi y la carpeta `ui/`. Pywebview requiere one-folder (ya era obligatorio por pystray). Verificar en Windows, Linux y macOS.
-
-### Estimación total: ~5 días
-
-| Fase | Tiempo estimado |
+| Archivo | Rol |
 |---|---|
-| UI-1 FastAPI cliente | 1 día |
-| UI-2 FastAPI servidor | 1 día |
-| UI-3 Arranque / pywebview / token | 1 día |
-| UI-4 Cablear HTML | ½–1 día |
-| UI-5 PyInstaller | 1 día |
+| `outwarp/api.py` | Clase `Api` con métodos JS-callable. Envuelve `TunnelManager`, gestiona settings persistentes en `settings.json`, retransmite eventos del MemoryLogHandler como `outwarp:log`. |
+| `outwarp/ui/` | `index.html` + `styles.css` + `app.jsx` (shell cableado) + `var-a.jsx` + `var-b.jsx` (referencia de diseño) + `shared.jsx` (i18n + atoms) + `brand.jsx` (logo). |
+| `outwarp_server/api.py` | Equivalente para el servidor: status, start/stop/restart, add/revoke client, run_setup (wizard), detect_public_ip, list_clients con get_live_peers. |
+| `outwarp_server/ui/` | Mismo skeleton para el servidor + `srv-data.jsx` con SRV_STR (i18n) y los componentes `srv-a/b.jsx`. |
+
+### Bridge protocol
+
+**JS → Python**: `await window.pywebview.api.<método>(args…)`. Todos los métodos devuelven JSON-serialisable. Operaciones bloqueantes (stop / restart) se despachan en `threading.Thread(daemon=True)` para no congelar el bridge.
+
+**Python → JS**: `Api._emit(name, payload)` ejecuta `window.evaluate_js("window.dispatchEvent(new CustomEvent('outwarp:NAME', {detail: …}))")`. El JS escucha con `window.addEventListener('outwarp:NAME', …)`.
+
+Eventos:
+- `outwarp:status` — cambio de estado del túnel/servicio.
+- `outwarp:stats` (cliente) — heartbeat de tráfico a 1Hz mientras está conectado.
+- `outwarp:log` — cada línea nueva del `MemoryLogHandler`.
+- `outwarp:settings` — cambio persistido de preferencias.
+- `outwarp:clients` (servidor) — alguien hizo add/revoke.
+
+### Persistencia de settings
+
+`outwarp.api` guarda `settings.json` junto al `config.json` del usuario (`%APPDATA%\OutWarp\` o `~/.config/OutWarp/`). `outwarp_server.api` usa `gui_settings.json` dentro de `default_config_dir()`.
+
+### Modo dev (VarB)
+
+`settings.advanced = true` cambia la estética del shell: sidebar con borde duro y numeración monoespaciada, tarjetas con bordes mate, panel extra "Detalles técnicos" en Home (endpoint, fingerprint, allowed IPs). El shell respeta los design tokens de `styles.css`, así que el toggle no requiere recargar.
 
 ---
 

@@ -116,10 +116,7 @@ def _ensure_elevated() -> None:
 
 def _resolve_ui_path() -> str:
     """Absolute path to ui/index.html (works in dev and PyInstaller bundles)."""
-    if hasattr(sys, "_MEIPASS"):
-        base = Path(sys._MEIPASS) / "ui"
-    else:
-        base = Path(__file__).parent / "ui"
+    base = Path(sys._MEIPASS) / "ui" if hasattr(sys, "_MEIPASS") else Path(__file__).parent / "ui"
     return str(base / "index.html")
 
 
