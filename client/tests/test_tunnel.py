@@ -74,18 +74,18 @@ class FakePlatform(Platform):
 def test_find_wstunnel_uses_env_override(tmp_path, monkeypatch):
     fake = tmp_path / "wstunnel.exe"
     fake.write_text("x")
-    monkeypatch.setenv("WARPSOCKET_WSTUNNEL", str(fake))
+    monkeypatch.setenv("OUTWARP_WSTUNNEL", str(fake))
     assert find_wstunnel() == fake
 
 
 def test_find_wstunnel_raises_when_env_override_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv("WARPSOCKET_WSTUNNEL", str(tmp_path / "nope"))
+    monkeypatch.setenv("OUTWARP_WSTUNNEL", str(tmp_path / "nope"))
     with pytest.raises(TunnelError, match="does not exist"):
         find_wstunnel()
 
 
 def test_find_wstunnel_falls_back_to_path(monkeypatch, tmp_path):
-    monkeypatch.delenv("WARPSOCKET_WSTUNNEL", raising=False)
+    monkeypatch.delenv("OUTWARP_WSTUNNEL", raising=False)
     fake = tmp_path / "wstunnel"
     fake.write_text("x")
     with patch("outwarp.tunnel.Path") as mock_path:
@@ -97,7 +97,7 @@ def test_find_wstunnel_falls_back_to_path(monkeypatch, tmp_path):
 
 
 def test_find_wstunnel_raises_when_nowhere(monkeypatch):
-    monkeypatch.delenv("WARPSOCKET_WSTUNNEL", raising=False)
+    monkeypatch.delenv("OUTWARP_WSTUNNEL", raising=False)
     with patch("outwarp.tunnel.shutil.which", return_value=None):
         with patch("pathlib.Path.exists", return_value=False):
             with pytest.raises(TunnelError, match="wstunnel binary not found"):

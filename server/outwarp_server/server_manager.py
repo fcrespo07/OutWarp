@@ -5,16 +5,16 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import replace
 from enum import Enum
 from pathlib import Path
-from typing import Callable
 
-from outwarp_server.config import ClientEntry, ConfigError, ServerConfig, default_config_path
+from outwarp_server.config import ClientEntry, ServerConfig, default_config_path
 from outwarp_server.crypto import generate_wg_keypair
 from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
-from outwarp_server.platforms import PlatformError, get_server_platform
 from outwarp_server.owcfg import build_owcfg, write_owcfg
+from outwarp_server.platforms import PlatformError, get_server_platform
 from outwarp_server.wireguard import (
     add_peer_live,
     build_server_wg_conf,

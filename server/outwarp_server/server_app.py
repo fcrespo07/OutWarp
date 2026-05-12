@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import secrets
 import sys
 from pathlib import Path
 
@@ -12,7 +11,7 @@ from outwarp_server.logs import setup_logging
 log = logging.getLogger(__name__)
 
 _MUTEX_NAME = "Global\\OutWarpServer"
-_PORT = 7172
+_WINDOW_TITLE = "OutWarp Server"
 
 
 class _SingleInstanceLock:
@@ -101,6 +100,14 @@ def _try_load_config() -> ServerConfig | None:
         return None
 
 
+def _resolve_ui_path() -> str:
+    if hasattr(sys, "_MEIPASS"):
+        base = Path(sys._MEIPASS) / "ui"
+    else:
+        base = Path(__file__).parent / "ui"
+    return str(base / "index.html")
+
+
 def main() -> int:
     _ensure_elevated()
     memory_handler = setup_logging()
@@ -112,52 +119,62 @@ def main() -> int:
         return 1
 
     try:
-        from outwarp_server.api import create_app
+        import webview
+
+        from outwarp_server.api import Api
         from outwarp_server.server_manager import ServerManager
         from outwarp_server.server_tray import ServerTrayApp
-        from outwarp_server.webview import show_window, start
 
         config = _try_load_config()
-        manager_ref: list[ServerManager | None] = [
-            ServerManager(config) if config else None
-        ]
-        token = secrets.token_urlsafe(32)
+        manager: ServerManager | None = ServerManager(config) if config else None
 
         tray: ServerTrayApp
 
-        def on_setup_complete(cfg: ServerConfig, mgr: ServerManager) -> None:
-            manager_ref[0] = mgr
-            tray.update_manager(mgr)
-            mgr.start()
-            log.info("Setup complete: server=%s:%d", cfg.endpoint, cfg.port)
+        def on_manager_replaced(new_mgr: ServerManager) -> None:
+            nonlocal manager
+            manager = new_mgr
+            tray.update_manager(new_mgr)
+            new_mgr.start()
 
-        api_app = create_app(manager_ref, memory_handler, on_setup_complete, token)
+        api = Api(memory_handler, manager, on_manager_replaced=on_manager_replaced)
 
-        session = start(api_app, _PORT, token)
-
-        def on_quit() -> None:
-            log.info("Shutting down OutWarp Server")
-            m = manager_ref[0]
-            if m is not None:
-                m.stop()
-            tray.stop()
-            session.shutdown()
-
-        tray = ServerTrayApp(
-            manager=manager_ref[0],
-            on_show=show_window,
-            on_quit=on_quit,
+        window = webview.create_window(
+            title=_WINDOW_TITLE,
+            url=_resolve_ui_path(),
+            js_api=api,
+            width=1200,
+            height=780,
+            min_size=(960, 640),
+            background_color="#f6f5f1",
+            resizable=True,
         )
+        api.bind_window(window)
 
-        if manager_ref[0] is not None:
-            manager_ref[0].start()
+        def _show_window() -> None:
+            try:
+                window.show()
+                window.restore()
+            except Exception:
+                log.exception("could not show window from tray")
+
+        def _on_quit() -> None:
+            log.info("Shutting down OutWarp Server")
+            api.shutdown()
+            tray.stop()
+            try:
+                window.destroy()
+            except Exception:
+                pass
+
+        tray = ServerTrayApp(manager=manager, on_show=_show_window, on_quit=_on_quit)
+
+        if manager is not None:
+            manager.start()
             log.info("Server manager started: server=%s:%d", config.endpoint, config.port)
 
         tray.run()
-        log.info(
-            "Tray running — entering pywebview loop on http://127.0.0.1:%d", _PORT
-        )
-        session.run("OutWarp Server")
+        log.info("Tray running — opening webview window")
+        webview.start(gui="edgechromium" if sys.platform == "win32" else None)
 
         log.info("OutWarp Server shut down cleanly")
         return 0

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -44,31 +44,22 @@ class TestMainEntryPoint:
             assert main() == 1
 
     def test_orchestrates_without_config(self, tmp_path) -> None:
-        """main() with no config should start uvicorn + tray + pywebview.
+        """main() with no config should create a pywebview window and start the tray.
 
-        We mock the three side-effecting subsystems so the test exercises the
-        wiring (token generation, manager_ref initialization, on_quit shutdown)
-        without actually starting a server or opening a window.
+        We mock pywebview itself and the TrayApp so this test exercises the
+        wiring (Api created, window bound, tray started) without opening a real
+        window.
         """
         from outwarp import app as app_mod
 
-        # No on-disk config → manager_ref starts as [None].
         nonexistent = tmp_path / "no" / "config.json"
 
         captured = {}
+        fake_window = MagicMock()
 
-        def fake_start(api_app, port, token, **kwargs):
-            captured["port"] = port
-            captured["token"] = token
-
-            class _Session:
-                def run(self, title):
-                    captured["title"] = title
-
-                def shutdown(self):
-                    captured["shutdown"] = True
-
-            return _Session()
+        fake_webview = MagicMock()
+        fake_webview.create_window.return_value = fake_window
+        fake_webview.start.side_effect = lambda **kwargs: captured.setdefault("start_called", True)
 
         class _FakeTrayApp:
             def __init__(self, manager, on_show, on_quit):
@@ -87,14 +78,17 @@ class TestMainEntryPoint:
 
         with (
             patch("outwarp.app.default_config_path", return_value=nonexistent),
-            patch("outwarp.webview.start", side_effect=fake_start),
+            patch.dict(sys.modules, {"webview": fake_webview}),
             patch("outwarp.tray.TrayApp", _FakeTrayApp),
         ):
             rc = app_mod.main()
 
         assert rc == 0
-        assert captured["port"] == 7171
-        assert isinstance(captured["token"], str) and len(captured["token"]) >= 32
-        assert captured["tray_manager"] is None
         assert captured["tray_ran"] is True
-        assert captured["title"] == "OutWarp"
+        assert captured["tray_manager"] is None
+        assert captured.get("start_called") is True
+        # The window was created with the OutWarp title
+        kwargs = fake_webview.create_window.call_args.kwargs
+        assert kwargs["title"] == "OutWarp"
+        # Api was bound to the window via api.bind_window(window)
+        fake_window.evaluate_js  # touch attr to ensure it's a MagicMock

@@ -6,10 +6,10 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import Callable
 
 from platformdirs import user_data_dir
 
@@ -19,7 +19,7 @@ from outwarp.platforms import Platform, get_platform
 from outwarp.wireguard import build_wg_conf
 
 _APP_NAME = "OutWarp"
-_ENV_OVERRIDE = "WARPSOCKET_WSTUNNEL"
+_ENV_OVERRIDE = "OUTWARP_WSTUNNEL"
 
 log = logging.getLogger(__name__)
 

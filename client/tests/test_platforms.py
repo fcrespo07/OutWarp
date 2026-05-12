@@ -192,7 +192,7 @@ def linux_helper(tmp_path, monkeypatch):
     """Stand up a fake helper script so existence checks pass without sudo."""
     helper = tmp_path / "outwarp-priv"
     helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    monkeypatch.setenv("WARPSOCKET_HELPER", str(helper))
+    monkeypatch.setenv("OUTWARP_HELPER", str(helper))
     return helper
 
 
@@ -239,14 +239,14 @@ def test_linux_install_wg_tunnel_raises_on_helper_failure(linux_helper):
 
 
 def test_linux_install_wg_tunnel_raises_when_helper_missing(tmp_path, monkeypatch):
-    monkeypatch.delenv("WARPSOCKET_HELPER", raising=False)
+    monkeypatch.delenv("OUTWARP_HELPER", raising=False)
     p = LinuxPlatform(helper=tmp_path / "missing-helper", sudo=False)
     with pytest.raises(PlatformError, match="Privileged helper not found"):
         p.install_wg_tunnel("OutWarp", "...")
 
 
 def test_linux_uninstall_wg_tunnel_no_op_when_helper_missing(tmp_path, monkeypatch):
-    monkeypatch.delenv("WARPSOCKET_HELPER", raising=False)
+    monkeypatch.delenv("OUTWARP_HELPER", raising=False)
     p = LinuxPlatform(helper=tmp_path / "missing-helper", sudo=False)
     p.uninstall_wg_tunnel("OutWarp")  # must not raise
 
@@ -273,7 +273,7 @@ def test_linux_is_wg_tunnel_active_false_when_helper_fails(linux_helper):
 
 
 def test_linux_is_wg_tunnel_active_false_when_helper_missing(tmp_path, monkeypatch):
-    monkeypatch.delenv("WARPSOCKET_HELPER", raising=False)
+    monkeypatch.delenv("OUTWARP_HELPER", raising=False)
     p = LinuxPlatform(helper=tmp_path / "missing-helper", sudo=False)
     assert p.is_wg_tunnel_active("OutWarp") is False
 
@@ -348,6 +348,6 @@ def test_linux_remove_host_route_idempotent(linux_helper):
 
 
 def test_linux_remove_host_route_no_op_when_helper_missing(tmp_path, monkeypatch):
-    monkeypatch.delenv("WARPSOCKET_HELPER", raising=False)
+    monkeypatch.delenv("OUTWARP_HELPER", raising=False)
     p = LinuxPlatform(helper=tmp_path / "missing-helper", sudo=False)
     p.remove_host_route("203.0.113.42")  # must not raise

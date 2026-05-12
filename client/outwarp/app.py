@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import secrets
 import sys
 import tempfile
 from pathlib import Path
@@ -13,7 +12,7 @@ from outwarp.logs import setup_logging
 log = logging.getLogger(__name__)
 
 _LOCK_NAME = "outwarp-client.lock"
-_PORT = 7171
+_WINDOW_TITLE = "OutWarp"
 
 
 class _SingleInstanceLock:
@@ -88,7 +87,7 @@ def _try_load_config() -> ClientConfig | None:
     try:
         return ClientConfig.load(path)
     except ConfigError as exc:
-        log.warning("Config file corrupt: %s — falling back to import screen", exc)
+        log.warning("Config file corrupt: %s — starting with import screen", exc)
         return None
 
 
@@ -115,6 +114,15 @@ def _ensure_elevated() -> None:
     sys.exit(0 if ret > 32 else 1)
 
 
+def _resolve_ui_path() -> str:
+    """Absolute path to ui/index.html (works in dev and PyInstaller bundles)."""
+    if hasattr(sys, "_MEIPASS"):
+        base = Path(sys._MEIPASS) / "ui"
+    else:
+        base = Path(__file__).parent / "ui"
+    return str(base / "index.html")
+
+
 def main() -> int:
     _ensure_elevated()
     memory_handler = setup_logging()
@@ -126,35 +134,25 @@ def main() -> int:
         return 1
 
     try:
-        from outwarp.api import create_app
+        import webview
+
+        from outwarp.api import Api
         from outwarp.tray import TrayApp
         from outwarp.tunnel import TunnelManager
-        from outwarp.webview import show_window, start
 
         config = _try_load_config()
-        manager_ref: list[TunnelManager | None] = [
-            TunnelManager(config) if config else None
-        ]
-        token = secrets.token_urlsafe(32)
+        manager: TunnelManager | None = TunnelManager(config) if config else None
 
+        # tray is filled in below before the closures fire
         tray: TrayApp
 
-        def on_import(cfg: ClientConfig) -> None:
-            existing = manager_ref[0]
-            if existing is not None:
-                existing.stop()
-            new_manager = TunnelManager(cfg)
-            manager_ref[0] = new_manager
-            tray.update_manager(new_manager)
-            new_manager.start()
-            log.info(
-                "Config imported: server=%s:%d tunnel=%s",
-                cfg.server.endpoint,
-                cfg.server.port,
-                cfg.wireguard.tunnel_name,
-            )
+        def on_manager_replaced(new_mgr: TunnelManager) -> None:
+            nonlocal manager
+            manager = new_mgr
+            tray.update_manager(new_mgr)
+            new_mgr.start()
 
-        api_app = create_app(manager_ref, memory_handler, on_import, token)
+        api = Api(memory_handler, manager, on_manager_replaced=on_manager_replaced)
 
         if config:
             log.info(
@@ -164,30 +162,44 @@ def main() -> int:
                 config.wireguard.tunnel_name,
             )
 
-        session = start(api_app, _PORT, token)
-
-        def on_quit() -> None:
-            log.info("Shutting down OutWarp")
-            m = manager_ref[0]
-            if m is not None:
-                m.stop()
-            tray.stop()
-            session.shutdown()
-
-        tray = TrayApp(
-            manager=manager_ref[0],
-            on_show=show_window,
-            on_quit=on_quit,
+        window = webview.create_window(
+            title=_WINDOW_TITLE,
+            url=_resolve_ui_path(),
+            js_api=api,
+            width=1080,
+            height=720,
+            min_size=(880, 600),
+            background_color="#f6f5f1",
+            resizable=True,
         )
+        api.bind_window(window)
 
-        if manager_ref[0] is not None:
-            manager_ref[0].start()
+        def _show_window() -> None:
+            try:
+                window.show()
+                window.restore()
+            except Exception:
+                log.exception("could not show window from tray")
+
+        def _on_quit() -> None:
+            log.info("Shutting down OutWarp client")
+            api.shutdown()
+            tray.stop()
+            try:
+                window.destroy()
+            except Exception:
+                pass
+
+        tray = TrayApp(manager=manager, on_show=_show_window, on_quit=_on_quit)
+
+        if manager is not None:
+            manager.start()
 
         tray.run()
-        log.info("Tray running — entering pywebview loop on http://127.0.0.1:%d", _PORT)
-        session.run("OutWarp")
+        log.info("Tray running — opening webview window")
+        webview.start(gui="edgechromium" if sys.platform == "win32" else None)
 
-        log.info("OutWarp shut down cleanly")
+        log.info("OutWarp client shut down cleanly")
         return 0
 
     finally:

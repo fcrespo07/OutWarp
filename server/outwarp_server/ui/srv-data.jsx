@@ -1,0 +1,159 @@
+// Server-side i18n strings + sample data
+const SRV_STR = {
+  es: {
+    appName: "OutWarp Server",
+    nav_dashboard: "Panel",
+    nav_clients: "Clientes",
+    nav_service: "Servicio",
+    nav_logs: "Registro",
+    nav_settings: "Ajustes",
+
+    serverStatus: "Estado del servicio",
+    running: "En ejecución",
+    stopped: "Detenido",
+    degraded: "Degradado",
+
+    metric_clientsOnline: "Clientes conectados",
+    metric_clientsTotal: "Clientes totales",
+    metric_traffic: "Tráfico total",
+    metric_uptime: "Uptime",
+    metric_rx: "Recibido",
+    metric_tx: "Enviado",
+    metric_peakClients: "Pico de clientes",
+    metric_peakTraffic: "Pico de tráfico",
+
+    addClient: "Añadir cliente",
+    revoke: "Revocar",
+    download: "Descargar .owcfg",
+    showQR: "Ver QR",
+    copyConfig: "Copiar config",
+
+    clientName: "Nombre",
+    lastHandshake: "Último handshake",
+    transferred: "Transferido",
+    ipAssigned: "IP asignada",
+    online: "En línea",
+    offline: "Desconectado",
+    never: "Nunca",
+
+    setup_title: "Generar nuevo cliente",
+    setup_sub: "Crea un perfil .owcfg para un nuevo dispositivo. El servidor genera claves WireGuard y firma una huella TLS pinada.",
+    setup_name: "Nombre del cliente",
+    setup_namePh: "ej. ana-laptop",
+    setup_allowedIps: "Allowed IPs",
+    setup_dns: "DNS",
+    setup_generate: "Generar perfil",
+
+    service_wstunnel: "wstunnel.service",
+    service_wg: "wg-quick@wg0.service",
+    service_restart: "Reiniciar",
+    service_regen: "Regenerar config",
+    service_uninstall: "Desinstalar",
+
+    logs_title: "Registro del servidor",
+    logs_sub: "journalctl -u wstunnel -u wg-quick@wg0 · live",
+
+    set_port: "Puerto",
+    set_iface: "Interfaz",
+    set_subnet: "Subred WireGuard",
+    set_cert: "Certificado TLS",
+    set_certSub: "Auto-firmado, anclado por huella SHA-256",
+    set_regen: "Regenerar",
+    set_domain: "Dominio (opcional)",
+    set_domainSub: "Sólo si tienes uno apuntando al servidor; no es necesario para OutWarp",
+
+    revokeConfirm: "¿Revocar a {name}? Su .owcfg dejará de funcionar inmediatamente.",
+  },
+  en: {
+    appName: "OutWarp Server",
+    nav_dashboard: "Dashboard",
+    nav_clients: "Clients",
+    nav_service: "Service",
+    nav_logs: "Logs",
+    nav_settings: "Settings",
+
+    serverStatus: "Service status",
+    running: "Running",
+    stopped: "Stopped",
+    degraded: "Degraded",
+
+    metric_clientsOnline: "Clients online",
+    metric_clientsTotal: "Total clients",
+    metric_traffic: "Total traffic",
+    metric_uptime: "Uptime",
+    metric_rx: "Received",
+    metric_tx: "Sent",
+    metric_peakClients: "Peak clients",
+    metric_peakTraffic: "Peak traffic",
+
+    addClient: "Add client",
+    revoke: "Revoke",
+    download: "Download .owcfg",
+    showQR: "Show QR",
+    copyConfig: "Copy config",
+
+    clientName: "Name",
+    lastHandshake: "Last handshake",
+    transferred: "Transferred",
+    ipAssigned: "Assigned IP",
+    online: "Online",
+    offline: "Offline",
+    never: "Never",
+
+    setup_title: "Generate new client",
+    setup_sub: "Create a .owcfg profile for a new device. The server generates WireGuard keys and a pinned TLS fingerprint.",
+    setup_name: "Client name",
+    setup_namePh: "e.g. ana-laptop",
+    setup_allowedIps: "Allowed IPs",
+    setup_dns: "DNS",
+    setup_generate: "Generate profile",
+
+    service_wstunnel: "wstunnel.service",
+    service_wg: "wg-quick@wg0.service",
+    service_restart: "Restart",
+    service_regen: "Regenerate config",
+    service_uninstall: "Uninstall",
+
+    logs_title: "Server log",
+    logs_sub: "journalctl -u wstunnel -u wg-quick@wg0 · live",
+
+    set_port: "Port",
+    set_iface: "Interface",
+    set_subnet: "WireGuard subnet",
+    set_cert: "TLS certificate",
+    set_certSub: "Self-signed, pinned by SHA-256 fingerprint",
+    set_regen: "Regenerate",
+    set_domain: "Domain (optional)",
+    set_domainSub: "Only if you have one pointing to the server; not required for OutWarp",
+
+    revokeConfirm: "Revoke {name}? Their .owcfg will stop working immediately.",
+  },
+};
+
+const SAMPLE_CLIENTS = [
+  { name: "ana-laptop",   ip: "10.66.0.2",  online: true,  hs: "00:00:42", rx: "19.7 MB", tx: "2.1 MB",  endpoint: "85.213.44.21:54122",  added: "2026-04-12" },
+  { name: "luis-phone",   ip: "10.66.0.3",  online: true,  hs: "00:01:15", rx: "4.2 MB",  tx: "812 KB",  endpoint: "187.92.10.4:51899",  added: "2026-04-15" },
+  { name: "carlos-desk",  ip: "10.66.0.4",  online: false, hs: "12 min ago", rx: "402 MB", tx: "38 MB",  endpoint: "—",                  added: "2026-03-28" },
+  { name: "marta-tablet", ip: "10.66.0.5",  online: true,  hs: "00:00:08", rx: "8.1 MB",  tx: "1.2 MB",  endpoint: "62.197.83.55:39021", added: "2026-04-22" },
+  { name: "rosa-laptop",  ip: "10.66.0.6",  online: false, hs: "3 days ago", rx: "1.2 GB", tx: "112 MB", endpoint: "—",                  added: "2026-02-19" },
+  { name: "javi-server",  ip: "10.66.0.7",  online: true,  hs: "00:00:22", rx: "78 MB",   tx: "9.4 MB",  endpoint: "212.55.71.100:443", added: "2026-04-01" },
+  { name: "test-vm",      ip: "10.66.0.8",  online: false, hs: "Nunca",      rx: "0 B",   tx: "0 B",    endpoint: "—",                  added: "2026-04-28" },
+];
+
+const SAMPLE_SRV_LOGS = [
+  { t: "12:04:01.002", svc: "wstunnel",       lvl: "info",  msg: "listening on :443 (TLS)" },
+  { t: "12:04:01.118", svc: "wg-quick",       lvl: "info",  msg: "[#] ip link add wg0 type wireguard" },
+  { t: "12:04:01.401", svc: "wg-quick",       lvl: "info",  msg: "[#] wg setconf wg0 /tmp/wg.conf" },
+  { t: "12:04:01.502", svc: "wstunnel",       lvl: "info",  msg: "TLS cert sha256: 4f:9a:1c:7e:b3:d2:8a:55:…" },
+  { t: "12:11:32.119", svc: "wstunnel",       lvl: "info",  msg: "client ana-laptop connected from 85.213.44.21" },
+  { t: "12:11:32.220", svc: "wg",             lvl: "debug", msg: "peer ana-laptop handshake OK" },
+  { t: "12:14:08.401", svc: "wstunnel",       lvl: "info",  msg: "client luis-phone connected from 187.92.10.4" },
+  { t: "12:18:55.001", svc: "wg",             lvl: "debug", msg: "peer carlos-desk last_handshake 12m ago, marking offline" },
+  { t: "12:21:18.502", svc: "outwarp-cli", lvl: "info",  msg: "add-client marta-tablet → wrote /etc/outwarp/clients/marta-tablet.owcfg" },
+  { t: "12:24:04.119", svc: "wstunnel",       lvl: "info",  msg: "client marta-tablet connected from 62.197.83.55" },
+  { t: "12:30:00.002", svc: "outwarp-cli", lvl: "warn",  msg: "rosa-laptop offline > 72h" },
+];
+
+window.SRV_STR = SRV_STR;
+window.SAMPLE_CLIENTS = SAMPLE_CLIENTS;
+window.SAMPLE_SRV_LOGS = SAMPLE_SRV_LOGS;

@@ -1,0 +1,62 @@
+/* OutWarp design tokens */
+:root {
+  /* Type */
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+  --font-display: "Geist", ui-sans-serif, system-ui, sans-serif;
+
+  /* Brand */
+  --brand: #2563ff; /* warp blue */
+  --brand-2: #00d4a8; /* signal cyan/green */
+  --brand-warn: #ff8a3d;
+  --brand-bad: #ff4d6d;
+
+  /* App tokens — defaults are LIGHT */
+  --bg: #f6f5f1;
+  --bg-2: #ffffff;
+  --bg-sunk: #ecebe5;
+  --line: #00000014;
+  --line-strong: #00000022;
+  --text: #0a0d12;
+  --text-2: #4a4f57;
+  --text-3: #7a7f87;
+  --chip: #00000008;
+  --shadow: 0 1px 0 rgba(0,0,0,.04), 0 8px 24px -12px rgba(0,0,0,.12);
+}
+
+[data-theme="dark"] {
+  --bg: #0a0c10;
+  --bg-2: #11141a;
+  --bg-sunk: #070910;
+  --line: #ffffff14;
+  --line-strong: #ffffff22;
+  --text: #f4f5f7;
+  --text-2: #a8aeb8;
+  --text-3: #6e747e;
+  --chip: #ffffff0a;
+  --shadow: 0 1px 0 rgba(255,255,255,.03), 0 8px 24px -12px rgba(0,0,0,.6);
+}
+
+* { box-sizing: border-box; }
+
+/* shared keyframes for the tunnel viz / status pulses */
+@keyframes ws-pulse {
+  0%   { transform: scale(1);   opacity: .7; }
+  70%  { transform: scale(2.2); opacity: 0; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+@keyframes ws-flow {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -64; }
+}
+@keyframes ws-spin { to { transform: rotate(360deg); } }
+@keyframes ws-blink { 50% { opacity: .25; } }
+@keyframes ws-ticker {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
+}
+
+/* a tiny scrollbar so phones/inner panes feel right */
+.ws-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.ws-scroll::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
+.ws-scroll { scrollbar-width: thin; }

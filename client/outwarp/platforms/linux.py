@@ -13,7 +13,7 @@ from .base import Platform, PlatformError
 _WG_CONF_DIR = Path("/etc/wireguard")
 
 # Default install location of the privileged helper script. The installer
-# drops this; tests / dev environments override via WARPSOCKET_HELPER.
+# drops this; tests / dev environments override via OUTWARP_HELPER.
 _DEFAULT_HELPER = Path("/usr/local/libexec/outwarp-priv")
 
 _IP = "ip"
@@ -43,7 +43,7 @@ class LinuxPlatform(Platform):
         helper: Path | None = None,
         sudo: bool | None = None,
     ) -> None:
-        env_helper = os.environ.get("WARPSOCKET_HELPER")
+        env_helper = os.environ.get("OUTWARP_HELPER")
         self._helper = helper or (Path(env_helper) if env_helper else _DEFAULT_HELPER)
         if sudo is None:
             sudo = hasattr(os, "geteuid") and os.geteuid() != 0
@@ -63,12 +63,12 @@ class LinuxPlatform(Platform):
         return _WG_CONF_DIR / f"{name}.conf"
 
     def uninstall_wg_tunnel(self, name: str) -> None:
-        if not self._helper.exists() and not os.environ.get("WARPSOCKET_HELPER"):
+        if not self._helper.exists() and not os.environ.get("OUTWARP_HELPER"):
             return
         self._run_helper("down", name)
 
     def is_wg_tunnel_active(self, name: str) -> bool:
-        if not self._helper.exists() and not os.environ.get("WARPSOCKET_HELPER"):
+        if not self._helper.exists() and not os.environ.get("OUTWARP_HELPER"):
             return False
         return self._run_helper("is-active", name).returncode == 0
 
@@ -105,7 +105,7 @@ class LinuxPlatform(Platform):
         )
 
     def remove_host_route(self, ip: str) -> None:
-        if not self._helper.exists() and not os.environ.get("WARPSOCKET_HELPER"):
+        if not self._helper.exists() and not os.environ.get("OUTWARP_HELPER"):
             return
         self._run_helper("route-del", ip)
 
@@ -120,7 +120,7 @@ class LinuxPlatform(Platform):
 
     def _require_helper(self) -> None:
         # Skip the existence check when an env override is set (tests / dev mode).
-        if os.environ.get("WARPSOCKET_HELPER"):
+        if os.environ.get("OUTWARP_HELPER"):
             return
         if not self._helper.exists():
             raise PlatformError(
