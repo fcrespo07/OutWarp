@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from warpsocket.config import (
+from outwarp.config import (
     ClientConfig,
     ReconnectConfig,
     RoutingConfig,
@@ -9,7 +9,7 @@ from warpsocket.config import (
     TunnelConfig,
     WireguardConfig,
 )
-from warpsocket.wireguard import build_wg_conf
+from outwarp.wireguard import build_wg_conf
 
 
 def _make_config(dns: list[str] | None = None) -> ClientConfig:
@@ -19,7 +19,7 @@ def _make_config(dns: list[str] | None = None) -> ClientConfig:
         tls=TlsConfig(cert_fingerprint_sha256="A" * 95),
         tunnel=TunnelConfig(local_port=51820, remote_host="10.0.0.1", remote_port=51820),
         wireguard=WireguardConfig(
-            tunnel_name="WarpSocket",
+            tunnel_name="OutWarp",
             client_address="10.0.0.42/32",
             client_private_key="cli3ntPriv",
             server_public_key="serv3rPub",

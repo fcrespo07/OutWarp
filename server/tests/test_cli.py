@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from warpsocket_server.cli import build_parser, main
-from warpsocket_server.config import ClientEntry, ServerConfig
+from outwarp_server.cli import build_parser, main
+from outwarp_server.config import ClientEntry, ServerConfig
 
 
 def _write_server_config(tmp_path: Path, **overrides: object) -> Path:
@@ -48,7 +48,7 @@ class TestRequireRoot:
         # When --config-dir is omitted, main() should invoke _require_root.
         # We patch _require_root to assert it's called and to short-circuit
         # before the real handler tries to read /etc paths.
-        with patch("warpsocket_server.cli._require_root") as mock_req:
+        with patch("outwarp_server.cli._require_root") as mock_req:
             mock_req.side_effect = SystemExit(1)
             with pytest.raises(SystemExit):
                 main(["status"])
@@ -57,8 +57,8 @@ class TestRequireRoot:
     def test_require_root_skipped_with_config_dir(self, tmp_path: Path) -> None:
         # Tests pass --config-dir and should NOT trip the root check.
         config_dir = _write_server_config(tmp_path)
-        with patch("warpsocket_server.cli._require_root") as mock_req:
-            with patch("warpsocket_server.platforms.get_server_platform") as mock_platform:
+        with patch("outwarp_server.cli._require_root") as mock_req:
+            with patch("outwarp_server.platforms.get_server_platform") as mock_platform:
                 mock_platform.return_value = MagicMock()
                 main(["--config-dir", str(config_dir), "status"])
             mock_req.assert_not_called()
@@ -71,8 +71,8 @@ def test_parser_has_config_dir_option() -> None:
 
 
 class TestAddClient:
-    @patch("warpsocket_server.cli.add_peer_live")
-    @patch("warpsocket_server.cli.generate_wg_keypair", return_value=("client_priv", "client_pub"))
+    @patch("outwarp_server.cli.add_peer_live")
+    @patch("outwarp_server.cli.generate_wg_keypair", return_value=("client_priv", "client_pub"))
     def test_add_client_creates_warpcfg(
         self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path
     ) -> None:
@@ -80,15 +80,15 @@ class TestAddClient:
         ret = main(["--config-dir", str(config_dir), "add-client", "laptop"])
         assert ret == 0
 
-        warpcfg_path = Path.cwd() / "laptop.warpcfg"
+        warpcfg_path = Path.cwd() / "laptop.owcfg"
         assert warpcfg_path.exists()
         warpcfg = json.loads(warpcfg_path.read_text(encoding="utf-8"))
         assert warpcfg["wireguard"]["client_private_key"] == "client_priv"
         assert warpcfg["wireguard"]["client_address"] == "10.0.0.2/32"
         warpcfg_path.unlink()  # cleanup
 
-    @patch("warpsocket_server.cli.add_peer_live")
-    @patch("warpsocket_server.cli.generate_wg_keypair", return_value=("priv", "pub"))
+    @patch("outwarp_server.cli.add_peer_live")
+    @patch("outwarp_server.cli.generate_wg_keypair", return_value=("priv", "pub"))
     def test_add_client_updates_server_config(
         self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path
     ) -> None:
@@ -97,10 +97,10 @@ class TestAddClient:
         cfg = ServerConfig.load(config_dir / "server_config.json")
         assert len(cfg.clients) == 1
         assert cfg.clients[0].name == "phone"
-        (Path.cwd() / "phone.warpcfg").unlink(missing_ok=True)
+        (Path.cwd() / "phone.owcfg").unlink(missing_ok=True)
 
-    @patch("warpsocket_server.cli.add_peer_live")
-    @patch("warpsocket_server.cli.generate_wg_keypair", return_value=("priv", "pub"))
+    @patch("outwarp_server.cli.add_peer_live")
+    @patch("outwarp_server.cli.generate_wg_keypair", return_value=("priv", "pub"))
     def test_add_duplicate_client_fails(
         self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path
     ) -> None:
@@ -116,7 +116,7 @@ class TestListClients:
         ret = main(["--config-dir", str(config_dir), "list-clients"])
         assert ret == 0
 
-    @patch("warpsocket_server.cli.get_live_peers", return_value={})
+    @patch("outwarp_server.cli.get_live_peers", return_value={})
     def test_list_with_clients(self, _mock_live: MagicMock, tmp_path: Path) -> None:
         clients = [
             {"name": "laptop", "public_key": "key1", "address": "10.0.0.2/32"},
@@ -126,13 +126,13 @@ class TestListClients:
         ret = main(["--config-dir", str(config_dir), "list-clients"])
         assert ret == 0
 
-    @patch("warpsocket_server.cli.get_live_peers")
+    @patch("outwarp_server.cli.get_live_peers")
     def test_list_shows_online_status(
         self, mock_live: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         import time
 
-        from warpsocket_server.wireguard import LivePeer
+        from outwarp_server.wireguard import LivePeer
 
         clients = [{"name": "laptop", "public_key": "key1", "address": "10.0.0.2/32"}]
         config_dir = _write_server_config(tmp_path, clients=clients)
@@ -152,13 +152,13 @@ class TestListClients:
         assert "online" in out
         assert "laptop" in out
 
-    @patch("warpsocket_server.cli.get_live_peers")
+    @patch("outwarp_server.cli.get_live_peers")
     def test_list_shows_offline_when_handshake_stale(
         self, mock_live: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         import time
 
-        from warpsocket_server.wireguard import LivePeer
+        from outwarp_server.wireguard import LivePeer
 
         clients = [{"name": "laptop", "public_key": "key1", "address": "10.0.0.2/32"}]
         config_dir = _write_server_config(tmp_path, clients=clients)
@@ -176,7 +176,7 @@ class TestListClients:
         assert ret == 0
         assert "offline" in capsys.readouterr().out
 
-    @patch("warpsocket_server.cli.get_live_peers", return_value={})
+    @patch("outwarp_server.cli.get_live_peers", return_value={})
     def test_list_shows_unknown_when_wg_down(
         self, _mock_live: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -188,7 +188,7 @@ class TestListClients:
 
 
 class TestStatus:
-    @patch("warpsocket_server.platforms.get_server_platform")
+    @patch("outwarp_server.platforms.get_server_platform")
     def test_status_shows_table(self, mock_platform: MagicMock, tmp_path: Path) -> None:
         config_dir = _write_server_config(tmp_path)
         fake = MagicMock()
@@ -198,11 +198,11 @@ class TestStatus:
         ret = main(["--config-dir", str(config_dir), "status"])
         assert ret == 0
 
-    @patch("warpsocket_server.platforms.get_server_platform")
+    @patch("outwarp_server.platforms.get_server_platform")
     def test_status_handles_platform_errors(
         self, mock_platform: MagicMock, tmp_path: Path
     ) -> None:
-        from warpsocket_server.platforms.base import PlatformError
+        from outwarp_server.platforms.base import PlatformError
 
         config_dir = _write_server_config(tmp_path)
         fake = MagicMock()
@@ -214,7 +214,7 @@ class TestStatus:
 
 
 class TestRestart:
-    @patch("warpsocket_server.platforms.get_server_platform")
+    @patch("outwarp_server.platforms.get_server_platform")
     def test_restart_calls_install_wg_and_restarts_services(
         self, mock_platform: MagicMock, tmp_path: Path
     ) -> None:
@@ -227,11 +227,11 @@ class TestRestart:
         fake.restart_wg.assert_called_once()
         fake.restart_wstunnel_service.assert_called_once()
 
-    @patch("warpsocket_server.platforms.get_server_platform")
+    @patch("outwarp_server.platforms.get_server_platform")
     def test_restart_returns_1_on_wg_failure(
         self, mock_platform: MagicMock, tmp_path: Path
     ) -> None:
-        from warpsocket_server.platforms.base import PlatformError
+        from outwarp_server.platforms.base import PlatformError
 
         config_dir = _write_server_config(tmp_path)
         fake = MagicMock()
@@ -242,7 +242,7 @@ class TestRestart:
 
 
 class TestUninstall:
-    @patch("warpsocket_server.platforms.get_server_platform")
+    @patch("outwarp_server.platforms.get_server_platform")
     def test_uninstall_with_yes_flag(self, mock_platform: MagicMock, tmp_path: Path) -> None:
         config_dir = _write_server_config(tmp_path)
         fake = MagicMock()
@@ -255,8 +255,8 @@ class TestUninstall:
         fake.uninstall_wg_config.assert_called_once()
         assert not config_dir.exists()
 
-    @patch("warpsocket_server.cli.console")
-    @patch("warpsocket_server.platforms.get_server_platform")
+    @patch("outwarp_server.cli.console")
+    @patch("outwarp_server.platforms.get_server_platform")
     def test_uninstall_aborts_without_confirmation(
         self, mock_platform: MagicMock, mock_console: MagicMock, tmp_path: Path
     ) -> None:
@@ -270,8 +270,8 @@ class TestUninstall:
         assert ret == 1
         fake.uninstall_wstunnel_service.assert_not_called()
 
-    @patch("warpsocket_server.cli.console")
-    @patch("warpsocket_server.platforms.get_server_platform")
+    @patch("outwarp_server.cli.console")
+    @patch("outwarp_server.platforms.get_server_platform")
     def test_uninstall_confirms_with_yes(
         self, mock_platform: MagicMock, mock_console: MagicMock, tmp_path: Path
     ) -> None:
@@ -286,11 +286,11 @@ class TestUninstall:
         assert ret == 0
         fake.uninstall_wstunnel_service.assert_called_once()
 
-    @patch("warpsocket_server.platforms.get_server_platform")
+    @patch("outwarp_server.platforms.get_server_platform")
     def test_uninstall_returns_1_on_platform_error(
         self, mock_platform: MagicMock, tmp_path: Path
     ) -> None:
-        from warpsocket_server.platforms.base import PlatformError
+        from outwarp_server.platforms.base import PlatformError
 
         config_dir = _write_server_config(tmp_path)
         fake = MagicMock()
@@ -301,8 +301,8 @@ class TestUninstall:
         ret = main(["--config-dir", str(config_dir), "uninstall", "--yes"])
         assert ret == 1
 
-    @patch("warpsocket_server.cli._spawn_deferred_cleanup")
-    @patch("warpsocket_server.platforms.get_server_platform")
+    @patch("outwarp_server.cli._spawn_deferred_cleanup")
+    @patch("outwarp_server.platforms.get_server_platform")
     def test_uninstall_schedules_deferred_cleanup_when_install_prefix_exists(
         self,
         mock_platform: MagicMock,
@@ -314,9 +314,9 @@ class TestUninstall:
         etc_dir = tmp_path / "etc"
         etc_dir.mkdir()
         config_dir = _write_server_config(etc_dir)
-        prefix = tmp_path / "opt-warpsocket"
+        prefix = tmp_path / "opt-outwarp"
         prefix.mkdir()
-        bin_link = tmp_path / "warpsocket-server"
+        bin_link = tmp_path / "outwarp-server"
         fake = MagicMock()
         fake.install_prefix.return_value = prefix
         fake.bin_link.return_value = bin_link
@@ -325,8 +325,8 @@ class TestUninstall:
         assert ret == 0
         mock_spawn.assert_called_once_with(prefix, bin_link)
 
-    @patch("warpsocket_server.cli._spawn_deferred_cleanup")
-    @patch("warpsocket_server.platforms.get_server_platform")
+    @patch("outwarp_server.cli._spawn_deferred_cleanup")
+    @patch("outwarp_server.platforms.get_server_platform")
     def test_uninstall_skips_deferred_cleanup_when_no_install_prefix(
         self,
         mock_platform: MagicMock,
@@ -343,7 +343,7 @@ class TestUninstall:
 
 
 class TestRevokeClient:
-    @patch("warpsocket_server.cli.remove_peer_live")
+    @patch("outwarp_server.cli.remove_peer_live")
     def test_revoke_removes_client(self, mock_remove: MagicMock, tmp_path: Path) -> None:
         clients = [{"name": "laptop", "public_key": "key1", "address": "10.0.0.2/32"}]
         config_dir = _write_server_config(tmp_path, clients=clients)

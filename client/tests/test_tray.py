@@ -4,13 +4,13 @@ from unittest.mock import MagicMock
 
 from PIL import Image
 
-from warpsocket.tray import (
+from outwarp.tray import (
     _STATE_TOOLTIPS,
     TrayApp,
     icon_for_state,
     load_base_icon,
 )
-from warpsocket.tunnel import TunnelState
+from outwarp.tunnel import TunnelState
 
 
 def test_load_base_icon_returns_rgba_image() -> None:

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from warpsocket.network import (
+from outwarp.network import (
     NetworkError,
     get_tls_fingerprint,
     tcp_probe,
@@ -76,11 +76,11 @@ def test_get_tls_fingerprint_raises_on_connection_error():
 # --- verify_tls_fingerprint ---
 
 def test_verify_tls_fingerprint_passes_on_match():
-    with patch("warpsocket.network.get_tls_fingerprint", return_value="AB:CD"):
+    with patch("outwarp.network.get_tls_fingerprint", return_value="AB:CD"):
         verify_tls_fingerprint("h", 443, "ab:cd")  # case-insensitive
 
 
 def test_verify_tls_fingerprint_raises_on_mismatch():
-    with patch("warpsocket.network.get_tls_fingerprint", return_value="AB:CD"):
+    with patch("outwarp.network.get_tls_fingerprint", return_value="AB:CD"):
         with pytest.raises(NetworkError, match="fingerprint mismatch"):
             verify_tls_fingerprint("h", 443, "FF:FF")

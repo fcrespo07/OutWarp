@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from warpsocket_server.config import ClientEntry, ServerConfig
-from warpsocket_server.wireguard import (
+from outwarp_server.config import ClientEntry, ServerConfig
+from outwarp_server.wireguard import (
     WireGuardError,
     add_peer_live,
     build_server_wg_conf,
@@ -22,8 +22,8 @@ def _make_config(**overrides: object) -> ServerConfig:
         "endpoint": "203.0.113.42",
         "port": 443,
         "http_upgrade_path_prefix": "secret",
-        "cert_path": "/etc/warpsocket/cert.pem",
-        "key_path": "/etc/warpsocket/key.pem",
+        "cert_path": "/etc/outwarp/cert.pem",
+        "key_path": "/etc/outwarp/key.pem",
         "cert_fingerprint_sha256": "AA:" * 31 + "AA",
         "wg_private_key": "server_private_key",
         "wg_public_key": "server_public_key",
@@ -78,14 +78,14 @@ class TestBuildServerWgConf:
 
 class TestAddPeerLive:
     def test_calls_wg_set(self) -> None:
-        with patch("warpsocket_server.wireguard.subprocess.run") as mock_run:
+        with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
             add_peer_live("pubkey123", "10.0.0.5/32")
             mock_run.assert_called_once()
             args = mock_run.call_args[0][0]
             assert args == ["wg", "set", "wg0", "peer", "pubkey123", "allowed-ips", "10.0.0.5/32"]
 
     def test_raises_on_failure(self) -> None:
-        with patch("warpsocket_server.wireguard.subprocess.run") as mock_run:
+        with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(1, "wg", stderr="fail")
             with pytest.raises(WireGuardError, match="Failed to add peer"):
                 add_peer_live("pubkey", "10.0.0.5/32")
@@ -102,7 +102,7 @@ class TestGetLivePeers:
     )
 
     def test_parses_two_peers(self) -> None:
-        with patch("warpsocket_server.wireguard.subprocess.run") as mock_run:
+        with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = self._DUMP_OUTPUT
             peers = get_live_peers()
@@ -121,26 +121,26 @@ class TestGetLivePeers:
         assert idle.transfer_rx == 0
 
     def test_returns_empty_when_wg_fails(self) -> None:
-        with patch("warpsocket_server.wireguard.subprocess.run") as mock_run:
+        with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
             mock_run.return_value.returncode = 1
             mock_run.return_value.stdout = ""
             assert get_live_peers() == {}
 
     def test_returns_empty_when_wg_not_installed(self) -> None:
-        with patch("warpsocket_server.wireguard.subprocess.run") as mock_run:
+        with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError("wg")
             assert get_live_peers() == {}
 
 
 class TestRemovePeerLive:
     def test_calls_wg_set_remove(self) -> None:
-        with patch("warpsocket_server.wireguard.subprocess.run") as mock_run:
+        with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
             remove_peer_live("pubkey123")
             args = mock_run.call_args[0][0]
             assert args == ["wg", "set", "wg0", "peer", "pubkey123", "remove"]
 
     def test_raises_on_failure(self) -> None:
-        with patch("warpsocket_server.wireguard.subprocess.run") as mock_run:
+        with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(1, "wg", stderr="fail")
             with pytest.raises(WireGuardError, match="Failed to remove peer"):
                 remove_peer_live("pubkey")

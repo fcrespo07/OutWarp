@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from warpsocket_server.ip_pool import PoolExhaustedError, next_available_ip
+from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
 
 
 def test_first_ip_skips_server() -> None:

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from warpsocket_server.crypto import (
+from outwarp_server.crypto import (
     CryptoError,
     compute_cert_fingerprint,
     generate_tls_cert,
@@ -64,7 +64,7 @@ class TestWgKeypair:
         mock_pubkey = MagicMock()
         mock_pubkey.stdout = "cHVibGlja2V5\n"
 
-        with patch("warpsocket_server.crypto.subprocess.run") as mock_run:
+        with patch("outwarp_server.crypto.subprocess.run") as mock_run:
             mock_run.side_effect = [mock_genkey, mock_pubkey]
             priv, pub = generate_wg_keypair(wg_bin=Path("/usr/bin/wg"))
 
@@ -73,14 +73,14 @@ class TestWgKeypair:
         assert mock_run.call_count == 2
 
     def test_raises_on_missing_binary(self) -> None:
-        with patch("warpsocket_server.crypto.shutil.which", return_value=None):
+        with patch("outwarp_server.crypto.shutil.which", return_value=None):
             with pytest.raises(CryptoError, match="WireGuard tools not found"):
                 generate_wg_keypair()
 
     def test_raises_on_subprocess_failure(self) -> None:
         import subprocess
 
-        with patch("warpsocket_server.crypto.subprocess.run") as mock_run:
+        with patch("outwarp_server.crypto.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(
                 1, "wg", stderr="error"
             )

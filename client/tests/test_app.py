@@ -8,14 +8,14 @@ import pytest
 
 class TestSingleInstanceLock:
     def test_acquire_and_release(self) -> None:
-        from warpsocket.app import _SingleInstanceLock
+        from outwarp.app import _SingleInstanceLock
         lock = _SingleInstanceLock()
         assert lock.acquire() is True
         lock.release()
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only flock test")
     def test_double_acquire_posix(self) -> None:
-        from warpsocket.app import _SingleInstanceLock
+        from outwarp.app import _SingleInstanceLock
         lock1 = _SingleInstanceLock()
         lock2 = _SingleInstanceLock()
         assert lock1.acquire() is True
@@ -24,7 +24,7 @@ class TestSingleInstanceLock:
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only mutex test")
     def test_double_acquire_windows(self) -> None:
-        from warpsocket.app import _SingleInstanceLock
+        from outwarp.app import _SingleInstanceLock
         lock1 = _SingleInstanceLock()
         lock2 = _SingleInstanceLock()
         assert lock1.acquire() is True
@@ -32,14 +32,14 @@ class TestSingleInstanceLock:
         lock1.release()
 
     def test_release_without_acquire_is_safe(self) -> None:
-        from warpsocket.app import _SingleInstanceLock
+        from outwarp.app import _SingleInstanceLock
         lock = _SingleInstanceLock()
         lock.release()  # must not raise
 
 
 class TestMainEntryPoint:
     def test_returns_one_when_lock_already_held(self) -> None:
-        from warpsocket.app import _SingleInstanceLock, main
+        from outwarp.app import _SingleInstanceLock, main
         with patch.object(_SingleInstanceLock, "acquire", return_value=False):
             assert main() == 1
 
@@ -50,7 +50,7 @@ class TestMainEntryPoint:
         wiring (token generation, manager_ref initialization, on_quit shutdown)
         without actually starting a server or opening a window.
         """
-        from warpsocket import app as app_mod
+        from outwarp import app as app_mod
 
         # No on-disk config → manager_ref starts as [None].
         nonexistent = tmp_path / "no" / "config.json"
@@ -86,9 +86,9 @@ class TestMainEntryPoint:
                 captured["tray_manager_updated"] = m
 
         with (
-            patch("warpsocket.app.default_config_path", return_value=nonexistent),
-            patch("warpsocket.webview.start", side_effect=fake_start),
-            patch("warpsocket.tray.TrayApp", _FakeTrayApp),
+            patch("outwarp.app.default_config_path", return_value=nonexistent),
+            patch("outwarp.webview.start", side_effect=fake_start),
+            patch("outwarp.tray.TrayApp", _FakeTrayApp),
         ):
             rc = app_mod.main()
 
@@ -97,4 +97,4 @@ class TestMainEntryPoint:
         assert isinstance(captured["token"], str) and len(captured["token"]) >= 32
         assert captured["tray_manager"] is None
         assert captured["tray_ran"] is True
-        assert captured["title"] == "WarpSocket"
+        assert captured["title"] == "OutWarp"

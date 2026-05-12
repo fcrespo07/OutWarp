@@ -6,10 +6,10 @@ from unittest.mock import patch
 
 import pytest
 
-from warpsocket.platforms import Platform, PlatformError, get_platform
-from warpsocket.platforms.linux import LinuxPlatform
-from warpsocket.platforms.macos import MacOSPlatform
-from warpsocket.platforms.windows import WindowsPlatform
+from outwarp.platforms import Platform, PlatformError, get_platform
+from outwarp.platforms.linux import LinuxPlatform
+from outwarp.platforms.macos import MacOSPlatform
+from outwarp.platforms.windows import WindowsPlatform
 
 
 def _mock_run(returncode: int = 0, stdout: str = "", stderr: str = ""):
@@ -44,7 +44,7 @@ def test_get_platform_raises_for_unknown(monkeypatch):
 def test_install_wg_tunnel_writes_conf_and_invokes_wireguard(tmp_path, monkeypatch):
     p = WindowsPlatform()
     monkeypatch.setattr(p, "_conf_dir", tmp_path)
-    monkeypatch.setattr("warpsocket.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
+    monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
     (tmp_path / "wireguard.exe").write_text("fake")
 
     with patch("subprocess.run", return_value=_mock_run(0)) as mock_run:
@@ -60,7 +60,7 @@ def test_install_wg_tunnel_writes_conf_and_invokes_wireguard(tmp_path, monkeypat
 def test_install_wg_tunnel_raises_on_failure(tmp_path, monkeypatch):
     p = WindowsPlatform()
     monkeypatch.setattr(p, "_conf_dir", tmp_path)
-    monkeypatch.setattr("warpsocket.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
+    monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
     (tmp_path / "wireguard.exe").write_text("fake")
 
     with patch("subprocess.run", return_value=_mock_run(1, stderr="access denied")):
@@ -70,21 +70,21 @@ def test_install_wg_tunnel_raises_on_failure(tmp_path, monkeypatch):
 
 def test_install_wg_tunnel_raises_when_wireguard_missing(tmp_path, monkeypatch):
     p = WindowsPlatform()
-    monkeypatch.setattr("warpsocket.platforms.windows._WIREGUARD_EXE", tmp_path / "missing.exe")
+    monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "missing.exe")
     with pytest.raises(PlatformError, match="WireGuard for Windows not found"):
         p.install_wg_tunnel("MyTunnel", "...")
 
 
 def test_uninstall_wg_tunnel_idempotent_when_wireguard_missing(tmp_path, monkeypatch):
     p = WindowsPlatform()
-    monkeypatch.setattr("warpsocket.platforms.windows._WIREGUARD_EXE", tmp_path / "missing.exe")
+    monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "missing.exe")
     p.uninstall_wg_tunnel("MyTunnel")  # must not raise
 
 
 def test_uninstall_wg_tunnel_calls_wireguard(tmp_path, monkeypatch):
     p = WindowsPlatform()
     monkeypatch.setattr(p, "_conf_dir", tmp_path)
-    monkeypatch.setattr("warpsocket.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
+    monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
     (tmp_path / "wireguard.exe").write_text("fake")
     # First call: wireguard /uninstalltunnelservice → success
     # Second call: sc query → service already gone (rc != 0) → stop polling
@@ -98,7 +98,7 @@ def test_uninstall_wg_tunnel_calls_wireguard(tmp_path, monkeypatch):
 def test_uninstall_wg_tunnel_deletes_conf_file(tmp_path, monkeypatch):
     p = WindowsPlatform()
     monkeypatch.setattr(p, "_conf_dir", tmp_path)
-    monkeypatch.setattr("warpsocket.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
+    monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
     (tmp_path / "wireguard.exe").write_text("fake")
     conf = tmp_path / "MyTunnel.conf"
     conf.write_text("[Interface]")
@@ -190,7 +190,7 @@ def test_platform_is_abstract():
 @pytest.fixture
 def linux_helper(tmp_path, monkeypatch):
     """Stand up a fake helper script so existence checks pass without sudo."""
-    helper = tmp_path / "warpsocket-priv"
+    helper = tmp_path / "outwarp-priv"
     helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     monkeypatch.setenv("WARPSOCKET_HELPER", str(helper))
     return helper
@@ -219,14 +219,14 @@ def test_linux_skips_sudo_when_already_root(linux_helper):
 def test_linux_install_wg_tunnel_invokes_helper_with_conf_on_stdin(linux_helper):
     p = _linux_platform(linux_helper)
     with patch("subprocess.run", return_value=_mock_run(0)) as mock_run:
-        path = p.install_wg_tunnel("WarpSocket", "[Interface]\nPrivateKey=k\n")
+        path = p.install_wg_tunnel("OutWarp", "[Interface]\nPrivateKey=k\n")
 
     # Returned path is the canonical /etc/wireguard location written by the helper.
     from pathlib import Path as _P
-    assert path == _P("/etc/wireguard/WarpSocket.conf")
+    assert path == _P("/etc/wireguard/OutWarp.conf")
 
     cmd = mock_run.call_args[0][0]
-    assert cmd == [str(linux_helper), "up", "WarpSocket"]
+    assert cmd == [str(linux_helper), "up", "OutWarp"]
     # Conf text is piped via stdin so it never lives on the user's filesystem.
     assert mock_run.call_args.kwargs.get("input") == "[Interface]\nPrivateKey=k\n"
 
@@ -235,27 +235,27 @@ def test_linux_install_wg_tunnel_raises_on_helper_failure(linux_helper):
     p = _linux_platform(linux_helper)
     with patch("subprocess.run", return_value=_mock_run(1, stderr="Address already in use")):
         with pytest.raises(PlatformError, match="Address already in use"):
-            p.install_wg_tunnel("WarpSocket", "...")
+            p.install_wg_tunnel("OutWarp", "...")
 
 
 def test_linux_install_wg_tunnel_raises_when_helper_missing(tmp_path, monkeypatch):
     monkeypatch.delenv("WARPSOCKET_HELPER", raising=False)
     p = LinuxPlatform(helper=tmp_path / "missing-helper", sudo=False)
     with pytest.raises(PlatformError, match="Privileged helper not found"):
-        p.install_wg_tunnel("WarpSocket", "...")
+        p.install_wg_tunnel("OutWarp", "...")
 
 
 def test_linux_uninstall_wg_tunnel_no_op_when_helper_missing(tmp_path, monkeypatch):
     monkeypatch.delenv("WARPSOCKET_HELPER", raising=False)
     p = LinuxPlatform(helper=tmp_path / "missing-helper", sudo=False)
-    p.uninstall_wg_tunnel("WarpSocket")  # must not raise
+    p.uninstall_wg_tunnel("OutWarp")  # must not raise
 
 
 def test_linux_uninstall_wg_tunnel_calls_helper_down(linux_helper):
     p = _linux_platform(linux_helper)
     with patch("subprocess.run", return_value=_mock_run(0)) as mock_run:
-        p.uninstall_wg_tunnel("WarpSocket")
-    assert mock_run.call_args[0][0] == [str(linux_helper), "down", "WarpSocket"]
+        p.uninstall_wg_tunnel("OutWarp")
+    assert mock_run.call_args[0][0] == [str(linux_helper), "down", "OutWarp"]
 
 
 # --- LinuxPlatform: tunnel status ---
@@ -263,19 +263,19 @@ def test_linux_uninstall_wg_tunnel_calls_helper_down(linux_helper):
 def test_linux_is_wg_tunnel_active_true_when_helper_succeeds(linux_helper):
     p = _linux_platform(linux_helper)
     with patch("subprocess.run", return_value=_mock_run(0)):
-        assert p.is_wg_tunnel_active("WarpSocket") is True
+        assert p.is_wg_tunnel_active("OutWarp") is True
 
 
 def test_linux_is_wg_tunnel_active_false_when_helper_fails(linux_helper):
     p = _linux_platform(linux_helper)
     with patch("subprocess.run", return_value=_mock_run(1)):
-        assert p.is_wg_tunnel_active("WarpSocket") is False
+        assert p.is_wg_tunnel_active("OutWarp") is False
 
 
 def test_linux_is_wg_tunnel_active_false_when_helper_missing(tmp_path, monkeypatch):
     monkeypatch.delenv("WARPSOCKET_HELPER", raising=False)
     p = LinuxPlatform(helper=tmp_path / "missing-helper", sudo=False)
-    assert p.is_wg_tunnel_active("WarpSocket") is False
+    assert p.is_wg_tunnel_active("OutWarp") is False
 
 
 # --- LinuxPlatform: gateway (unprivileged, calls `ip` directly) ---

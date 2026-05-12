@@ -277,6 +277,116 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 El repo está en GitHub como privado: https://github.com/fcrespo07/WarpSocket
 
+## Optimizaciones de rendimiento pendientes
+
+El túnel funciona end-to-end (speed test: Download 34.76 Mbps / Upload 24.16 Mbps, Ping 62–118 ms en LAN). Dos cambios sencillos mejorarán la latencia y el throughput:
+
+### 1. Connection pooling — `--connection-min-idle 3` en wstunnel
+
+**Archivo**: `client/warpsocket/tunnel.py` → `build_wstunnel_command()`
+
+```python
+return [
+    str(wstunnel_bin),
+    "client",
+    "--connection-min-idle", "3",   # mantiene 3 conexiones TLS pre-establecidas
+    "-L",
+    forward,
+    "--http-upgrade-path-prefix",
+    s.http_upgrade_path_prefix,
+    f"wss://{s.endpoint}:{s.port}",
+]
+```
+
+Sin esto, cada sesión UDP de WireGuard abre una conexión TCP+TLS+WebSocket nueva (~30–50 ms de handshake). Con `--connection-min-idle 3`, wstunnel tiene conexiones listas de antemano.
+
+### 2. MTU correcto — `MTU = 1380` en el config WireGuard
+
+**Archivo**: `client/warpsocket/wireguard.py` → `build_wg_conf()`, sección `[Interface]`
+
+```
+[Interface]
+PrivateKey = ...
+Address = ...
+MTU = 1380
+DNS = ...
+```
+
+Cálculo: 1500 (Ethernet) − 40 (IP/TCP) − 40 (TLS) − 8 (WebSocket frame) − 4 (wstunnel header) − 28 (WireGuard overhead) = 1380. El default 1420 está calibrado para WG-over-UDP; sobre TCP/TLS provoca fragmentación y jitter (62 vs 118 ms observados).
+
+**Verificación**: tras el cambio, repetir speed test. El ping debería estabilizarse y el throughput mejorar en transferencias grandes. Confirmar en los logs: `Starting wstunnel: ... --connection-min-idle 3 ...`
+
+---
+
+## Pre-Plan nueva UI
+
+La UI actual (customtkinter) se sustituye por HTMLs exportados desde **Claude Design**. El backend Python no cambia — todo el trabajo es de integración entre la UI y la lógica existente.
+
+### Arquitectura objetivo
+
+```
+cliente:  pystray (sin cambios) → abre pywebview → localhost:7171 → FastAPI → TunnelManager
+servidor: pywebview local  O  browser remoto    → localhost:7172 → FastAPI → ServerManager
+```
+
+Los HTMLs de Claude Design cubren 4 modos × 2 temas:
+- Cliente normal / cliente developer
+- Servidor normal / servidor developer
+- Dark mode en todos
+
+### Qué cambia y qué no
+
+**No cambia**: `tunnel.py`, `wireguard.py`, `network.py`, `config.py`, `logs.py`, `tray.py`, `platforms/`, todos los tests.
+
+**Se elimina**: `wizard.py` (reemplazado por el HTML de Claude Design).
+
+**Se añade**:
+```
+client/warpsocket/
+├── api.py          # FastAPI app con los endpoints del cliente
+└── webview.py      # arranca uvicorn en thread + abre ventana pywebview
+
+server/warpsocket_server/
+├── api.py          # FastAPI app con los endpoints del servidor
+└── webview.py      # igual, opcional para acceso local
+
+ui/                 # HTMLs + assets exportados de Claude Design
+├── client.html
+├── server.html
+└── assets/
+```
+
+### Fases
+
+**UI-1 — FastAPI cliente** (~1 día)
+Endpoints REST: `GET /status`, `POST /connect`, `POST /disconnect`, `GET /config`, `POST /import-config`. WebSocket `GET /ws/logs` para streaming del `MemoryLogHandler` existente.
+
+**UI-2 — FastAPI servidor** (~1 día)
+Endpoints: `GET /status`, `POST /add-client`, `GET /list-clients`, `DELETE /revoke-client/{name}`, `POST /setup`. Misma lógica que los subcomandos CLI actuales, expuesta por HTTP.
+
+**UI-3 — Arranque, pywebview y seguridad** (~1 día)
+- Token aleatorio generado al arrancar; se pasa al HTML en la URL (`localhost:7171?token=xxx`); FastAPI lo valida en cada request.
+- `webview.py` espera a que FastAPI esté listo antes de abrir la ventana.
+- Al cerrar la ventana o hacer Quit en el tray, se para uvicorn y se limpia el estado (misma lógica de shutdown que hay ahora).
+
+**UI-4 — Cablear HTML de Claude Design** (~½-1 día)
+Sustituir los `fetch()` / WebSocket del HTML por llamadas a `localhost:PORT`. El HTML ya tiene los 4 modos y dark mode; solo hay que conectarlos a la API.
+
+**UI-5 — Packaging PyInstaller** (~1 día con margen)
+Actualizar el spec para incluir uvicorn, fastapi y la carpeta `ui/`. Pywebview requiere one-folder (ya era obligatorio por pystray). Verificar en Windows, Linux y macOS.
+
+### Estimación total: ~5 días
+
+| Fase | Tiempo estimado |
+|---|---|
+| UI-1 FastAPI cliente | 1 día |
+| UI-2 FastAPI servidor | 1 día |
+| UI-3 Arranque / pywebview / token | 1 día |
+| UI-4 Cablear HTML | ½–1 día |
+| UI-5 PyInstaller | 1 día |
+
+---
+
 ## Notas para futuras sesiones
 
 - El directorio hermano `C:\Users\ferra\Documents\wstunnel_10.5.2_windows_amd64.tar\script portable\` contiene el script PowerShell original. Úsalo como referencia funcional (flujo de reconexión, estructura de menú, manejo de errores), pero **no** copies literales — la arquitectura Python es distinta.
