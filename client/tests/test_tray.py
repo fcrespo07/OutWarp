@@ -2,25 +2,24 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
 from PIL import Image
 
 from warpsocket.tray import (
     TrayApp,
     icon_for_state,
     load_base_icon,
-    tooltip_for_state,
+    _STATE_TOOLTIPS,
 )
 from warpsocket.tunnel import TunnelState
 
 
-def test_load_base_icon_returns_rgba_image():
+def test_load_base_icon_returns_rgba_image() -> None:
     img = load_base_icon()
     assert isinstance(img, Image.Image)
     assert img.mode == "RGBA"
 
 
-def test_icon_for_state_handles_all_states():
+def test_icon_for_state_handles_all_states() -> None:
     base = load_base_icon()
     for state in TunnelState:
         img = icon_for_state(state, base)
@@ -28,83 +27,66 @@ def test_icon_for_state_handles_all_states():
         assert img.size == base.size
 
 
-def test_icon_for_state_differs_per_state():
+def test_icon_for_state_differs_per_state() -> None:
     base = load_base_icon()
-    images = {state: icon_for_state(state, base) for state in TunnelState}
     seen: set[bytes] = set()
-    for img in images.values():
-        seen.add(img.tobytes())
-    assert len(seen) == len(TunnelState)  # every state distinct
-
-
-def test_tooltip_for_state_returns_string_for_all_states():
     for state in TunnelState:
-        t = tooltip_for_state(state)
-        assert isinstance(t, str)
-        assert "WarpSocket" in t
+        seen.add(icon_for_state(state, base).tobytes())
+    assert len(seen) == len(TunnelState)
 
 
-def test_tooltip_for_unknown_state_raises():
-    with pytest.raises(KeyError):
-        tooltip_for_state("not-a-state")  # type: ignore[arg-type]
-
-
-def test_tray_subscribes_to_manager_on_construction():
+def test_tray_subscribes_to_manager_on_construction() -> None:
     manager = MagicMock()
     manager.state = TunnelState.DISCONNECTED
-    TrayApp(
-        manager=manager,
-        on_import_warpcfg=lambda: None,
-        on_view_logs=lambda: None,
-        on_quit=lambda: None,
-    )
+    TrayApp(manager=manager, on_show=lambda: None, on_quit=lambda: None)
     manager.add_listener.assert_called_once()
 
 
-def test_tray_state_change_updates_icon():
+def test_tray_state_change_updates_icon() -> None:
     manager = MagicMock()
     manager.state = TunnelState.DISCONNECTED
-    app = TrayApp(
-        manager=manager,
-        on_import_warpcfg=lambda: None,
-        on_view_logs=lambda: None,
-        on_quit=lambda: None,
-    )
+    tray = TrayApp(manager=manager, on_show=lambda: None, on_quit=lambda: None)
     fake_icon = MagicMock()
-    app._icon = fake_icon
+    tray._icon = fake_icon
 
-    app._on_state_change(TunnelState.CONNECTED)
+    tray._on_state_change(TunnelState.CONNECTED)
 
     assert fake_icon.icon is not None
-    assert fake_icon.title == tooltip_for_state(TunnelState.CONNECTED)
+    assert fake_icon.title == _STATE_TOOLTIPS[TunnelState.CONNECTED]
 
 
-def test_tray_state_change_noop_before_run():
+def test_tray_state_change_noop_before_run() -> None:
     manager = MagicMock()
     manager.state = TunnelState.DISCONNECTED
-    app = TrayApp(
-        manager=manager,
-        on_import_warpcfg=lambda: None,
-        on_view_logs=lambda: None,
-        on_quit=lambda: None,
-    )
-    app._on_state_change(TunnelState.CONNECTED)  # icon is None; must not raise
+    tray = TrayApp(manager=manager, on_show=lambda: None, on_quit=lambda: None)
+    tray._on_state_change(TunnelState.CONNECTED)  # icon is None; must not raise
 
 
-def test_tray_quit_calls_on_quit_and_stops_icon():
+def test_tray_open_window_invokes_callback() -> None:
+    manager = MagicMock()
+    manager.state = TunnelState.DISCONNECTED
+    on_show = MagicMock()
+    tray = TrayApp(manager=manager, on_show=on_show, on_quit=lambda: None)
+    tray._open_window(None, None)
+    on_show.assert_called_once()
+
+
+def test_tray_quit_stops_icon_and_invokes_callback() -> None:
     manager = MagicMock()
     manager.state = TunnelState.DISCONNECTED
     on_quit = MagicMock()
-    app = TrayApp(
-        manager=manager,
-        on_import_warpcfg=lambda: None,
-        on_view_logs=lambda: None,
-        on_quit=on_quit,
-    )
+    tray = TrayApp(manager=manager, on_show=lambda: None, on_quit=on_quit)
     fake_icon = MagicMock()
-    app._icon = fake_icon
+    tray._icon = fake_icon
 
-    app._quit()
+    tray._quit(None, None)
 
     fake_icon.stop.assert_called_once()
     on_quit.assert_called_once()
+
+
+def test_tray_update_manager_subscribes_new_listener() -> None:
+    tray = TrayApp(manager=None, on_show=lambda: None, on_quit=lambda: None)
+    new_manager = MagicMock()
+    tray.update_manager(new_manager)
+    new_manager.add_listener.assert_called_once()
