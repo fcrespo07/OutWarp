@@ -220,12 +220,64 @@ def check_win_forwarding_on_wg_iface(config: ServerConfig) -> CheckResult:
     )
 
 
+def check_win_netnat_provider(config: ServerConfig) -> CheckResult:
+    """Probe whether the NetNat WMI class is registered.
+
+    If not, every NAT cmdlet (New-NetNat, Get-NetNat, …) returns "Invalid class"
+    / "Clase no válida" regardless of admin rights. The root cause is that the
+    Windows Containers / Hyper-V feature isn't enabled — that feature ships the
+    NAT driver and its WMI provider. This check is what unlocks the chain: when
+    it fails, downstream NAT checks are noise.
+    """
+    result = _ps(
+        "Get-CimClass -ClassName MSFT_NetNat -Namespace ROOT/StandardCimv2 "
+        "-ErrorAction SilentlyContinue | Select-Object -ExpandProperty CimClassName"
+    )
+    if "MSFT_NetNat" in result.stdout:
+        return CheckResult(name="NetNat provider (WMI class)", status=Status.PASS)
+    return CheckResult(
+        name="NetNat provider (WMI class)",
+        status=Status.FAIL,
+        detail=(
+            "MSFT_NetNat is not registered — NAT cmdlets will fail with "
+            "'Invalid class' / 'Clase no válida'."
+        ),
+        remediation=(
+            "The Windows NAT infrastructure is not installed. Enable the "
+            "'Containers' feature and reboot. On Windows Home (where Containers "
+            "may be unavailable) enable Hyper-V instead — note Home only "
+            "supports Hyper-V with unofficial workarounds."
+        ),
+        remediation_command=(
+            "Enable-WindowsOptionalFeature -Online -FeatureName Containers -All"
+        ),
+    )
+
+
 def check_win_netnat(config: ServerConfig) -> CheckResult:
     result = _ps(
         "Get-NetNat | Select-Object Name, InternalIPInterfaceAddressPrefix, Active "
         "| ConvertTo-Json -Compress"
     )
     raw = result.stdout.strip()
+    err = (result.stderr or "").lower()
+    # "Invalid class" (en) / "Clase no válida" (es) — the WMI provider is
+    # missing entirely; surface that as the headline so the user doesn't chase
+    # the wrong fix. The dedicated check_win_netnat_provider should already have
+    # caught it, but this is the safety net for older deployments.
+    if "invalid class" in err or "clase no v" in err:
+        return CheckResult(
+            name="WinNAT rule for WG subnet",
+            status=Status.FAIL,
+            detail="Cannot query NetNat — WMI provider not registered.",
+            remediation=(
+                "Enable the 'Containers' Windows feature and reboot — that "
+                "installs the NetNat WMI provider."
+            ),
+            remediation_command=(
+                "Enable-WindowsOptionalFeature -Online -FeatureName Containers -All"
+            ),
+        )
     if not raw:
         return CheckResult(
             name="WinNAT rule for WG subnet",
@@ -234,8 +286,8 @@ def check_win_netnat(config: ServerConfig) -> CheckResult:
             remediation=(
                 f"As admin: `New-NetNat -Name '{_WIN_NAT_NAME}' "
                 f"-InternalIPInterfaceAddressPrefix '{config.subnet}'`. "
-                "If this fails, the WinNat service is probably not running — "
-                "fix that check first."
+                "If this fails with 'Invalid class', the NAT provider is "
+                "missing — enable the Containers Windows feature and reboot."
             ),
             remediation_command=(
                 f"New-NetNat -Name '{_WIN_NAT_NAME}' "
@@ -483,6 +535,7 @@ def gather_checks() -> list[Check]:
             Check("admin", "Permissions", check_win_admin),
             Check("ip_forwarding", "Network", check_win_ip_forwarding),
             Check("iface_forwarding", "Network", check_win_forwarding_on_wg_iface),
+            Check("netnat_provider", "NAT", check_win_netnat_provider),
             Check("netnat", "NAT", check_win_netnat),
             Check("winnat_svc", "NAT", check_win_winnat_service),
             Check("wg_svc", "WireGuard", check_win_wg_service),
