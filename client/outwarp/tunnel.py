@@ -74,6 +74,10 @@ def build_wstunnel_command(config: ClientConfig, wstunnel_bin: Path) -> list[str
     return [
         str(wstunnel_bin),
         "client",
+        # Pre-establish idle TCP+TLS+WS connections so a new WG flow doesn't pay
+        # the ~30-50 ms handshake cost on first packet.
+        "--connection-min-idle",
+        "3",
         "-L",
         forward,
         "--http-upgrade-path-prefix",
