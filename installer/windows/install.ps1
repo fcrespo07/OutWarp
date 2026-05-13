@@ -1,37 +1,39 @@
-# WarpSocket - Windows installer / bootstrapper
+# OutWarp - Windows installer / bootstrapper
 #
 # Two ways to run:
 #   1. Remote (via irm | iex):
-#      irm https://raw.githubusercontent.com/fcrespo07/WarpSocket/main/installer/windows/install.ps1 | iex
+#      irm https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/windows/install.ps1 | iex
 #   2. Local (from a clone):
 #      powershell -ExecutionPolicy Bypass -File installer\windows\install.ps1
 #
 # Environment overrides:
-#   $env:WARPSOCKET_COMPONENT  = server|client     Skip the interactive prompt
-#   $env:WARPSOCKET_REPO_DIR   = C:\path\to\clone  Use existing repo instead of cloning
-#   $env:WARPSOCKET_RUN_WIZARD = 0                 Skip the setup wizard (server only)
-#   $env:WSTUNNEL_VERSION      = v10.5.2           Pin a specific wstunnel release
+#   $env:OUTWARP_COMPONENT  = server|client     Skip the interactive prompt
+#   $env:OUTWARP_REPO_DIR   = C:\path\to\clone  Use existing repo instead of cloning
+#   $env:OUTWARP_RUN_WIZARD = 0                 Skip the setup wizard (server only)
+#   $env:WSTUNNEL_VERSION   = v10.5.2           Pin a specific wstunnel release
 #
 # Requires: Windows 10/11, PowerShell 5.1+, Administrator privileges
+# The GUI uses pywebview's Edge WebView2 backend, which ships natively on
+# Windows 10 1803+ / Windows 11. No extra runtime install needed.
 
 $ErrorActionPreference = 'Stop'
 
 # ---------------------------------------------------------------------------
 # Log transcript (written regardless of success/failure)
 # ---------------------------------------------------------------------------
-$script:LOG_FILE = Join-Path $env:TEMP "warpsocket-install-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+$script:LOG_FILE = Join-Path $env:TEMP "outwarp-install-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
 Start-Transcript -Path $script:LOG_FILE -Force | Out-Null
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-$WARPSOCKET_DIR            = Join-Path $env:ProgramFiles "WarpSocket"
-$INSTALL_PREFIX            = Join-Path $WARPSOCKET_DIR "server"
-$CLIENT_PREFIX             = Join-Path $WARPSOCKET_DIR "client"
-$WSTUNNEL_BIN              = Join-Path $WARPSOCKET_DIR "wstunnel.exe"
+$OUTWARP_DIR               = Join-Path $env:ProgramFiles "OutWarp"
+$INSTALL_PREFIX            = Join-Path $OUTWARP_DIR "server"
+$CLIENT_PREFIX             = Join-Path $OUTWARP_DIR "client"
+$WSTUNNEL_BIN              = Join-Path $OUTWARP_DIR "wstunnel.exe"
 $WG_EXE                    = 'C:\Program Files\WireGuard\wireguard.exe'
-$DEFAULT_REPO_DIR          = Join-Path $env:USERPROFILE "WarpSocket"
-$GITHUB_REPO               = "fcrespo07/WarpSocket"
+$DEFAULT_REPO_DIR          = Join-Path $env:USERPROFILE "OutWarp"
+$GITHUB_REPO               = "fcrespo07/OutWarp"
 $GITHUB_REPO_URL           = "https://github.com/$GITHUB_REPO"
 $WSTUNNEL_FALLBACK_VERSION = "v10.5.2"
 $PYTHON_FALLBACK_VERSION   = "3.12.8"   # used when winget is not available
@@ -56,11 +58,12 @@ function Write-Fail {
 function Show-Banner {
     $art = @'
 
-   _      __                  ____           __        __
-  | | /| / /__ _ _____  ___  / __/__  ____  / /_____  / /_
-  | |/ |/ / _ `/ __/ _ \/ _ \_\ \/ _ \/ __/ /  '_/ -_) __/
-  |__/|__/\_,_/_/  \_,_/ .__/___/\___/\__/_/\_\\__/\__/
-                       /_/
+    ____        __  _       __
+   / __ \__  __/ /_| |     / /___ __________
+  / / / / / / / __/| | /| / / __ `/ ___/ __ \
+ / /_/ / /_/ / /_  | |/ |/ / /_/ / /  / /_/ /
+ \____/\__,_/\__/  |__/|__/\__,_/_/  / .___/
+                                    /_/
 
 '@
     Write-Host $art -ForegroundColor Cyan
@@ -250,14 +253,14 @@ function Ensure-Wstunnel {
     & tar -xzf $tarballPath -C $tmpDir
     if ($LASTEXITCODE -ne 0) { Write-Fail "Failed to extract $tarballName (tar exit code $LASTEXITCODE)" }
 
-    New-Item -ItemType Directory -Path $WARPSOCKET_DIR -Force | Out-Null
+    New-Item -ItemType Directory -Path $OUTWARP_DIR -Force | Out-Null
 
     $wstunnelExe = Get-ChildItem -Path $tmpDir -Filter 'wstunnel.exe' -Recurse | Select-Object -First 1
     if (-not $wstunnelExe) { Write-Fail "wstunnel.exe not found in downloaded archive" }
     Copy-Item $wstunnelExe.FullName -Destination $WSTUNNEL_BIN
     Remove-Item -Recurse -Force $tmpDir
 
-    Add-ToSystemPath $WARPSOCKET_DIR
+    Add-ToSystemPath $OUTWARP_DIR
     Write-OK "wstunnel installed: $WSTUNNEL_BIN"
 }
 
@@ -282,10 +285,10 @@ $script:REPO_DIR = $null
 
 function Resolve-Repo {
     # 1. Env override
-    if ($env:WARPSOCKET_REPO_DIR) {
-        $script:REPO_DIR = $env:WARPSOCKET_REPO_DIR
+    if ($env:OUTWARP_REPO_DIR) {
+        $script:REPO_DIR = $env:OUTWARP_REPO_DIR
         if (-not (Test-Path $script:REPO_DIR)) {
-            Write-Fail "WARPSOCKET_REPO_DIR=$($script:REPO_DIR) does not exist"
+            Write-Fail "OUTWARP_REPO_DIR=$($script:REPO_DIR) does not exist"
         }
         Write-OK "Using repo at: $($script:REPO_DIR)"
         return
@@ -365,7 +368,7 @@ function Resolve-Repo {
 git clone failed. If the repo is private, either:
   1) Install + auth gh:  gh auth login  and re-run this installer
   2) Clone manually then re-run with:
-       `$env:WARPSOCKET_REPO_DIR = 'C:\path\to\WarpSocket'; .\install.ps1
+       `$env:OUTWARP_REPO_DIR = 'C:\path\to\OutWarp'; .\install.ps1
 "@
     }
     Write-OK "Cloned to: $($script:REPO_DIR)"
@@ -390,30 +393,33 @@ function Ensure-Venv {
     }
 }
 
+function Ensure-WireGuard {
+    if (Test-Path $WG_EXE) {
+        Write-OK "WireGuard for Windows: found"
+        return
+    }
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Fail "winget not found and WireGuard is missing. Install from https://www.wireguard.com/install/ and retry."
+    }
+    Write-Info "Installing WireGuard for Windows via winget..."
+    & winget install --id WireGuard.WireGuard --source winget --silent --accept-package-agreements --accept-source-agreements
+    if (-not (Test-Path $WG_EXE)) {
+        Write-Fail "WireGuard install failed. Install from https://www.wireguard.com/install/ and retry."
+    }
+    Write-OK "WireGuard installed"
+}
+
 # ---------------------------------------------------------------------------
 # Server install
 # ---------------------------------------------------------------------------
 function Install-Server {
-    Write-Info "Installing WarpSocket server to $INSTALL_PREFIX"
+    Write-Info "Installing OutWarp server to $INSTALL_PREFIX"
 
     if (-not (Test-Path (Join-Path $script:REPO_DIR 'server'))) {
         Write-Fail "Server source not found at $($script:REPO_DIR)\server"
     }
 
-    # WireGuard for Windows (server uses wireguard.exe /installtunnelservice)
-    if (Test-Path $WG_EXE) {
-        Write-OK "WireGuard for Windows: found"
-    } else {
-        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            Write-Fail "winget not found and WireGuard is missing. Install from https://www.wireguard.com/install/ and retry."
-        }
-        Write-Info "Installing WireGuard for Windows via winget..."
-        & winget install --id WireGuard.WireGuard --source winget --silent --accept-package-agreements --accept-source-agreements
-        if (-not (Test-Path $WG_EXE)) {
-            Write-Fail "WireGuard install failed. Install from https://www.wireguard.com/install/ and retry."
-        }
-        Write-OK "WireGuard installed"
-    }
+    Ensure-WireGuard
 
     New-Item -ItemType Directory -Path $INSTALL_PREFIX -Force | Out-Null
     # Recreate venv if the Python version changed (stale venv from a previous install).
@@ -430,59 +436,50 @@ function Install-Server {
 
     $pip = Join-Path $INSTALL_PREFIX '.venv\Scripts\pip.exe'
 
-    Write-Info "Installing core dependencies..."
-    & $pip install --quiet --disable-pip-version-check -e (Join-Path $script:REPO_DIR 'server')
-    if ($LASTEXITCODE -ne 0) {
-        Write-Fail "pip install (core) failed with exit code $LASTEXITCODE. See output above."
+    # Install with the [gui] extra: pywebview + pystray + Pillow for the
+    # server-gui tray + window. Core CLI deps come in as transitive.
+    Write-Info "Installing server + GUI dependencies (pywebview, pystray, pillow)..."
+    $serverSpec = (Join-Path $script:REPO_DIR 'server') + '[gui]'
+    & $pip install --disable-pip-version-check -e $serverSpec
+    $pipExit = $LASTEXITCODE
+    if ($pipExit -ne 0) {
+        Write-Fail "pip install (server[gui]) failed with exit code $pipExit. See output above."
     }
-    Write-OK "Core dependencies installed"
+    Write-OK "Server dependencies installed"
 
-    Write-Info "Installing GUI dependencies (customtkinter, pillow, pystray)..."
-    # Do NOT use --quiet here: we need to see error messages if a package fails.
-    & $pip install --disable-pip-version-check "customtkinter>=5.2" "pillow>=10.0" "pystray>=0.19"
-    $guiPipExit = $LASTEXITCODE
-
-    # CLI shim in $WARPSOCKET_DIR (which is in PATH)
-    $cliExe  = Join-Path $INSTALL_PREFIX '.venv\Scripts\warpsocket-server.exe'
-    $cliShim = Join-Path $WARPSOCKET_DIR 'warpsocket-server.bat'
+    # CLI shim in $OUTWARP_DIR (which is in PATH)
+    $cliExe  = Join-Path $INSTALL_PREFIX '.venv\Scripts\outwarp-server.exe'
+    $cliShim = Join-Path $OUTWARP_DIR 'outwarp-server.bat'
     "@echo off`r`n`"$cliExe`" %*" | Out-File -FilePath $cliShim -Encoding ascii
-    Write-OK "warpsocket-server -> $cliExe"
+    Write-OK "outwarp-server -> $cliExe"
 
-    $guiExe     = Join-Path $INSTALL_PREFIX '.venv\Scripts\warpsocket-server-gui.exe'
-    $venvPython = Join-Path $INSTALL_PREFIX '.venv\Scripts\python.exe'
+    $guiExe     = Join-Path $INSTALL_PREFIX '.venv\Scripts\outwarp-server-gui.exe'
     $script:GUI_AVAILABLE = $false
     $guiReady = $false
 
-    if ($guiPipExit -ne 0) {
-        Write-Warn "GUI dependencies failed to install (exit $guiPipExit). See pip output above."
-        Write-Warn "The server CLI (warpsocket-server) will work, but the GUI tray app won't."
-        Write-Warn "You can retry later:  $pip install customtkinter pillow pystray"
+    # Verify the GUI packages actually import (catches broken wheels, missing DLLs).
+    Write-Info "Verifying GUI imports (pywebview, pystray, Pillow)..."
+    & $venvPython -c "import webview; import pystray; import PIL" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "GUI packages installed but fail to import (see output above)."
+        Write-Warn "The GUI tray app will not be available — the CLI ($cliShim) still works."
+    } elseif (-not (Test-Path $guiExe)) {
+        Write-Warn "outwarp-server-gui.exe not found — regenerating entry points..."
+        & $pip install --quiet --disable-pip-version-check --force-reinstall --no-deps -e $serverSpec
+        if (Test-Path $guiExe) { $guiReady = $true }
+        else { Write-Warn "Entry point still missing after reinstall — GUI not available." }
     } else {
-        # Verify the packages actually import (catches broken wheels, missing DLLs, etc.)
-        Write-Info "Verifying GUI imports..."
-        & $venvPython -c "import customtkinter; import pystray; import PIL" 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "GUI packages installed but fail to import (see output above)."
-            Write-Warn "The GUI tray app will not be available."
-        } elseif (-not (Test-Path $guiExe)) {
-            Write-Warn "warpsocket-server-gui.exe not found — regenerating entry points..."
-            & $pip install --quiet --disable-pip-version-check --force-reinstall --no-deps `
-                -e (Join-Path $script:REPO_DIR 'server')
-            if (Test-Path $guiExe) { $guiReady = $true }
-            else { Write-Warn "Entry point still missing after reinstall — GUI not available." }
-        } else {
-            $guiReady = $true
-        }
+        $guiReady = $true
     }
 
     if ($guiReady) {
         $script:GUI_AVAILABLE = $true
 
-        $guiShim = Join-Path $WARPSOCKET_DIR 'warpsocket-server-gui.bat'
+        $guiShim = Join-Path $OUTWARP_DIR 'outwarp-server-gui.bat'
         "@echo off`r`n`"$guiExe`" %*" | Out-File -FilePath $guiShim -Encoding ascii
-        Write-OK "warpsocket-server-gui -> $guiExe"
+        Write-OK "outwarp-server-gui -> $guiExe"
 
-        $iconFile   = Join-Path $script:REPO_DIR 'server\warpsocket_server\resources\app_icon.ico'
+        $iconFile   = Join-Path $script:REPO_DIR 'server\outwarp_server\resources\app_icon.ico'
         $wsh        = New-Object -ComObject WScript.Shell
         $startupDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
 
@@ -496,7 +493,7 @@ function Install-Server {
             [System.IO.File]::WriteAllBytes($LnkPath, $bytes)
         }
 
-        $startupLnk = Join-Path $startupDir 'WarpSocket Server.lnk'
+        $startupLnk = Join-Path $startupDir 'OutWarp Server.lnk'
         $startupSc = $wsh.CreateShortcut($startupLnk)
         $startupSc.TargetPath       = $guiExe
         $startupSc.WorkingDirectory = Split-Path $guiExe
@@ -507,7 +504,7 @@ function Install-Server {
         Write-OK "Startup shortcut: $startupLnk"
 
         $desktopDir = $wsh.SpecialFolders('Desktop')
-        $desktopLnk = Join-Path $desktopDir 'WarpSocket Server.lnk'
+        $desktopLnk = Join-Path $desktopDir 'OutWarp Server.lnk'
         $desktopSc  = $wsh.CreateShortcut($desktopLnk)
         $desktopSc.TargetPath       = $guiExe
         $desktopSc.WorkingDirectory = Split-Path $guiExe
@@ -521,16 +518,16 @@ function Install-Server {
 }
 
 function Invoke-SetupWizard {
-    if ($env:WARPSOCKET_RUN_WIZARD -eq '0') {
-        Write-Info "Skipping setup wizard (WARPSOCKET_RUN_WIZARD=0)"
+    if ($env:OUTWARP_RUN_WIZARD -eq '0') {
+        Write-Info "Skipping setup wizard (OUTWARP_RUN_WIZARD=0)"
         Write-Host ""
         if ($script:GUI_AVAILABLE) {
             Write-Host "  Run the server GUI later with:"
-            Write-Host "    warpsocket-server-gui"
-            Write-Host "  Or use the desktop shortcut: 'WarpSocket Server'"
+            Write-Host "    outwarp-server-gui"
+            Write-Host "  Or use the desktop shortcut: 'OutWarp Server'"
         } else {
             Write-Host "  Run the CLI setup wizard with:"
-            Write-Host "    warpsocket-server setup"
+            Write-Host "    outwarp-server setup"
         }
         Write-Host ""
         return
@@ -538,15 +535,15 @@ function Invoke-SetupWizard {
 
     Write-Host ""
     if ($script:GUI_AVAILABLE) {
-        Write-Info "Launching WarpSocket Server GUI..."
+        Write-Info "Launching OutWarp Server GUI..."
         Write-Host "  The setup wizard will open automatically on first run." -ForegroundColor DarkGray
         Write-Host ""
-        $guiExe = Join-Path $INSTALL_PREFIX '.venv\Scripts\warpsocket-server-gui.exe'
+        $guiExe = Join-Path $INSTALL_PREFIX '.venv\Scripts\outwarp-server-gui.exe'
         Start-Process -FilePath $guiExe
     } else {
         Write-Info "Launching CLI setup wizard (GUI not available)..."
         Write-Host ""
-        $cliExe = Join-Path $INSTALL_PREFIX '.venv\Scripts\warpsocket-server.exe'
+        $cliExe = Join-Path $INSTALL_PREFIX '.venv\Scripts\outwarp-server.exe'
         & $cliExe setup
     }
 }
@@ -555,26 +552,13 @@ function Invoke-SetupWizard {
 # Client install
 # ---------------------------------------------------------------------------
 function Install-Client {
-    Write-Info "Installing WarpSocket client to $CLIENT_PREFIX"
+    Write-Info "Installing OutWarp client to $CLIENT_PREFIX"
 
     if (-not (Test-Path (Join-Path $script:REPO_DIR 'client'))) {
         Write-Fail "Client source not found at $($script:REPO_DIR)\client"
     }
 
-    # WireGuard for Windows
-    if (Test-Path $WG_EXE) {
-        Write-OK "WireGuard for Windows: found"
-    } else {
-        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            Write-Fail "winget not found and WireGuard is missing. Install from https://www.wireguard.com/install/ and retry."
-        }
-        Write-Info "Installing WireGuard for Windows via winget..."
-        & winget install --id WireGuard.WireGuard --source winget --silent --accept-package-agreements --accept-source-agreements
-        if (-not (Test-Path $WG_EXE)) {
-            Write-Fail "WireGuard install failed. Install from https://www.wireguard.com/install/ and retry."
-        }
-        Write-OK "WireGuard installed"
-    }
+    Ensure-WireGuard
 
     New-Item -ItemType Directory -Path $CLIENT_PREFIX -Force | Out-Null
     Ensure-Venv -Prefix $CLIENT_PREFIX -Label 'client'
@@ -582,46 +566,61 @@ function Install-Client {
     $pip = Join-Path $CLIENT_PREFIX '.venv\Scripts\pip.exe'
     Write-Info "Installing Python dependencies (this may take ~30-60s)"
     & $pip install --upgrade --disable-pip-version-check pip
+    # pywebview + pystray + Pillow + platformdirs come in as core deps from pyproject.
     & $pip install --disable-pip-version-check -e (Join-Path $script:REPO_DIR 'client')
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "pip install (client) failed with exit code $LASTEXITCODE. See output above."
+    }
 
-    # Shim in $WARPSOCKET_DIR (in PATH)
-    $exePath  = Join-Path $CLIENT_PREFIX '.venv\Scripts\warpsocket.exe'
-    $shimPath = Join-Path $WARPSOCKET_DIR 'warpsocket.bat'
+    # Verify pywebview imports cleanly so the user finds out now, not on first launch.
+    $venvPython = Join-Path $CLIENT_PREFIX '.venv\Scripts\python.exe'
+    & $venvPython -c "import webview; import pystray; import PIL" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "pywebview / pystray / Pillow failed to import (see output above)."
+        Write-Warn "The window may not open. On Windows the GUI needs Edge WebView2 (built into Win10 1803+/Win11)."
+    }
+
+    # `outwarp` is a gui-script in pyproject.toml; on Windows pip generates a
+    # GUI-subsystem .exe (pythonw.exe-backed) so launching it doesn't pop a console.
+    $exePath  = Join-Path $CLIENT_PREFIX '.venv\Scripts\outwarp.exe'
+
+    # Shim in $OUTWARP_DIR (in PATH)
+    $shimPath = Join-Path $OUTWARP_DIR 'outwarp.bat'
     "@echo off`r`n`"$exePath`" %*" | Out-File -FilePath $shimPath -Encoding ascii
-    Write-OK "warpsocket -> $exePath"
+    Write-OK "outwarp -> $exePath"
 
     # Startup shortcut (launch tray at login)
     $startupDir   = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
-    $iconFile     = Join-Path $script:REPO_DIR 'client\warpsocket\resources\app_icon.ico'
+    $iconFile     = Join-Path $script:REPO_DIR 'client\outwarp\resources\app_icon.ico'
     $wsh          = New-Object -ComObject WScript.Shell
 
-    $startupSc = $wsh.CreateShortcut((Join-Path $startupDir 'WarpSocket.lnk'))
+    $startupSc = $wsh.CreateShortcut((Join-Path $startupDir 'OutWarp.lnk'))
     $startupSc.TargetPath       = $exePath
     $startupSc.WorkingDirectory = Split-Path $exePath
     $startupSc.WindowStyle      = 7  # minimized (tray apps start without a visible window)
     if (Test-Path $iconFile) { $startupSc.IconLocation = $iconFile }
     $startupSc.Save()
-    Write-OK "Startup shortcut: $(Join-Path $startupDir 'WarpSocket.lnk')"
+    Write-OK "Startup shortcut: $(Join-Path $startupDir 'OutWarp.lnk')"
 
     # Desktop shortcut
     $desktopDir = $wsh.SpecialFolders('Desktop')
-    $desktopSc  = $wsh.CreateShortcut((Join-Path $desktopDir 'WarpSocket.lnk'))
+    $desktopSc  = $wsh.CreateShortcut((Join-Path $desktopDir 'OutWarp.lnk'))
     $desktopSc.TargetPath       = $exePath
     $desktopSc.WorkingDirectory = Split-Path $exePath
     if (Test-Path $iconFile) { $desktopSc.IconLocation = $iconFile }
     $desktopSc.Save()
-    Write-OK "Desktop shortcut: $(Join-Path $desktopDir 'WarpSocket.lnk')"
+    Write-OK "Desktop shortcut: $(Join-Path $desktopDir 'OutWarp.lnk')"
 
     Write-Host ""
     Write-Host "  Client installed." -ForegroundColor Green
     Write-Host ""
     Write-Host "  Next steps:"
-    Write-Host "    1. Drop your .warpcfg file somewhere accessible."
-    Write-Host "    2. Launch WarpSocket from the desktop shortcut or run: warpsocket"
-    Write-Host "    3. The first run opens the import wizard to load your .warpcfg."
+    Write-Host "    1. Drop your .owcfg file somewhere accessible."
+    Write-Host "    2. Launch OutWarp from the desktop shortcut or run: outwarp"
+    Write-Host "    3. The first run opens the import wizard to load your .owcfg."
     Write-Host ""
-    Write-Host "  Startup entry : $(Join-Path $startupDir 'WarpSocket.lnk')"
-    Write-Host "  Desktop       : $(Join-Path $desktopDir 'WarpSocket.lnk')"
+    Write-Host "  Startup entry : $(Join-Path $startupDir 'OutWarp.lnk')"
+    Write-Host "  Desktop       : $(Join-Path $desktopDir 'OutWarp.lnk')"
     Write-Host ""
 }
 
@@ -629,13 +628,13 @@ function Install-Client {
 # Component picker
 # ---------------------------------------------------------------------------
 function Select-Component {
-    $component = $env:WARPSOCKET_COMPONENT
+    $component = $env:OUTWARP_COMPONENT
 
     if (-not $component) {
         Write-Host ""
         Write-Host "Which component do you want to install?" -ForegroundColor White
         Write-Host "  1) Server  - runs wstunnel + WireGuard, accepts client connections"
-        Write-Host "  2) Client  - connects to a WarpSocket server"
+        Write-Host "  2) Client  - connects to an OutWarp server"
         Write-Host ""
 
         while (-not $component) {
@@ -657,13 +656,13 @@ function Select-Component {
             Write-Host ""
             Write-Host "  Next steps:"
             Write-Host "    1. The setup wizard will open automatically on first launch."
-            Write-Host "    2. Use 'Añadir cliente' to generate .warpcfg files for each user."
-            Write-Host "    3. Send each .warpcfg to the corresponding client device."
+            Write-Host "    2. Use 'Add client' to generate .owcfg files for each user."
+            Write-Host "    3. Send each .owcfg to the corresponding client device."
             Write-Host ""
             if ($script:GUI_AVAILABLE) {
-                Write-Host "  Desktop shortcut : 'WarpSocket Server'"
+                Write-Host "  Desktop shortcut : 'OutWarp Server'"
             }
-            Write-Host "  CLI (admin PS)   : warpsocket-server <subcommand>"
+            Write-Host "  CLI (admin PS)   : outwarp-server <subcommand>"
             Write-Host ""
             Invoke-SetupWizard
         }

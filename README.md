@@ -13,7 +13,7 @@ No domain name required. The server generates a self-signed TLS certificate and 
 ### Linux (client or server)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fcrespo07/WarpSocket/main/installer/linux/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/linux/install.sh | sudo bash
 ```
 
 The installer will ask whether you want to set up the **client** or the **server** and guide you through the rest.
@@ -23,7 +23,7 @@ The installer will ask whether you want to set up the **client** or the **server
 Open PowerShell as Administrator and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/fcrespo07/WarpSocket/main/installer/windows/install.ps1 | iex
+irm https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/windows/install.ps1 | iex
 ```
 
 ### macOS
@@ -38,21 +38,21 @@ After running the server installer, the following commands are available:
 
 | Command | Description |
 |---|---|
-| `warpsocket-server setup` | Interactive setup wizard |
-| `warpsocket-server add-client <name>` | Generate a `.warpcfg` file for a new client |
-| `warpsocket-server list-clients` | List registered clients with their live status (online/offline, last handshake, transfer) |
-| `warpsocket-server revoke-client <name>` | Remove a client |
-| `warpsocket-server status` | Show service status |
-| `warpsocket-server restart` | Regenerate config and fully restart wg-quick + wstunnel |
-| `warpsocket-server uninstall` | Remove WarpSocket server completely |
+| `outwarp-server setup` | Interactive setup wizard |
+| `outwarp-server add-client <name>` | Generate a `.owcfg` file for a new client |
+| `outwarp-server list-clients` | List registered clients with their live status (online/offline, last handshake, transfer) |
+| `outwarp-server revoke-client <name>` | Remove a client |
+| `outwarp-server status` | Show service status |
+| `outwarp-server restart` | Regenerate config and fully restart wg-quick + wstunnel |
+| `outwarp-server uninstall` | Remove OutWarp server completely |
 
 ---
 
 ## How it works
 
 1. The **server** wizard installs wstunnel as a systemd service, generates WireGuard keys and a self-signed TLS certificate, and detects its public IP.
-2. For each client, `add-client` generates a `.owpcfg` file containing everything needed to connect (keys, endpoint, certificate fingerprint, routing rules).
-3. The **client** imports the `.owpcfg` file, sets up the WireGuard interface, adds a static route to bypass the tunnel for wstunnel traffic, and maintains the connection with automatic reconnection and exponential backoff.
+2. For each client, `add-client` generates a `.owcfg` file containing everything needed to connect (keys, endpoint, certificate fingerprint, routing rules).
+3. The **client** imports the `.owcfg` file, sets up the WireGuard interface, adds a static route to bypass the tunnel for wstunnel traffic, and maintains the connection with automatic reconnection and exponential backoff.
 
 ---
 

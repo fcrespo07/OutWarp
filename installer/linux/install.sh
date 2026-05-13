@@ -1,40 +1,43 @@
 #!/usr/bin/env bash
-# WarpSocket - Linux installer / bootstrapper
+# OutWarp - Linux installer / bootstrapper
 #
 # Two ways to run:
 #   1. Local (from a clone):    sudo bash installer/linux/install.sh
-#   2. Remote (via curl pipe):  curl -fsSL https://raw.githubusercontent.com/fcrespo07/WarpSocket/main/installer/linux/install.sh | sudo bash
+#   2. Remote (via curl pipe):  curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/linux/install.sh | sudo bash
 #
 # Environment overrides:
-#   WARPSOCKET_COMPONENT=server|client    Skip the interactive prompt
-#   WARPSOCKET_REPO_DIR=/path/to/clone    Use existing repo instead of cloning
-#   WARPSOCKET_RUN_WIZARD=0               Skip the final `warpsocket-server setup`
+#   OUTWARP_COMPONENT=server|client       Skip the interactive prompt
+#   OUTWARP_REPO_DIR=/path/to/clone       Use existing repo instead of cloning
+#   OUTWARP_RUN_WIZARD=0                  Skip the final `outwarp-server setup`
+#   OUTWARP_SERVER_GUI=1                  Install the pywebview server GUI too
+#                                         (default: auto-detect via $DISPLAY/$WAYLAND_DISPLAY)
 #   WSTUNNEL_VERSION=v10.5.2              Pin a specific wstunnel release
-#   WARPSOCKET_FORCE_IPV4=0               Disable the default IPv4-only mode for apt/curl
+#   OUTWARP_FORCE_IPV4=0                  Disable the default IPv4-only mode for apt/curl
 #                                         (default: 1 - many bridged-VM LANs have broken IPv6)
 
 set -euo pipefail
 
 # IPv4-only is the default: bridged VMs frequently get an IPv6 address via SLAAC
 # from a router whose upstream doesn't actually route IPv6 -> curl/apt hang for
-# minutes on TCP timeout per mirror. Override with WARPSOCKET_FORCE_IPV4=0.
-FORCE_IPV4="${WARPSOCKET_FORCE_IPV4:-1}"
+# minutes on TCP timeout per mirror. Override with OUTWARP_FORCE_IPV4=0.
+FORCE_IPV4="${OUTWARP_FORCE_IPV4:-1}"
 CURL_OPTS=(--fail --silent --show-error --location --connect-timeout 10 --max-time 300)
 [[ "$FORCE_IPV4" == "1" ]] && CURL_OPTS+=(-4)
 
 # ----------------------------------------------------------------------------
 # Constants
 # ----------------------------------------------------------------------------
-readonly GITHUB_REPO="fcrespo07/WarpSocket"
+readonly GITHUB_REPO="fcrespo07/OutWarp"
 readonly GITHUB_REPO_URL="https://github.com/${GITHUB_REPO}"
-readonly INSTALL_PREFIX="/opt/warpsocket-server"
-readonly BIN_LINK="/usr/local/bin/warpsocket-server"
-readonly CLIENT_PREFIX="/opt/warpsocket-client"
-readonly CLIENT_BIN_LINK="/usr/local/bin/warpsocket"
-readonly CLIENT_SUDOERS="/etc/sudoers.d/warpsocket"
-readonly CLIENT_HELPER="/usr/local/libexec/warpsocket-priv"
+readonly INSTALL_PREFIX="/opt/outwarp-server"
+readonly BIN_LINK="/usr/local/bin/outwarp-server"
+readonly GUI_BIN_LINK="/usr/local/bin/outwarp-server-gui"
+readonly CLIENT_PREFIX="/opt/outwarp-client"
+readonly CLIENT_BIN_LINK="/usr/local/bin/outwarp"
+readonly CLIENT_SUDOERS="/etc/sudoers.d/outwarp"
+readonly CLIENT_HELPER="/usr/local/libexec/outwarp-priv"
 readonly WSTUNNEL_BIN="/usr/local/bin/wstunnel"
-readonly DEFAULT_REPO_DIR="${HOME:-/root}/WarpSocket"
+readonly DEFAULT_REPO_DIR="${HOME:-/root}/OutWarp"
 
 # ----------------------------------------------------------------------------
 # UI helpers
@@ -79,11 +82,12 @@ ask_choice() {
 banner() {
     cat <<EOF
 ${BOLD}${CYAN}
-   _      __                  ____           __        __
-  | | /| / /__ _ _____  ___  / __/__  ____  / /_____  / /_
-  | |/ |/ / _ \`/ __/ _ \\/ _ \\_\\ \\/ _ \\/ __/ /  '_/ -_) __/
-  |__/|__/\\_,_/_/  \\_,_/ .__/___/\\___/\\__/_/\\_\\\\__/\\__/
-                       /_/
+    ____        __  _       __
+   / __ \\__  __/ /_| |     / /___ __________
+  / / / / / / / __/| | /| / / __ \`/ ___/ __ \\
+ / /_/ / /_/ / /_  | |/ |/ / /_/ / /  / /_/ /
+ \\____/\\__,_/\\__/  |__/|__/\\__,_/_/  / .___/
+                                    /_/
 ${RESET}
   ${DIM}WireGuard over WebSocket - Linux installer${RESET}
 
@@ -124,7 +128,7 @@ detect_package_manager() {
         PKG_UPDATE_CMD="pacman -Sy --noconfirm"
         PKG_INSTALL_CMD="pacman -S --noconfirm --needed"
     else
-        die "No supported package manager found (apt/dnf/pacman). Install dependencies manually and rerun with WARPSOCKET_SKIP_DEPS=1."
+        die "No supported package manager found (apt/dnf/pacman). Install dependencies manually and rerun with OUTWARP_SKIP_DEPS=1."
     fi
     ok "Package manager: ${BOLD}${PKG_MANAGER}${RESET}"
 }
@@ -357,9 +361,9 @@ ensure_wstunnel() {
 REPO_DIR=""
 locate_repo() {
     # Override via env
-    if [[ -n "${WARPSOCKET_REPO_DIR:-}" ]]; then
-        REPO_DIR="$WARPSOCKET_REPO_DIR"
-        [[ -d "$REPO_DIR" ]] || die "WARPSOCKET_REPO_DIR=$REPO_DIR does not exist"
+    if [[ -n "${OUTWARP_REPO_DIR:-}" ]]; then
+        REPO_DIR="$OUTWARP_REPO_DIR"
+        [[ -d "$REPO_DIR" ]] || die "OUTWARP_REPO_DIR=$REPO_DIR does not exist"
         ok "Using repo at: ${BOLD}${REPO_DIR}${RESET}"
         return
     fi
@@ -397,7 +401,7 @@ locate_repo() {
         if ! GIT_TERMINAL_PROMPT=0 git clone "$GITHUB_REPO_URL" "$REPO_DIR" 2>&1; then
             die "git clone failed. If the repo is private, either:
     1) Install + auth gh:  ${BOLD}gh auth login${RESET}  and re-run this installer, or
-    2) Clone manually and re-run with: ${BOLD}WARPSOCKET_REPO_DIR=/path/to/clone${RESET}"
+    2) Clone manually and re-run with: ${BOLD}OUTWARP_REPO_DIR=/path/to/clone${RESET}"
         fi
     fi
     ok "Cloned to: ${BOLD}${REPO_DIR}${RESET}"
@@ -406,10 +410,57 @@ locate_repo() {
 # ----------------------------------------------------------------------------
 # Server install
 # ----------------------------------------------------------------------------
+# Decide whether to install the optional [gui] extras for the server (pywebview
+# + pystray + Pillow). On a desktop session we install them automatically; on a
+# pure VPS/headless box we skip them. User can force via OUTWARP_SERVER_GUI=0|1.
+want_server_gui() {
+    case "${OUTWARP_SERVER_GUI:-auto}" in
+        1|true|yes) return 0 ;;
+        0|false|no) return 1 ;;
+    esac
+    [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]
+}
+
+ensure_server_gui_system_deps() {
+    info "Installing server GUI system dependencies (webkitgtk + tray indicator)"
+    case "$PKG_MANAGER" in
+        apt)
+            # pywebview on Linux uses GTK + WebKit2. webkit2 4.1 is the modern
+            # package (Ubuntu 22.04+); fall back to 4.0 on older releases.
+            local webkit_pkg="gir1.2-webkit2-4.1"
+            if ! $SUDO bash -c "$PKG_INSTALL_CMD $webkit_pkg" >/dev/null 2>&1; then
+                webkit_pkg="gir1.2-webkit2-4.0"
+                warn "gir1.2-webkit2-4.1 not available - falling back to 4.0"
+            fi
+            $SUDO bash -c "$PKG_INSTALL_CMD python3-gi gir1.2-gtk-3.0 $webkit_pkg gir1.2-ayatanaappindicator3-0.1" \
+                || warn "Some GUI deps failed - the GUI may not start (CLI is unaffected)"
+            ;;
+        dnf)
+            # Fedora 38+: webkit2gtk4.1 / older: webkit2gtk4.0
+            $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.1 libappindicator-gtk3" \
+                || $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.0 libappindicator-gtk3" \
+                || warn "Some GUI deps failed - the GUI may not start (CLI is unaffected)"
+            ;;
+        pacman)
+            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3" \
+                || warn "Some GUI deps failed - the GUI may not start (CLI is unaffected)"
+            ;;
+    esac
+}
+
 install_server() {
-    info "Installing WarpSocket server to ${BOLD}${INSTALL_PREFIX}${RESET}"
+    info "Installing OutWarp server to ${BOLD}${INSTALL_PREFIX}${RESET}"
 
     [[ -d "$REPO_DIR/server" ]] || die "Server source not found at $REPO_DIR/server"
+
+    local install_gui="false"
+    if want_server_gui; then
+        install_gui="true"
+        ensure_server_gui_system_deps
+    else
+        info "Headless install (no display) - skipping GUI extras."
+        info "Set OUTWARP_SERVER_GUI=1 to install the pywebview admin GUI too."
+    fi
 
     $SUDO mkdir -p "$INSTALL_PREFIX"
     if [[ ! -x "$INSTALL_PREFIX/.venv/bin/pip" ]]; then
@@ -425,49 +476,66 @@ install_server() {
 
     info "Installing Python dependencies (this may take ~30-60s)"
     $SUDO "$INSTALL_PREFIX/.venv/bin/pip" install --upgrade --disable-pip-version-check pip
-    $SUDO "$INSTALL_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/server"
+    if [[ "$install_gui" == "true" ]]; then
+        $SUDO "$INSTALL_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/server[gui]"
+    else
+        $SUDO "$INSTALL_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/server"
+    fi
 
-    # Symlink so user can call `warpsocket-server` directly
-    $SUDO ln -sf "$INSTALL_PREFIX/.venv/bin/warpsocket-server" "$BIN_LINK"
-    ok "Linked: ${BOLD}${BIN_LINK}${RESET} -> ${INSTALL_PREFIX}/.venv/bin/warpsocket-server"
+    # CLI symlink (always)
+    $SUDO ln -sf "$INSTALL_PREFIX/.venv/bin/outwarp-server" "$BIN_LINK"
+    ok "Linked: ${BOLD}${BIN_LINK}${RESET} -> ${INSTALL_PREFIX}/.venv/bin/outwarp-server"
 
-    ok "Server installed (version: $(warpsocket-server --version | awk '{print $2}'))"
+    # GUI symlink (only when [gui] extras were installed)
+    if [[ "$install_gui" == "true" && -x "$INSTALL_PREFIX/.venv/bin/outwarp-server-gui" ]]; then
+        $SUDO ln -sf "$INSTALL_PREFIX/.venv/bin/outwarp-server-gui" "$GUI_BIN_LINK"
+        ok "Linked: ${BOLD}${GUI_BIN_LINK}${RESET} -> ${INSTALL_PREFIX}/.venv/bin/outwarp-server-gui"
+    fi
+
+    ok "Server installed (version: $(outwarp-server --version | awk '{print $2}'))"
 }
 
 run_setup_wizard() {
-    if [[ "${WARPSOCKET_RUN_WIZARD:-1}" == "0" ]]; then
-        info "Skipping setup wizard (WARPSOCKET_RUN_WIZARD=0)"
+    if [[ "${OUTWARP_RUN_WIZARD:-1}" == "0" ]]; then
+        info "Skipping setup wizard (OUTWARP_RUN_WIZARD=0)"
         echo
         echo "${BOLD}Run the wizard later with:${RESET}"
-        echo "  sudo warpsocket-server setup"
+        echo "  sudo outwarp-server setup"
         return
     fi
     echo
     info "Launching the setup wizard..."
     echo
-    $SUDO warpsocket-server setup </dev/tty
+    $SUDO outwarp-server setup </dev/tty
 }
 
 # ----------------------------------------------------------------------------
 # Client install
 # ----------------------------------------------------------------------------
 ensure_client_system_deps() {
-    info "Installing client GUI dependencies (tkinter + tray indicator)"
+    info "Installing client GUI dependencies (webkitgtk + tray indicator)"
     case "$PKG_MANAGER" in
         apt)
-            # python3-tk: tkinter base for customtkinter
-            # gir + libayatana: lets pystray show in GNOME/Cinnamon shells that
-            #                   route trays through AppIndicator
-            $SUDO bash -c "$PKG_INSTALL_CMD python3-tk gir1.2-ayatanaappindicator3-0.1" \
-                || warn "Some optional GUI deps failed - tray may render but with reduced features"
+            # pywebview on Linux uses GTK + WebKit2. webkit2 4.1 is the modern
+            # package (Ubuntu 22.04+); fall back to 4.0 on older releases.
+            # gir1.2-ayatanaappindicator3-0.1: pystray tray indicator for
+            # GNOME/Cinnamon shells that route trays through AppIndicator.
+            local webkit_pkg="gir1.2-webkit2-4.1"
+            if ! $SUDO bash -c "$PKG_INSTALL_CMD $webkit_pkg" >/dev/null 2>&1; then
+                webkit_pkg="gir1.2-webkit2-4.0"
+                warn "gir1.2-webkit2-4.1 not available - falling back to 4.0"
+            fi
+            $SUDO bash -c "$PKG_INSTALL_CMD python3-gi gir1.2-gtk-3.0 $webkit_pkg gir1.2-ayatanaappindicator3-0.1" \
+                || warn "Some GUI deps failed - the window may not open (tray will still work with reduced features)"
             ;;
         dnf)
-            $SUDO bash -c "$PKG_INSTALL_CMD python3-tkinter libappindicator-gtk3" \
-                || warn "Some optional GUI deps failed"
+            $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.1 libappindicator-gtk3" \
+                || $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.0 libappindicator-gtk3" \
+                || warn "Some GUI deps failed"
             ;;
         pacman)
-            $SUDO bash -c "$PKG_INSTALL_CMD tk libappindicator-gtk3" \
-                || warn "Some optional GUI deps failed"
+            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3" \
+                || warn "Some GUI deps failed"
             ;;
     esac
 }
@@ -479,8 +547,8 @@ TARGET_HOME=""
 resolve_target_user() {
     if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
         TARGET_USER="$SUDO_USER"
-    elif [[ -n "${WARPSOCKET_USER:-}" ]]; then
-        TARGET_USER="$WARPSOCKET_USER"
+    elif [[ -n "${OUTWARP_USER:-}" ]]; then
+        TARGET_USER="$OUTWARP_USER"
     else
         echo
         TARGET_USER=$(ask "Desktop user that will run the tray app" "${USER:-}")
@@ -503,7 +571,7 @@ write_client_helper() {
     tmp=$(mktemp)
     cat >"$tmp" <<'HELPER_EOF'
 #!/usr/bin/env bash
-# WarpSocket privileged helper. Installed by the WarpSocket installer.
+# OutWarp privileged helper. Installed by the OutWarp installer.
 # Invoked via `sudo -n` by the user-mode tray app. Single sudoers entry
 # whitelists this script for the desktop user.
 set -euo pipefail
@@ -512,7 +580,7 @@ WG_CONF_DIR="/etc/wireguard"
 NAME_RE='^[A-Za-z0-9_=+.-]{1,15}$'
 IPV4_RE='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
 
-die() { echo "warpsocket-priv: $*" >&2; exit 2; }
+die() { echo "outwarp-priv: $*" >&2; exit 2; }
 need_name() { [[ "${1:-}" =~ $NAME_RE ]] || die "invalid tunnel name: ${1:-<empty>}"; }
 need_ipv4() { [[ "${1:-}" =~ $IPV4_RE ]] || die "invalid IPv4: ${1:-<empty>}"; }
 
@@ -565,8 +633,8 @@ write_client_sudoers() {
     local tmp
     tmp=$(mktemp)
     cat >"$tmp" <<EOF
-# Managed by WarpSocket installer - do not edit by hand.
-# Lets the tray app (running as $TARGET_USER) invoke the WarpSocket
+# Managed by OutWarp installer - do not edit by hand.
+# Lets the tray app (running as $TARGET_USER) invoke the OutWarp
 # privileged helper without a password prompt. The helper validates inputs.
 $TARGET_USER ALL=(root) NOPASSWD: $CLIENT_HELPER
 EOF
@@ -582,15 +650,15 @@ EOF
 
 write_client_autostart() {
     local autostart_dir="$TARGET_HOME/.config/autostart"
-    local desktop_file="$autostart_dir/warpsocket.desktop"
-    local icon_path="$REPO_DIR/client/warpsocket/resources/app_icon.png"
+    local desktop_file="$autostart_dir/outwarp.desktop"
+    local icon_path="$REPO_DIR/client/outwarp/resources/app_icon.png"
 
     info "Creating autostart entry: $desktop_file"
     $SUDO -u "$TARGET_USER" mkdir -p "$autostart_dir"
     $SUDO -u "$TARGET_USER" tee "$desktop_file" >/dev/null <<EOF
 [Desktop Entry]
 Type=Application
-Name=WarpSocket
+Name=OutWarp
 Comment=WireGuard over WebSocket - tray client
 Exec=$CLIENT_BIN_LINK
 Icon=$icon_path
@@ -602,7 +670,7 @@ EOF
 }
 
 install_client() {
-    info "Installing WarpSocket client to ${BOLD}${CLIENT_PREFIX}${RESET}"
+    info "Installing OutWarp client to ${BOLD}${CLIENT_PREFIX}${RESET}"
     [[ -d "$REPO_DIR/client" ]] || die "Client source not found at $REPO_DIR/client"
 
     resolve_target_user
@@ -622,10 +690,13 @@ install_client() {
 
     info "Installing Python dependencies (this may take ~30-60s)"
     $SUDO "$CLIENT_PREFIX/.venv/bin/pip" install --upgrade --disable-pip-version-check pip
+    # pywebview + pystray + Pillow + platformdirs are in `dependencies`, no extra needed.
     $SUDO "$CLIENT_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/client"
 
-    $SUDO ln -sf "$CLIENT_PREFIX/.venv/bin/warpsocket" "$CLIENT_BIN_LINK"
-    ok "Linked: ${BOLD}${CLIENT_BIN_LINK}${RESET} -> ${CLIENT_PREFIX}/.venv/bin/warpsocket"
+    # `outwarp` is declared as a gui-script in pyproject.toml; on Linux the
+    # installed name is identical to a regular script, so the symlink works.
+    $SUDO ln -sf "$CLIENT_PREFIX/.venv/bin/outwarp" "$CLIENT_BIN_LINK"
+    ok "Linked: ${BOLD}${CLIENT_BIN_LINK}${RESET} -> ${CLIENT_PREFIX}/.venv/bin/outwarp"
 
     write_client_helper
     write_client_sudoers
@@ -636,11 +707,11 @@ install_client() {
 ${BOLD}${GREEN}Client installed.${RESET}
 
   ${BOLD}Next steps:${RESET}
-    1. Drop your ${BOLD}.warpcfg${RESET} file somewhere accessible by ${TARGET_USER}.
-    2. Launch ${BOLD}warpsocket${RESET} (or log out/in to trigger autostart).
-    3. The first run prompts for the .warpcfg via the import wizard.
+    1. Drop your ${BOLD}.owcfg${RESET} file somewhere accessible by ${TARGET_USER}.
+    2. Launch ${BOLD}outwarp${RESET} (or log out/in to trigger autostart).
+    3. The first run prompts for the .owcfg via the import wizard.
 
-  ${DIM}Autostart entry: $TARGET_HOME/.config/autostart/warpsocket.desktop${RESET}
+  ${DIM}Autostart entry: $TARGET_HOME/.config/autostart/outwarp.desktop${RESET}
   ${DIM}Privileged helper: $CLIENT_HELPER${RESET}
   ${DIM}Sudoers rule: $CLIENT_SUDOERS  (revoke with: sudo rm $CLIENT_SUDOERS)${RESET}
 
@@ -651,12 +722,12 @@ EOF
 # Component picker
 # ----------------------------------------------------------------------------
 pick_component() {
-    local component="${WARPSOCKET_COMPONENT:-}"
+    local component="${OUTWARP_COMPONENT:-}"
     if [[ -z "$component" ]]; then
         echo
         echo "${BOLD}Which component do you want to install?${RESET}"
         echo "  ${BOLD}1)${RESET} Server  - runs wstunnel + WireGuard, accepts client connections"
-        echo "  ${BOLD}2)${RESET} Client  - connects to a WarpSocket server"
+        echo "  ${BOLD}2)${RESET} Client  - connects to an OutWarp server"
         echo
         local choice
         while true; do
@@ -686,8 +757,9 @@ main() {
     detect_package_manager
 
     # Both server and client need: Python 3.11+, wireguard-tools, wstunnel.
-    # GUI-only client deps (tkinter, appindicator) are installed inside
-    # install_client to keep the server install minimal.
+    # GUI-only deps (webkitgtk for pywebview, appindicator for pystray) are
+    # installed inside install_client / install_server to keep headless server
+    # installs minimal.
     info "Preparing system dependencies"
     ensure_python
     ensure_wireguard
