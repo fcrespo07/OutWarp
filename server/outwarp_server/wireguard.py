@@ -26,13 +26,29 @@ class LivePeer:
     transfer_tx: int  # bytes sent to peer
 
 
+def _find_wg_bin() -> Path | None:
+    """Locate the wg binary, trying common hard-coded paths as fallback."""
+    found = __import__("shutil").which("wg")
+    if found:
+        return Path(found)
+    for candidate in ("/usr/bin/wg", "/usr/local/bin/wg", "/sbin/wg"):
+        p = Path(candidate)
+        if p.exists():
+            return p
+    return None
+
+
 def get_live_peers(interface: str = "wg0", wg_bin: Path | None = None) -> dict[str, LivePeer]:
     """Return public_key -> LivePeer for every peer on the running interface.
 
     Returns an empty dict if the interface is down or `wg` fails — callers
     should treat absence of data as "no live state available", not as error.
     """
-    wg = str(wg_bin or "wg")
+    resolved = wg_bin or _find_wg_bin()
+    if resolved is None:
+        log.warning("get_live_peers: wg binary not found in PATH or common locations")
+        return {}
+    wg = str(resolved)
     extra: dict = {}
     if sys.platform == "win32":
         extra["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -45,9 +61,15 @@ def get_live_peers(interface: str = "wg0", wg_bin: Path | None = None) -> dict[s
             timeout=5,
             **extra,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        log.warning("get_live_peers: wg command failed: %s", exc)
         return {}
     if result.returncode != 0:
+        log.warning(
+            "get_live_peers: 'wg show %s dump' exited %d — %s",
+            interface, result.returncode,
+            result.stderr.strip() or "(no stderr)",
+        )
         return {}
 
     peers: dict[str, LivePeer] = {}

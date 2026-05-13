@@ -87,6 +87,27 @@ function App() {
   useBridgeEvent("log",     useCallback((e) => setLogs((l) => [...l.slice(-1999), e]), []));
   useBridgeEvent("settings", useCallback((d) => setSettings(d), []));
 
+  // JS-side poll — same reasoning as the server: evaluate_js from a Python
+  // background thread can be silently dropped on some platform/backend
+  // combinations. Polling from JS guarantees the connection state and stats
+  // stay live regardless of threading or window-focus throttling.
+  useEffect(() => {
+    if (!api) return;
+    let alive = true;
+    const tick = async () => {
+      if (!alive) return;
+      try {
+        const s = await api.get_status();
+        setStatus(s.status);
+        setActiveId(s.active_profile_id);
+        setStats(s.stats);
+      } catch (_) {}
+      if (alive) setTimeout(tick, 1000);
+    };
+    setTimeout(tick, 1000);
+    return () => { alive = false; };
+  }, [api]);
+
   // resolve theme
   const isDark = settings.theme === "dark" ||
     (settings.theme === "auto" && window.matchMedia?.("(prefers-color-scheme: dark)")?.matches);
