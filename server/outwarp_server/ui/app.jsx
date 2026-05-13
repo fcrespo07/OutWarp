@@ -63,15 +63,15 @@ function App() {
       } else {
         setScreen("setup");
       }
+      // Signal Python that the page is ready; the live poll starts only now so
+      // events are never dispatched before React has registered its listeners.
+      a.notify_ready();
     });
   }, []);
 
-  useBridgeEvent("status", useCallback(async (d) => {
-    setStatus((s) => ({ ...(s || {}), ...d }));
-    if (d.config_present && api) {
-      setClients(await api.list_clients());
-    }
-  }, [api]));
+  useBridgeEvent("status", useCallback((d) => {
+    setStatus((prev) => ({ ...(prev || {}), ...d }));
+  }, []));
   useBridgeEvent("clients", useCallback((d) => setClients(d), []));
   useBridgeEvent("log",     useCallback((e) => setLogs((l) => [...l.slice(-1999), e]), []));
   useBridgeEvent("settings", useCallback((d) => setSettings(d), []));

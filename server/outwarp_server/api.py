@@ -116,7 +116,15 @@ class Api:
         for line in self._memory_handler.snapshot():
             self._record_log("info", line)
         self._start_log_watcher()
+
+    def notify_ready(self) -> dict[str, Any]:
+        """Called by the JS shell once the page is fully mounted and ready to receive events.
+
+        Starts the live poll so events are never dispatched before the React
+        tree has attached its window.addEventListener listeners.
+        """
         self._start_live_poll()
+        return {"ok": True}
 
     def _start_live_poll(self) -> None:
         """Re-emit status + client list every 2s.

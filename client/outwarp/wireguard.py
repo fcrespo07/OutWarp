@@ -36,10 +36,14 @@ def get_tunnel_stats(tunnel_name: str) -> TunnelStats | None:
     wg = _find_wg_bin()
     if wg is None:
         return None
+    extra: dict = {}
+    if sys.platform == "win32":
+        extra["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
         result = subprocess.run(
             [str(wg), "show", tunnel_name, "dump"],
             capture_output=True, text=True, check=False, timeout=2,
+            **extra,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None

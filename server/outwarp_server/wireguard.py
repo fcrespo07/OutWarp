@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,14 +33,19 @@ def get_live_peers(interface: str = "wg0", wg_bin: Path | None = None) -> dict[s
     should treat absence of data as "no live state available", not as error.
     """
     wg = str(wg_bin or "wg")
+    extra: dict = {}
+    if sys.platform == "win32":
+        extra["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
         result = subprocess.run(
             [wg, "show", interface, "dump"],
             capture_output=True,
             text=True,
             check=False,
+            timeout=5,
+            **extra,
         )
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return {}
     if result.returncode != 0:
         return {}
