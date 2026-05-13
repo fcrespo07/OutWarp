@@ -116,6 +116,9 @@ class WindowsServerPlatform(ServerPlatform):
     def wg_config_dir(self) -> Path:
         return _WG_DIR
 
+    def wg_interface_name(self) -> str:
+        return _WG_INTERFACE
+
     # ── System preparation ────────────────────────────────────────────────────
 
     def prepare_system(self, subnet: str, wss_port: int) -> None:

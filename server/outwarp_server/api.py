@@ -234,7 +234,9 @@ class Api:
         if self._manager is None:
             return []
         try:
-            live = get_live_peers()
+            from outwarp_server.platforms import get_server_platform
+            iface = get_server_platform().wg_interface_name()
+            live = get_live_peers(iface)
         except Exception:
             live = {}
         now = int(time.time())

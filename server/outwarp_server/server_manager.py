@@ -209,18 +209,20 @@ class ServerManager:
                 self._set_state(ServerState.ERROR)
                 return
 
-            # `systemctl enable --now wg-quick@wg0` can return 0 even when the
-            # interface fails to come up (the unit ran, but PostUp failed, the
-            # wireguard kernel module is missing, etc.). Verify explicitly so
-            # the GUI shows ERROR instead of a confusingly "running" server
+            # `systemctl enable --now wg-quick@wg0` (Linux) and
+            # `wireguard.exe /installtunnelservice` (Windows) can both return
+            # 0 even when the interface fails to come up — verify explicitly
+            # so the GUI shows ERROR instead of a confusingly "running" server
             # whose tunnel handshakes silently never happen.
-            if not platform.is_wg_active("wg0"):
+            wg_iface = platform.wg_interface_name()
+            if not platform.is_wg_active(wg_iface):
                 log.error(
-                    "WireGuard interface 'wg0' did not come up. Diagnose with: "
-                    "'systemctl status wg-quick@wg0' and "
-                    "'journalctl -u wg-quick@wg0 -n 50'. Common causes: "
-                    "missing wireguard kernel module, syntax error in "
-                    "/etc/wireguard/wg0.conf, or PostUp script failure."
+                    "WireGuard interface '%s' did not come up. On Linux: "
+                    "'systemctl status wg-quick@%s' / 'journalctl -u wg-quick@%s -n 50'. "
+                    "On Windows: check Service Manager for 'WireGuardTunnel$%s'. "
+                    "Common causes: missing wireguard kernel module, config syntax "
+                    "error, or PostUp/PostDown script failure.",
+                    wg_iface, wg_iface, wg_iface, wg_iface,
                 )
                 self._set_state(ServerState.ERROR)
                 return
