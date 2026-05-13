@@ -38,6 +38,26 @@ def _find_wg_bin() -> Path | None:
     return None
 
 
+# Module-level deduplication for the periodic poll: the JS-side poll calls
+# get_live_peers every 2 s, so without this we would flood the Logs screen
+# with one warning every 2 s for as long as the interface is missing.
+_last_failure_message: str | None = None
+
+
+def _log_failure(message: str) -> None:
+    global _last_failure_message
+    if message != _last_failure_message:
+        log.warning("get_live_peers: %s", message)
+        _last_failure_message = message
+
+
+def _clear_failure(interface: str) -> None:
+    global _last_failure_message
+    if _last_failure_message is not None:
+        log.info("get_live_peers: 'wg show %s dump' is working again", interface)
+        _last_failure_message = None
+
+
 def get_live_peers(interface: str = "wg0", wg_bin: Path | None = None) -> dict[str, LivePeer]:
     """Return public_key -> LivePeer for every peer on the running interface.
 
@@ -46,7 +66,7 @@ def get_live_peers(interface: str = "wg0", wg_bin: Path | None = None) -> dict[s
     """
     resolved = wg_bin or _find_wg_bin()
     if resolved is None:
-        log.warning("get_live_peers: wg binary not found in PATH or common locations")
+        _log_failure("wg binary not found in PATH or common locations")
         return {}
     wg = str(resolved)
     extra: dict = {}
@@ -62,15 +82,15 @@ def get_live_peers(interface: str = "wg0", wg_bin: Path | None = None) -> dict[s
             **extra,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        log.warning("get_live_peers: wg command failed: %s", exc)
+        _log_failure(f"wg command failed: {exc}")
         return {}
     if result.returncode != 0:
-        log.warning(
-            "get_live_peers: 'wg show %s dump' exited %d — %s",
-            interface, result.returncode,
-            result.stderr.strip() or "(no stderr)",
+        _log_failure(
+            f"'wg show {interface} dump' exited {result.returncode} — "
+            f"{result.stderr.strip() or '(no stderr)'}"
         )
         return {}
+    _clear_failure(interface)
 
     peers: dict[str, LivePeer] = {}
     lines = result.stdout.strip().split("\n")

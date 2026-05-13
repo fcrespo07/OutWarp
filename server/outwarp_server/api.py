@@ -293,6 +293,49 @@ class Api:
             "owcfg_base64": base64.b64encode(owcfg_bytes).decode("ascii"),
         }
 
+    def save_owcfg(self, name: str, content_base64: str) -> dict[str, Any]:
+        """Open a native SAVE_DIALOG and write the .owcfg there.
+
+        HTML5 <a download="..."> doesn't reliably trigger a file save in
+        pywebview (WebView2/WebKit handle the download attribute differently
+        than a real browser), so we route through the bridge instead.
+        """
+        if self._window is None:
+            return {"ok": False, "error": "no window"}
+        try:
+            content = base64.b64decode(content_base64)
+        except Exception as exc:
+            return {"ok": False, "error": f"invalid content: {exc}"}
+
+        downloads = Path.home() / "Downloads"
+        if not downloads.is_dir():
+            downloads = Path.home()
+
+        try:
+            import webview
+            chosen = self._window.create_file_dialog(
+                webview.SAVE_DIALOG,
+                directory=str(downloads),
+                save_filename=f"{name}.owcfg",
+            )
+        except Exception as exc:
+            log.exception("save_owcfg: dialog failed")
+            return {"ok": False, "error": f"dialog failed: {exc}"}
+
+        if not chosen:
+            return {"ok": False, "error": "cancelled"}
+        # pywebview returns str for SAVE_DIALOG in some versions and
+        # tuple[str, ...] in others — accept both.
+        path = chosen if isinstance(chosen, str) else (chosen[0] if chosen else None)
+        if not path:
+            return {"ok": False, "error": "cancelled"}
+
+        try:
+            Path(path).write_bytes(content)
+        except OSError as exc:
+            return {"ok": False, "error": f"could not write: {exc}"}
+        return {"ok": True, "path": path}
+
     def revoke_client(self, name: str) -> dict[str, Any]:
         if self._manager is None:
             return {"ok": False, "error": "server not configured"}

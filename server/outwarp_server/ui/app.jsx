@@ -365,10 +365,11 @@ const ClientsScreen = ({ T, api, clients }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [lastAdded, setLastAdded] = useState(null);
+  const [savedTo, setSavedTo] = useState("");
 
   const onAdd = async () => {
     if (!name.trim() || !api) return;
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setSavedTo("");
     try {
       const r = await api.add_client(name.trim());
       if (r.ok) {
@@ -380,13 +381,15 @@ const ClientsScreen = ({ T, api, clients }) => {
     } finally { setBusy(false); }
   };
 
-  const onDownload = () => {
-    if (!lastAdded) return;
-    const blob = new Blob([lastAdded.owcfg], { type: "application/octet-stream" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${lastAdded.name}.owcfg`;
-    a.click();
+  const onDownload = async () => {
+    if (!lastAdded || !api) return;
+    setError(""); setSavedTo("");
+    const r = await api.save_owcfg(lastAdded.name, lastAdded.owcfg_base64);
+    if (r.ok) {
+      setSavedTo(r.path);
+    } else if (r.error !== "cancelled") {
+      setError(r.error || "no se pudo guardar");
+    }
   };
 
   return (
@@ -406,6 +409,11 @@ const ClientsScreen = ({ T, api, clients }) => {
               <strong>{lastAdded.name}</strong> · <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-3)" }}>{lastAdded.path}</span>
             </div>
             <window.Btn kind="primary" size="sm" onClick={onDownload}>{T.download}</window.Btn>
+          </div>
+        )}
+        {savedTo && (
+          <div style={{ marginTop: 10, fontSize: 12, color: "var(--brand-2)", fontFamily: "var(--font-mono)" }}>
+            ✓ guardado en {savedTo}
           </div>
         )}
       </section>

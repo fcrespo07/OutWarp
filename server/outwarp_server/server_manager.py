@@ -209,6 +209,22 @@ class ServerManager:
                 self._set_state(ServerState.ERROR)
                 return
 
+            # `systemctl enable --now wg-quick@wg0` can return 0 even when the
+            # interface fails to come up (the unit ran, but PostUp failed, the
+            # wireguard kernel module is missing, etc.). Verify explicitly so
+            # the GUI shows ERROR instead of a confusingly "running" server
+            # whose tunnel handshakes silently never happen.
+            if not platform.is_wg_active("wg0"):
+                log.error(
+                    "WireGuard interface 'wg0' did not come up. Diagnose with: "
+                    "'systemctl status wg-quick@wg0' and "
+                    "'journalctl -u wg-quick@wg0 -n 50'. Common causes: "
+                    "missing wireguard kernel module, syntax error in "
+                    "/etc/wireguard/wg0.conf, or PostUp script failure."
+                )
+                self._set_state(ServerState.ERROR)
+                return
+
             wstunnel_bin = shutil.which("wstunnel")
             if wstunnel_bin is None:
                 log.error("wstunnel binary not found in PATH")
