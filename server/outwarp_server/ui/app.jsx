@@ -76,6 +76,27 @@ function App() {
   useBridgeEvent("log",     useCallback((e) => setLogs((l) => [...l.slice(-1999), e]), []));
   useBridgeEvent("settings", useCallback((d) => setSettings(d), []));
 
+  // JS-side poll — primary mechanism for live updates. evaluate_js from a
+  // Python background thread can be silently dropped on some platform/backend
+  // combinations (GTK throttling, window not focused, etc.). Polling from JS
+  // via the bridge always works because those calls go JS → Python, not the
+  // other way around.
+  useEffect(() => {
+    if (!api) return;
+    let alive = true;
+    const tick = async () => {
+      if (!alive) return;
+      try {
+        const [s, cl] = await Promise.all([api.get_status(), api.list_clients()]);
+        setStatus((prev) => ({ ...(prev || {}), ...s }));
+        setClients(cl);
+      } catch (_) {}
+      if (alive) setTimeout(tick, 2000);
+    };
+    setTimeout(tick, 2000); // initial data already loaded in bootstrap
+    return () => { alive = false; };
+  }, [api]);
+
   const T = (settings.language === "en" ? window.SRV_STR.en : window.SRV_STR.es);
 
   const isDark = settings.theme === "dark" ||
