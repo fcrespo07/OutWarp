@@ -356,3 +356,49 @@ class TestRevokeClient:
         config_dir = _write_server_config(tmp_path)
         ret = main(["--config-dir", str(config_dir), "revoke-client", "ghost"])
         assert ret == 1
+
+
+class TestDoctorCommand:
+    def test_doctor_in_parser(self) -> None:
+        # `doctor` must be a registered subcommand — guards against the parser
+        # entry being removed by accident.
+        import argparse
+        parser = build_parser()
+        sub_action = next(
+            a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+        )
+        assert "doctor" in sub_action.choices
+
+    def test_doctor_exits_zero_when_all_pass(self, tmp_path: Path) -> None:
+        from outwarp_server.diagnostics import CheckResult, Status
+
+        config_dir = _write_server_config(tmp_path)
+        with patch(
+            "outwarp_server.diagnostics.run_all",
+            return_value=[CheckResult("ok", Status.PASS, "fine")],
+        ):
+            ret = main(["--config-dir", str(config_dir), "doctor"])
+        assert ret == 0
+
+    def test_doctor_exits_one_when_any_fail(self, tmp_path: Path) -> None:
+        from outwarp_server.diagnostics import CheckResult, Status
+
+        config_dir = _write_server_config(tmp_path)
+        results = [
+            CheckResult("a", Status.PASS),
+            CheckResult("b", Status.FAIL, "broken", remediation="do X"),
+        ]
+        with patch("outwarp_server.diagnostics.run_all", return_value=results):
+            ret = main(["--config-dir", str(config_dir), "doctor"])
+        assert ret == 1
+
+    def test_doctor_warn_only_does_not_fail(self, tmp_path: Path) -> None:
+        # WARN alone shouldn't fail the run — the CLI returns 0 so it can be
+        # used in scripts that only care about hard failures.
+        from outwarp_server.diagnostics import CheckResult, Status
+
+        config_dir = _write_server_config(tmp_path)
+        results = [CheckResult("a", Status.WARN, "soft", remediation="maybe Y")]
+        with patch("outwarp_server.diagnostics.run_all", return_value=results):
+            ret = main(["--config-dir", str(config_dir), "doctor"])
+        assert ret == 0

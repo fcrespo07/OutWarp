@@ -36,7 +36,7 @@ console = Console()
 # Anything not in this set runs without a root check (--version, --help).
 _PRIVILEGED_COMMANDS = frozenset({
     "setup", "add-client", "list-clients", "revoke-client",
-    "status", "restart", "uninstall",
+    "status", "restart", "uninstall", "doctor",
 })
 
 
@@ -463,6 +463,61 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Run the diagnostics battery and print a pass/warn/fail report.
+
+    Exit code: 0 if no failures, 1 if any FAIL (WARN does not fail the run —
+    warnings often signal "works for now but fragile" and shouldn't block CI).
+    """
+    from rich.panel import Panel
+
+    from outwarp_server.diagnostics import Status, run_all
+
+    config = _load_config(args)
+
+    console.print(
+        Panel(
+            "[bold]Modo de pruebas / Doctor[/bold]\n"
+            "Comprueba todo lo necesario para que el túnel funcione end-to-end.",
+            border_style="cyan",
+        )
+    )
+
+    results = run_all(config)
+
+    table = Table(title="Resultados", show_lines=False)
+    table.add_column("", width=2)
+    table.add_column("Check", style="bold")
+    table.add_column("Detalle")
+
+    icons = {
+        Status.PASS: "[green]✓[/green]",
+        Status.WARN: "[yellow]⚠[/yellow]",
+        Status.FAIL: "[red]✗[/red]",
+        Status.SKIP: "[dim]—[/dim]",
+    }
+    for r in results:
+        table.add_row(icons[r.status], r.name, r.detail or "")
+    console.print(table)
+
+    needs_action = [r for r in results if r.status in (Status.FAIL, Status.WARN) and r.remediation]
+    if needs_action:
+        console.print("\n[bold]Acciones sugeridas:[/bold]")
+        for r in needs_action:
+            style = "red" if r.status == Status.FAIL else "yellow"
+            console.print(f"  [{style}]•[/{style}] [bold]{r.name}[/bold]: {r.remediation}")
+
+    summary = {Status.PASS: 0, Status.WARN: 0, Status.FAIL: 0, Status.SKIP: 0}
+    for r in results:
+        summary[r.status] += 1
+    console.print(
+        f"\n[green]{summary[Status.PASS]} OK[/green] / "
+        f"[yellow]{summary[Status.WARN]} warn[/yellow] / "
+        f"[red]{summary[Status.FAIL]} fail[/red]"
+    )
+    return 1 if summary[Status.FAIL] > 0 else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="outwarp-server",
@@ -503,6 +558,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes", "-y", action="store_true", help="Skip confirmation prompt"
     )
 
+    sub.add_parser(
+        "doctor",
+        help="Run the full diagnostics battery (modo de pruebas) — "
+             "checks NAT, forwarding, services, firewall, etc.",
+    )
+
     return parser
 
 
@@ -514,6 +575,7 @@ _COMMANDS: dict[str, callable] = {
     "status": _cmd_status,
     "restart": _cmd_restart,
     "uninstall": _cmd_uninstall,
+    "doctor": _cmd_doctor,
 }
 
 

@@ -63,6 +63,19 @@ const SRV_STR = {
     set_domainSub: "Sólo si tienes uno apuntando al servidor; no es necesario para OutWarp",
 
     revokeConfirm: "¿Revocar a {name}? Su .owcfg dejará de funcionar inmediatamente.",
+
+    doctor_title: "Doctor",
+    doctor_sub: "Comprueba que todo lo necesario para que el túnel funcione está en orden.",
+    doctor_run: "Ejecutar comprobaciones",
+    doctor_running: "Comprobando…",
+    doctor_lastRun: "Última ejecución",
+    doctor_neverRun: "Aún no se ha ejecutado.",
+    doctor_allGood: "Todo en orden.",
+    doctor_someWarn: "Funciona pero con avisos.",
+    doctor_someFail: "Hay fallos que impedirán el funcionamiento correcto.",
+    doctor_remediation: "Acciones sugeridas",
+    doctor_copy: "Copiar",
+    doctor_copied: "Copiado",
   },
   en: {
     appName: "OutWarp Server",
@@ -127,6 +140,19 @@ const SRV_STR = {
     set_domainSub: "Only if you have one pointing to the server; not required for OutWarp",
 
     revokeConfirm: "Revoke {name}? Their .owcfg will stop working immediately.",
+
+    doctor_title: "Doctor",
+    doctor_sub: "Checks that everything needed for the tunnel to work is in order.",
+    doctor_run: "Run checks",
+    doctor_running: "Checking…",
+    doctor_lastRun: "Last run",
+    doctor_neverRun: "Not run yet.",
+    doctor_allGood: "Everything OK.",
+    doctor_someWarn: "Works but with warnings.",
+    doctor_someFail: "Failures detected — the tunnel won't work correctly.",
+    doctor_remediation: "Suggested actions",
+    doctor_copy: "Copy",
+    doctor_copied: "Copied",
   },
 };
 

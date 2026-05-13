@@ -198,6 +198,42 @@ class Api:
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
             return {"ip": None, "error": str(exc)}
 
+    def run_diagnostics(self) -> dict[str, Any]:
+        """Run the full diagnostics battery and return a JSON-serialisable report.
+
+        Returns {"ok": bool, "checks": [...], "summary": {...}} so the UI can
+        render the table and a one-line headline. The blocking checks (network
+        egress, PowerShell calls) can take a few seconds; the JS side awaits.
+        """
+        if self._manager is None:
+            return {
+                "ok": False,
+                "error": "Server not configured yet — run setup first.",
+                "checks": [],
+                "summary": {"pass": 0, "warn": 0, "fail": 1, "skip": 0},
+            }
+
+        from outwarp_server.diagnostics import Status, run_all
+
+        results = run_all(self._manager.config)
+        checks = [
+            {
+                "name": r.name,
+                "status": r.status.value,
+                "detail": r.detail,
+                "remediation": r.remediation,
+            }
+            for r in results
+        ]
+        summary = {s.value: 0 for s in Status}
+        for r in results:
+            summary[r.status.value] += 1
+        return {
+            "ok": summary["fail"] == 0,
+            "checks": checks,
+            "summary": summary,
+        }
+
     def _on_state_change(self, state: ServerState) -> None:
         self._emit("status", {
             "status": _STATE_TO_JS.get(state, "stopped"),

@@ -237,3 +237,39 @@ def test_record_log_emits_event():
     js = fake_window.evaluate_js.call_args.args[0]
     assert "outwarp:log" in js
     assert "boom" in js
+
+
+def test_run_diagnostics_without_manager():
+    api, _ = _make_api()
+    r = api.run_diagnostics()
+    assert r["ok"] is False
+    assert "setup" in r["error"].lower()
+    assert r["checks"] == []
+
+
+def test_run_diagnostics_serializes_results():
+    from outwarp_server.diagnostics import CheckResult, Status
+
+    mgr = _make_mgr()
+    api, _ = _make_api(mgr)
+
+    fake_results = [
+        CheckResult(name="Check OK", status=Status.PASS, detail="all good"),
+        CheckResult(
+            name="Check Fail",
+            status=Status.FAIL,
+            detail="broken",
+            remediation="Run: do-the-thing",
+        ),
+        CheckResult(name="Check Warn", status=Status.WARN, detail="meh"),
+    ]
+    with patch("outwarp_server.diagnostics.run_all", return_value=fake_results):
+        r = api.run_diagnostics()
+
+    assert r["ok"] is False  # one FAIL -> ok is False
+    assert r["summary"] == {"pass": 1, "warn": 1, "fail": 1, "skip": 0}
+    assert r["checks"][0] == {
+        "name": "Check OK", "status": "pass", "detail": "all good", "remediation": None
+    }
+    assert r["checks"][1]["remediation"] == "Run: do-the-thing"
+    assert r["checks"][1]["status"] == "fail"

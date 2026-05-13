@@ -130,7 +130,7 @@ function App() {
         {screen === "clients"   && <ClientsScreen T={T} api={api} clients={clients}/>}
         {screen === "service"   && <ServiceScreen T={T} api={api} status={status}/>}
         {screen === "logs"      && <LogsScreen T={T} logs={logs} onClear={() => setLogs([])}/>}
-        {screen === "settings"  && <SettingsScreen T={T} settings={settings} onSetting={onSetting} status={status}/>}
+        {screen === "settings"  && <SettingsScreen T={T} settings={settings} onSetting={onSetting} status={status} api={api}/>}
       </main>
     </div>
   );
@@ -534,8 +534,152 @@ const LogsScreen = ({ T, logs, onClear }) => {
   );
 };
 
+// ── Doctor (diagnostics panel embedded in Settings) ────────────────
+//
+// Runs the same battery as `outwarp-server doctor` and renders a table of
+// pass/warn/fail rows. Each row with a remediation gets a copyable command
+// block — the user is meant to paste those into an elevated PowerShell.
+const DoctorPanel = ({ T, api }) => {
+  const [running, setRunning] = useState(false);
+  const [report, setReport] = useState(null);
+  const [lastRunTs, setLastRunTs] = useState(null);
+  const [copiedIdx, setCopiedIdx] = useState(null);
+
+  const run = useCallback(async () => {
+    if (!api || running) return;
+    setRunning(true);
+    try {
+      const r = await api.run_diagnostics();
+      setReport(r);
+      setLastRunTs(Date.now());
+    } finally {
+      setRunning(false);
+    }
+  }, [api, running]);
+
+  const onCopy = async (text, idx) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedIdx(idx);
+      setTimeout(() => setCopiedIdx((c) => (c === idx ? null : c)), 1500);
+    } catch (_) {
+      // Clipboard API can be blocked in pywebview on some platforms.
+      // The text remains visible on screen; user can select + copy manually.
+    }
+  };
+
+  const summaryTone = !report
+    ? "neutral"
+    : report.summary.fail > 0
+    ? "bad"
+    : report.summary.warn > 0
+    ? "warn"
+    : "good";
+  const summaryText = !report
+    ? T.doctor_neverRun
+    : report.summary.fail > 0
+    ? T.doctor_someFail
+    : report.summary.warn > 0
+    ? T.doctor_someWarn
+    : T.doctor_allGood;
+
+  const lastRunLabel = lastRunTs
+    ? new Date(lastRunTs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : null;
+
+  const statusIcons = {
+    pass: { ch: "✓", color: "var(--brand-2)" },
+    warn: { ch: "⚠", color: "var(--brand-warn)" },
+    fail: { ch: "✗", color: "var(--brand-bad)" },
+    skip: { ch: "—", color: "var(--text-3)" },
+  };
+
+  return (
+    <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>{T.doctor_title}</div>
+          <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>{T.doctor_sub}</div>
+        </div>
+        <window.Btn kind="primary" size="md" onClick={run} disabled={running || !api}>
+          {running ? T.doctor_running : T.doctor_run}
+        </window.Btn>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
+        <window.StatusDot tone={summaryTone} pulse={running}/>
+        <span style={{ fontSize: 13, fontWeight: 500 }}>{summaryText}</span>
+        {report && (
+          <span style={{ fontSize: 12, color: "var(--text-3)", marginLeft: 8, fontFamily: "var(--font-mono)" }}>
+            ✓ {report.summary.pass} · ⚠ {report.summary.warn} · ✗ {report.summary.fail}
+          </span>
+        )}
+        {lastRunLabel && (
+          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>
+            {T.doctor_lastRun}: {lastRunLabel}
+          </span>
+        )}
+      </div>
+
+      {report && report.error && (
+        <div style={{ marginTop: 14, padding: 12, background: "color-mix(in srgb, var(--brand-bad) 12%, transparent)", color: "var(--brand-bad)", borderRadius: 8, fontSize: 12 }}>
+          {report.error}
+        </div>
+      )}
+
+      {report && report.checks.length > 0 && (
+        <div style={{ marginTop: 14, border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden" }}>
+          {report.checks.map((c, i) => {
+            const ic = statusIcons[c.status] || statusIcons.skip;
+            return (
+              <div key={i} style={{
+                display: "grid",
+                gridTemplateColumns: "28px 1fr",
+                gap: 10,
+                padding: "10px 14px",
+                borderTop: i === 0 ? "none" : "1px solid var(--line)",
+                background: c.status === "fail" ? "color-mix(in srgb, var(--brand-bad) 5%, transparent)"
+                          : c.status === "warn" ? "color-mix(in srgb, var(--brand-warn) 5%, transparent)"
+                          : "transparent",
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: ic.color, lineHeight: "20px" }}>{ic.ch}</div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>{c.name}</div>
+                  {c.detail && (
+                    <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)", wordBreak: "break-word" }}>
+                      {c.detail}
+                    </div>
+                  )}
+                  {c.remediation && (
+                    <div style={{
+                      marginTop: 8, padding: "8px 10px",
+                      background: "var(--bg-sunk)", border: "1px solid var(--line)", borderRadius: 8,
+                      display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "start",
+                    }}>
+                      <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-2)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                        {c.remediation}
+                      </div>
+                      <button onClick={() => onCopy(c.remediation, i)} style={{
+                        all: "unset", cursor: "pointer", padding: "4px 10px", borderRadius: 6,
+                        fontSize: 11, fontWeight: 600, color: "var(--text-2)", border: "1px solid var(--line-strong)",
+                        background: "var(--bg-2)",
+                      }}>
+                        {copiedIdx === i ? T.doctor_copied : T.doctor_copy}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+};
+
 // ── Settings ───────────────────────────────────────────────────────
-const SettingsScreen = ({ T, settings, onSetting, status }) => {
+const SettingsScreen = ({ T, settings, onSetting, status, api }) => {
   const Row = ({ title, sub, control }) => (
     <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, alignItems: "center", padding: "14px 0", borderBottom: "1px solid var(--line)" }}>
       <div>
@@ -562,6 +706,7 @@ const SettingsScreen = ({ T, settings, onSetting, status }) => {
         <Row title={T.set_subnet} control={<span style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{status.subnet}</span>}/>
         <Row title={T.set_cert} sub={T.set_certSub} control={<span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-3)", maxWidth: 320, display: "inline-block", textAlign: "right", wordBreak: "break-all" }}>{status.cert_fingerprint_sha256}</span>}/>
       </div>
+      <DoctorPanel T={T} api={api}/>
     </section>
   );
 };
