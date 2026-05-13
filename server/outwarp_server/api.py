@@ -222,6 +222,7 @@ class Api:
                 "status": r.status.value,
                 "detail": r.detail,
                 "remediation": r.remediation,
+                "remediation_command": r.remediation_command,
             }
             for r in results
         ]

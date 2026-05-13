@@ -654,18 +654,30 @@ const DoctorPanel = ({ T, api }) => {
                     <div style={{
                       marginTop: 8, padding: "8px 10px",
                       background: "var(--bg-sunk)", border: "1px solid var(--line)", borderRadius: 8,
-                      display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "start",
                     }}>
-                      <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-2)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                      <div style={{ fontSize: 12, color: "var(--text-2)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                         {c.remediation}
                       </div>
-                      <button onClick={() => onCopy(c.remediation, i)} style={{
-                        all: "unset", cursor: "pointer", padding: "4px 10px", borderRadius: 6,
-                        fontSize: 11, fontWeight: 600, color: "var(--text-2)", border: "1px solid var(--line-strong)",
-                        background: "var(--bg-2)",
-                      }}>
-                        {copiedIdx === i ? T.doctor_copied : T.doctor_copy}
-                      </button>
+                      {c.remediation_command && (
+                        <div style={{
+                          marginTop: 8,
+                          display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "stretch",
+                          background: "var(--bg)", border: "1px solid var(--line-strong)", borderRadius: 6,
+                          padding: "6px 8px",
+                        }}>
+                          <code style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                            {c.remediation_command}
+                          </code>
+                          <button onClick={() => onCopy(c.remediation_command, i)} style={{
+                            all: "unset", cursor: "pointer", padding: "2px 10px", borderRadius: 4,
+                            fontSize: 11, fontWeight: 600, color: "var(--text-2)",
+                            border: "1px solid var(--line-strong)", background: "var(--bg-2)",
+                            alignSelf: "center",
+                          }}>
+                            {copiedIdx === i ? T.doctor_copied : T.doctor_copy}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

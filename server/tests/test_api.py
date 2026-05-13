@@ -269,7 +269,10 @@ def test_run_diagnostics_serializes_results():
     assert r["ok"] is False  # one FAIL -> ok is False
     assert r["summary"] == {"pass": 1, "warn": 1, "fail": 1, "skip": 0}
     assert r["checks"][0] == {
-        "name": "Check OK", "status": "pass", "detail": "all good", "remediation": None
+        "name": "Check OK", "status": "pass", "detail": "all good",
+        "remediation": None, "remediation_command": None,
     }
     assert r["checks"][1]["remediation"] == "Run: do-the-thing"
     assert r["checks"][1]["status"] == "fail"
+    # remediation_command defaults to None when the check didn't set it.
+    assert r["checks"][1]["remediation_command"] is None

@@ -27,6 +27,9 @@ class CheckResult:
     status: Status
     detail: str = ""
     remediation: str | None = None
+    # Bare command intended for the UI's "Copy" button — without surrounding
+    # prose like "As admin: ...". Falls back to `remediation` when unset.
+    remediation_command: str | None = None
 
 
 @dataclass
@@ -79,6 +82,7 @@ def check_clients_registered(config: ServerConfig) -> CheckResult:
             status=Status.WARN,
             detail="No clients registered yet.",
             remediation="Run `outwarp-server add-client <name>` to issue a profile.",
+            remediation_command="outwarp-server add-client <name>",
         )
     return CheckResult(
         name="Clients registered",
@@ -88,21 +92,25 @@ def check_clients_registered(config: ServerConfig) -> CheckResult:
 
 
 def check_tls_cert_files(config: ServerConfig) -> CheckResult:
-    cfg_dir = default_config_dir()
-    cert = cfg_dir / "server_cert.pem"
-    key = cfg_dir / "server_key.pem"
+    # Use the paths stored in the config — these are the ones wstunnel actually
+    # reads. The fallback to default_config_dir was wrong: the wizard may store
+    # them anywhere, and the doctor would falsely flag them as missing.
+    from pathlib import Path
+    cert = Path(config.cert_path)
+    key = Path(config.key_path)
     missing = [p for p in (cert, key) if not p.exists()]
     if missing:
         return CheckResult(
             name="TLS cert + key present",
             status=Status.FAIL,
-            detail=f"Missing: {', '.join(p.name for p in missing)}",
+            detail=f"Missing: {', '.join(str(p) for p in missing)}",
             remediation="Re-run `outwarp-server setup` to regenerate the TLS material.",
+            remediation_command="outwarp-server setup",
         )
     return CheckResult(
         name="TLS cert + key present",
         status=Status.PASS,
-        detail=str(cfg_dir),
+        detail=str(cert.parent),
     )
 
 
@@ -171,6 +179,10 @@ def check_win_ip_forwarding(config: ServerConfig) -> CheckResult:
             "'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters' "
             "-Name IPEnableRouter -Value 1` and reboot."
         ),
+        remediation_command=(
+            "Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters' "
+            "-Name IPEnableRouter -Value 1"
+        ),
     )
 
 
@@ -186,6 +198,7 @@ def check_win_forwarding_on_wg_iface(config: ServerConfig) -> CheckResult:
             status=Status.FAIL,
             detail="Interface not present.",
             remediation="WireGuard interface isn't installed. Run `outwarp-server restart`.",
+            remediation_command="outwarp-server restart",
         )
     if "Enabled" in stdout:
         return CheckResult(
@@ -200,6 +213,9 @@ def check_win_forwarding_on_wg_iface(config: ServerConfig) -> CheckResult:
         remediation=(
             f"As admin: `Set-NetIPInterface -InterfaceAlias '{_WIN_WG_INTERFACE}' "
             f"-Forwarding Enabled`."
+        ),
+        remediation_command=(
+            f"Set-NetIPInterface -InterfaceAlias '{_WIN_WG_INTERFACE}' -Forwarding Enabled"
         ),
     )
 
@@ -217,7 +233,13 @@ def check_win_netnat(config: ServerConfig) -> CheckResult:
             detail="No NetNat instances exist at all.",
             remediation=(
                 f"As admin: `New-NetNat -Name '{_WIN_NAT_NAME}' "
-                f"-InternalIPInterfaceAddressPrefix '{config.subnet}'`."
+                f"-InternalIPInterfaceAddressPrefix '{config.subnet}'`. "
+                "If this fails, the WinNat service is probably not running — "
+                "fix that check first."
+            ),
+            remediation_command=(
+                f"New-NetNat -Name '{_WIN_NAT_NAME}' "
+                f"-InternalIPInterfaceAddressPrefix '{config.subnet}'"
             ),
         )
     try:
@@ -240,6 +262,7 @@ def check_win_netnat(config: ServerConfig) -> CheckResult:
         listing = ", ".join(
             f"{n.get('Name')}({n.get('InternalIPInterfaceAddressPrefix')})" for n in nats
         )
+        conflict_name = nats[0].get("Name") if nats else "<name>"
         return CheckResult(
             name="WinNAT rule for WG subnet",
             status=Status.FAIL,
@@ -249,6 +272,11 @@ def check_win_netnat(config: ServerConfig) -> CheckResult:
                 "e.g. `Remove-NetNat -Name <name> -Confirm:$false` (typical culprits: "
                 "'WSL', 'Hyper-V', 'ICS', a Mobile Hotspot rule) — then run "
                 "`outwarp-server restart`."
+            ),
+            remediation_command=(
+                f"Remove-NetNat -Name '{conflict_name}' -Confirm:$false; "
+                f"New-NetNat -Name '{_WIN_NAT_NAME}' "
+                f"-InternalIPInterfaceAddressPrefix '{config.subnet}'"
             ),
         )
 
@@ -260,6 +288,7 @@ def check_win_netnat(config: ServerConfig) -> CheckResult:
             status=Status.FAIL,
             detail=f"NAT '{found.get('Name')}' exists but Active=False.",
             remediation="Restart the WinNAT service: `Restart-Service WinNat`.",
+            remediation_command="Restart-Service WinNat",
         )
     if others:
         listing = ", ".join(
@@ -286,11 +315,38 @@ def check_win_winnat_service(config: ServerConfig) -> CheckResult:
     if "RUNNING" in out:
         return CheckResult(name="WinNat service", status=Status.PASS, detail="RUNNING")
     if "STOPPED" in out:
+        # NetNat creation triggers WinNat on demand, but only if startup is not
+        # disabled. If `Start-Service` fails here, the underlying driver is
+        # missing — almost always because Hyper-V / Containers features aren't
+        # enabled. Suggest both the easy path and the diagnostic.
         return CheckResult(
             name="WinNat service",
             status=Status.FAIL,
             detail="Stopped — NetNat rules will NOT translate traffic.",
-            remediation="As admin: `Start-Service WinNat; Set-Service WinNat -StartupType Automatic`.",
+            remediation=(
+                "As admin: `Set-Service WinNat -StartupType Automatic; Start-Service WinNat`. "
+                "If start fails with 'service did not respond', the underlying NAT driver "
+                "is missing — enable the 'Containers' or 'Hyper-V' Windows feature: "
+                "`Enable-WindowsOptionalFeature -Online -FeatureName Containers -All` and reboot."
+            ),
+            remediation_command=(
+                "Set-Service WinNat -StartupType Automatic; Start-Service WinNat"
+            ),
+        )
+    if "FAILED" in out or not out.strip():
+        # `sc query` returns "[SC] EnumQueryServicesStatus:OpenService FAILED 1060"
+        # when the service literally doesn't exist on the machine.
+        return CheckResult(
+            name="WinNat service",
+            status=Status.FAIL,
+            detail="WinNat service not registered on this Windows install.",
+            remediation=(
+                "The NAT driver isn't installed. Enable the 'Containers' Windows feature: "
+                "`Enable-WindowsOptionalFeature -Online -FeatureName Containers -All` and reboot."
+            ),
+            remediation_command=(
+                "Enable-WindowsOptionalFeature -Online -FeatureName Containers -All"
+            ),
         )
     return CheckResult(
         name="WinNat service",
@@ -312,6 +368,7 @@ def check_win_wg_service(config: ServerConfig) -> CheckResult:
         status=Status.FAIL,
         detail=f"Not running: {out.strip()[:200]}",
         remediation="As admin: `outwarp-server restart`.",
+        remediation_command="outwarp-server restart",
     )
 
 
@@ -381,6 +438,7 @@ def check_win_firewall(config: ServerConfig) -> CheckResult:
             status=Status.FAIL,
             detail=f"Rule exists but disabled: {raw}",
             remediation="As admin: `Enable-NetFirewallRule -DisplayName 'OutWarp-wstunnel'`.",
+            remediation_command="Enable-NetFirewallRule -DisplayName 'OutWarp-wstunnel'",
         )
     # Legacy fallback for rules created via netsh.
     legacy = subprocess.run(
@@ -403,6 +461,10 @@ def check_win_firewall(config: ServerConfig) -> CheckResult:
         remediation=(
             f"As admin: `netsh advfirewall firewall add rule "
             f"name=OutWarp-wstunnel dir=in action=allow localport={config.port} protocol=TCP`."
+        ),
+        remediation_command=(
+            f"netsh advfirewall firewall add rule name=OutWarp-wstunnel "
+            f"dir=in action=allow localport={config.port} protocol=TCP"
         ),
     )
 
