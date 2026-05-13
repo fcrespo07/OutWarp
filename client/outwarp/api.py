@@ -35,6 +35,7 @@ from outwarp.config import (
 )
 from outwarp.logs import MemoryLogHandler
 from outwarp.tunnel import TunnelManager, TunnelState
+from outwarp.wireguard import get_tunnel_stats
 
 log = logging.getLogger(__name__)
 
@@ -343,11 +344,36 @@ class Api:
         self._stats_stop.clear()
 
         def _loop() -> None:
-            # The real backend doesn't yet expose per-second throughput. Emit
-            # zeros at 1Hz so the UI's live charts have a heartbeat; the values
-            # will become real once tunnel.py grows a stats hook.
+            tunnel_name = self._manager.config.wireguard.tunnel_name if self._manager else ""
+            prev_rx, prev_tx, prev_ts = 0, 0, 0.0
             while not self._stats_stop.is_set():
+                now = time.time()
+                snap = get_tunnel_stats(tunnel_name) if tunnel_name else None
+                if snap is not None:
+                    if prev_ts > 0:
+                        dt = max(now - prev_ts, 0.001)
+                        rx_bps = max(0, int((snap.rx_bytes - prev_rx) / dt))
+                        tx_bps = max(0, int((snap.tx_bytes - prev_tx) / dt))
+                    else:
+                        rx_bps = tx_bps = 0
+                    self._stats["rx_bps"] = rx_bps
+                    self._stats["tx_bps"] = tx_bps
+                    self._stats["rx_total"] = snap.rx_bytes
+                    self._stats["tx_total"] = snap.tx_bytes
+                    if snap.latest_handshake is not None:
+                        self._stats["last_handshake"] = snap.latest_handshake
+                    prev_rx, prev_tx, prev_ts = snap.rx_bytes, snap.tx_bytes, now
+                # Always emit so the UI has a heartbeat — even if wg isn't
+                # readable (e.g. running tunnel without privileges) the dial
+                # / session timer keeps ticking.
                 self._emit("stats", dict(self._stats))
+                # Re-broadcast status too: a cheap watchdog in case an earlier
+                # evaluate_js call was dropped by the webview backend before
+                # the page was ready to receive it.
+                self._emit("status", {
+                    "status": self._status_str(),
+                    "active_profile_id": self._active_profile_id(),
+                })
                 time.sleep(1.0)
 
         self._stats_thread = threading.Thread(

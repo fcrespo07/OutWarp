@@ -103,6 +103,8 @@ class Api:
         self._settings = _load_settings()
         self._log_seq = 0
         self._logs: deque[dict[str, Any]] = deque(maxlen=2000)
+        self._poll_stop = threading.Event()
+        self._poll_thread: threading.Thread | None = None
 
         if manager is not None:
             manager.add_listener(self._on_state_change)
@@ -114,6 +116,38 @@ class Api:
         for line in self._memory_handler.snapshot():
             self._record_log("info", line)
         self._start_log_watcher()
+        self._start_live_poll()
+
+    def _start_live_poll(self) -> None:
+        """Re-emit status + client list every 2s.
+
+        wg handshakes happen at the kernel level and never fire a Python
+        callback — without this poll the UI's "online/offline" pill for each
+        client would stay frozen until the next add/revoke. The status
+        heartbeat also acts as a safety net for any evaluate_js call the
+        webview dropped during page load.
+        """
+        if self._poll_thread is not None and self._poll_thread.is_alive():
+            return
+        self._poll_stop.clear()
+
+        def _loop() -> None:
+            while not self._poll_stop.is_set():
+                try:
+                    if self._manager is not None:
+                        self._emit("status", {
+                            "status": _STATE_TO_JS.get(self._manager.state, "stopped"),
+                            "config_present": True,
+                        })
+                        self._emit("clients", self.list_clients())
+                except Exception:
+                    log.exception("live poll iteration failed")
+                self._poll_stop.wait(2.0)
+
+        self._poll_thread = threading.Thread(
+            target=_loop, daemon=True, name="outwarp-server-poll",
+        )
+        self._poll_thread.start()
 
     def _emit(self, name: str, payload: Any) -> None:
         if self._window is None:
@@ -383,6 +417,7 @@ class Api:
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def shutdown(self) -> None:
+        self._poll_stop.set()
         if self._manager is not None:
             try:
                 self._manager.stop()
