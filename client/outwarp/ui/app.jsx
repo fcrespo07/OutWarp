@@ -446,6 +446,7 @@ const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => 
   const fileRef = useRef(null);
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
+  const [showEditor, setShowEditor] = useState(false);
 
   const handleFile = async (file) => {
     if (!file) return;
@@ -476,7 +477,10 @@ const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => 
             <div style={{ fontSize: 13, fontWeight: 600 }}>{active.name}</div>
             <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)" }}>{active.endpoint}</div>
           </div>
-          <window.Btn kind="danger" size="sm" onClick={onRemove}>Eliminar</window.Btn>
+          <div style={{ display: "flex", gap: 8 }}>
+            <window.Btn kind="ghost" size="sm" onClick={() => setShowEditor((v) => !v)}>{T.edit_open}</window.Btn>
+            <window.Btn kind="danger" size="sm" onClick={onRemove}>Eliminar</window.Btn>
+          </div>
         </div>
       )}
       <div style={{
@@ -498,7 +502,13 @@ const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => 
         {msg && <div style={{ marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-2)" }}>{msg}</div>}
         {error && <div style={{ marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>{error}</div>}
       </div>
-      {active && <ProfileEditor T={T} api={api} active={active} onUpdated={onProfilesChanged}/>}
+      {active && showEditor && (
+        <ProfileEditor
+          T={T} api={api} active={active}
+          onUpdated={onProfilesChanged}
+          onClose={() => setShowEditor(false)}
+        />
+      )}
     </div>
   );
 };
@@ -508,7 +518,7 @@ const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => 
 // .owcfg (name, MTU, DNS, client IP, bypass routes, reconnect backoff).
 // Gated behind a disclaimer because a wrong value breaks the tunnel; the
 // "reset to defaults" button restores the pristine imported config.
-const ProfileEditor = ({ T, api, active, onUpdated }) => {
+const ProfileEditor = ({ T, api, active, onUpdated, onClose }) => {
   const [ack, setAck] = useState(false);
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -593,8 +603,9 @@ const ProfileEditor = ({ T, api, active, onUpdated }) => {
             <div style={{ fontSize: 13, fontWeight: 600, color: "var(--brand-warn)" }}>{T.edit_disclaimerTitle}</div>
           </div>
           <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.55 }}>{T.edit_disclaimerBody}</div>
-          <div style={{ marginTop: 12 }}>
+          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
             <window.Btn kind="ghost" size="sm" onClick={() => { setMsg(""); setErr(""); setAck(true); }}>{T.edit_disclaimerAck}</window.Btn>
+            <window.Btn kind="ghost" size="sm" onClick={onClose}>{T.edit_cancel}</window.Btn>
           </div>
         </div>
       )}
@@ -615,7 +626,7 @@ const ProfileEditor = ({ T, api, active, onUpdated }) => {
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <window.Btn kind="primary" size="md" onClick={save} disabled={busy} style={busy ? { opacity: .6 } : {}}>{T.edit_save}</window.Btn>
           <window.Btn kind="danger" size="md" onClick={reset} disabled={busy} style={busy ? { opacity: .6 } : {}}>{T.edit_reset}</window.Btn>
-          <window.Btn kind="ghost" size="md" onClick={() => setAck(false)} disabled={busy}>{T.edit_cancel}</window.Btn>
+          <window.Btn kind="ghost" size="md" onClick={onClose} disabled={busy}>{T.edit_cancel}</window.Btn>
           <span style={{ fontSize: 11, color: "var(--text-3)" }}>{T.edit_reconnectNote}</span>
         </div>
       )}

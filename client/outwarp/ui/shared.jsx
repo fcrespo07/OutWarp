@@ -76,7 +76,7 @@ const STR = {
     // Profile editor
     edit_title: "Ajustes del perfil",
     edit_sub: "Valores de conexión asignados por tu servidor.",
-    edit_open: "Editar ajustes",
+    edit_open: "Modificar conexión",
     edit_disclaimerTitle: "Estás a punto de editar la configuración",
     edit_disclaimerBody: "Estos valores vienen de tu servidor y normalmente no necesitan cambiarse. Una configuración incorrecta puede impedir que el túnel conecte. Si algo deja de funcionar, usa «Reiniciar a predeterminados».",
     edit_disclaimerAck: "Entiendo, quiero editar",
@@ -181,7 +181,7 @@ const STR = {
 
     edit_title: "Profile settings",
     edit_sub: "Connection values assigned by your server.",
-    edit_open: "Edit settings",
+    edit_open: "Modify connection",
     edit_disclaimerTitle: "You're about to edit the configuration",
     edit_disclaimerBody: "These values come from your server and rarely need changing. A wrong setting can stop the tunnel from connecting. If something breaks, use “Reset to defaults”.",
     edit_disclaimerAck: "I understand, let me edit",
