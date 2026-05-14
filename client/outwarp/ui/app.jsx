@@ -49,6 +49,49 @@ const fmtDuration = (sec) => {
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 };
+const fmtClock = (epoch) => {
+  const d = new Date(epoch * 1000);  // local time, not UTC
+  return [d.getHours(), d.getMinutes(), d.getSeconds()]
+    .map((n) => String(n).padStart(2, "0")).join(":");
+};
+
+// ── Confirm modal ──────────────────────────────────────────────────
+// Replaces window.confirm so destructive actions match the app's design.
+// useConfirmState returns [confirm, dialogElement]: render the element inside
+// the themed tree, then `await confirm({...})` resolves to a boolean.
+const ConfirmDialog = ({ title, message, confirmLabel, cancelLabel, danger, onResult }) => {
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") onResult(false);
+      else if (e.key === "Enter") onResult(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onResult]);
+  return (
+    <div className="ow-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onResult(false); }}>
+      <div className="ow-modal" role="dialog" aria-modal="true">
+        {title && <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>{title}</div>}
+        <div style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.55 }}>{message}</div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <window.Btn kind="ghost" size="md" onClick={() => onResult(false)}>{cancelLabel}</window.Btn>
+          <window.Btn kind={danger ? "danger" : "primary"} size="md" onClick={() => onResult(true)}>{confirmLabel}</window.Btn>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+function useConfirmState() {
+  const [pending, setPending] = useState(null);
+  const confirm = useCallback((opts) => new Promise((resolve) => {
+    setPending({ ...opts, resolve });
+  }), []);
+  const dialog = pending
+    ? <ConfirmDialog {...pending} onResult={(val) => { pending.resolve(val); setPending(null); }}/>
+    : null;
+  return [confirm, dialog];
+}
 
 // ── App root ───────────────────────────────────────────────────────
 function App() {
@@ -62,7 +105,9 @@ function App() {
   const [screen, setScreen] = useState("home");
   const [busyMsg, setBusyMsg] = useState("");
   const [connError, setConnError] = useState("");
+  const [attemptInfo, setAttemptInfo] = useState({ attempt: 0, max_attempts: 0 });
   const [ready, setReady] = useState(false);
+  const [confirm, confirmDialog] = useConfirmState();
 
   // bootstrap
   useEffect(() => {
@@ -75,6 +120,7 @@ function App() {
       setActiveId(s.active_profile_id);
       setStats(s.stats);
       setConnError(s.error || "");
+      setAttemptInfo({ attempt: s.attempt || 0, max_attempts: s.max_attempts || 0 });
       setProfiles(ps);
       setSettings(st);
       setLogs(lg);
@@ -86,7 +132,8 @@ function App() {
     setStatus(d.status);
     setActiveId(d.active_profile_id);
     setConnError(d.error || "");
-    if (d.status !== "connecting" && d.status !== "error") setBusyMsg("");
+    setAttemptInfo({ attempt: d.attempt || 0, max_attempts: d.max_attempts || 0 });
+    if (d.status === "connected" || d.status === "disconnected" || d.status === "empty") setBusyMsg("");
   }, []));
   useBridgeEvent("stats",   useCallback((d) => setStats(d), []));
   useBridgeEvent("log",     useCallback((e) => setLogs((l) => [...l.slice(-1999), e]), []));
@@ -107,6 +154,7 @@ function App() {
         setActiveId(s.active_profile_id);
         setStats(s.stats);
         setConnError(s.error || "");
+        setAttemptInfo({ attempt: s.attempt || 0, max_attempts: s.max_attempts || 0 });
       } catch (_) {}
       if (alive) setTimeout(tick, 1000);
     };
@@ -140,7 +188,14 @@ function App() {
   };
   const onRemoveProfile = async () => {
     if (!api || !activeId) return;
-    if (!window.confirm("¿Eliminar el perfil activo? Tendrás que importar de nuevo el .owcfg.")) return;
+    const ok = await confirm({
+      title: T.profiles_removeTitle,
+      message: T.profiles_removeConfirm,
+      confirmLabel: T.profiles_remove,
+      cancelLabel: T.cancel,
+      danger: true,
+    });
+    if (!ok) return;
     await api.remove_profile(activeId);
     const ps = await api.list_profiles();
     setProfiles(ps);
@@ -184,16 +239,18 @@ function App() {
             advanced={!!settings.advanced}
             busyMsg={busyMsg}
             connError={connError}
+            attemptInfo={attemptInfo}
             onConnect={onConnect}
             onDisconnect={onDisconnect}
             onReconnect={onReconnect}
             onImport={() => setScreen("import")}
           />
         )}
-        {screen === "import"  && <Import T={T} api={api} active={active} onImported={(p) => { setActiveId(p.id); setProfiles([p]); setScreen("home"); }} onRemove={onRemoveProfile} onProfilesChanged={refreshProfiles}/>}
+        {screen === "import"  && <Import T={T} api={api} active={active} confirm={confirm} onImported={(p) => { setActiveId(p.id); setProfiles([p]); setScreen("home"); }} onRemove={onRemoveProfile} onProfilesChanged={refreshProfiles}/>}
         {screen === "logs"     && <Logs T={T} logs={logs} api={api} onClear={() => setLogs([])}/>}
         {screen === "settings" && <Settings T={T} settings={settings} onSetting={onSetting}/>}
       </main>
+      {confirmDialog}
     </div>
   );
 }
@@ -208,13 +265,15 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
   ];
   const tone =
     status === "connected" ? "good" :
-    status === "connecting" ? "warn" :
+    (status === "connecting" || status === "reconnecting") ? "warn" :
     status === "error" ? "bad" : "neutral";
   const label =
     status === "connected" ? T.connected :
     status === "connecting" ? T.connecting :
+    status === "reconnecting" ? T.reconnecting :
     status === "error" ? T.error :
     status === "empty" ? T.notConnected : T.disconnected;
+  const pulse = status === "connecting" || status === "reconnecting" || status === "connected";
 
   return (
     <aside style={{
@@ -236,8 +295,10 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
         {items.map(([id, lbl, d], i) => {
           const active = id === screen;
           return (
-            <button key={id} onClick={() => onScreen(id)} style={{
-              all: "unset",
+            <button key={id} onClick={() => onScreen(id)}
+              className={`ow-nav${active ? " is-active" : ""}`}
+              style={{
+              appearance: "none", border: "none", font: "inherit", textAlign: "left", width: "100%",
               display: advanced ? "grid" : "flex",
               gridTemplateColumns: advanced ? "auto 1fr auto" : undefined,
               alignItems: "center", gap: 10,
@@ -245,9 +306,6 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
               borderLeft: advanced ? (active ? "2px solid var(--brand)" : "2px solid transparent") : undefined,
               borderRadius: advanced ? 0 : 8,
               fontSize: 13, fontWeight: active ? 600 : 500,
-              background: active ? "var(--chip)" : "transparent",
-              color: active ? "var(--text)" : "var(--text-2)",
-              cursor: "pointer",
             }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={active ? "var(--brand)" : "var(--text-3)"} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                 <path d={d}/>
@@ -268,7 +326,7 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
       }}>
         <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.profile}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-          <window.StatusDot tone={tone} pulse={status === "connecting" || status === "connected"}/>
+          <window.StatusDot tone={tone} pulse={pulse}/>
           <div style={{ fontSize: 13, fontWeight: 600 }}>{profileName || "—"}</div>
         </div>
         <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)" }}>{label}</div>
@@ -278,12 +336,14 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
 };
 
 // ── Home ───────────────────────────────────────────────────────────
-const Home = ({ T, status, active, stats, advanced, busyMsg, connError, onConnect, onDisconnect, onReconnect, onImport }) => {
+const Home = ({ T, status, active, stats, advanced, busyMsg, connError, attemptInfo, onConnect, onDisconnect, onReconnect, onImport }) => {
   if (status === "empty" || !active) {
     return <EmptyHome T={T} onImport={onImport}/>;
   }
   if (status === "connected") return <ConnectedHome T={T} active={active} stats={stats} advanced={advanced} onDisconnect={onDisconnect}/>;
-  if (status === "connecting") return <ConnectingHome T={T} active={active} busyMsg={busyMsg}/>;
+  if (status === "connecting" || status === "reconnecting") {
+    return <ConnectingHome T={T} active={active} busyMsg={busyMsg} reconnecting={status === "reconnecting"} attemptInfo={attemptInfo}/>;
+  }
   if (status === "error") return <ErrorHome T={T} active={active} connError={connError} onReconnect={onReconnect} onImport={onImport}/>;
   return <DisconnectedHome T={T} active={active} onConnect={onConnect}/>;
 };
@@ -323,25 +383,35 @@ const DisconnectedHome = ({ T, active, onConnect }) => (
   </div>
 );
 
-const ConnectingHome = ({ T, active, busyMsg }) => (
-  <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-    <Header title={T.nav_home} sub={T.home_ribbon}/>
-    <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 18, padding: 28 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 24, alignItems: "center" }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-            <window.StatusDot tone="warn"/>
-            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--brand-warn)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.connecting}</span>
+const ConnectingHome = ({ T, active, busyMsg, reconnecting, attemptInfo }) => {
+  const showAttempt = reconnecting && attemptInfo && attemptInfo.attempt > 0;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <Header title={T.nav_home} sub={T.home_ribbon}/>
+      <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 18, padding: 28 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 24, alignItems: "center" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <window.StatusDot tone="warn"/>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--brand-warn)", letterSpacing: ".06em", textTransform: "uppercase" }}>
+                {reconnecting ? T.reconnecting : T.connecting}
+              </span>
+            </div>
+            <div style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-0.02em" }}>{T.handshake}</div>
+            <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{active.endpoint}</div>
+            {showAttempt && (
+              <div style={{ fontSize: 12, color: "var(--brand-warn)", marginTop: 8, fontFamily: "var(--font-mono)" }}>
+                {T.reconnectAttempt} {attemptInfo.attempt}/{attemptInfo.max_attempts}
+              </div>
+            )}
+            {busyMsg && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8, fontFamily: "var(--font-mono)" }}>{busyMsg}</div>}
           </div>
-          <div style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-0.02em" }}>{T.handshake}</div>
-          <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{active.endpoint}</div>
-          {busyMsg && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8, fontFamily: "var(--font-mono)" }}>{busyMsg}</div>}
+          <Dial pulsing/>
         </div>
-        <Dial pulsing/>
-      </div>
-    </section>
-  </div>
-);
+      </section>
+    </div>
+  );
+};
 
 const ConnectedHome = ({ T, active, stats, advanced, onDisconnect }) => {
   const sessionSec = stats.session_start ? (Date.now() / 1000 - stats.session_start) : 0;
@@ -382,10 +452,10 @@ const ConnectedHome = ({ T, active, stats, advanced, onDisconnect }) => {
 
       {advanced && (
         <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 18, fontFamily: "var(--font-mono)", fontSize: 12 }}>
-          <div style={{ fontSize: 11, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 10, fontFamily: "var(--font-sans)", fontWeight: 600 }}>Detalles técnicos</div>
+          <div style={{ fontSize: 11, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 10, fontFamily: "var(--font-sans)", fontWeight: 600 }}>{T.techDetails}</div>
           <KV k={T.endpoint} v={active.endpoint}/>
           <KV k={T.fingerprint} v={active.fingerprint || "—"}/>
-          <KV k="Client IP" v={active.client_address || "—"}/>
+          <KV k={T.clientIp} v={active.client_address || "—"}/>
           <KV k="DNS" v={(active.dns || []).join(", ") || "—"} last/>
         </section>
       )}
@@ -401,7 +471,7 @@ const ErrorHome = ({ T, active, connError, onReconnect, onImport }) => (
         <window.StatusDot tone="bad"/>
         <span style={{ fontSize: 12, fontWeight: 600, color: "var(--brand-bad)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.error}</span>
       </div>
-      <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em" }}>No se pudo conectar</div>
+      <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em" }}>{T.error_title}</div>
       {connError ? (
         <div style={{
           marginTop: 12, padding: "10px 12px", borderRadius: 8,
@@ -414,26 +484,27 @@ const ErrorHome = ({ T, active, connError, onReconnect, onImport }) => (
         </div>
       ) : (
         <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6, maxWidth: 540 }}>
-          Revisa los logs para más detalles. Puede ser un error de huella TLS, un endpoint inalcanzable o un fallo de WireGuard.
+          {T.error_genericBody}
         </div>
       )}
       <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 10 }}>
-        Revisa el registro para el detalle completo.
+        {T.error_checkLog}
       </div>
       <div style={{ marginTop: 18, display: "flex", gap: 8 }}>
-        <window.Btn kind="primary" size="md" onClick={onReconnect}>Reintentar</window.Btn>
-        <window.Btn kind="ghost" size="md" onClick={onImport}>Importar nuevo .owcfg</window.Btn>
+        <window.Btn kind="primary" size="md" onClick={onReconnect}>{T.retry}</window.Btn>
+        <window.Btn kind="ghost" size="md" onClick={onImport}>{T.error_importNew}</window.Btn>
       </div>
     </section>
   </div>
 );
 
-const Header = ({ title, sub }) => (
-  <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+const Header = ({ title, sub, right }) => (
+  <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
     <div>
       <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{title}</div>
       {sub && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>{sub}</div>}
     </div>
+    {right && <div style={{ display: "flex", alignItems: "center", gap: 8 }}>{right}</div>}
   </header>
 );
 
@@ -482,7 +553,7 @@ const Dial = ({ active, pulsing }) => (
 );
 
 // ── Import / Profiles ──────────────────────────────────────────────
-const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => {
+const Import = ({ T, api, active, confirm, onImported, onRemove, onProfilesChanged }) => {
   const fileRef = useRef(null);
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
@@ -491,7 +562,7 @@ const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => 
   const handleFile = async (file) => {
     if (!file) return;
     setError("");
-    setMsg("Leyendo archivo…");
+    setMsg(T.importReading);
     try {
       const text = await file.text();
       const r = await api.import_profile(text);
@@ -501,11 +572,22 @@ const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => 
         onImported(r.profile);
       } else {
         setMsg("");
-        setError(r.error || "Error desconocido");
+        setError(r.error || T.errorUnknown);
       }
     } catch (e) {
       setError(String(e));
     }
+  };
+
+  // Importing replaces the single active profile — make that explicit.
+  const onAddClick = async () => {
+    const ok = await confirm({
+      title: T.profiles_replaceTitle,
+      message: T.profiles_replaceWarn,
+      confirmLabel: T.confirm_continue,
+      cancelLabel: T.cancel,
+    });
+    if (ok) fileRef.current?.click();
   };
 
   // First run: no profile yet — the drag-and-drop importer is the whole screen.
@@ -540,13 +622,9 @@ const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 720 }}>
       <input ref={fileRef} type="file" accept=".owcfg,.warpcfg,.json,.txt" hidden onChange={(e) => handleFile(e.target.files[0])}/>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{T.profiles_title}</div>
-          <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>{T.welcomeSub}</div>
-        </div>
-        <window.Btn kind="primary" size="md" onClick={() => { if (window.confirm(T.profiles_replaceWarn)) fileRef.current?.click(); }}>{T.profiles_add}</window.Btn>
-      </header>
+      <Header title={T.profiles_title} sub={T.welcomeSub} right={
+        <window.Btn kind="primary" size="md" onClick={onAddClick}>{T.profiles_add}</window.Btn>
+      }/>
       {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>{error}</div>}
       <div>
         <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 12, padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -556,13 +634,13 @@ const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => 
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <window.Btn kind="ghost" size="sm" onClick={() => setShowEditor((v) => !v)}>{T.edit_open}</window.Btn>
-            <window.Btn kind="danger" size="sm" onClick={onRemove}>Eliminar</window.Btn>
+            <window.Btn kind="danger" size="sm" onClick={onRemove}>{T.profiles_remove}</window.Btn>
           </div>
         </div>
         {showEditor && (
           <div style={{ marginTop: 10 }}>
             <ProfileEditor
-              T={T} api={api} active={active}
+              T={T} api={api} active={active} confirm={confirm}
               onUpdated={onProfilesChanged}
               onClose={() => setShowEditor(false)}
             />
@@ -578,7 +656,7 @@ const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => 
 // .owcfg (name, MTU, DNS, client IP, bypass routes, reconnect backoff).
 // Gated behind a disclaimer because a wrong value breaks the tunnel; the
 // "reset to defaults" button restores the pristine imported config.
-const ProfileEditor = ({ T, api, active, onUpdated, onClose }) => {
+const ProfileEditor = ({ T, api, active, confirm, onUpdated, onClose }) => {
   const [ack, setAck] = useState(false);
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -614,7 +692,14 @@ const ProfileEditor = ({ T, api, active, onUpdated, onClose }) => {
 
   const reset = async () => {
     if (!api) return;
-    if (!window.confirm(T.edit_resetConfirm)) return;
+    const ok = await confirm({
+      title: T.edit_resetTitle,
+      message: T.edit_resetConfirm,
+      confirmLabel: T.confirm_reset,
+      cancelLabel: T.cancel,
+      danger: true,
+    });
+    if (!ok) return;
     setBusy(true); setErr(""); setMsg("");
     const r = await api.reset_profile(active.id);
     setBusy(false);
@@ -622,24 +707,17 @@ const ProfileEditor = ({ T, api, active, onUpdated, onClose }) => {
     else { setErr((r && r.error) || T.error); }
   };
 
-  const inputStyle = (disabled) => ({
-    height: 32, padding: "0 10px", borderRadius: 8,
-    border: "1px solid var(--line-strong)",
-    background: disabled ? "var(--bg-sunk)" : "var(--bg)",
-    color: disabled ? "var(--text-3)" : "var(--text)",
-    fontSize: 13, fontFamily: "var(--font-mono)", width: "100%", outline: "none",
-  });
-
   // Plain render function (not a component) — defining a component inside the
   // render would remount the <input> on every keystroke and drop focus.
   const field = (label, k, { hint = "", mono = true } = {}) => (
     <div key={k} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)" }}>{label}</label>
       <input
+        className="ow-input"
         value={form[k]}
         disabled={!ack || busy}
         onChange={(e) => set(k, e.target.value)}
-        style={{ ...inputStyle(!ack || busy), fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)" }}
+        style={{ width: "100%", fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)" }}
       />
       {hint && <div style={{ fontSize: 11, color: "var(--text-3)" }}>{hint}</div>}
     </div>
@@ -684,8 +762,8 @@ const ProfileEditor = ({ T, api, active, onUpdated, onClose }) => {
 
       {ack && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <window.Btn kind="primary" size="md" onClick={save} disabled={busy} style={busy ? { opacity: .6 } : {}}>{T.edit_save}</window.Btn>
-          <window.Btn kind="danger" size="md" onClick={reset} disabled={busy} style={busy ? { opacity: .6 } : {}}>{T.edit_reset}</window.Btn>
+          <window.Btn kind="primary" size="md" onClick={save} disabled={busy}>{T.edit_save}</window.Btn>
+          <window.Btn kind="danger" size="md" onClick={reset} disabled={busy}>{T.edit_reset}</window.Btn>
           <window.Btn kind="ghost" size="md" onClick={onClose} disabled={busy}>{T.edit_cancel}</window.Btn>
           <span style={{ fontSize: 11, color: "var(--text-3)" }}>{T.edit_reconnectNote}</span>
         </div>
@@ -698,45 +776,71 @@ const ProfileEditor = ({ T, api, active, onUpdated, onClose }) => {
 };
 
 // ── Logs ───────────────────────────────────────────────────────────
+const LOG_LEVEL_COLOR = {
+  error: "var(--brand-bad)", warn: "var(--brand-warn)", debug: "var(--text-3)",
+};
 const Logs = ({ T, logs, api, onClear }) => {
   const ref = useRef(null);
+  const atBottomRef = useRef(true);
   const [filter, setFilter] = useState("");
-  useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [logs.length]);
+  const [level, setLevel] = useState("all");
+  const [exportMsg, setExportMsg] = useState("");
 
-  const filtered = filter ? logs.filter((l) => l.msg.toLowerCase().includes(filter.toLowerCase())) : logs;
+  // Auto-scroll only when the user is already at the bottom — don't yank them
+  // down while they're scrolled up reading history.
+  useEffect(() => {
+    const el = ref.current;
+    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight;
+  }, [logs.length]);
+  const onScroll = () => {
+    const el = ref.current;
+    if (el) atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  };
+
+  const filtered = logs.filter((l) =>
+    (level === "all" || l.level === level) &&
+    (!filter || l.msg.toLowerCase().includes(filter.toLowerCase()))
+  );
+
+  const doClear = async () => { await api?.clear_logs?.(); onClear(); };
+  const doExport = async () => {
+    const r = await api?.export_logs?.();
+    if (r && r.ok) { setExportMsg(T.logs_exported); setTimeout(() => setExportMsg(""), 3000); }
+  };
+
+  const levels = [
+    ["all", T.logs_levelAll], ["info", "INFO"], ["warn", "WARN"],
+    ["error", "ERROR"], ["debug", "DEBUG"],
+  ];
 
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{T.logs_title}</div>
-          <div style={{ fontSize: 12, color: "var(--text-3)" }}>outwarp-client · live</div>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={T.logs_filter} style={{
-            height: 30, padding: "0 12px", borderRadius: 8, border: "1px solid var(--line-strong)",
-            background: "var(--bg-2)", color: "var(--text)", fontSize: 12, width: 220, outline: "none",
-          }}/>
-          <window.Btn kind="ghost" size="sm" onClick={onClear}>{T.logs_clear}</window.Btn>
-        </div>
-      </header>
-      <div ref={ref} style={{
+      <Header title={T.logs_title} sub="outwarp-client" right={
+        <>
+          <select className="ow-input" value={level} onChange={(e) => setLevel(e.target.value)}
+            aria-label={T.logs_level} style={{ width: "auto", height: 30, fontSize: 12 }}>
+            {levels.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <input className="ow-input" value={filter} onChange={(e) => setFilter(e.target.value)}
+            placeholder={T.logs_filter} style={{ width: 200, height: 30, fontSize: 12 }}/>
+          <window.Btn kind="ghost" size="sm" onClick={doExport}>{T.logs_export}</window.Btn>
+          <window.Btn kind="ghost" size="sm" onClick={doClear}>{T.logs_clear}</window.Btn>
+        </>
+      }/>
+      {exportMsg && <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-2)" }}>{exportMsg}</div>}
+      <div ref={ref} onScroll={onScroll} style={{
         background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 12,
         fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.65,
         padding: 14, color: "var(--text-2)", overflow: "auto", flex: 1, minHeight: 360,
       }} className="ws-scroll">
-        {filtered.map((l) => {
-          const ts = new Date(l.ts * 1000).toISOString().slice(11, 19);
-          const c = l.level === "error" ? "var(--brand-bad)" : l.level === "warn" ? "var(--brand-warn)" : l.level === "debug" ? "var(--text-3)" : "var(--brand-2)";
-          return (
-            <div key={l.seq} style={{ display: "grid", gridTemplateColumns: "84px 60px 1fr", gap: 10 }}>
-              <span style={{ color: "var(--text-3)" }}>{ts}</span>
-              <span style={{ color: c, textTransform: "uppercase" }}>{l.level}</span>
-              <span style={{ color: "var(--text)", wordBreak: "break-all" }}>{l.msg}</span>
-            </div>
-          );
-        })}
-        {filtered.length === 0 && <div style={{ opacity: .5 }}>— sin entradas —</div>}
+        {filtered.map((l) => (
+          <div key={l.seq} style={{ display: "grid", gridTemplateColumns: "84px 60px 1fr", gap: 10 }}>
+            <span style={{ color: "var(--text-3)" }}>{fmtClock(l.ts)}</span>
+            <span style={{ color: LOG_LEVEL_COLOR[l.level] || "var(--brand-2)", textTransform: "uppercase" }}>{l.level}</span>
+            <span style={{ color: "var(--text)", wordBreak: "break-all" }}>{l.msg}</span>
+          </div>
+        ))}
+        {filtered.length === 0 && <div style={{ opacity: .5 }}>{T.logs_empty}</div>}
       </div>
     </section>
   );
@@ -754,10 +858,10 @@ const Settings = ({ T, settings, onSetting }) => {
     </div>
   );
   const Select = ({ value, onChange, options }) => (
-    <select value={value} onChange={(e) => onChange(e.target.value)} style={{
-      height: 30, padding: "0 10px", borderRadius: 8, border: "1px solid var(--line-strong)",
-      background: "var(--bg)", color: "var(--text)", fontSize: 13, fontFamily: "var(--font-sans)",
-    }}>{options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+    <select className="ow-input" value={value} onChange={(e) => onChange(e.target.value)}
+      style={{ height: 30, fontSize: 13, width: "auto" }}>
+      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
   );
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 720 }}>

@@ -46,7 +46,7 @@ _STATE_TO_JS = {
     TunnelState.DISCONNECTED: "disconnected",
     TunnelState.CONNECTING:   "connecting",
     TunnelState.CONNECTED:    "connected",
-    TunnelState.RECONNECTING: "connecting",  # UI treats both alike
+    TunnelState.RECONNECTING: "reconnecting",
     TunnelState.FAILED:       "error",
 }
 
@@ -170,12 +170,7 @@ class Api:
     # ── status / connect ──────────────────────────────────────────────────────
 
     def get_status(self) -> dict[str, Any]:
-        return {
-            "status": self._status_str(),
-            "active_profile_id": self._active_profile_id(),
-            "error": self._error_str(),
-            "stats": dict(self._stats),
-        }
+        return {**self._status_payload(), "stats": dict(self._stats)}
 
     def _status_str(self) -> str:
         if self._manager is None:
@@ -195,11 +190,27 @@ class Api:
         err = self._manager.last_error
         return err if isinstance(err, str) else None
 
+    def _attempt_info(self) -> tuple[int, int]:
+        """(failed attempts in the current streak, configured max). Coerced to
+        int so a non-serialisable value can never break the status event."""
+        if self._manager is None:
+            return 0, 0
+        a = getattr(self._manager, "attempt", 0)
+        attempt = a if isinstance(a, int) else 0
+        try:
+            max_attempts = int(self._manager.config.reconnect.max_attempts)
+        except (TypeError, ValueError, AttributeError):
+            max_attempts = 0
+        return attempt, max_attempts
+
     def _status_payload(self) -> dict[str, Any]:
+        attempt, max_attempts = self._attempt_info()
         return {
             "status": self._status_str(),
             "active_profile_id": self._active_profile_id(),
             "error": self._error_str(),
+            "attempt": attempt,
+            "max_attempts": max_attempts,
         }
 
     def connect(self, profile_id: str | None = None) -> dict[str, Any]:
@@ -226,12 +237,10 @@ class Api:
         return {"ok": True}
 
     def _on_state_change(self, state: TunnelState) -> None:
-        ui = _STATE_TO_JS.get(state, "disconnected")
-        self._emit("status", {
-            "status": ui,
-            "active_profile_id": self._active_profile_id(),
-            "error": self._error_str(),
-        })
+        payload = self._status_payload()
+        # Trust the state we were handed over a re-read of the manager.
+        payload["status"] = _STATE_TO_JS.get(state, "disconnected")
+        self._emit("status", payload)
         if state is TunnelState.CONNECTED:
             self._stats["session_start"] = time.time()
             self._stats["last_handshake"] = time.time()
@@ -415,6 +424,41 @@ class Api:
     def get_logs(self, since: int = 0) -> list[dict[str, Any]]:
         with self._lock:
             return [e for e in self._logs if e["seq"] > since]
+
+    def clear_logs(self) -> dict[str, Any]:
+        """Empty the in-memory log buffer the UI reads from. New lines from the
+        running tunnel keep flowing in afterwards."""
+        with self._lock:
+            self._logs.clear()
+        return {"ok": True}
+
+    def export_logs(self) -> dict[str, Any]:
+        """Write the current log buffer to a file the user picks via the native
+        save dialog."""
+        if self._window is None:
+            return {"ok": False, "error": "no window"}
+        try:
+            import webview
+            result = self._window.create_file_dialog(
+                webview.SAVE_DIALOG, save_filename="outwarp-logs.txt"
+            )
+        except Exception as exc:
+            log.exception("export_logs: file dialog failed")
+            return {"ok": False, "error": str(exc)}
+        if not result:
+            return {"ok": False, "error": "cancelled"}
+        path = result if isinstance(result, str) else result[0]
+        try:
+            with self._lock:
+                lines = [
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(e['ts']))} "
+                    f"[{e['level'].upper()}] {e['msg']}"
+                    for e in self._logs
+                ]
+            Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "path": path}
 
     def _record_log(self, level: str, msg: str) -> None:
         with self._lock:

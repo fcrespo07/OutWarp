@@ -56,7 +56,81 @@
   100% { transform: translateY(-50%); }
 }
 
+@keyframes ow-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ow-pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 /* a tiny scrollbar so phones/inner panes feel right */
 .ws-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
 .ws-scroll::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
 .ws-scroll { scrollbar-width: thin; }
+
+/* ── Buttons ───────────────────────────────────────────────────────
+   Palette + interactive states live here (not inline) so hover/active/
+   focus-visible/disabled actually render. */
+.ow-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-sans); font-weight: 500; letter-spacing: -0.005em;
+  white-space: nowrap; cursor: pointer; border: 1px solid transparent;
+  transition: background .12s, filter .12s, box-shadow .12s, transform .04s;
+}
+.ow-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.ow-btn:active:not(:disabled) { transform: translateY(1px); }
+.ow-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.ow-btn--sm { height: 28px; padding: 0 10px; font-size: 12px; border-radius: 6px; }
+.ow-btn--md { height: 36px; padding: 0 14px; font-size: 13px; border-radius: 8px; }
+.ow-btn--lg { height: 44px; padding: 0 18px; font-size: 14px; border-radius: 10px; }
+
+.ow-btn--primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+.ow-btn--primary:hover:not(:disabled) { filter: brightness(1.1); box-shadow: 0 6px 16px -8px var(--brand); }
+.ow-btn--solid { background: var(--text); color: var(--bg); border-color: var(--text); }
+.ow-btn--solid:hover:not(:disabled) { filter: brightness(1.15); }
+.ow-btn--ghost { background: transparent; color: var(--text); border-color: var(--line-strong); }
+.ow-btn--ghost:hover:not(:disabled) { background: var(--chip); }
+.ow-btn--soft { background: var(--chip); color: var(--text); }
+.ow-btn--soft:hover:not(:disabled) { filter: brightness(1.08); }
+.ow-btn--danger { background: transparent; color: var(--brand-bad); border-color: var(--line-strong); }
+.ow-btn--danger:hover:not(:disabled) { background: color-mix(in srgb, var(--brand-bad) 12%, transparent); border-color: color-mix(in srgb, var(--brand-bad) 40%, transparent); }
+
+/* ── Inputs & selects ─────────────────────────────────────────────── */
+.ow-input {
+  height: 32px; padding: 0 10px; border-radius: 8px;
+  border: 1px solid var(--line-strong); background: var(--bg);
+  color: var(--text); font-size: 13px; font-family: var(--font-sans);
+  outline: none; transition: border-color .12s, box-shadow .12s;
+}
+.ow-input:hover:not(:disabled) { border-color: var(--text-3); }
+.ow-input:focus-visible {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
+}
+.ow-input:disabled { background: var(--bg-sunk); color: var(--text-3); cursor: not-allowed; }
+
+/* ── Sidebar nav items ────────────────────────────────────────────── */
+.ow-nav {
+  background: transparent; color: var(--text-2);
+  cursor: pointer; transition: background .12s, color .12s;
+}
+.ow-nav:hover { background: var(--chip); color: var(--text); }
+.ow-nav:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.ow-nav.is-active { background: var(--chip); color: var(--text); }
+
+.ow-toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+/* ── Modal ────────────────────────────────────────────────────────── */
+.ow-overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: blur(2px);
+  display: grid; place-items: center;
+  animation: ow-fade-in .12s ease-out;
+}
+.ow-modal {
+  background: var(--bg-2); border: 1px solid var(--line-strong);
+  border-radius: 14px; box-shadow: var(--shadow);
+  width: min(420px, calc(100vw - 48px)); padding: 20px;
+  animation: ow-pop-in .14s ease-out;
+}

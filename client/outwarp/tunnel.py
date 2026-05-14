@@ -200,6 +200,7 @@ class TunnelManager:
         self._poll = poll_interval
         self._state = TunnelState.DISCONNECTED
         self._last_error: str | None = None
+        self._attempt = 0
         self._lock = Lock()
         self._listeners: list[StateListener] = []
         self._stop_event = Event()
@@ -219,12 +220,25 @@ class TunnelManager:
             return self._last_error
 
     @property
+    def attempt(self) -> int:
+        """How many connect attempts have failed in the current streak.
+
+        0 while connecting fresh or once a connection has held; >0 while
+        reconnecting after a drop. Resets after the stability window."""
+        with self._lock:
+            return self._attempt
+
+    @property
     def config(self) -> ClientConfig:
         return self._config
 
     def _set_error(self, msg: str | None) -> None:
         with self._lock:
             self._last_error = msg
+
+    def _set_attempt(self, n: int) -> None:
+        with self._lock:
+            self._attempt = n
 
     def add_listener(self, callback: StateListener) -> None:
         with self._lock:
@@ -248,6 +262,7 @@ class TunnelManager:
         except Exception:
             log.exception("Error while disconnecting tunnel during stop()")
         self._set_error(None)
+        self._set_attempt(0)
         self._set_state(TunnelState.DISCONNECTED)
 
     def _set_state(self, state: TunnelState) -> None:
@@ -266,6 +281,7 @@ class TunnelManager:
         attempt = 0
         max_attempts = self._config.reconnect.max_attempts
         delays = self._config.reconnect.delays_seconds
+        self._set_attempt(0)
 
         while not self._stop_event.is_set():
             self._set_state(
@@ -277,6 +293,7 @@ class TunnelManager:
                 log.warning("Connect attempt %d failed: %s", attempt + 1, exc)
                 self._set_error(str(exc))
                 attempt += 1
+                self._set_attempt(attempt)
                 if attempt >= max_attempts:
                     self._set_state(TunnelState.FAILED)
                     return
@@ -294,6 +311,7 @@ class TunnelManager:
                     break
                 if not stability_reset and time.monotonic() - connected_at >= self._stability:
                     attempt = 0
+                    self._set_attempt(0)
                     stability_reset = True
                 if self._stop_event.wait(self._poll):
                     return
@@ -309,6 +327,7 @@ class TunnelManager:
                 log.exception("Cleanup after unexpected tunnel death failed")
 
             attempt += 1
+            self._set_attempt(attempt)
             if attempt >= max_attempts:
                 self._set_state(TunnelState.FAILED)
                 return

@@ -100,6 +100,33 @@ const STR = {
     edit_saved: "✓ Ajustes guardados",
     edit_resetDone: "✓ Ajustes restaurados a los valores originales",
     edit_resetConfirm: "¿Restaurar todos los ajustes a como estaban al importar el perfil? Se perderán los cambios locales.",
+    edit_resetTitle: "Reiniciar ajustes",
+
+    // Confirmations
+    confirm_continue: "Continuar",
+    confirm_reset: "Reiniciar",
+    profiles_remove: "Eliminar",
+    profiles_removeTitle: "Eliminar perfil",
+    profiles_removeConfirm: "¿Eliminar el perfil activo? Tendrás que importar de nuevo el .owcfg.",
+    profiles_replaceTitle: "Reemplazar conexión",
+
+    // Errors / status
+    error_title: "No se pudo conectar",
+    error_genericBody: "Puede ser un error de huella TLS, un endpoint inalcanzable o un fallo de WireGuard.",
+    error_checkLog: "Revisa el registro para el detalle completo.",
+    error_importNew: "Importar nuevo .owcfg",
+    retry: "Reintentar",
+    reconnectAttempt: "Intento",
+    importReading: "Leyendo archivo…",
+    errorUnknown: "Error desconocido",
+    techDetails: "Detalles técnicos",
+    clientIp: "IP del cliente",
+
+    // Logs (extra)
+    logs_empty: "— sin entradas —",
+    logs_level: "Nivel",
+    logs_levelAll: "Todos",
+    logs_exported: "✓ Registro exportado",
 
     // Connecting steps
     step_resolve: "Resolviendo endpoint",
@@ -206,6 +233,30 @@ const STR = {
     edit_saved: "✓ Settings saved",
     edit_resetDone: "✓ Settings restored to their original values",
     edit_resetConfirm: "Restore all settings to how they were when the profile was imported? Local changes will be lost.",
+    edit_resetTitle: "Reset settings",
+
+    confirm_continue: "Continue",
+    confirm_reset: "Reset",
+    profiles_remove: "Remove",
+    profiles_removeTitle: "Remove profile",
+    profiles_removeConfirm: "Remove the active profile? You'll need to import the .owcfg again.",
+    profiles_replaceTitle: "Replace connection",
+
+    error_title: "Couldn't connect",
+    error_genericBody: "It may be a TLS fingerprint mismatch, an unreachable endpoint or a WireGuard failure.",
+    error_checkLog: "Check the activity log for the full detail.",
+    error_importNew: "Import a new .owcfg",
+    retry: "Retry",
+    reconnectAttempt: "Attempt",
+    importReading: "Reading file…",
+    errorUnknown: "Unknown error",
+    techDetails: "Technical details",
+    clientIp: "Client IP",
+
+    logs_empty: "— no entries —",
+    logs_level: "Level",
+    logs_levelAll: "All",
+    logs_exported: "✓ Log exported",
 
     step_resolve: "Resolving endpoint",
     step_tls: "Verifying certificate",
@@ -250,45 +301,19 @@ const useUiState = (initial) => {
 };
 window.useUiState = useUiState;
 
-// Tiny atoms shared by both variations
-const Btn = ({ children, kind = "ghost", size = "md", icon, style = {}, ...rest }) => {
-  const sizes = {
-    sm: { h: 28, px: 10, fs: 12, r: 6 },
-    md: { h: 36, px: 14, fs: 13, r: 8 },
-    lg: { h: 44, px: 18, fs: 14, r: 10 },
-  }[size];
-  const palettes = {
-    primary: { bg: "var(--brand)", color: "#fff", border: "var(--brand)" },
-    ghost:   { bg: "transparent", color: "var(--text)", border: "var(--line-strong)" },
-    soft:    { bg: "var(--chip)", color: "var(--text)", border: "transparent" },
-    danger:  { bg: "transparent", color: "var(--brand-bad)", border: "var(--line-strong)" },
-    solid:   { bg: "var(--text)", color: "var(--bg)", border: "var(--text)" },
-  }[kind];
-  return (
-    <button {...rest}
-      style={{
-        height: sizes.h,
-        padding: `0 ${sizes.px}px`,
-        borderRadius: sizes.r,
-        background: palettes.bg,
-        color: palettes.color,
-        border: `1px solid ${palettes.border}`,
-        fontFamily: "var(--font-sans)",
-        fontSize: sizes.fs,
-        fontWeight: 500,
-        letterSpacing: "-0.005em",
-        cursor: "pointer",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 8,
-        whiteSpace: "nowrap",
-        ...style,
-      }}
-    >
-      {icon}{children}
-    </button>
-  );
-};
+// Tiny atoms shared by both variations.
+// Btn's palette + interactive states live in styles.css (.ow-btn) so
+// hover/active/focus-visible/disabled actually render — inline styles can't
+// express pseudo-states.
+const Btn = ({ children, kind = "ghost", size = "md", icon, style = {}, className = "", ...rest }) => (
+  <button
+    {...rest}
+    className={`ow-btn ow-btn--${kind} ow-btn--${size}${className ? " " + className : ""}`}
+    style={style}
+  >
+    {icon}{children}
+  </button>
+);
 
 const Pill = ({ children, tone = "neutral", style = {} }) => {
   const tones = {
@@ -316,7 +341,7 @@ const StatusDot = ({ tone = "good", pulse = true }) => {
 };
 
 const Toggle = ({ on, onChange, accent }) => (
-  <button onClick={() => onChange?.(!on)} aria-pressed={on}
+  <button onClick={() => onChange?.(!on)} aria-pressed={on} className="ow-toggle"
     style={{
       width: 36, height: 20, borderRadius: 999, padding: 2, border: "none",
       background: on ? (accent || "var(--brand)") : "var(--line-strong)",
