@@ -48,6 +48,12 @@ class TestBuildServerWgConf:
         conf = build_server_wg_conf(_make_config())
         assert "Table = off" in conf
 
+    def test_mtu_matches_client(self) -> None:
+        # Server MTU must stay in sync with the client (1380) — a mismatch over
+        # the wstunnel TCP/TLS transport reintroduces fragmentation.
+        conf = build_server_wg_conf(_make_config())
+        assert "MTU = 1380" in conf
+
     def test_forward_rules_use_insert_not_append(self) -> None:
         conf = build_server_wg_conf(_make_config())
         assert "iptables -I FORWARD" in conf

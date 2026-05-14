@@ -127,6 +127,11 @@ def build_server_wg_conf_windows(config: ServerConfig) -> str:
         f"PrivateKey = {config.wg_private_key}",
         f"Address = {config.server_address}",
         f"ListenPort = {config.wg_listen_port}",
+        # Must match the client's MTU (client/outwarp/wireguard.py). Over
+        # wstunnel's TCP/TLS transport the usable budget is ~1380, not the
+        # wg-quick default of 1420 — a mismatch reintroduces the fragmentation
+        # / jitter the client-side MTU fix was meant to remove.
+        "MTU = 1380",
     ]
 
     for client in config.clients:
@@ -148,6 +153,9 @@ def build_server_wg_conf(config: ServerConfig) -> str:
         f"PrivateKey = {config.wg_private_key}",
         f"Address = {config.server_address}",
         f"ListenPort = {config.wg_listen_port}",
+        # See build_server_wg_conf_windows: ~1380 is the usable MTU over the
+        # wstunnel TCP/TLS transport; keep both ends in sync with the client.
+        "MTU = 1380",
         # Table=off: routing is handled by iptables MASQUERADE (PostUp), not wg-quick.
         # Without this, wg-quick modifies the kernel routing table and can accidentally
         # break the server's own default route (observed with NetworkManager / VirtualBox NAT).
