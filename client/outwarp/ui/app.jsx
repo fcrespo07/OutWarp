@@ -468,10 +468,47 @@ const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => 
     }
   };
 
+  // First run: no profile yet — the drag-and-drop importer is the whole screen.
+  if (!active) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 720 }}>
+        <Header title={T.welcomeTitle} sub={T.welcomeSub}/>
+        <div style={{
+          border: "1.5px dashed var(--line-strong)", borderRadius: 14, padding: 32,
+          background: "var(--bg-2)", textAlign: "center",
+        }}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}
+        >
+          <input ref={fileRef} type="file" accept=".owcfg,.warpcfg,.json,.txt" hidden onChange={(e) => handleFile(e.target.files[0])}/>
+          <div style={{ width: 48, height: 48, borderRadius: 12, background: "color-mix(in srgb, var(--brand) 12%, transparent)", color: "var(--brand)", display: "grid", placeItems: "center", margin: "0 auto" }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16 V4 M6 10 L12 4 L18 10"/><path d="M4 20 H20"/></svg>
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 600, marginTop: 10 }}>{T.importDrop}</div>
+          <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>{T.importHint}</div>
+          <div style={{ marginTop: 16 }}>
+            <window.Btn kind="primary" size="md" onClick={() => fileRef.current?.click()}>{T.importFile}</window.Btn>
+          </div>
+          {msg && <div style={{ marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-2)" }}>{msg}</div>}
+          {error && <div style={{ marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>{error}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  // A profile exists: list it with an "Añadir" action top-right; no drag zone.
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 720 }}>
-      <Header title={T.welcomeTitle} sub={T.welcomeSub}/>
-      {active && (
+      <input ref={fileRef} type="file" accept=".owcfg,.warpcfg,.json,.txt" hidden onChange={(e) => handleFile(e.target.files[0])}/>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{T.profiles_title}</div>
+          <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>{T.welcomeSub}</div>
+        </div>
+        <window.Btn kind="primary" size="md" onClick={() => fileRef.current?.click()}>{T.profiles_add}</window.Btn>
+      </header>
+      {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>{error}</div>}
+      <div>
         <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 12, padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 600 }}>{active.name}</div>
@@ -482,33 +519,16 @@ const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => 
             <window.Btn kind="danger" size="sm" onClick={onRemove}>Eliminar</window.Btn>
           </div>
         </div>
-      )}
-      <div style={{
-        border: "1.5px dashed var(--line-strong)", borderRadius: 14, padding: 32,
-        background: "var(--bg-2)", textAlign: "center",
-      }}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}
-      >
-        <input ref={fileRef} type="file" accept=".owcfg,.warpcfg,.json,.txt" hidden onChange={(e) => handleFile(e.target.files[0])}/>
-        <div style={{ width: 48, height: 48, borderRadius: 12, background: "color-mix(in srgb, var(--brand) 12%, transparent)", color: "var(--brand)", display: "grid", placeItems: "center", margin: "0 auto" }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16 V4 M6 10 L12 4 L18 10"/><path d="M4 20 H20"/></svg>
-        </div>
-        <div style={{ fontSize: 15, fontWeight: 600, marginTop: 10 }}>{T.importDrop}</div>
-        <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>{T.importHint}</div>
-        <div style={{ marginTop: 16 }}>
-          <window.Btn kind="primary" size="md" onClick={() => fileRef.current?.click()}>{T.importFile}</window.Btn>
-        </div>
-        {msg && <div style={{ marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-2)" }}>{msg}</div>}
-        {error && <div style={{ marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>{error}</div>}
+        {showEditor && (
+          <div style={{ marginTop: 10 }}>
+            <ProfileEditor
+              T={T} api={api} active={active}
+              onUpdated={onProfilesChanged}
+              onClose={() => setShowEditor(false)}
+            />
+          </div>
+        )}
       </div>
-      {active && showEditor && (
-        <ProfileEditor
-          T={T} api={api} active={active}
-          onUpdated={onProfilesChanged}
-          onClose={() => setShowEditor(false)}
-        />
-      )}
     </div>
   );
 };
