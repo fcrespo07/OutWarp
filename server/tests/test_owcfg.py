@@ -56,6 +56,12 @@ def test_build_owcfg_wireguard_section() -> None:
     assert wg["server_public_key"] == "server_pub"
     assert wg["client_address"] == "10.0.0.2/32"
     assert wg["tunnel_name"] == "OutWarp"
+    assert wg["mtu"] == 1380
+
+
+def test_build_owcfg_name_is_client_name() -> None:
+    cfg = build_owcfg(_make_server_config(), "laptop", "client_priv", "10.0.0.2/32")
+    assert cfg["name"] == "laptop"
 
 
 def test_build_owcfg_tunnel_points_to_loopback() -> None:

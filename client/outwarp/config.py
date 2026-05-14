@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,7 @@ class WireguardConfig:
     client_private_key: str
     server_public_key: str
     dns: list[str] = field(default_factory=lambda: ["1.1.1.1"])
+    mtu: int = 1380
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,9 @@ class ClientConfig:
     wireguard: WireguardConfig
     routing: RoutingConfig
     reconnect: ReconnectConfig
+    # Human-readable label assigned by the server (outwarp-server add-client <name>).
+    # Distinct from wireguard.tunnel_name, which is the OS network interface name.
+    name: str = ""
 
     @classmethod
     def load(cls, path: Path) -> ClientConfig:
@@ -92,10 +97,19 @@ def default_config_path() -> Path:
     return Path(user_config_dir(_APP_NAME)) / "config.json"
 
 
+def original_config_path(config_path: Path | None = None) -> Path:
+    """Pristine copy of the config as it was imported — the baseline that
+    'reset profile settings to defaults' restores from."""
+    base = config_path or default_config_path()
+    return base.with_name("config.original.json")
+
+
 def import_owcfg(warpcfg_path: Path, dest: Path | None = None) -> ClientConfig:
     config = ClientConfig.load(warpcfg_path)
     target = dest or default_config_path()
     config.save(target)
+    # Snapshot the untouched import so profile editing can always be undone.
+    config.save(original_config_path(target))
     return config
 
 
@@ -130,6 +144,7 @@ def _parse(raw: dict[str, Any]) -> ClientConfig:
         wireguard=wireguard,
         routing=routing,
         reconnect=reconnect,
+        name=str(raw.get("name", "")),
     )
 
 
@@ -175,12 +190,20 @@ def _parse_tunnel(d: Any) -> TunnelConfig:
 def _parse_wireguard(d: Any) -> WireguardConfig:
     if not isinstance(d, dict):
         raise ConfigError("Section 'wireguard' must be an object")
+    mtu_raw = d.get("mtu", 1380)
+    try:
+        mtu = int(mtu_raw)
+    except (TypeError, ValueError):
+        raise ConfigError(f"wireguard.mtu must be an integer, got {mtu_raw!r}")
+    if not (576 <= mtu <= 1500):
+        raise ConfigError(f"wireguard.mtu must be between 576 and 1500, got {mtu}")
     return WireguardConfig(
         tunnel_name=str(_require(d, "tunnel_name", "wireguard")),
         client_address=str(_require(d, "client_address", "wireguard")),
         client_private_key=str(_require(d, "client_private_key", "wireguard")),
         server_public_key=str(_require(d, "server_public_key", "wireguard")),
         dns=list(d.get("dns", ["1.1.1.1"])),
+        mtu=mtu,
     )
 
 
@@ -205,6 +228,7 @@ def _parse_reconnect(d: Any) -> ReconnectConfig:
 def _to_dict(cfg: ClientConfig) -> dict[str, Any]:
     return {
         "schema_version": cfg.schema_version,
+        "name": cfg.name,
         "server": {
             "endpoint": cfg.server.endpoint,
             "port": cfg.server.port,
@@ -224,6 +248,7 @@ def _to_dict(cfg: ClientConfig) -> dict[str, Any]:
             "client_private_key": cfg.wireguard.client_private_key,
             "server_public_key": cfg.wireguard.server_public_key,
             "dns": cfg.wireguard.dns,
+            "mtu": cfg.wireguard.mtu,
         },
         "routing": {
             "bypass_ips": cfg.routing.bypass_ips,
@@ -233,3 +258,122 @@ def _to_dict(cfg: ClientConfig) -> dict[str, Any]:
             "delays_seconds": cfg.reconnect.delays_seconds,
         },
     }
+
+
+# --- profile editing ---
+
+# Fields the user is allowed to change from the client UI. Server identity
+# (endpoint, port, keys, TLS fingerprint, http_upgrade_path_prefix) is never
+# editable — changing it would just break the tunnel, not reconfigure it.
+EDITABLE_FIELDS = (
+    "name",
+    "mtu",
+    "dns",
+    "client_address",
+    "bypass_ips",
+    "reconnect_max_attempts",
+    "reconnect_delays",
+)
+
+
+def _split_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [tok for tok in re.split(r"[,\s]+", value.strip()) if tok]
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    raise ConfigError("se esperaba una lista de valores")
+
+
+def _parse_ip_list(value: Any, label: str, *, allow_cidr: bool) -> list[str]:
+    items = _split_list(value)
+    out: list[str] = []
+    for item in items:
+        try:
+            if "/" in item:
+                if not allow_cidr:
+                    raise ValueError
+                ipaddress.ip_network(item, strict=False)
+            else:
+                ipaddress.ip_address(item)
+        except ValueError:
+            raise ConfigError(f"{label}: dirección inválida '{item}'")
+        out.append(item)
+    return out
+
+
+def apply_profile_patch(cfg: ClientConfig, patch: dict[str, Any]) -> ClientConfig:
+    """Return a new ClientConfig with the user-editable fields in `patch` applied.
+
+    Raises ConfigError with a human-readable (Spanish) message on bad input so
+    the UI can surface it directly.
+    """
+    name = cfg.name
+    wg_changes: dict[str, Any] = {}
+    routing = cfg.routing
+    rc_changes: dict[str, Any] = {}
+
+    if "name" in patch:
+        n = str(patch["name"]).strip()
+        if not n:
+            raise ConfigError("El nombre del perfil no puede estar vacío")
+        name = n
+
+    if "mtu" in patch:
+        try:
+            mtu = int(patch["mtu"])
+        except (TypeError, ValueError):
+            raise ConfigError("El MTU debe ser un número entero")
+        if not (576 <= mtu <= 1500):
+            raise ConfigError("El MTU debe estar entre 576 y 1500")
+        wg_changes["mtu"] = mtu
+
+    if "dns" in patch:
+        wg_changes["dns"] = _parse_ip_list(patch["dns"], "DNS", allow_cidr=False)
+
+    if "client_address" in patch:
+        addr = str(patch["client_address"]).strip()
+        try:
+            ipaddress.ip_interface(addr)
+        except ValueError:
+            raise ConfigError(
+                f"IP del cliente inválida: '{addr}' (usa formato 10.0.0.2/32)"
+            )
+        wg_changes["client_address"] = addr
+
+    if "bypass_ips" in patch:
+        routing = replace(
+            routing,
+            bypass_ips=_parse_ip_list(patch["bypass_ips"], "IPs de bypass", allow_cidr=True),
+        )
+
+    if "reconnect_max_attempts" in patch:
+        try:
+            ma = int(patch["reconnect_max_attempts"])
+        except (TypeError, ValueError):
+            raise ConfigError("Los reintentos de reconexión deben ser un entero")
+        if not (1 <= ma <= 100):
+            raise ConfigError("Los reintentos de reconexión deben estar entre 1 y 100")
+        rc_changes["max_attempts"] = ma
+
+    if "reconnect_delays" in patch:
+        tokens = _split_list(patch["reconnect_delays"])
+        if not tokens:
+            raise ConfigError("Indica al menos un tiempo de reconexión")
+        delays: list[int] = []
+        for tok in tokens:
+            try:
+                v = int(tok)
+            except (TypeError, ValueError):
+                raise ConfigError(f"Tiempo de reconexión inválido: '{tok}'")
+            if v < 1:
+                raise ConfigError("Los tiempos de reconexión deben ser positivos")
+            delays.append(v)
+        rc_changes["delays_seconds"] = delays
+
+    return replace(
+        cfg,
+        name=name,
+        wireguard=replace(cfg.wireguard, **wg_changes) if wg_changes else cfg.wireguard,
+        routing=routing,
+        reconnect=replace(cfg.reconnect, **rc_changes) if rc_changes else cfg.reconnect,
+    )

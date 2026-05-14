@@ -30,8 +30,10 @@ from typing import Any
 from outwarp.config import (
     ClientConfig,
     ConfigError,
+    apply_profile_patch,
     default_config_path,
     import_owcfg,
+    original_config_path,
 )
 from outwarp.logs import MemoryLogHandler
 from outwarp.tunnel import TunnelManager, TunnelState
@@ -44,7 +46,7 @@ _STATE_TO_JS = {
     TunnelState.DISCONNECTED: "disconnected",
     TunnelState.CONNECTING:   "connecting",
     TunnelState.CONNECTED:    "connected",
-    TunnelState.RECONNECTING: "connecting",  # UI treats both alike
+    TunnelState.RECONNECTING: "reconnecting",
     TunnelState.FAILED:       "error",
 }
 
@@ -54,13 +56,13 @@ def _settings_path() -> Path:
 
 
 def _default_settings() -> dict[str, Any]:
+    # Only settings the client actually acts on. start_at_boot / kill_switch /
+    # auto_reconnect were dropped — they were persisted but never consumed, so
+    # the toggles misled the user. Reintroduce them once they're wired up.
     return {
         "language": "es",
         "theme": "auto",
         "advanced": False,
-        "start_at_boot": False,
-        "auto_reconnect": True,
-        "kill_switch": False,
     }
 
 
@@ -85,14 +87,25 @@ def _save_settings(settings: dict[str, Any]) -> None:
 
 
 def _profile_from_config(cfg: ClientConfig) -> dict[str, Any]:
-    """Public-facing projection of a ClientConfig — no private keys."""
+    """Public-facing projection of a ClientConfig — no private keys.
+
+    Includes the user-editable fields so the profile editor in the UI can be
+    populated without a second round-trip.
+    """
+    wg = cfg.wireguard
     return {
-        "id": cfg.wireguard.tunnel_name or cfg.server.endpoint,
-        "name": cfg.wireguard.tunnel_name or cfg.server.endpoint,
+        # id stays tied to the OS interface name (stable); name is the
+        # server-assigned, user-editable display label.
+        "id": wg.tunnel_name or cfg.server.endpoint,
+        "name": cfg.name or wg.tunnel_name or cfg.server.endpoint,
         "endpoint": f"{cfg.server.endpoint}:{cfg.server.port}",
         "fingerprint": cfg.tls.cert_fingerprint_sha256,
-        "client_address": cfg.wireguard.client_address,
-        "dns": cfg.wireguard.dns,
+        "client_address": wg.client_address,
+        "dns": list(wg.dns),
+        "mtu": wg.mtu,
+        "bypass_ips": list(cfg.routing.bypass_ips),
+        "reconnect_max_attempts": cfg.reconnect.max_attempts,
+        "reconnect_delays": list(cfg.reconnect.delays_seconds),
     }
 
 
@@ -121,6 +134,7 @@ class Api:
             "tx_bps": 0, "rx_bps": 0,
             "tx_total": 0, "rx_total": 0,
             "session_start": 0, "last_handshake": 0,
+            "exit_ip": "",
         }
         self._stats_thread: threading.Thread | None = None
         self._stats_stop = threading.Event()
@@ -156,11 +170,7 @@ class Api:
     # ── status / connect ──────────────────────────────────────────────────────
 
     def get_status(self) -> dict[str, Any]:
-        return {
-            "status": self._status_str(),
-            "active_profile_id": self._active_profile_id(),
-            "stats": dict(self._stats),
-        }
+        return {**self._status_payload(), "stats": dict(self._stats)}
 
     def _status_str(self) -> str:
         if self._manager is None:
@@ -171,6 +181,37 @@ class Api:
         if self._manager is None:
             return None
         return _profile_from_config(self._manager.config)["id"]
+
+    def _error_str(self) -> str | None:
+        """Last failure reason for the active tunnel, or None. Coerced to str so
+        a stray non-serialisable value can never break the status event."""
+        if self._manager is None:
+            return None
+        err = self._manager.last_error
+        return err if isinstance(err, str) else None
+
+    def _attempt_info(self) -> tuple[int, int]:
+        """(failed attempts in the current streak, configured max). Coerced to
+        int so a non-serialisable value can never break the status event."""
+        if self._manager is None:
+            return 0, 0
+        a = getattr(self._manager, "attempt", 0)
+        attempt = a if isinstance(a, int) else 0
+        try:
+            max_attempts = int(self._manager.config.reconnect.max_attempts)
+        except (TypeError, ValueError, AttributeError):
+            max_attempts = 0
+        return attempt, max_attempts
+
+    def _status_payload(self) -> dict[str, Any]:
+        attempt, max_attempts = self._attempt_info()
+        return {
+            "status": self._status_str(),
+            "active_profile_id": self._active_profile_id(),
+            "error": self._error_str(),
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+        }
 
     def connect(self, profile_id: str | None = None) -> dict[str, Any]:
         if self._manager is None:
@@ -196,17 +237,19 @@ class Api:
         return {"ok": True}
 
     def _on_state_change(self, state: TunnelState) -> None:
-        ui = _STATE_TO_JS.get(state, "disconnected")
-        self._emit("status", {
-            "status": ui,
-            "active_profile_id": self._active_profile_id(),
-        })
+        payload = self._status_payload()
+        # Trust the state we were handed over a re-read of the manager.
+        payload["status"] = _STATE_TO_JS.get(state, "disconnected")
+        self._emit("status", payload)
         if state is TunnelState.CONNECTED:
             self._stats["session_start"] = time.time()
             self._stats["last_handshake"] = time.time()
+            self._stats["exit_ip"] = ""
             self._start_stats_loop()
+            self._start_exit_ip_probe()
         else:
             self._stop_stats_loop()
+            self._stats["exit_ip"] = ""
             if state in (TunnelState.DISCONNECTED, TunnelState.FAILED):
                 self._stats["session_start"] = 0
 
@@ -254,10 +297,7 @@ class Api:
 
         prof = _profile_from_config(cfg)
         self._record_log("info", f"profile imported: {prof['name']}")
-        self._emit("status", {
-            "status": self._status_str(),
-            "active_profile_id": prof["id"],
-        })
+        self._emit("status", self._status_payload())
         return {"ok": True, "profile": prof}
 
     def remove_profile(self, profile_id: str) -> dict[str, Any]:
@@ -271,18 +311,154 @@ class Api:
             default_config_path().unlink(missing_ok=True)
         except OSError as exc:
             log.warning("could not delete config: %s", exc)
-        self._emit("status", {"status": "empty", "active_profile_id": None})
+        self._emit("status", self._status_payload())
         return {"ok": True}
 
     def set_active_profile(self, profile_id: str) -> dict[str, Any]:
         # Only one profile today — accept and ignore.
         return {"ok": True}
 
+    def update_profile(self, profile_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        """Apply user edits (name, MTU, DNS, IP, routing, reconnect) to the
+        active profile. Persists config.json and — if the tunnel was up —
+        reconnects so the new values take effect."""
+        if self._manager is None:
+            return {"ok": False, "error": "no profile imported"}
+        if not isinstance(patch, dict):
+            return {"ok": False, "error": "invalid patch"}
+
+        current = self._manager.config
+        try:
+            new_cfg = apply_profile_patch(current, patch)
+        except ConfigError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        # Profiles imported before profile-editing existed have no pristine
+        # snapshot; capture the pre-edit state once so "reset" still works.
+        orig_path = original_config_path(default_config_path())
+        if not orig_path.exists():
+            try:
+                current.save(orig_path)
+            except OSError:
+                log.warning("could not snapshot original config")
+
+        try:
+            new_cfg.save(default_config_path())
+        except OSError as exc:
+            return {"ok": False, "error": f"no se pudo guardar la configuración: {exc}"}
+
+        try:
+            self._replace_manager(new_cfg)
+        except Exception as exc:
+            log.exception("update_profile: manager swap failed")
+            return {"ok": False, "error": str(exc)}
+
+        prof = _profile_from_config(new_cfg)
+        self._record_log("info", f"profile settings updated: {prof['name']}")
+        return {"ok": True, "profile": prof}
+
+    def reset_profile(self, profile_id: str) -> dict[str, Any]:
+        """Restore the profile to the exact state it had when the .owcfg was
+        imported, discarding every local edit."""
+        if self._manager is None:
+            return {"ok": False, "error": "no profile imported"}
+
+        orig_path = original_config_path(default_config_path())
+        try:
+            new_cfg = ClientConfig.load(orig_path)
+        except ConfigError:
+            return {
+                "ok": False,
+                "error": "No hay una configuración original guardada para este perfil. "
+                         "Vuelve a importar el .owcfg para restaurarla.",
+            }
+
+        try:
+            new_cfg.save(default_config_path())
+        except OSError as exc:
+            return {"ok": False, "error": f"no se pudo guardar la configuración: {exc}"}
+
+        try:
+            self._replace_manager(new_cfg)
+        except Exception as exc:
+            log.exception("reset_profile: manager swap failed")
+            return {"ok": False, "error": str(exc)}
+
+        prof = _profile_from_config(new_cfg)
+        self._record_log("info", f"profile settings reset to defaults: {prof['name']}")
+        return {"ok": True, "profile": prof}
+
+    def _replace_manager(self, cfg: ClientConfig) -> None:
+        """Swap in a TunnelManager for `cfg`. If the tunnel was active, the old
+        one is stopped and the new one started (in a background thread so the
+        bridge call returns immediately)."""
+        old = self._manager
+        was_active = old is not None and old.state in (
+            TunnelState.CONNECTED,
+            TunnelState.CONNECTING,
+            TunnelState.RECONNECTING,
+        )
+        new_manager = TunnelManager(cfg)
+        new_manager.add_listener(self._on_state_change)
+        self._manager = new_manager
+        if self._on_manager_replaced is not None:
+            try:
+                self._on_manager_replaced(new_manager)
+            except Exception:
+                log.exception("on_manager_replaced raised")
+
+        def _switch() -> None:
+            if old is not None:
+                try:
+                    old.stop()
+                except Exception:
+                    log.exception("error stopping previous manager")
+            if was_active:
+                new_manager.start()
+
+        threading.Thread(target=_switch, daemon=True, name="api-profile-swap").start()
+        self._emit("status", self._status_payload())
+
     # ── logs ──────────────────────────────────────────────────────────────────
 
     def get_logs(self, since: int = 0) -> list[dict[str, Any]]:
         with self._lock:
             return [e for e in self._logs if e["seq"] > since]
+
+    def clear_logs(self) -> dict[str, Any]:
+        """Empty the in-memory log buffer the UI reads from. New lines from the
+        running tunnel keep flowing in afterwards."""
+        with self._lock:
+            self._logs.clear()
+        return {"ok": True}
+
+    def export_logs(self) -> dict[str, Any]:
+        """Write the current log buffer to a file the user picks via the native
+        save dialog."""
+        if self._window is None:
+            return {"ok": False, "error": "no window"}
+        try:
+            import webview
+            result = self._window.create_file_dialog(
+                webview.SAVE_DIALOG, save_filename="outwarp-logs.txt"
+            )
+        except Exception as exc:
+            log.exception("export_logs: file dialog failed")
+            return {"ok": False, "error": str(exc)}
+        if not result:
+            return {"ok": False, "error": "cancelled"}
+        path = result if isinstance(result, str) else result[0]
+        try:
+            with self._lock:
+                lines = [
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(e['ts']))} "
+                    f"[{e['level'].upper()}] {e['msg']}"
+                    for e in self._logs
+                ]
+            Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "path": path}
 
     def _record_log(self, level: str, msg: str) -> None:
         with self._lock:
@@ -370,10 +546,7 @@ class Api:
                 # Re-broadcast status too: a cheap watchdog in case an earlier
                 # evaluate_js call was dropped by the webview backend before
                 # the page was ready to receive it.
-                self._emit("status", {
-                    "status": self._status_str(),
-                    "active_profile_id": self._active_profile_id(),
-                })
+                self._emit("status", self._status_payload())
                 time.sleep(1.0)
 
         self._stats_thread = threading.Thread(
@@ -384,6 +557,31 @@ class Api:
     def _stop_stats_loop(self) -> None:
         self._stats_stop.set()
         self._stats_thread = None
+
+    def _start_exit_ip_probe(self) -> None:
+        """After connecting, query our public IP so the UI can show the user
+        their traffic is actually exiting through the tunnel. Best-effort: a
+        few retries (routing may not be up the instant we go CONNECTED), short
+        timeouts, every failure swallowed."""
+        def _probe() -> None:
+            import urllib.request
+            for _ in range(3):
+                if self._stats.get("session_start", 0) == 0:
+                    return  # disconnected before we got an answer
+                try:
+                    with urllib.request.urlopen(
+                        "https://api.ipify.org", timeout=5
+                    ) as resp:
+                        ip = resp.read().decode("utf-8", "replace").strip()
+                    if ip:
+                        self._stats["exit_ip"] = ip
+                        self._emit("stats", dict(self._stats))
+                        return
+                except Exception:
+                    pass
+                time.sleep(2)
+
+        threading.Thread(target=_probe, daemon=True, name="outwarp-exit-ip").start()
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
