@@ -199,6 +199,7 @@ class TunnelManager:
         self._stability = stability_seconds
         self._poll = poll_interval
         self._state = TunnelState.DISCONNECTED
+        self._last_error: str | None = None
         self._lock = Lock()
         self._listeners: list[StateListener] = []
         self._stop_event = Event()
@@ -210,8 +211,20 @@ class TunnelManager:
             return self._state
 
     @property
+    def last_error(self) -> str | None:
+        """Human-readable reason for the most recent failure, or None.
+
+        Cleared on a successful connection and on stop()."""
+        with self._lock:
+            return self._last_error
+
+    @property
     def config(self) -> ClientConfig:
         return self._config
+
+    def _set_error(self, msg: str | None) -> None:
+        with self._lock:
+            self._last_error = msg
 
     def add_listener(self, callback: StateListener) -> None:
         with self._lock:
@@ -234,6 +247,7 @@ class TunnelManager:
             self._tunnel.disconnect()
         except Exception:
             log.exception("Error while disconnecting tunnel during stop()")
+        self._set_error(None)
         self._set_state(TunnelState.DISCONNECTED)
 
     def _set_state(self, state: TunnelState) -> None:
@@ -261,6 +275,7 @@ class TunnelManager:
                 self._tunnel.connect()
             except Exception as exc:
                 log.warning("Connect attempt %d failed: %s", attempt + 1, exc)
+                self._set_error(str(exc))
                 attempt += 1
                 if attempt >= max_attempts:
                     self._set_state(TunnelState.FAILED)
@@ -269,6 +284,7 @@ class TunnelManager:
                     return
                 continue
 
+            self._set_error(None)
             self._set_state(TunnelState.CONNECTED)
             connected_at = time.monotonic()
             stability_reset = False
@@ -286,6 +302,7 @@ class TunnelManager:
                 return
 
             log.warning("Tunnel died unexpectedly; cleaning up before retry")
+            self._set_error("La conexión se cerró inesperadamente")
             try:
                 self._tunnel.disconnect()
             except Exception:

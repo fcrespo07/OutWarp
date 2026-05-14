@@ -56,13 +56,13 @@ def _settings_path() -> Path:
 
 
 def _default_settings() -> dict[str, Any]:
+    # Only settings the client actually acts on. start_at_boot / kill_switch /
+    # auto_reconnect were dropped — they were persisted but never consumed, so
+    # the toggles misled the user. Reintroduce them once they're wired up.
     return {
         "language": "es",
         "theme": "auto",
         "advanced": False,
-        "start_at_boot": False,
-        "auto_reconnect": True,
-        "kill_switch": False,
     }
 
 
@@ -134,6 +134,7 @@ class Api:
             "tx_bps": 0, "rx_bps": 0,
             "tx_total": 0, "rx_total": 0,
             "session_start": 0, "last_handshake": 0,
+            "exit_ip": "",
         }
         self._stats_thread: threading.Thread | None = None
         self._stats_stop = threading.Event()
@@ -172,6 +173,7 @@ class Api:
         return {
             "status": self._status_str(),
             "active_profile_id": self._active_profile_id(),
+            "error": self._error_str(),
             "stats": dict(self._stats),
         }
 
@@ -184,6 +186,21 @@ class Api:
         if self._manager is None:
             return None
         return _profile_from_config(self._manager.config)["id"]
+
+    def _error_str(self) -> str | None:
+        """Last failure reason for the active tunnel, or None. Coerced to str so
+        a stray non-serialisable value can never break the status event."""
+        if self._manager is None:
+            return None
+        err = self._manager.last_error
+        return err if isinstance(err, str) else None
+
+    def _status_payload(self) -> dict[str, Any]:
+        return {
+            "status": self._status_str(),
+            "active_profile_id": self._active_profile_id(),
+            "error": self._error_str(),
+        }
 
     def connect(self, profile_id: str | None = None) -> dict[str, Any]:
         if self._manager is None:
@@ -213,13 +230,17 @@ class Api:
         self._emit("status", {
             "status": ui,
             "active_profile_id": self._active_profile_id(),
+            "error": self._error_str(),
         })
         if state is TunnelState.CONNECTED:
             self._stats["session_start"] = time.time()
             self._stats["last_handshake"] = time.time()
+            self._stats["exit_ip"] = ""
             self._start_stats_loop()
+            self._start_exit_ip_probe()
         else:
             self._stop_stats_loop()
+            self._stats["exit_ip"] = ""
             if state in (TunnelState.DISCONNECTED, TunnelState.FAILED):
                 self._stats["session_start"] = 0
 
@@ -267,10 +288,7 @@ class Api:
 
         prof = _profile_from_config(cfg)
         self._record_log("info", f"profile imported: {prof['name']}")
-        self._emit("status", {
-            "status": self._status_str(),
-            "active_profile_id": prof["id"],
-        })
+        self._emit("status", self._status_payload())
         return {"ok": True, "profile": prof}
 
     def remove_profile(self, profile_id: str) -> dict[str, Any]:
@@ -284,7 +302,7 @@ class Api:
             default_config_path().unlink(missing_ok=True)
         except OSError as exc:
             log.warning("could not delete config: %s", exc)
-        self._emit("status", {"status": "empty", "active_profile_id": None})
+        self._emit("status", self._status_payload())
         return {"ok": True}
 
     def set_active_profile(self, profile_id: str) -> dict[str, Any]:
@@ -390,10 +408,7 @@ class Api:
                 new_manager.start()
 
         threading.Thread(target=_switch, daemon=True, name="api-profile-swap").start()
-        self._emit("status", {
-            "status": self._status_str(),
-            "active_profile_id": _profile_from_config(cfg)["id"],
-        })
+        self._emit("status", self._status_payload())
 
     # ── logs ──────────────────────────────────────────────────────────────────
 
@@ -487,10 +502,7 @@ class Api:
                 # Re-broadcast status too: a cheap watchdog in case an earlier
                 # evaluate_js call was dropped by the webview backend before
                 # the page was ready to receive it.
-                self._emit("status", {
-                    "status": self._status_str(),
-                    "active_profile_id": self._active_profile_id(),
-                })
+                self._emit("status", self._status_payload())
                 time.sleep(1.0)
 
         self._stats_thread = threading.Thread(
@@ -501,6 +513,31 @@ class Api:
     def _stop_stats_loop(self) -> None:
         self._stats_stop.set()
         self._stats_thread = None
+
+    def _start_exit_ip_probe(self) -> None:
+        """After connecting, query our public IP so the UI can show the user
+        their traffic is actually exiting through the tunnel. Best-effort: a
+        few retries (routing may not be up the instant we go CONNECTED), short
+        timeouts, every failure swallowed."""
+        def _probe() -> None:
+            import urllib.request
+            for _ in range(3):
+                if self._stats.get("session_start", 0) == 0:
+                    return  # disconnected before we got an answer
+                try:
+                    with urllib.request.urlopen(
+                        "https://api.ipify.org", timeout=5
+                    ) as resp:
+                        ip = resp.read().decode("utf-8", "replace").strip()
+                    if ip:
+                        self._stats["exit_ip"] = ip
+                        self._emit("stats", dict(self._stats))
+                        return
+                except Exception:
+                    pass
+                time.sleep(2)
+
+        threading.Thread(target=_probe, daemon=True, name="outwarp-exit-ip").start()
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 

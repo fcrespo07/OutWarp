@@ -58,9 +58,11 @@ function App() {
   const [activeId, setActiveId] = useState(null);
   const [stats, setStats] = useState({ tx_bps: 0, rx_bps: 0, tx_total: 0, rx_total: 0, session_start: 0, last_handshake: 0 });
   const [logs, setLogs] = useState([]);
-  const [settings, setSettings] = useState({ language: "es", theme: "auto", advanced: false, start_at_boot: false, auto_reconnect: true, kill_switch: false });
+  const [settings, setSettings] = useState({ language: "es", theme: "auto", advanced: false });
   const [screen, setScreen] = useState("home");
   const [busyMsg, setBusyMsg] = useState("");
+  const [connError, setConnError] = useState("");
+  const [ready, setReady] = useState(false);
 
   // bootstrap
   useEffect(() => {
@@ -72,15 +74,18 @@ function App() {
       setStatus(s.status);
       setActiveId(s.active_profile_id);
       setStats(s.stats);
+      setConnError(s.error || "");
       setProfiles(ps);
       setSettings(st);
       setLogs(lg);
+      setReady(true);
     });
   }, []);
 
   useBridgeEvent("status", useCallback((d) => {
     setStatus(d.status);
     setActiveId(d.active_profile_id);
+    setConnError(d.error || "");
     if (d.status !== "connecting" && d.status !== "error") setBusyMsg("");
   }, []));
   useBridgeEvent("stats",   useCallback((d) => setStats(d), []));
@@ -101,6 +106,7 @@ function App() {
         setStatus(s.status);
         setActiveId(s.active_profile_id);
         setStats(s.stats);
+        setConnError(s.error || "");
       } catch (_) {}
       if (alive) setTimeout(tick, 1000);
     };
@@ -148,6 +154,16 @@ function App() {
 
   const onSetting = (k, v) => api?.set_settings({ [k]: v });
 
+  // Hold the first paint until the bridge has answered — otherwise the app
+  // briefly renders the "empty / import" screen even when a profile exists.
+  if (!ready) {
+    return (
+      <div data-theme={theme} style={{ display: "grid", placeItems: "center", height: "100%", background: "var(--bg)" }}>
+        <window.WSLogoMark size={40} color="var(--text-3)" accent="var(--brand)"/>
+      </div>
+    );
+  }
+
   return (
     <div data-theme={theme} style={{ display: "grid", gridTemplateColumns: "232px 1fr", height: "100%", background: "var(--bg)", color: "var(--text)" }}>
       <Sidebar
@@ -167,6 +183,7 @@ function App() {
             stats={stats}
             advanced={!!settings.advanced}
             busyMsg={busyMsg}
+            connError={connError}
             onConnect={onConnect}
             onDisconnect={onDisconnect}
             onReconnect={onReconnect}
@@ -261,13 +278,13 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
 };
 
 // ── Home ───────────────────────────────────────────────────────────
-const Home = ({ T, status, active, stats, advanced, busyMsg, onConnect, onDisconnect, onReconnect, onImport }) => {
+const Home = ({ T, status, active, stats, advanced, busyMsg, connError, onConnect, onDisconnect, onReconnect, onImport }) => {
   if (status === "empty" || !active) {
     return <EmptyHome T={T} onImport={onImport}/>;
   }
   if (status === "connected") return <ConnectedHome T={T} active={active} stats={stats} advanced={advanced} onDisconnect={onDisconnect}/>;
   if (status === "connecting") return <ConnectingHome T={T} active={active} busyMsg={busyMsg}/>;
-  if (status === "error") return <ErrorHome T={T} active={active} onReconnect={onReconnect} onImport={onImport}/>;
+  if (status === "error") return <ErrorHome T={T} active={active} connError={connError} onReconnect={onReconnect} onImport={onImport}/>;
   return <DisconnectedHome T={T} active={active} onConnect={onConnect}/>;
 };
 
@@ -341,6 +358,14 @@ const ConnectedHome = ({ T, active, stats, advanced, onDisconnect }) => {
             </div>
             <div style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.05 }}>{active.name}</div>
             <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{active.endpoint}</div>
+            {stats.exit_ip ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--brand-2)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 L9 17 L4 12"/></svg>
+                <span style={{ fontSize: 12, color: "var(--brand-2)", fontFamily: "var(--font-mono)" }}>{T.publicIp}: {stats.exit_ip}</span>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8, fontFamily: "var(--font-mono)" }}>{T.publicIp}: …</div>
+            )}
             <div style={{ marginTop: 18 }}>
               <window.Btn kind="solid" size="md" onClick={onDisconnect}>{T.disconnect}</window.Btn>
             </div>
@@ -368,7 +393,7 @@ const ConnectedHome = ({ T, active, stats, advanced, onDisconnect }) => {
   );
 };
 
-const ErrorHome = ({ T, active, onReconnect, onImport }) => (
+const ErrorHome = ({ T, active, connError, onReconnect, onImport }) => (
   <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
     <Header title={T.nav_home} sub={T.home_ribbon}/>
     <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 18, padding: 28 }}>
@@ -377,8 +402,23 @@ const ErrorHome = ({ T, active, onReconnect, onImport }) => (
         <span style={{ fontSize: 12, fontWeight: 600, color: "var(--brand-bad)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.error}</span>
       </div>
       <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em" }}>No se pudo conectar</div>
-      <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6, maxWidth: 540 }}>
-        Revisa los logs para más detalles. Puede ser un error de huella TLS, un endpoint inalcanzable o un fallo de WireGuard.
+      {connError ? (
+        <div style={{
+          marginTop: 12, padding: "10px 12px", borderRadius: 8,
+          background: "color-mix(in srgb, var(--brand-bad) 10%, transparent)",
+          border: "1px solid color-mix(in srgb, var(--brand-bad) 35%, transparent)",
+          fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text)",
+          wordBreak: "break-word", maxWidth: 560,
+        }}>
+          {connError}
+        </div>
+      ) : (
+        <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6, maxWidth: 540 }}>
+          Revisa los logs para más detalles. Puede ser un error de huella TLS, un endpoint inalcanzable o un fallo de WireGuard.
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 10 }}>
+        Revisa el registro para el detalle completo.
       </div>
       <div style={{ marginTop: 18, display: "flex", gap: 8 }}>
         <window.Btn kind="primary" size="md" onClick={onReconnect}>Reintentar</window.Btn>
@@ -505,7 +545,7 @@ const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => 
           <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{T.profiles_title}</div>
           <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>{T.welcomeSub}</div>
         </div>
-        <window.Btn kind="primary" size="md" onClick={() => fileRef.current?.click()}>{T.profiles_add}</window.Btn>
+        <window.Btn kind="primary" size="md" onClick={() => { if (window.confirm(T.profiles_replaceWarn)) fileRef.current?.click(); }}>{T.profiles_add}</window.Btn>
       </header>
       {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>{error}</div>}
       <div>
@@ -726,9 +766,6 @@ const Settings = ({ T, settings, onSetting }) => {
         <Row title={T.set_language} control={<Select value={settings.language} onChange={(v) => onSetting("language", v)} options={[["es", "Español"], ["en", "English"]]}/>}/>
         <Row title={T.set_theme} control={<Select value={settings.theme} onChange={(v) => onSetting("theme", v)} options={[["auto", T.set_themeAuto], ["light", T.set_themeLight], ["dark", T.set_themeDark]]}/>}/>
         <Row title={T.set_advanced} sub={T.set_advancedSub} control={<window.Toggle on={!!settings.advanced} onChange={(v) => onSetting("advanced", v)}/>}/>
-        <Row title={T.set_autoconnect} sub={T.set_autoconnectSub} control={<window.Toggle on={!!settings.auto_reconnect} onChange={(v) => onSetting("auto_reconnect", v)}/>}/>
-        <Row title={T.set_startup} control={<window.Toggle on={!!settings.start_at_boot} onChange={(v) => onSetting("start_at_boot", v)}/>}/>
-        <Row title={T.set_killSwitch} sub={T.set_killSwitchSub} control={<window.Toggle on={!!settings.kill_switch} onChange={(v) => onSetting("kill_switch", v)}/>}/>
       </div>
     </section>
   );

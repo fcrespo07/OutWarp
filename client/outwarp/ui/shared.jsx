@@ -72,6 +72,7 @@ const STR = {
     profiles_title: "Perfiles",
     profiles_add: "Añadir perfil",
     profiles_active: "Activo",
+    profiles_replaceWarn: "Ya tienes una conexión configurada. Importar otra reemplazará la actual. ¿Continuar?",
 
     // Profile editor
     edit_title: "Ajustes del perfil",
@@ -178,6 +179,7 @@ const STR = {
     profiles_title: "Profiles",
     profiles_add: "Add profile",
     profiles_active: "Active",
+    profiles_replaceWarn: "You already have a connection configured. Importing another will replace the current one. Continue?",
 
     edit_title: "Profile settings",
     edit_sub: "Connection values assigned by your server.",
