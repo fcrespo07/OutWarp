@@ -30,8 +30,10 @@ from typing import Any
 from outwarp.config import (
     ClientConfig,
     ConfigError,
+    apply_profile_patch,
     default_config_path,
     import_owcfg,
+    original_config_path,
 )
 from outwarp.logs import MemoryLogHandler
 from outwarp.tunnel import TunnelManager, TunnelState
@@ -85,14 +87,25 @@ def _save_settings(settings: dict[str, Any]) -> None:
 
 
 def _profile_from_config(cfg: ClientConfig) -> dict[str, Any]:
-    """Public-facing projection of a ClientConfig — no private keys."""
+    """Public-facing projection of a ClientConfig — no private keys.
+
+    Includes the user-editable fields so the profile editor in the UI can be
+    populated without a second round-trip.
+    """
+    wg = cfg.wireguard
     return {
-        "id": cfg.wireguard.tunnel_name or cfg.server.endpoint,
-        "name": cfg.wireguard.tunnel_name or cfg.server.endpoint,
+        # id stays tied to the OS interface name (stable); name is the
+        # server-assigned, user-editable display label.
+        "id": wg.tunnel_name or cfg.server.endpoint,
+        "name": cfg.name or wg.tunnel_name or cfg.server.endpoint,
         "endpoint": f"{cfg.server.endpoint}:{cfg.server.port}",
         "fingerprint": cfg.tls.cert_fingerprint_sha256,
-        "client_address": cfg.wireguard.client_address,
-        "dns": cfg.wireguard.dns,
+        "client_address": wg.client_address,
+        "dns": list(wg.dns),
+        "mtu": wg.mtu,
+        "bypass_ips": list(cfg.routing.bypass_ips),
+        "reconnect_max_attempts": cfg.reconnect.max_attempts,
+        "reconnect_delays": list(cfg.reconnect.delays_seconds),
     }
 
 
@@ -277,6 +290,110 @@ class Api:
     def set_active_profile(self, profile_id: str) -> dict[str, Any]:
         # Only one profile today — accept and ignore.
         return {"ok": True}
+
+    def update_profile(self, profile_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        """Apply user edits (name, MTU, DNS, IP, routing, reconnect) to the
+        active profile. Persists config.json and — if the tunnel was up —
+        reconnects so the new values take effect."""
+        if self._manager is None:
+            return {"ok": False, "error": "no profile imported"}
+        if not isinstance(patch, dict):
+            return {"ok": False, "error": "invalid patch"}
+
+        current = self._manager.config
+        try:
+            new_cfg = apply_profile_patch(current, patch)
+        except ConfigError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        # Profiles imported before profile-editing existed have no pristine
+        # snapshot; capture the pre-edit state once so "reset" still works.
+        orig_path = original_config_path(default_config_path())
+        if not orig_path.exists():
+            try:
+                current.save(orig_path)
+            except OSError:
+                log.warning("could not snapshot original config")
+
+        try:
+            new_cfg.save(default_config_path())
+        except OSError as exc:
+            return {"ok": False, "error": f"no se pudo guardar la configuración: {exc}"}
+
+        try:
+            self._replace_manager(new_cfg)
+        except Exception as exc:
+            log.exception("update_profile: manager swap failed")
+            return {"ok": False, "error": str(exc)}
+
+        prof = _profile_from_config(new_cfg)
+        self._record_log("info", f"profile settings updated: {prof['name']}")
+        return {"ok": True, "profile": prof}
+
+    def reset_profile(self, profile_id: str) -> dict[str, Any]:
+        """Restore the profile to the exact state it had when the .owcfg was
+        imported, discarding every local edit."""
+        if self._manager is None:
+            return {"ok": False, "error": "no profile imported"}
+
+        orig_path = original_config_path(default_config_path())
+        try:
+            new_cfg = ClientConfig.load(orig_path)
+        except ConfigError:
+            return {
+                "ok": False,
+                "error": "No hay una configuración original guardada para este perfil. "
+                         "Vuelve a importar el .owcfg para restaurarla.",
+            }
+
+        try:
+            new_cfg.save(default_config_path())
+        except OSError as exc:
+            return {"ok": False, "error": f"no se pudo guardar la configuración: {exc}"}
+
+        try:
+            self._replace_manager(new_cfg)
+        except Exception as exc:
+            log.exception("reset_profile: manager swap failed")
+            return {"ok": False, "error": str(exc)}
+
+        prof = _profile_from_config(new_cfg)
+        self._record_log("info", f"profile settings reset to defaults: {prof['name']}")
+        return {"ok": True, "profile": prof}
+
+    def _replace_manager(self, cfg: ClientConfig) -> None:
+        """Swap in a TunnelManager for `cfg`. If the tunnel was active, the old
+        one is stopped and the new one started (in a background thread so the
+        bridge call returns immediately)."""
+        old = self._manager
+        was_active = old is not None and old.state in (
+            TunnelState.CONNECTED,
+            TunnelState.CONNECTING,
+            TunnelState.RECONNECTING,
+        )
+        new_manager = TunnelManager(cfg)
+        new_manager.add_listener(self._on_state_change)
+        self._manager = new_manager
+        if self._on_manager_replaced is not None:
+            try:
+                self._on_manager_replaced(new_manager)
+            except Exception:
+                log.exception("on_manager_replaced raised")
+
+        def _switch() -> None:
+            if old is not None:
+                try:
+                    old.stop()
+                except Exception:
+                    log.exception("error stopping previous manager")
+            if was_active:
+                new_manager.start()
+
+        threading.Thread(target=_switch, daemon=True, name="api-profile-swap").start()
+        self._emit("status", {
+            "status": self._status_str(),
+            "active_profile_id": _profile_from_config(cfg)["id"],
+        })
 
     # ── logs ──────────────────────────────────────────────────────────────────
 

@@ -140,6 +140,11 @@ function App() {
     setProfiles(ps);
     setActiveId(null);
   };
+  const refreshProfiles = async () => {
+    if (!api) return;
+    const ps = await api.list_profiles();
+    setProfiles(ps);
+  };
 
   const onSetting = (k, v) => api?.set_settings({ [k]: v });
 
@@ -168,7 +173,7 @@ function App() {
             onImport={() => setScreen("import")}
           />
         )}
-        {screen === "import"  && <Import T={T} api={api} active={active} onImported={(p) => { setActiveId(p.id); setProfiles([p]); setScreen("home"); }} onRemove={onRemoveProfile}/>}
+        {screen === "import"  && <Import T={T} api={api} active={active} onImported={(p) => { setActiveId(p.id); setProfiles([p]); setScreen("home"); }} onRemove={onRemoveProfile} onProfilesChanged={refreshProfiles}/>}
         {screen === "logs"     && <Logs T={T} logs={logs} api={api} onClear={() => setLogs([])}/>}
         {screen === "settings" && <Settings T={T} settings={settings} onSetting={onSetting}/>}
       </main>
@@ -437,7 +442,7 @@ const Dial = ({ active, pulsing }) => (
 );
 
 // ── Import / Profiles ──────────────────────────────────────────────
-const Import = ({ T, api, active, onImported, onRemove }) => {
+const Import = ({ T, api, active, onImported, onRemove, onProfilesChanged }) => {
   const fileRef = useRef(null);
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
@@ -493,7 +498,131 @@ const Import = ({ T, api, active, onImported, onRemove }) => {
         {msg && <div style={{ marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-2)" }}>{msg}</div>}
         {error && <div style={{ marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>{error}</div>}
       </div>
+      {active && <ProfileEditor T={T} api={api} active={active} onUpdated={onProfilesChanged}/>}
     </div>
+  );
+};
+
+// ── Profile editor ─────────────────────────────────────────────────
+// Lets the user tweak the connection settings the server baked into the
+// .owcfg (name, MTU, DNS, client IP, bypass routes, reconnect backoff).
+// Gated behind a disclaimer because a wrong value breaks the tunnel; the
+// "reset to defaults" button restores the pristine imported config.
+const ProfileEditor = ({ T, api, active, onUpdated }) => {
+  const [ack, setAck] = useState(false);
+  const [form, setForm] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (!active) { setForm(null); return; }
+    setForm({
+      name: active.name || "",
+      client_address: active.client_address || "",
+      mtu: String(active.mtu ?? 1380),
+      dns: (active.dns || []).join(", "),
+      bypass_ips: (active.bypass_ips || []).join(", "),
+      reconnect_max_attempts: String(active.reconnect_max_attempts ?? 5),
+      reconnect_delays: (active.reconnect_delays || []).join(", "),
+    });
+    setAck(false);
+  }, [active]);
+
+  if (!form) return null;
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const save = async () => {
+    if (!api) return;
+    setBusy(true); setErr(""); setMsg("");
+    const r = await api.update_profile(active.id, { ...form });
+    setBusy(false);
+    if (r && r.ok) { setMsg(T.edit_saved); await onUpdated?.(); }
+    else { setErr((r && r.error) || T.error); }
+  };
+
+  const reset = async () => {
+    if (!api) return;
+    if (!window.confirm(T.edit_resetConfirm)) return;
+    setBusy(true); setErr(""); setMsg("");
+    const r = await api.reset_profile(active.id);
+    setBusy(false);
+    if (r && r.ok) { setMsg(T.edit_resetDone); await onUpdated?.(); }
+    else { setErr((r && r.error) || T.error); }
+  };
+
+  const inputStyle = (disabled) => ({
+    height: 32, padding: "0 10px", borderRadius: 8,
+    border: "1px solid var(--line-strong)",
+    background: disabled ? "var(--bg-sunk)" : "var(--bg)",
+    color: disabled ? "var(--text-3)" : "var(--text)",
+    fontSize: 13, fontFamily: "var(--font-mono)", width: "100%", outline: "none",
+  });
+
+  // Plain render function (not a component) — defining a component inside the
+  // render would remount the <input> on every keystroke and drop focus.
+  const field = (label, k, { hint = "", mono = true } = {}) => (
+    <div key={k} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)" }}>{label}</label>
+      <input
+        value={form[k]}
+        disabled={!ack || busy}
+        onChange={(e) => set(k, e.target.value)}
+        style={{ ...inputStyle(!ack || busy), fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)" }}
+      />
+      {hint && <div style={{ fontSize: 11, color: "var(--text-3)" }}>{hint}</div>}
+    </div>
+  );
+
+  return (
+    <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
+      <div>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>{T.edit_title}</div>
+        <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>{T.edit_sub}</div>
+      </div>
+
+      {!ack && (
+        <div style={{
+          background: "color-mix(in srgb, var(--brand-warn) 12%, transparent)",
+          border: "1px solid color-mix(in srgb, var(--brand-warn) 45%, transparent)",
+          borderRadius: 10, padding: 14,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand-warn)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3 L22 20 H2 Z"/><path d="M12 10 V14 M12 17 V17.5"/></svg>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--brand-warn)" }}>{T.edit_disclaimerTitle}</div>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.55 }}>{T.edit_disclaimerBody}</div>
+          <div style={{ marginTop: 12 }}>
+            <window.Btn kind="ghost" size="sm" onClick={() => { setMsg(""); setErr(""); setAck(true); }}>{T.edit_disclaimerAck}</window.Btn>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        {field(T.edit_name, "name", { mono: false })}
+        {field(T.edit_mtu, "mtu", { hint: T.edit_mtuHint })}
+        {field(T.edit_clientIp, "client_address", { hint: T.edit_clientIpHint })}
+        {field(T.edit_dns, "dns", { hint: T.edit_dnsHint })}
+        {field(T.edit_bypass, "bypass_ips", { hint: T.edit_bypassHint })}
+        {field(T.edit_maxAttempts, "reconnect_max_attempts")}
+        <div style={{ gridColumn: "1 / -1" }}>
+          {field(T.edit_delays, "reconnect_delays", { hint: T.edit_delaysHint })}
+        </div>
+      </div>
+
+      {ack && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <window.Btn kind="primary" size="md" onClick={save} disabled={busy} style={busy ? { opacity: .6 } : {}}>{T.edit_save}</window.Btn>
+          <window.Btn kind="danger" size="md" onClick={reset} disabled={busy} style={busy ? { opacity: .6 } : {}}>{T.edit_reset}</window.Btn>
+          <window.Btn kind="ghost" size="md" onClick={() => setAck(false)} disabled={busy}>{T.edit_cancel}</window.Btn>
+          <span style={{ fontSize: 11, color: "var(--text-3)" }}>{T.edit_reconnectNote}</span>
+        </div>
+      )}
+
+      {msg && <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-2)" }}>{msg}</div>}
+      {err && <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>{err}</div>}
+    </section>
   );
 };
 

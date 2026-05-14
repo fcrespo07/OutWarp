@@ -100,10 +100,11 @@ def build_wg_conf(config: ClientConfig) -> str:
         "[Interface]\n"
         f"PrivateKey = {wg.client_private_key}\n"
         f"Address = {wg.client_address}\n"
-        # 1500 (Ethernet) - 40 (IP/TCP) - 40 (TLS) - 8 (WS frame) - 4 (wstunnel) - 28 (WG) = 1380.
-        # The wg-quick default of 1420 is sized for WG-over-UDP; over TCP/TLS it causes
-        # silent drops of full-size return packets (PMTUD black hole).
-        "MTU = 1380\n"
+        # Default 1380: 1500 (Ethernet) - 40 (IP/TCP) - 40 (TLS) - 8 (WS frame)
+        # - 4 (wstunnel) - 28 (WG) = 1380. The wg-quick default of 1420 is sized
+        # for WG-over-UDP; over TCP/TLS it causes silent drops of full-size return
+        # packets (PMTUD black hole). User-overridable from the profile editor.
+        f"MTU = {wg.mtu}\n"
         f"{dns_line}"
         "\n"
         "[Peer]\n"

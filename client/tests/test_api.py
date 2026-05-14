@@ -91,6 +91,7 @@ def test_list_profiles_empty_when_no_manager():
 
 def test_list_profiles_returns_active_only():
     mgr = MagicMock()
+    mgr.config.name = ""  # falls back to tunnel_name as the display name
     mgr.config.server.endpoint = "1.2.3.4"
     mgr.config.server.port = 443
     mgr.config.tls.cert_fingerprint_sha256 = "AB:CD"
@@ -196,3 +197,82 @@ def test_get_logs_returns_buffer():
     after_first = api.get_logs(1)
     assert len(after_first) == 1
     assert after_first[0]["msg"] == "second"
+
+
+# ── profile editing ───────────────────────────────────────────────────────
+
+def _real_config(tmp_path, **overrides):
+    from outwarp.config import ClientConfig
+    data = json.loads(json.dumps(_VALID_OWCFG))
+    data.update(overrides)
+    src = tmp_path / "src.owcfg"
+    src.write_text(json.dumps(data), encoding="utf-8")
+    return ClientConfig.load(src)
+
+
+def _mgr_with_config(cfg, state=TunnelState.DISCONNECTED):
+    mgr = MagicMock()
+    mgr.config = cfg
+    mgr.state = state
+    return mgr
+
+
+def test_update_profile_without_manager_errors():
+    api, _ = _make_api()
+    r = api.update_profile("x", {"mtu": 1400})
+    assert r["ok"] is False
+
+
+def test_update_profile_applies_and_persists(tmp_path):
+    cfg = _real_config(tmp_path)
+    api, _ = _make_api(_mgr_with_config(cfg))
+    with (
+        patch("outwarp.api.default_config_path", return_value=tmp_path / "config.json"),
+        patch("outwarp.api.TunnelManager", return_value=MagicMock()),
+    ):
+        r = api.update_profile("OutWarp", {"name": "Trabajo", "mtu": 1400, "dns": "9.9.9.9, 1.1.1.1"})
+    assert r["ok"] is True
+    assert r["profile"]["name"] == "Trabajo"
+    assert r["profile"]["mtu"] == 1400
+    assert r["profile"]["dns"] == ["9.9.9.9", "1.1.1.1"]
+    saved = json.loads((tmp_path / "config.json").read_text())
+    assert saved["wireguard"]["mtu"] == 1400
+    assert saved["name"] == "Trabajo"
+    # pre-edit state was snapshotted so reset has a baseline
+    assert (tmp_path / "config.original.json").exists()
+
+
+def test_update_profile_rejects_invalid_value(tmp_path):
+    cfg = _real_config(tmp_path)
+    api, _ = _make_api(_mgr_with_config(cfg))
+    with patch("outwarp.api.default_config_path", return_value=tmp_path / "config.json"):
+        r = api.update_profile("OutWarp", {"mtu": 99999})
+    assert r["ok"] is False
+    assert "MTU" in r["error"]
+
+
+def test_reset_profile_restores_original(tmp_path):
+    original = _real_config(tmp_path)
+    original.save(tmp_path / "config.original.json")
+    edited = _real_config(tmp_path, name="Editado")
+    api, _ = _make_api(_mgr_with_config(edited))
+    with (
+        patch("outwarp.api.default_config_path", return_value=tmp_path / "config.json"),
+        patch("outwarp.api.TunnelManager", return_value=MagicMock()),
+    ):
+        r = api.reset_profile("OutWarp")
+    assert r["ok"] is True
+    # _VALID_OWCFG carries no name field, so the display name falls back to the
+    # interface name — the point is that the "Editado" edit was discarded.
+    assert r["profile"]["name"] == "OutWarp"
+    saved = json.loads((tmp_path / "config.json").read_text())
+    assert saved["wireguard"]["mtu"] == 1380
+    assert saved["name"] == ""
+
+
+def test_reset_profile_without_baseline_errors(tmp_path):
+    cfg = _real_config(tmp_path)
+    api, _ = _make_api(_mgr_with_config(cfg))
+    with patch("outwarp.api.default_config_path", return_value=tmp_path / "config.json"):
+        r = api.reset_profile("OutWarp")
+    assert r["ok"] is False

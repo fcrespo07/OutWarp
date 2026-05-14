@@ -16,6 +16,7 @@ def build_owcfg(
     """Build the .owcfg dict that the client expects."""
     return {
         "schema_version": 1,
+        "name": client_name,
         "server": {
             "endpoint": server_config.endpoint,
             "port": server_config.port,
@@ -35,6 +36,7 @@ def build_owcfg(
             "client_private_key": client_private_key,
             "server_public_key": server_config.wg_public_key,
             "dns": ["1.1.1.1"],
+            "mtu": 1380,
         },
         "routing": {
             "bypass_ips": [server_config.endpoint],
