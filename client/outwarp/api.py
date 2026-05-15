@@ -63,6 +63,11 @@ def _default_settings() -> dict[str, Any]:
         "language": "es",
         "theme": "auto",
         "advanced": False,
+        # Tolerate a pinned-fingerprint mismatch instead of aborting. For
+        # networks that do active TLS interception (corporate/school proxies)
+        # where the outer cert is the proxy's, not the server's. WireGuard's
+        # own crypto still protects the traffic. Off by default.
+        "allow_tls_intercept": False,
     }
 
 
@@ -141,6 +146,9 @@ class Api:
 
         if manager is not None:
             manager.add_listener(self._on_state_change)
+            manager.allow_tls_intercept = bool(
+                self._settings.get("allow_tls_intercept", False)
+            )
 
     # ── pywebview wiring ──────────────────────────────────────────────────────
 
@@ -286,7 +294,9 @@ class Api:
         old = self._manager
         if old is not None:
             old.stop()
-        new_manager = TunnelManager(cfg)
+        new_manager = TunnelManager(
+            cfg, allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False))
+        )
         new_manager.add_listener(self._on_state_change)
         self._manager = new_manager
         if self._on_manager_replaced is not None:
@@ -398,7 +408,9 @@ class Api:
             TunnelState.CONNECTING,
             TunnelState.RECONNECTING,
         )
-        new_manager = TunnelManager(cfg)
+        new_manager = TunnelManager(
+            cfg, allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False))
+        )
         new_manager.add_listener(self._on_state_change)
         self._manager = new_manager
         if self._on_manager_replaced is not None:
@@ -509,6 +521,8 @@ class Api:
                 _save_settings(snapshot)
             except OSError as exc:
                 log.warning("could not persist settings: %s", exc)
+        if isinstance(patch, dict) and "allow_tls_intercept" in patch and self._manager:
+            self._manager.allow_tls_intercept = bool(snapshot["allow_tls_intercept"])
         self._emit("settings", snapshot)
         return {"ok": True, "settings": snapshot}
 

@@ -101,7 +101,7 @@ function App() {
   const [activeId, setActiveId] = useState(null);
   const [stats, setStats] = useState({ tx_bps: 0, rx_bps: 0, tx_total: 0, rx_total: 0, session_start: 0, last_handshake: 0 });
   const [logs, setLogs] = useState([]);
-  const [settings, setSettings] = useState({ language: "es", theme: "auto", advanced: false });
+  const [settings, setSettings] = useState({ language: "es", theme: "auto", advanced: false, allow_tls_intercept: false });
   const [screen, setScreen] = useState("home");
   const [busyMsg, setBusyMsg] = useState("");
   const [connError, setConnError] = useState("");
@@ -870,6 +870,7 @@ const Settings = ({ T, settings, onSetting }) => {
         <Row title={T.set_language} control={<Select value={settings.language} onChange={(v) => onSetting("language", v)} options={[["es", "Español"], ["en", "English"]]}/>}/>
         <Row title={T.set_theme} control={<Select value={settings.theme} onChange={(v) => onSetting("theme", v)} options={[["auto", T.set_themeAuto], ["light", T.set_themeLight], ["dark", T.set_themeDark]]}/>}/>
         <Row title={T.set_advanced} sub={T.set_advancedSub} control={<window.Toggle on={!!settings.advanced} onChange={(v) => onSetting("advanced", v)}/>}/>
+        <Row title={T.set_tlsIntercept} sub={T.set_tlsInterceptSub} control={<window.Toggle on={!!settings.allow_tls_intercept} onChange={(v) => onSetting("allow_tls_intercept", v)}/>}/>
       </div>
     </section>
   );

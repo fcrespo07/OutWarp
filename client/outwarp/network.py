@@ -9,6 +9,14 @@ class NetworkError(RuntimeError):
     pass
 
 
+class FingerprintMismatch(NetworkError):
+    """The endpoint presented a certificate other than the pinned one.
+
+    Distinct from a plain NetworkError (unreachable / no cert) so callers can
+    choose to tolerate it on TLS-intercepting networks, where WireGuard's own
+    encryption is still the real security boundary."""
+
+
 def tcp_probe(host: str, port: int, timeout: float = 5.0) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -36,7 +44,7 @@ def get_tls_fingerprint(host: str, port: int, timeout: float = 5.0) -> str:
 def verify_tls_fingerprint(host: str, port: int, expected: str, timeout: float = 5.0) -> None:
     actual = get_tls_fingerprint(host, port, timeout)
     if actual.upper() != expected.upper():
-        raise NetworkError(
+        raise FingerprintMismatch(
             f"TLS certificate fingerprint mismatch for {host}:{port}.\n"
             f"  Expected: {expected.upper()}\n"
             f"  Got:      {actual}\n"

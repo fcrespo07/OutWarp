@@ -14,7 +14,12 @@ from threading import Event, Lock, Thread
 from platformdirs import user_data_dir
 
 from outwarp.config import ClientConfig
-from outwarp.network import NetworkError, tcp_probe, verify_tls_fingerprint
+from outwarp.network import (
+    FingerprintMismatch,
+    NetworkError,
+    tcp_probe,
+    verify_tls_fingerprint,
+)
 from outwarp.platforms import Platform, get_platform
 from outwarp.wireguard import build_wg_conf
 
@@ -92,6 +97,7 @@ class Tunnel:
         config: ClientConfig,
         platform: Platform | None = None,
         wstunnel_bin: Path | None = None,
+        allow_tls_intercept: bool = False,
     ) -> None:
         self._config = config
         self._platform = platform or get_platform()
@@ -99,6 +105,13 @@ class Tunnel:
         self._proc: subprocess.Popen[str] | None = None
         self._stdout_thread: Thread | None = None
         self._wg_installed = False
+        # When True, a pinned-fingerprint mismatch is logged and tolerated
+        # instead of aborting the connection. Meant for networks that do active
+        # TLS interception (corporate/school proxies): the WireGuard layer
+        # inside the WebSocket is still end-to-end encrypted and authenticated,
+        # so the outer TLS pin is belt-and-suspenders there. Mutable so a live
+        # settings change takes effect on the next connect attempt.
+        self.allow_tls_intercept = allow_tls_intercept
 
     def _drain_stdout(self) -> None:
         assert self._proc is not None
@@ -121,6 +134,16 @@ class Tunnel:
 
         try:
             verify_tls_fingerprint(s.endpoint, s.port, self._config.tls.cert_fingerprint_sha256)
+        except FingerprintMismatch as exc:
+            if not self.allow_tls_intercept:
+                raise TunnelError(str(exc)) from exc
+            log.warning(
+                "TLS fingerprint mismatch ignored ('allow TLS-intercepting networks' "
+                "is on). This network is terminating the outer TLS connection (a "
+                "corporate/school inspection proxy); WireGuard still encrypts and "
+                "authenticates your traffic end-to-end. Details: %s",
+                exc,
+            )
         except NetworkError as exc:
             raise TunnelError(str(exc)) from exc
 
@@ -193,9 +216,10 @@ class TunnelManager:
         *,
         stability_seconds: float = 30.0,
         poll_interval: float = 1.0,
+        allow_tls_intercept: bool = False,
     ) -> None:
         self._config = config
-        self._tunnel = tunnel or Tunnel(config)
+        self._tunnel = tunnel or Tunnel(config, allow_tls_intercept=allow_tls_intercept)
         self._stability = stability_seconds
         self._poll = poll_interval
         self._state = TunnelState.DISCONNECTED
@@ -231,6 +255,15 @@ class TunnelManager:
     @property
     def config(self) -> ClientConfig:
         return self._config
+
+    @property
+    def allow_tls_intercept(self) -> bool:
+        return self._tunnel.allow_tls_intercept
+
+    @allow_tls_intercept.setter
+    def allow_tls_intercept(self, value: bool) -> None:
+        # Picked up on the next connect attempt — no need to restart the tunnel.
+        self._tunnel.allow_tls_intercept = bool(value)
 
     def _set_error(self, msg: str | None) -> None:
         with self._lock:
