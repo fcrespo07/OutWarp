@@ -1,23 +1,36 @@
 from __future__ import annotations
 
+import os
 import sys
+import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 
+def _unique_lock_args() -> dict[str, str]:
+    """Per-test mutex / lock-file names so the suite doesn't collide with a
+    real OutWarp client running on the developer's machine."""
+    tag = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    return {
+        "mutex_name": f"Local\\OutWarpClient-test-{tag}",
+        "lock_file": f"outwarp-client-test-{tag}.lock",
+    }
+
+
 class TestSingleInstanceLock:
     def test_acquire_and_release(self) -> None:
         from outwarp.app import _SingleInstanceLock
-        lock = _SingleInstanceLock()
+        lock = _SingleInstanceLock(**_unique_lock_args())
         assert lock.acquire() is True
         lock.release()
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only flock test")
     def test_double_acquire_posix(self) -> None:
         from outwarp.app import _SingleInstanceLock
-        lock1 = _SingleInstanceLock()
-        lock2 = _SingleInstanceLock()
+        args = _unique_lock_args()
+        lock1 = _SingleInstanceLock(**args)
+        lock2 = _SingleInstanceLock(**args)
         assert lock1.acquire() is True
         assert lock2.acquire() is False
         lock1.release()
@@ -25,15 +38,16 @@ class TestSingleInstanceLock:
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only mutex test")
     def test_double_acquire_windows(self) -> None:
         from outwarp.app import _SingleInstanceLock
-        lock1 = _SingleInstanceLock()
-        lock2 = _SingleInstanceLock()
+        args = _unique_lock_args()
+        lock1 = _SingleInstanceLock(**args)
+        lock2 = _SingleInstanceLock(**args)
         assert lock1.acquire() is True
         assert lock2.acquire() is False
         lock1.release()
 
     def test_release_without_acquire_is_safe(self) -> None:
         from outwarp.app import _SingleInstanceLock
-        lock = _SingleInstanceLock()
+        lock = _SingleInstanceLock(**_unique_lock_args())
         lock.release()  # must not raise
 
 
@@ -80,6 +94,10 @@ class TestMainEntryPoint:
             patch("outwarp.app.default_config_path", return_value=nonexistent),
             patch.dict(sys.modules, {"webview": fake_webview}),
             patch("outwarp.tray.TrayApp", _FakeTrayApp),
+            # Bypass the production mutex — a real OutWarp client may be
+            # running on the developer's machine and holding it.
+            patch.object(app_mod._SingleInstanceLock, "acquire", return_value=True),
+            patch.object(app_mod._SingleInstanceLock, "release"),
         ):
             rc = app_mod.main()
 

@@ -13,14 +13,24 @@ log = logging.getLogger(__name__)
 
 _LOCK_NAME = "outwarp-client.lock"
 _WINDOW_TITLE = "OutWarp"
+_DEFAULT_MUTEX_NAME = "Global\\OutWarpClient"
 
 
 class _SingleInstanceLock:
-    """Cross-platform mutex to prevent running two instances."""
+    """Cross-platform mutex to prevent running two instances.
 
-    def __init__(self) -> None:
+    `mutex_name` / `lock_file` are exposed so tests can use unique names
+    instead of colliding with a running production instance."""
+
+    def __init__(
+        self,
+        mutex_name: str = _DEFAULT_MUTEX_NAME,
+        lock_file: str = _LOCK_NAME,
+    ) -> None:
         self._handle: object | None = None
         self._lock_path: Path | None = None
+        self._mutex_name = mutex_name
+        self._lock_file = lock_file
 
     def acquire(self) -> bool:
         if sys.platform == "win32":
@@ -35,7 +45,7 @@ class _SingleInstanceLock:
 
     def _acquire_windows(self) -> bool:
         import ctypes
-        handle = ctypes.windll.kernel32.CreateMutexW(None, True, "Global\\OutWarpClient")
+        handle = ctypes.windll.kernel32.CreateMutexW(None, True, self._mutex_name)
         last_error = ctypes.windll.kernel32.GetLastError()
         if last_error == 183:  # ERROR_ALREADY_EXISTS
             if handle:
@@ -53,7 +63,7 @@ class _SingleInstanceLock:
 
     def _acquire_posix(self) -> bool:
         import fcntl
-        self._lock_path = Path(tempfile.gettempdir()) / _LOCK_NAME
+        self._lock_path = Path(tempfile.gettempdir()) / self._lock_file
         try:
             self._handle = open(self._lock_path, "w")  # noqa: SIM115
             fcntl.flock(self._handle, fcntl.LOCK_EX | fcntl.LOCK_NB)

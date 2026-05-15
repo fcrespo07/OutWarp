@@ -47,14 +47,29 @@ def test_install_wg_tunnel_writes_conf_and_invokes_wireguard(tmp_path, monkeypat
     monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
     (tmp_path / "wireguard.exe").write_text("fake")
 
-    with patch("subprocess.run", return_value=_mock_run(0)) as mock_run:
+    # install_wg_tunnel does several subprocess.run calls in sequence:
+    #   1. `sc query …` — stale-check (rc != 0 = no stale service, take fast path)
+    #   2. `wireguard.exe /installtunnelservice <conf>` — actual install
+    #   3+. `sc query …` polled until stdout contains "RUNNING"
+    install_calls: list[list[str]] = []
+
+    def fake_run(cmd, *args, **kwargs):
+        install_calls.append(list(cmd))
+        if cmd[0] == "sc" and cmd[1] == "query":
+            # No stale service before install; reports RUNNING during poll.
+            if any("/installtunnelservice" in str(prev[1] if len(prev) > 1 else "")
+                   for prev in install_calls[:-1]):
+                return _mock_run(0, stdout="STATE : 4 RUNNING")
+            return _mock_run(1060, stderr="service not found")
+        return _mock_run(0)
+
+    with patch("subprocess.run", side_effect=fake_run):
         path = p.install_wg_tunnel("MyTunnel", "[Interface]\nPrivateKey=...")
 
     assert path == tmp_path / "MyTunnel.conf"
     assert path.read_text(encoding="utf-8").startswith("[Interface]")
-    args = mock_run.call_args[0][0]
-    assert args[1] == "/installtunnelservice"
-    assert args[2] == str(path)
+    install_call = next(c for c in install_calls if "/installtunnelservice" in (c[1] if len(c) > 1 else ""))
+    assert install_call[2] == str(path)
 
 
 def test_install_wg_tunnel_raises_on_failure(tmp_path, monkeypatch):

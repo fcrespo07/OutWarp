@@ -112,7 +112,10 @@ def test_build_wstunnel_command_has_expected_structure():
     cmd = build_wstunnel_command(cfg, bin_path)
     assert cmd[0] == str(bin_path)
     assert cmd[1] == "client"
-    assert "--dangerous-disable-certificate-verification" in cmd
+    # wstunnel v10+ has TLS cert verification off by default and removed the
+    # old --dangerous-disable-certificate-verification flag — identity is
+    # checked by our own fingerprint pinning before wstunnel ever starts.
+    assert "--dangerous-disable-certificate-verification" not in cmd
     assert "-L" in cmd
     forward = cmd[cmd.index("-L") + 1]
     assert forward == "udp://127.0.0.1:51820:10.0.0.1:51820?timeout_sec=0"
@@ -138,7 +141,11 @@ def test_connect_happy_path():
         t.connect()
 
     assert plat.installed is True
-    assert sorted(plat.routes) == ["203.0.113.42", "203.0.113.43"]
+    # Bypass routing is encoded in WireGuard's AllowedIPs (see
+    # wireguard._allowed_ips_excluding) rather than adding host routes on top
+    # of the WG interface — the WG-NT driver on Windows captures traffic
+    # before the OS routing table is consulted, so host routes don't take.
+    assert plat.routes == []
     assert t._proc is fake_proc
 
 

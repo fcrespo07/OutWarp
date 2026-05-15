@@ -56,8 +56,22 @@ def test_build_wg_conf_omits_dns_when_empty():
 
 
 def test_build_wg_conf_routes_all_traffic():
-    text = build_wg_conf(_make_config())
+    # With no bypass IPs, AllowedIPs should be the full default route.
+    cfg = _make_config()
+    from dataclasses import replace
+    cfg = replace(cfg, routing=RoutingConfig(bypass_ips=[]))
+    text = build_wg_conf(cfg)
     assert "AllowedIPs = 0.0.0.0/0" in text
+
+
+def test_build_wg_conf_excludes_bypass_ips_from_allowed():
+    # With bypass IPs, AllowedIPs must cover 0.0.0.0/0 minus the bypass set
+    # so wstunnel's own traffic to the server escapes the tunnel.
+    text = build_wg_conf(_make_config())  # bypass_ips=["203.0.113.42"]
+    assert "AllowedIPs = 0.0.0.0/0" not in text
+    assert "203.0.113.42" not in text  # excluded address is not advertised
+    # The next /32 is still inside the tunnel — proves we sliced /32-precisely.
+    assert "203.0.113.43/32" in text
 
 
 def test_build_wg_conf_includes_keepalive():
