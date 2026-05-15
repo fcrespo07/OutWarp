@@ -163,6 +163,46 @@ def test_set_settings_ignores_unknown_keys(tmp_path):
     assert "unknown_key" not in r["settings"]
 
 
+def test_default_settings_include_auto_reconnect(tmp_path):
+    with patch(
+        "outwarp.api.default_config_path",
+        return_value=tmp_path / "config.json",
+    ):
+        api, _ = _make_api()
+        s = api.get_settings()
+    assert s["auto_reconnect"] is True
+
+
+def test_set_settings_propagates_auto_reconnect_to_manager(tmp_path):
+    mgr = MagicMock()
+    mgr.state = TunnelState.DISCONNECTED
+    mgr.auto_reconnect = True
+    with patch(
+        "outwarp.api.default_config_path",
+        return_value=tmp_path / "config.json",
+    ):
+        api, _ = _make_api(mgr)
+        api.set_settings({"auto_reconnect": False})
+    # The setter on the manager is what gets called; MagicMock records the
+    # assignment, so verify by reading back.
+    assert mgr.auto_reconnect is False
+
+
+def test_settings_propagated_to_manager_on_construction(tmp_path):
+    """When Api is built with a manager, the persisted settings are pushed
+    onto it so existing tunnels honour the latest user prefs."""
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({"auto_reconnect": False}))
+    mgr = MagicMock()
+    mgr.state = TunnelState.DISCONNECTED
+    with patch(
+        "outwarp.api.default_config_path",
+        return_value=tmp_path / "config.json",
+    ):
+        Api(MemoryLogHandler(), mgr)
+    assert mgr.auto_reconnect is False
+
+
 def test_state_change_emits_status_event():
     mgr = MagicMock()
     mgr.state = TunnelState.DISCONNECTED

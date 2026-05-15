@@ -142,6 +142,58 @@ def test_reconnects_when_tunnel_dies():
     m.stop(timeout=2)
 
 
+def test_auto_reconnect_off_goes_straight_to_failed_after_death():
+    """With auto_reconnect=False, a tunnel that dies after connecting should
+    transition to FAILED without launching a second connect attempt."""
+    fake = FakeTunnel()
+    m = TunnelManager(
+        _make_config(max_attempts=5, delays=[0]),
+        tunnel=fake,
+        stability_seconds=100.0,
+        poll_interval=0.005,
+        auto_reconnect=False,
+    )
+    m.start()
+    assert _wait_until(lambda: m.state == TunnelState.CONNECTED)
+
+    fake.alive = False  # simulate process death
+    assert _wait_until(lambda: m.state == TunnelState.FAILED, timeout=2)
+    # Exactly one connect call — no retry after the death.
+    assert fake.connect_calls == 1
+    m.stop(timeout=2)
+
+
+def test_auto_reconnect_off_still_honours_max_attempts_on_initial_connect():
+    """auto_reconnect=False only changes the post-CONNECTED path. A first
+    connect that just keeps failing must still cycle through max_attempts so
+    transient network glitches at startup don't immediately surface as
+    FAILED to the user."""
+    fake = FakeTunnel()
+    fake.connect_errors = [RuntimeError("nope")] * 3
+    m = TunnelManager(
+        _make_config(max_attempts=3, delays=[0, 0, 0]),
+        tunnel=fake,
+        poll_interval=0.005,
+        auto_reconnect=False,
+    )
+    m.start()
+    assert _wait_until(lambda: m.state == TunnelState.FAILED, timeout=3)
+    assert fake.connect_calls == 3
+    m.stop(timeout=2)
+
+
+def test_auto_reconnect_setter_is_live():
+    """The auto_reconnect property is mutable so a Settings toggle change takes
+    effect on the next death without restarting the tunnel."""
+    fake = FakeTunnel()
+    m = _make_manager(_make_config(max_attempts=5, delays=[0]), fake)
+    assert m.auto_reconnect is True
+    m.auto_reconnect = False
+    assert m.auto_reconnect is False
+    m.auto_reconnect = True
+    assert m.auto_reconnect is True
+
+
 # --- stability resets attempt counter ---
 
 def test_stability_resets_attempt_counter():

@@ -56,9 +56,9 @@ def _settings_path() -> Path:
 
 
 def _default_settings() -> dict[str, Any]:
-    # Only settings the client actually acts on. start_at_boot / kill_switch /
-    # auto_reconnect were dropped — they were persisted but never consumed, so
-    # the toggles misled the user. Reintroduce them once they're wired up.
+    # Only settings the client actually acts on. Each toggle below has a real
+    # consumer downstream — if you add a key, wire its consumer first, or you
+    # lie to the user with a no-op switch.
     return {
         "language": "es",
         "theme": "auto",
@@ -68,6 +68,10 @@ def _default_settings() -> dict[str, Any]:
         # where the outer cert is the proxy's, not the server's. WireGuard's
         # own crypto still protects the traffic. Off by default.
         "allow_tls_intercept": False,
+        # When False, an unexpectedly-closed tunnel goes straight to FAILED
+        # instead of looping through the reconnect schedule. Consumed by
+        # TunnelManager._run. Initial-connect failures still honour max_attempts.
+        "auto_reconnect": True,
     }
 
 
@@ -148,6 +152,9 @@ class Api:
             manager.add_listener(self._on_state_change)
             manager.allow_tls_intercept = bool(
                 self._settings.get("allow_tls_intercept", False)
+            )
+            manager.auto_reconnect = bool(
+                self._settings.get("auto_reconnect", True)
             )
 
     # ── pywebview wiring ──────────────────────────────────────────────────────
@@ -295,7 +302,9 @@ class Api:
         if old is not None:
             old.stop()
         new_manager = TunnelManager(
-            cfg, allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False))
+            cfg,
+            allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False)),
+            auto_reconnect=bool(self._settings.get("auto_reconnect", True)),
         )
         new_manager.add_listener(self._on_state_change)
         self._manager = new_manager
@@ -409,7 +418,9 @@ class Api:
             TunnelState.RECONNECTING,
         )
         new_manager = TunnelManager(
-            cfg, allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False))
+            cfg,
+            allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False)),
+            auto_reconnect=bool(self._settings.get("auto_reconnect", True)),
         )
         new_manager.add_listener(self._on_state_change)
         self._manager = new_manager
@@ -521,8 +532,11 @@ class Api:
                 _save_settings(snapshot)
             except OSError as exc:
                 log.warning("could not persist settings: %s", exc)
-        if isinstance(patch, dict) and "allow_tls_intercept" in patch and self._manager:
-            self._manager.allow_tls_intercept = bool(snapshot["allow_tls_intercept"])
+        if isinstance(patch, dict) and self._manager:
+            if "allow_tls_intercept" in patch:
+                self._manager.allow_tls_intercept = bool(snapshot["allow_tls_intercept"])
+            if "auto_reconnect" in patch:
+                self._manager.auto_reconnect = bool(snapshot["auto_reconnect"])
         self._emit("settings", snapshot)
         return {"ok": True, "settings": snapshot}
 

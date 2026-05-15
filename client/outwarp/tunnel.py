@@ -217,6 +217,7 @@ class TunnelManager:
         stability_seconds: float = 30.0,
         poll_interval: float = 1.0,
         allow_tls_intercept: bool = False,
+        auto_reconnect: bool = True,
     ) -> None:
         self._config = config
         self._tunnel = tunnel or Tunnel(config, allow_tls_intercept=allow_tls_intercept)
@@ -229,6 +230,11 @@ class TunnelManager:
         self._listeners: list[StateListener] = []
         self._stop_event = Event()
         self._thread: Thread | None = None
+        # When False, an unexpectedly-closed tunnel goes straight to FAILED
+        # instead of looping through max_attempts retries. Initial-connect
+        # failures still honour max_attempts — the user explicitly asked to
+        # connect, so giving up immediately would surprise them.
+        self._auto_reconnect = bool(auto_reconnect)
 
     @property
     def state(self) -> TunnelState:
@@ -264,6 +270,16 @@ class TunnelManager:
     def allow_tls_intercept(self, value: bool) -> None:
         # Picked up on the next connect attempt — no need to restart the tunnel.
         self._tunnel.allow_tls_intercept = bool(value)
+
+    @property
+    def auto_reconnect(self) -> bool:
+        return self._auto_reconnect
+
+    @auto_reconnect.setter
+    def auto_reconnect(self, value: bool) -> None:
+        # Live setting; affects the next unexpected-death path. We deliberately
+        # do not touch a retry that's already in flight.
+        self._auto_reconnect = bool(value)
 
     def _set_error(self, msg: str | None) -> None:
         with self._lock:
@@ -358,6 +374,13 @@ class TunnelManager:
                 self._tunnel.disconnect()
             except Exception:
                 log.exception("Cleanup after unexpected tunnel death failed")
+
+            if not self._auto_reconnect:
+                # User opted out of post-connection retries. Surface the failure
+                # so the UI can prompt to reconnect manually.
+                log.info("auto_reconnect=off — not retrying after tunnel death")
+                self._set_state(TunnelState.FAILED)
+                return
 
             attempt += 1
             self._set_attempt(attempt)
