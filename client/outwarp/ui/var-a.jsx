@@ -250,7 +250,7 @@ const ImportA = ({ T }) => (
     <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{T.welcomeTitle}</div>
     <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4, maxWidth: 520 }}>{T.welcomeSub}</div>
 
-    <div style={{ marginTop: 22, display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 14 }}>
+    <div style={{ marginTop: 22, maxWidth: 720 }}>
       <div style={{
         border: "1.5px dashed var(--line-strong)", borderRadius: 14, padding: 28,
         background: "var(--bg-2)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", minHeight: 240,
@@ -264,15 +264,6 @@ const ImportA = ({ T }) => (
           <window.Btn kind="primary" size="md">{T.importFile}</window.Btn>
           <window.Btn kind="ghost" size="md">{T.importPaste}</window.Btn>
         </div>
-      </div>
-
-      <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 18, display: "flex", flexDirection: "column" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>{T.importQR}</div>
-        <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>El servidor genera un QR temporal en <code style={{ fontFamily: "var(--font-mono)" }}>outwarp-server add-client</code>.</div>
-        <div style={{ flex: 1, marginTop: 14, border: "1px solid var(--line)", borderRadius: 10, background: "var(--bg-sunk)", display: "grid", placeItems: "center", minHeight: 160 }}>
-          <FakeQR/>
-        </div>
-        <window.Btn kind="ghost" size="sm" style={{ marginTop: 12, alignSelf: "flex-start" }}>Abrir cámara</window.Btn>
       </div>
     </div>
   </section>
@@ -334,14 +325,9 @@ const SettingsA = ({ T, tweaks }) => {
       <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: "0 18px" }}>
         <Row title={T.set_killSwitch}    sub={T.set_killSwitchSub}   control={<window.Toggle on={true}/>}/>
         <Row title={T.set_autoconnect}   sub={T.set_autoconnectSub}  control={<window.Toggle on={true}/>}/>
-        <Row title={T.set_splitTunnel}   sub={T.set_splitTunnelSub}  control={<window.Btn kind="ghost" size="sm">Configurar…</window.Btn>}/>
         <Row title={T.set_startup}                                    control={<window.Toggle on={false}/>}/>
         <Row title={T.set_minimizeTray}                               control={<window.Toggle on={true}/>}/>
         <Row title={T.set_advanced}      sub={T.set_advancedSub}     control={<window.Toggle on={!!tweaks.advanced}/>}/>
-      </div>
-      <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: "0 18px" }}>
-        <Row title={T.set_dns} sub="Custom DNS para el túnel" control={<input defaultValue="1.1.1.1, 9.9.9.9" style={{ width: 220, height: 30, padding: "0 10px", borderRadius: 6, border: "1px solid var(--line-strong)", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 12 }}/>}/>
-        <Row title={T.set_mtu} control={<input defaultValue="1280" style={{ width: 90, height: 30, padding: "0 10px", borderRadius: 6, border: "1px solid var(--line-strong)", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 12 }}/>}/>
       </div>
     </section>
   );
@@ -434,19 +420,6 @@ const Spark = ({ good }) => {
   const pts = [4, 6, 5, 7, 5, 8, 6, 9, 7, 10, 8, 9].map((v, i) => `${i*4},${14-v}`).join(" ");
   return <svg width="48" height="14" viewBox="0 0 48 14"><polyline points={pts} fill="none" stroke={good ? "var(--brand-2)" : "var(--brand-bad)"} strokeWidth="1.4"/></svg>;
 };
-
-const FakeQR = () => (
-  <div style={{ width: 140, height: 140, borderRadius: 8, background: "#fff", display: "grid", placeItems: "center", padding: 8 }}>
-    <svg viewBox="0 0 21 21" width="124" height="124" shapeRendering="crispEdges">
-      {Array.from({ length: 21 }).flatMap((_, y) => Array.from({ length: 21 }).map((_, x) => {
-        const seed = (x * 31 + y * 17 + 7) % 13;
-        const isFinder = (x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13);
-        const fill = isFinder ? ((Math.abs(x - (x>13?17:3)) <= 1 && Math.abs(y - (y>13?17:3)) <= 1) ? 1 : (Math.abs(x - (x>13?17:3)) === 3 || Math.abs(y - (y>13?17:3)) === 3) ? 1 : 0) : (seed > 6 ? 1 : 0);
-        return fill ? <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" fill="#0a0d12"/> : null;
-      }))}
-    </svg>
-  </div>
-);
 
 const BgGlow = () => (
   <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden", borderRadius: 18 }}>
