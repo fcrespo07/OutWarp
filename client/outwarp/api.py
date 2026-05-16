@@ -196,12 +196,15 @@ class Api:
 
     def bind_window(self, window: Any) -> None:
         """Called once after the window is created so we can push events to JS."""
-        self._window = window
-        # Backfill: replay the MemoryLogHandler buffer so the UI's log view has
-        # context as soon as it mounts.
+        # Backfill the log buffer *before* publishing the window — _record_log
+        # is a no-op for _emit() while window is None, so we don't waste time
+        # calling evaluate_js on a renderer that hasn't started yet
+        # (webview.start() runs after this and is what actually boots
+        # WebView2). The UI picks the backfill up on first paint via
+        # api.get_logs(0); the watcher below covers everything after.
         for line in self._memory_handler.snapshot():
             self._record_log("info", line)
-        # Start the watcher that streams real log lines as they arrive.
+        self._window = window
         self._start_log_watcher()
 
     def _emit(self, name: str, payload: dict[str, Any]) -> None:

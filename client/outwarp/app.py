@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 from outwarp import __version__
@@ -130,39 +132,55 @@ def _resolve_ui_path() -> str:
     return str(base / "index.html")
 
 
-def _release_stale_kill_switch() -> None:
+def _release_stale_kill_switch_async() -> None:
     """If a previous session crashed with the kill switch engaged, the netsh
     rules survive. Release unconditionally on every startup — it's a no-op
     when nothing is engaged, and prevents the user from being locked out of
-    their network without realising why."""
-    try:
-        from outwarp.platforms import get_platform
+    their network without realising why. Runs on a daemon thread so the two
+    netsh subprocess calls (~300 ms total) don't gate the splash window."""
+    def _work() -> None:
+        try:
+            from outwarp.platforms import get_platform
 
-        get_platform().release_kill_switch()
-    except Exception:
-        log.exception("startup kill-switch cleanup failed (continuing)")
+            get_platform().release_kill_switch()
+        except Exception:
+            log.exception("startup kill-switch cleanup failed (continuing)")
+    threading.Thread(
+        target=_work, daemon=True, name="outwarp-startup-killswitch",
+    ).start()
 
 
 def main() -> int:
     _ensure_elevated()
     memory_handler = setup_logging()
-    log.info("OutWarp client v%s starting", __version__)
-    _release_stale_kill_switch()
+    t0 = time.monotonic()
+
+    def _stage(label: str) -> None:
+        # Per-stage timing so we can spot future startup regressions. Format
+        # matches the rest of the log line so it stays grep-friendly.
+        log.info("startup [%5.2fs] %s", time.monotonic() - t0, label)
+
+    _stage("OutWarp client v%s starting" % __version__)
+    _release_stale_kill_switch_async()
 
     lock = _SingleInstanceLock()
     if not lock.acquire():
         log.error("Another instance is already running — exiting")
         return 1
+    _stage("single-instance lock acquired")
 
     try:
         import webview
+        _stage("imported pywebview")
 
         from outwarp.api import Api
         from outwarp.tray import TrayApp
         from outwarp.tunnel import TunnelManager
+        _stage("imported outwarp modules")
 
         config = _try_load_config()
         manager: TunnelManager | None = TunnelManager(config) if config else None
+        _stage("config loaded + manager constructed (config=%s)" % (config is not None))
 
         # tray is filled in below before the closures fire
         tray: TrayApp
@@ -174,6 +192,7 @@ def main() -> int:
             new_mgr.start()
 
         api = Api(memory_handler, manager, on_manager_replaced=on_manager_replaced)
+        _stage("Api constructed")
 
         if config:
             log.info(
@@ -206,7 +225,9 @@ def main() -> int:
             # able to copy log lines, fingerprints, error messages, etc.
             text_select=True,
         )
+        _stage("webview window created")
         api.bind_window(window)
+        _stage("api bound to window")
 
         def _show_window() -> None:
             try:
@@ -225,12 +246,14 @@ def main() -> int:
                 pass
 
         tray = TrayApp(manager=manager, on_show=_show_window, on_quit=_on_quit)
+        _stage("tray constructed")
 
         if manager is not None:
             manager.start()
+            _stage("tunnel manager started")
 
         tray.run()
-        log.info("Tray running — opening webview window")
+        _stage("tray running — about to hand off to webview.start()")
         webview.start(gui="edgechromium" if sys.platform == "win32" else None)
 
         log.info("OutWarp client shut down cleanly")
