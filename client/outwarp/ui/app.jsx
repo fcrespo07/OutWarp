@@ -126,6 +126,10 @@ function App() {
   const [phase, setPhase] = useState("");
   const [ready, setReady] = useState(false);
   const [confirm, confirmDialog] = useConfirmState();
+  // Rolling window of (rx_bps, tx_bps) samples for the Home throughput chart.
+  // Fed from the outwarp:stats heartbeat (1 Hz) so the chart and the stat
+  // cards never disagree. Capped at 60 samples ≈ 60 s of history.
+  const [history, setHistory] = useState([]);
 
   // bootstrap
   useEffect(() => {
@@ -155,9 +159,22 @@ function App() {
     setPhase(d.phase || "");
     if (d.status === "connected" || d.status === "disconnected" || d.status === "empty") setBusyMsg("");
   }, []));
-  useBridgeEvent("stats",   useCallback((d) => setStats(d), []));
+  useBridgeEvent("stats", useCallback((d) => {
+    setStats(d);
+    setHistory((h) => {
+      const next = h.concat({ rx: d.rx_bps || 0, tx: d.tx_bps || 0 });
+      return next.length > 60 ? next.slice(-60) : next;
+    });
+  }, []));
   useBridgeEvent("log",     useCallback((e) => setLogs((l) => [...l.slice(-1999), e]), []));
   useBridgeEvent("settings", useCallback((d) => setSettings(d), []));
+
+  // Reset the throughput history whenever the tunnel isn't actively
+  // transferring — leaving stale samples on screen after a disconnect would
+  // be lying about what's happening now.
+  useEffect(() => {
+    if (status !== "connected") setHistory([]);
+  }, [status]);
 
   // JS-side poll — same reasoning as the server: evaluate_js from a Python
   // background thread can be silently dropped on some platform/backend
@@ -265,6 +282,7 @@ function App() {
             status={status}
             active={active}
             stats={stats}
+            history={history}
             advanced={!!settings.advanced}
             busyMsg={busyMsg}
             connError={connError}
@@ -368,11 +386,11 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
 };
 
 // ── Home ───────────────────────────────────────────────────────────
-const Home = ({ T, lang, status, active, stats, advanced, busyMsg, connError, attemptInfo, phase, onConnect, onDisconnect, onReconnect, onImport }) => {
+const Home = ({ T, lang, status, active, stats, history, advanced, busyMsg, connError, attemptInfo, phase, onConnect, onDisconnect, onReconnect, onImport }) => {
   if (status === "empty" || !active) {
     return <EmptyHome T={T} onImport={onImport}/>;
   }
-  if (status === "connected") return <ConnectedHome T={T} lang={lang} active={active} stats={stats} advanced={advanced} onDisconnect={onDisconnect}/>;
+  if (status === "connected") return <ConnectedHome T={T} lang={lang} active={active} stats={stats} history={history} advanced={advanced} onDisconnect={onDisconnect}/>;
   if (status === "connecting" || status === "reconnecting") {
     return <ConnectingHome T={T} active={active} busyMsg={busyMsg} reconnecting={status === "reconnecting"} attemptInfo={attemptInfo} phase={phase}/>;
   }
@@ -518,7 +536,7 @@ const StepIcon = ({ state }) => {
   );
 };
 
-const ConnectedHome = ({ T, lang, active, stats, advanced, onDisconnect }) => {
+const ConnectedHome = ({ T, lang, active, stats, history, advanced, onDisconnect }) => {
   const sessionSec = stats.session_start ? (Date.now() / 1000 - stats.session_start) : 0;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -560,6 +578,8 @@ const ConnectedHome = ({ T, lang, active, stats, advanced, onDisconnect }) => {
         <Stat label={T.lastHandshake} value={fmtAgo(stats.last_handshake, lang)}/>
         <Stat label={T.location}      value={stats.exit_location || "—"}/>
       </div>
+
+      <ThroughputChart T={T} history={history || []}/>
 
       {advanced && (
         <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 18, fontFamily: "var(--font-mono)", fontSize: 12 }}>
@@ -618,6 +638,65 @@ const Header = ({ title, sub, right }) => (
     {right && <div style={{ display: "flex", alignItems: "center", gap: 8 }}>{right}</div>}
   </header>
 );
+
+// Mirror-stacked area chart: download grows downward from the centre line,
+// upload upward. Auto-scales to the max sample in the window so a low
+// constant signal doesn't flatten to nothing. Renders a placeholder until
+// we have at least two samples — one point doesn't define a line.
+const ThroughputChart = ({ T, history }) => {
+  const W = 760, H = 140, P = 8;
+  const window_s = T.throughput_window.replace("{n}", String(history.length));
+  const peak = history.reduce((m, s) => Math.max(m, s.rx || 0, s.tx || 0), 0);
+  // Floor the scale so tiny constant traffic still draws a visible band.
+  // 64 KB/s = 524288 b/s; one cell-tower screenshot's worth of upload, ish.
+  const scale = Math.max(peak, 64 * 1024);
+  const mid = H / 2;
+  const innerH = mid - P;
+  const innerW = W - P * 2;
+  const xAt = (i) => history.length <= 1 ? P : P + (i * innerW) / (history.length - 1);
+  const path = (key, sign) => {
+    if (history.length === 0) return "";
+    return history.map((s, i) => {
+      const v = (s[key] || 0) / scale;
+      const y = mid + sign * v * innerH;
+      return `${i === 0 ? "M" : "L"} ${xAt(i).toFixed(1)} ${y.toFixed(1)}`;
+    }).join(" ");
+  };
+  const area = (key, sign) => {
+    if (history.length === 0) return "";
+    return `${path(key, sign)} L ${(W - P).toFixed(1)} ${mid} L ${P} ${mid} Z`;
+  };
+
+  return (
+    <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>
+          {T.throughput_title}
+          <span style={{ color: "var(--text-3)", fontWeight: 400, marginLeft: 8, fontFamily: "var(--font-mono)", fontSize: 12 }}>
+            · {window_s}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 14, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-2)" }}>
+          <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: "var(--brand)", marginRight: 6, verticalAlign: 1 }}/>{T.download}</span>
+          <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: "var(--brand-2)", marginRight: 6, verticalAlign: 1 }}/>{T.upload}</span>
+        </div>
+      </div>
+      {history.length < 2 ? (
+        <div style={{ height: H, display: "grid", placeItems: "center", color: "var(--text-3)", fontSize: 12, fontFamily: "var(--font-mono)" }}>
+          {T.throughput_empty}
+        </div>
+      ) : (
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
+          <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--line)" strokeDasharray="2 4"/>
+          <path d={area("rx", +1)} fill="color-mix(in srgb, var(--brand) 18%, transparent)"/>
+          <path d={path("rx", +1)} stroke="var(--brand)" fill="none" strokeWidth="1.6"/>
+          <path d={area("tx", -1)} fill="color-mix(in srgb, var(--brand-2) 18%, transparent)"/>
+          <path d={path("tx", -1)} stroke="var(--brand-2)" fill="none" strokeWidth="1.6"/>
+        </svg>
+      )}
+    </section>
+  );
+};
 
 const Stat = ({ label, value, sub }) => (
   <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 12, padding: 14 }}>

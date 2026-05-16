@@ -152,6 +152,9 @@ const STR = {
     // Misc
     profile: "Perfil",
     home_ribbon: "Tu tráfico viaja cifrado por wstunnel → WireGuard.",
+    throughput_title: "Tráfico",
+    throughput_window: "últimos {n} s",
+    throughput_empty: "Recogiendo muestras…",
     notConnected: "Sin túnel activo",
   },
   en: {
@@ -290,6 +293,9 @@ const STR = {
 
     profile: "Profile",
     home_ribbon: "Your traffic is encrypted via wstunnel → WireGuard.",
+    throughput_title: "Traffic",
+    throughput_window: "last {n} s",
+    throughput_empty: "Gathering samples…",
     notConnected: "No active tunnel",
   },
 };
