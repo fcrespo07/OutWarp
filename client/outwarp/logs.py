@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import sys
 from collections import deque
 from pathlib import Path
 from threading import Lock
@@ -64,5 +65,12 @@ def setup_logging(
     root.handlers.clear()
     root.addHandler(file_handler)
     root.addHandler(memory_handler)
+    # Mirror to the parent console when there is one. PyInstaller --windowed
+    # builds (and double-click launches) have no stdout, so skip the stream
+    # handler there to avoid noise / crashes — sys.stdout is None in that case.
+    if sys.stdout is not None and sys.stdout.isatty():
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(fmt)
+        root.addHandler(stream_handler)
 
     return memory_handler

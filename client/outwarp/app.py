@@ -209,7 +209,12 @@ def main() -> int:
         settings = api.get_settings()
         start_hidden = bool(settings.get("minimize_to_tray", True)) and config is not None
         if start_hidden:
-            log.info("minimize_to_tray=on — starting with the window hidden")
+            log.info(
+                "minimize_to_tray=on — starting with the window hidden. "
+                "Look for the OutWarp icon in the system tray (it may be in "
+                "the hidden-icons flyout) and click it to open the window. "
+                "Turn this off in Settings → System → Minimize to system tray."
+            )
 
         window = webview.create_window(
             title=_WINDOW_TITLE,
