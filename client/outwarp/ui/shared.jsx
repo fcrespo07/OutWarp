@@ -44,6 +44,12 @@ const STR = {
     nav_logs: "Registro",
     nav_settings: "Ajustes",
     nav_about: "Acerca de",
+    about_sub: "Información de la aplicación y de sus componentes.",
+    about_blurb: "Cliente OutWarp: levanta un túnel WireGuard sobre WebSocket usando wstunnel como transporte, para redes que bloquean UDP.",
+    about_openRepo: "Abrir repositorio",
+    about_thirdParty: "Componentes de terceros",
+    about_openUrl: "Abrir →",
+    about_disclaimer: "OutWarp se distribuye bajo licencia MIT. WireGuard es marca registrada de Jason A. Donenfeld. wstunnel es un proyecto independiente de erebe.",
 
     // Settings
     set_killSwitch: "Kill switch",
@@ -185,6 +191,12 @@ const STR = {
     nav_logs: "Logs",
     nav_settings: "Settings",
     nav_about: "About",
+    about_sub: "Application info and component licenses.",
+    about_blurb: "OutWarp client: brings up a WireGuard tunnel over WebSocket using wstunnel as transport, for networks that block UDP.",
+    about_openRepo: "Open repository",
+    about_thirdParty: "Third-party components",
+    about_openUrl: "Open →",
+    about_disclaimer: "OutWarp is distributed under the MIT license. WireGuard is a registered trademark of Jason A. Donenfeld. wstunnel is an independent project by erebe.",
 
     set_killSwitch: "Kill switch",
     set_killSwitchSub: "Block all internet traffic if the tunnel drops.",

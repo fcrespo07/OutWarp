@@ -516,6 +516,70 @@ def test_get_status_coerces_non_string_phase_to_empty():
     assert s["phase"] == ""
 
 
+# --- About: get_app_info / open_url ---
+
+def test_get_app_info_returns_metadata():
+    api, _ = _make_api()
+    info = api.get_app_info()
+    assert isinstance(info["version"], str) and info["version"]
+    assert isinstance(info["python"], str) and info["python"]
+    assert isinstance(info["platform"], str) and info["platform"]
+    assert info["repo_url"].startswith("https://github.com/")
+    assert info["license"] == "MIT"
+    names = {p["name"] for p in info["third_party"]}
+    # Each component the README and CLAUDE.md call out should be in the list.
+    assert {"wstunnel", "WireGuard", "pystray", "pywebview"} <= names
+    for p in info["third_party"]:
+        assert p["url"].startswith("https://")
+        assert p["license"]  # non-empty
+
+
+def test_open_url_invokes_webbrowser():
+    api, _ = _make_api()
+    with patch("webbrowser.open") as opener:
+        r = api.open_url("https://example.com/x")
+    assert r == {"ok": True}
+    opener.assert_called_once_with("https://example.com/x", new=2)
+
+
+def test_open_url_allows_plain_http():
+    """Some self-hosted resources (status pages, CI dashboards) only serve
+    over HTTP. Allow it; refuse only schemes that can launch local handlers."""
+    api, _ = _make_api()
+    with patch("webbrowser.open") as opener:
+        r = api.open_url("http://example.com/")
+    assert r["ok"] is True
+    opener.assert_called_once()
+
+
+def test_open_url_refuses_non_http_schemes():
+    """A compromised renderer must not be able to launch file://, javascript:
+    or custom protocol handlers via the bridge."""
+    api, _ = _make_api()
+    for bad in ("file:///etc/passwd", "javascript:alert(1)", "outwarp://x", ""):
+        with patch("webbrowser.open") as opener:
+            r = api.open_url(bad)
+        assert r["ok"] is False
+        opener.assert_not_called()
+
+
+def test_open_url_refuses_non_string_input():
+    api, _ = _make_api()
+    for bad in (None, 42, ["https://x"], {"url": "https://x"}):
+        with patch("webbrowser.open") as opener:
+            r = api.open_url(bad)  # type: ignore[arg-type]
+        assert r["ok"] is False
+        opener.assert_not_called()
+
+
+def test_open_url_surfaces_browser_failure():
+    api, _ = _make_api()
+    with patch("webbrowser.open", side_effect=RuntimeError("no display")):
+        r = api.open_url("https://example.com/")
+    assert r["ok"] is False
+    assert "no display" in r["error"]
+
+
 def test_state_change_emits_status_event():
     mgr = MagicMock()
     mgr.state = TunnelState.DISCONNECTED

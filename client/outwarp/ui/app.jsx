@@ -263,6 +263,7 @@ function App() {
         {screen === "import"  && <Import T={T} api={api} active={active} confirm={confirm} onImported={(p) => { setActiveId(p.id); setProfiles([p]); setScreen("home"); }} onRemove={onRemoveProfile} onProfilesChanged={refreshProfiles}/>}
         {screen === "logs"     && <Logs T={T} logs={logs} api={api} onClear={() => setLogs([])}/>}
         {screen === "settings" && <Settings T={T} settings={settings} onSetting={onSetting}/>}
+        {screen === "about"    && <About T={T} api={api}/>}
       </main>
       {confirmDialog}
     </div>
@@ -276,6 +277,7 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
     ["import",   T.nav_profiles, "M12 8 m-4 0 a4 4 0 1 0 8 0 a4 4 0 1 0 -8 0 M4 21 C4 16 8 14 12 14 C16 14 20 16 20 21"],
     ["logs",     T.nav_logs,     "M5 4 H19 V20 H5 Z M8 8 H16 M8 12 H16 M8 16 H13"],
     ["settings", T.nav_settings, "M12 9 a3 3 0 1 1 0 6 a3 3 0 1 1 0 -6 M12 2 V4 M12 20 V22 M2 12 H4 M20 12 H22"],
+    ["about",    T.nav_about,    "M3 12 a9 9 0 1 1 18 0 a9 9 0 1 1 -18 0 M12 8 V13 M12 16 V16.01"],
   ];
   const tone =
     status === "connected" ? "good" :
@@ -1160,6 +1162,92 @@ const Settings = ({ T, settings, onSetting }) => {
           ))}
         </SettingsCard>
       ))}
+    </section>
+  );
+};
+
+// ── About ──────────────────────────────────────────────────────────
+const About = ({ T, api }) => {
+  const [info, setInfo] = useState(null);
+  useEffect(() => {
+    if (!api) return;
+    let alive = true;
+    api.get_app_info().then((data) => { if (alive) setInfo(data); });
+    return () => { alive = false; };
+  }, [api]);
+
+  // Best-effort: any failure to open the URL is logged server-side and the
+  // bridge returns {ok:false}. We don't surface it inline because the only
+  // realistic failure is a Linux box without a default browser, which we
+  // can't fix from here anyway.
+  const openUrl = (url) => api?.open_url(url);
+
+  if (!info) {
+    return (
+      <section style={{ display: "flex", flexDirection: "column", gap: 24, maxWidth: 720 }}>
+        <Header title={T.nav_about} sub={T.about_sub}/>
+      </section>
+    );
+  }
+
+  return (
+    <section style={{ display: "flex", flexDirection: "column", gap: 22, maxWidth: 720 }}>
+      <Header title={T.nav_about} sub={T.about_sub}/>
+
+      <div style={{
+        background: "var(--bg-2)", border: "1px solid var(--line)",
+        borderRadius: 14, padding: 24,
+      }}>
+        <window.WSWordmark size={22} color="var(--text)" accent="var(--brand)"/>
+        <div style={{
+          marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12,
+          color: "var(--text-3)",
+        }}>
+          v{info.version} · {info.platform} · Python {info.python}
+        </div>
+        <div style={{
+          marginTop: 14, fontSize: 13, color: "var(--text-2)", lineHeight: 1.6,
+        }}>
+          {T.about_blurb}
+        </div>
+        <div style={{ marginTop: 18, display: "flex", gap: 8 }}>
+          <window.Btn kind="primary" size="md" onClick={() => openUrl(info.repo_url)}>
+            {T.about_openRepo}
+          </window.Btn>
+        </div>
+      </div>
+
+      <div>
+        <div style={{
+          fontSize: 11, fontWeight: 600, color: "var(--text-3)",
+          letterSpacing: ".06em", textTransform: "uppercase",
+          margin: "0 4px 8px",
+        }}>{T.about_thirdParty}</div>
+        <div style={{
+          background: "var(--bg-2)", border: "1px solid var(--line)",
+          borderRadius: 14, overflow: "hidden",
+        }}>
+          {info.third_party.map((p, i) => (
+            <div key={p.name} style={{
+              display: "grid", gridTemplateColumns: "1fr auto auto",
+              gap: 16, alignItems: "center", padding: "14px 18px",
+              borderTop: i === 0 ? "none" : "1px solid var(--line)",
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</div>
+              <window.Pill tone="neutral">{p.license}</window.Pill>
+              <button onClick={() => openUrl(p.url)} className="ow-link" type="button">
+                {T.about_openUrl}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{
+        fontSize: 11, color: "var(--text-3)", lineHeight: 1.6, padding: "0 4px",
+      }}>
+        {T.about_disclaimer}
+      </div>
     </section>
   );
 };

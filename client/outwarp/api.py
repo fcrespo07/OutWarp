@@ -591,6 +591,50 @@ class Api:
         with self._lock:
             return dict(self._settings)
 
+    # ── about ─────────────────────────────────────────────────────────────────
+
+    def get_app_info(self) -> dict[str, Any]:
+        """Static metadata for the About screen. Pure read-only — no I/O."""
+        import platform as platform_mod
+        import sys
+
+        from outwarp import __version__
+
+        return {
+            "version": __version__,
+            "python": sys.version.split()[0],
+            "platform": platform_mod.platform(),
+            "repo_url": "https://github.com/fcrespo07/OutWarp",
+            "license": "MIT",
+            "third_party": [
+                {"name": "wstunnel",  "license": "BSD-3-Clause",
+                 "url": "https://github.com/erebe/wstunnel"},
+                {"name": "WireGuard", "license": "GPL-2.0",
+                 "url": "https://www.wireguard.com/"},
+                {"name": "pystray",   "license": "LGPL-3.0",
+                 "url": "https://github.com/moses-palmer/pystray"},
+                {"name": "pywebview", "license": "BSD-3-Clause",
+                 "url": "https://pywebview.flowrl.com/"},
+            ],
+        }
+
+    def open_url(self, url: str) -> dict[str, Any]:
+        """Open `url` in the user's default browser. Refuses non-http(s) so a
+        compromised renderer can't ask us to launch arbitrary handlers
+        (file://, javascript:, custom protocol handlers)."""
+        import webbrowser
+
+        if not isinstance(url, str) or not (
+            url.startswith("https://") or url.startswith("http://")
+        ):
+            return {"ok": False, "error": "only http(s) URLs are allowed"}
+        try:
+            webbrowser.open(url, new=2)
+        except Exception as exc:
+            log.exception("open_url failed for %s", url)
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
     def set_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             before = dict(self._settings)
