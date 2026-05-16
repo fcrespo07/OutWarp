@@ -139,6 +139,7 @@ const STR = {
     logs_level: "Nivel",
     logs_levelAll: "Todos",
     logs_exported: "✓ Registro exportado",
+    logs_jumpBottom: "Saltar al final",
 
     // Connecting steps. No "step_route" — bypass IPs are excluded from
     // WG AllowedIPs at config-build time, not added as host routes after.
@@ -279,6 +280,7 @@ const STR = {
     logs_level: "Level",
     logs_levelAll: "All",
     logs_exported: "✓ Log exported",
+    logs_jumpBottom: "Jump to bottom",
 
     step_resolve: "Resolving endpoint",
     step_tls: "Verifying certificate",

@@ -202,6 +202,9 @@ def main() -> int:
             background_color="#f6f5f1",
             resizable=True,
             hidden=start_hidden,
+            # pywebview disables text selection by default; users need to be
+            # able to copy log lines, fingerprints, error messages, etc.
+            text_select=True,
         )
         api.bind_window(window)
 

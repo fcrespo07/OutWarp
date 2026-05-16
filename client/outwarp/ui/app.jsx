@@ -1010,6 +1010,7 @@ const LOG_LEVEL_COLOR = {
 const Logs = ({ T, logs, api, onClear }) => {
   const ref = useRef(null);
   const atBottomRef = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
   const [filter, setFilter] = useState("");
   const [level, setLevel] = useState("all");
   const [exportMsg, setExportMsg] = useState("");
@@ -1022,7 +1023,17 @@ const Logs = ({ T, logs, api, onClear }) => {
   }, [logs.length]);
   const onScroll = () => {
     const el = ref.current;
-    if (el) atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    if (!el) return;
+    const isBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    atBottomRef.current = isBottom;
+    setAtBottom(isBottom);
+  };
+  const jumpToBottom = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    atBottomRef.current = true;
+    setAtBottom(true);
   };
 
   const filtered = logs.filter((l) =>
@@ -1056,19 +1067,27 @@ const Logs = ({ T, logs, api, onClear }) => {
         </>
       }/>
       {exportMsg && <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-2)" }}>{exportMsg}</div>}
-      <div ref={ref} onScroll={onScroll} style={{
-        background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 12,
-        fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.65,
-        padding: 14, color: "var(--text-2)", overflow: "auto", flex: 1, minHeight: 360,
-      }} className="ws-scroll">
-        {filtered.map((l) => (
-          <div key={l.seq} style={{ display: "grid", gridTemplateColumns: "84px 60px 1fr", gap: 10 }}>
-            <span style={{ color: "var(--text-3)" }}>{fmtClock(l.ts)}</span>
-            <span style={{ color: LOG_LEVEL_COLOR[l.level] || "var(--brand-2)", textTransform: "uppercase" }}>{l.level}</span>
-            <span style={{ color: "var(--text)", wordBreak: "break-all" }}>{l.msg}</span>
-          </div>
-        ))}
-        {filtered.length === 0 && <div style={{ opacity: .5 }}>{T.logs_empty}</div>}
+      <div style={{ position: "relative", flex: 1, minHeight: 360 }}>
+        <div ref={ref} onScroll={onScroll} style={{
+          background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 12,
+          fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.65,
+          padding: 14, color: "var(--text-2)", overflow: "auto",
+          height: "100%", cursor: "text",
+        }} className="ws-scroll ow-logs">
+          {filtered.map((l) => (
+            <div key={l.seq} style={{ display: "grid", gridTemplateColumns: "84px 60px 1fr", gap: 10 }}>
+              <span style={{ color: "var(--text-3)" }}>{fmtClock(l.ts)}</span>
+              <span style={{ color: LOG_LEVEL_COLOR[l.level] || "var(--brand-2)", textTransform: "uppercase" }}>{l.level}</span>
+              <span style={{ color: "var(--text)", wordBreak: "break-all" }}>{l.msg}</span>
+            </div>
+          ))}
+          {filtered.length === 0 && <div style={{ opacity: .5 }}>{T.logs_empty}</div>}
+        </div>
+        {!atBottom && (
+          <button onClick={jumpToBottom} className="ow-logs-jump" type="button">
+            ↓ {T.logs_jumpBottom}
+          </button>
+        )}
       </div>
     </section>
   );
