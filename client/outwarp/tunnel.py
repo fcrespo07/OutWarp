@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,11 @@ from outwarp.wireguard import build_wg_conf
 
 _APP_NAME = "OutWarp"
 _ENV_OVERRIDE = "OUTWARP_WSTUNNEL"
+
+# Strip CSI/SGR escape sequences that wstunnel emits when it thinks stdout is
+# a TTY (e.g. `\x1b[2mINFO\x1b[0m`). They show up as literal `[2m...[0m` in
+# the UI's log panel otherwise.
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 log = logging.getLogger(__name__)
 
@@ -122,7 +128,7 @@ class Tunnel:
         assert self._proc is not None
         try:
             for line in self._proc.stdout:  # type: ignore[union-attr]
-                stripped = line.rstrip()
+                stripped = _ANSI_ESCAPE_RE.sub("", line).rstrip()
                 if stripped:
                     log.info("wstunnel: %s", stripped)
         except Exception:
@@ -172,6 +178,11 @@ class Tunnel:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                # wstunnel emits UTF-8 on stdout. The default `text=True`
+                # uses the system locale encoding (CP1252 on Spanish-Windows,
+                # etc.), which mangles non-ASCII Rust error messages.
+                encoding="utf-8",
+                errors="replace",
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             )
             self._stdout_thread = Thread(

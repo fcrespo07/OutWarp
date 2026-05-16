@@ -804,8 +804,17 @@ const ImportTabBtn = ({ active, onClick, children }) => (
 
 const DropZone = ({ T, onPick, onFile }) => (
   <div
-    onDragOver={(e) => e.preventDefault()}
-    onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) onFile(f); }}
+    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+    onDrop={(e) => {
+      // stopPropagation: the outer container also listens for drop so users
+      // can drop anywhere on the screen. Without it the same file is handed
+      // to handleFile twice and import_profile runs twice — that races two
+      // TunnelManagers, both binding wstunnel on UDP :51820 → port crash.
+      e.preventDefault();
+      e.stopPropagation();
+      const f = e.dataTransfer.files?.[0];
+      if (f) onFile(f);
+    }}
     style={{
       border: "1.5px dashed var(--line-strong)", borderRadius: 14, padding: 32,
       background: "var(--bg-2)", textAlign: "center",

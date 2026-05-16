@@ -19,6 +19,7 @@ from outwarp.platforms.base import Platform, PlatformError
 from outwarp.tunnel import (
     Tunnel,
     TunnelError,
+    _ANSI_ESCAPE_RE,
     build_wstunnel_command,
     find_wstunnel,
 )
@@ -347,3 +348,20 @@ def test_is_active_false_when_proc_died():
 
     fake_proc.poll.return_value = 1  # process exited
     assert t.is_active is False
+
+
+def test_ansi_escape_re_strips_color_sequences():
+    # wstunnel emits CSI/SGR colour codes around its log level / module names
+    # when it thinks stdout is a TTY (which subprocess pipes look like to it).
+    # The drain thread strips them before logging so the UI log panel doesn't
+    # show literal `[2m...[0m` noise.
+    raw = "\x1b[2m2026-05-16T19:35:50.153691Z\x1b[0m \x1b[32m INFO\x1b[0m \x1b[2mwstunnel\x1b[0m: Starting"
+    assert _ANSI_ESCAPE_RE.sub("", raw) == "2026-05-16T19:35:50.153691Z  INFO wstunnel: Starting"
+
+
+def test_ansi_escape_re_preserves_unicode_content():
+    # The Rust panic message that surfaced the regression had Spanish text
+    # (UTF-8 encoded). Make sure the regex doesn't eat anything beyond the
+    # escape sequence itself.
+    raw = "\x1b[31mError\x1b[0m: Solo se permite un uso de cada dirección de socket"
+    assert _ANSI_ESCAPE_RE.sub("", raw) == "Error: Solo se permite un uso de cada dirección de socket"
