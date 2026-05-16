@@ -72,6 +72,11 @@ def _default_settings() -> dict[str, Any]:
         # instead of looping through the reconnect schedule. Consumed by
         # TunnelManager._run. Initial-connect failures still honour max_attempts.
         "auto_reconnect": True,
+        # When True, app.py creates the main window hidden on startup so only
+        # the tray icon is visible. The user opens the window from the tray's
+        # "Open" entry. A fresh install (no profile yet) ignores this setting
+        # — the user needs the import screen visible to do anything at all.
+        "minimize_to_tray": True,
     }
 
 

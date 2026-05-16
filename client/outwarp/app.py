@@ -169,6 +169,15 @@ def main() -> int:
                 config.wireguard.tunnel_name,
             )
 
+        # Honour the user's "minimize to tray" preference: start with the
+        # window hidden so only the tray is visible. Override on first run
+        # (no profile yet) — the tray icon alone is useless if the user has
+        # nothing to import yet, they need to see the import screen.
+        settings = api.get_settings()
+        start_hidden = bool(settings.get("minimize_to_tray", True)) and config is not None
+        if start_hidden:
+            log.info("minimize_to_tray=on — starting with the window hidden")
+
         window = webview.create_window(
             title=_WINDOW_TITLE,
             url=_resolve_ui_path(),
@@ -178,6 +187,7 @@ def main() -> int:
             min_size=(880, 600),
             background_color="#f6f5f1",
             resizable=True,
+            hidden=start_hidden,
         )
         api.bind_window(window)
 
