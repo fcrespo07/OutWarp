@@ -207,7 +207,14 @@ function App() {
     setProfiles(ps);
   };
 
-  const onSetting = (k, v) => api?.set_settings({ [k]: v });
+  // onSetting returns the bridge result so children can show an inline error
+  // when a side-effecting setting (kill_switch / start_at_boot) fails. The
+  // persisted value is rolled back server-side and re-broadcast via
+  // outwarp:settings, so the toggle's visual state recovers on its own.
+  const onSetting = async (k, v) => {
+    if (!api) return { ok: false, error: "no bridge" };
+    return api.set_settings({ [k]: v });
+  };
 
   // Hold the first paint until the bridge has answered — otherwise the app
   // briefly renders the "empty / import" screen even when a profile exists.
@@ -847,31 +854,115 @@ const Logs = ({ T, logs, api, onClear }) => {
 };
 
 // ── Settings ───────────────────────────────────────────────────────
-const Settings = ({ T, settings, onSetting }) => {
-  const Row = ({ title, sub, control }) => (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, alignItems: "center", padding: "14px 0", borderBottom: "1px solid var(--line)" }}>
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 500 }}>{title}</div>
-        {sub && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>{sub}</div>}
-      </div>
-      <div>{control}</div>
+const SettingsCard = ({ title, children }) => (
+  <div>
+    {title && (
+      <div style={{
+        fontSize: 11, fontWeight: 600, color: "var(--text-3)",
+        letterSpacing: ".06em", textTransform: "uppercase",
+        margin: "0 4px 8px",
+      }}>{title}</div>
+    )}
+    <div style={{
+      background: "var(--bg-2)", border: "1px solid var(--line)",
+      borderRadius: 14, padding: "0 18px",
+    }}>{children}</div>
+  </div>
+);
+
+const SettingsRow = ({ title, sub, control, isLast }) => (
+  <div style={{
+    display: "grid", gridTemplateColumns: "1fr auto", gap: 16,
+    alignItems: "center", padding: "14px 0",
+    borderBottom: isLast ? "none" : "1px solid var(--line)",
+  }}>
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 500 }}>{title}</div>
+      {sub && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2, lineHeight: 1.45 }}>{sub}</div>}
     </div>
-  );
-  const Select = ({ value, onChange, options }) => (
-    <select className="ow-input" value={value} onChange={(e) => onChange(e.target.value)}
-      style={{ height: 30, fontSize: 13, width: "auto" }}>
-      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-    </select>
-  );
+    <div>{control}</div>
+  </div>
+);
+
+const SettingsSelect = ({ value, onChange, options }) => (
+  <select className="ow-input" value={value} onChange={(e) => onChange(e.target.value)}
+    style={{ height: 30, fontSize: 13, width: "auto" }}>
+    {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+  </select>
+);
+
+const Settings = ({ T, settings, onSetting }) => {
+  // Side-effecting toggles (kill_switch on Linux/macOS, start_at_boot on a
+  // platform where the registry write fails, etc.) return {ok:false}. Surface
+  // the error inline; the persisted value is rolled back by the backend and
+  // arrives via outwarp:settings, so the toggle's visual state self-corrects.
+  const [error, setError] = useState("");
+
+  const apply = async (k, v) => {
+    setError("");
+    const r = await onSetting(k, v);
+    if (r && r.ok === false && r.error) setError(r.error);
+  };
+
+  const groups = [
+    { key: "appearance", title: T.set_groupAppearance, rows: [
+      { title: T.set_language, control: (
+        <SettingsSelect value={settings.language} onChange={(v) => apply("language", v)}
+          options={[["es", "Español"], ["en", "English"]]}/>
+      )},
+      { title: T.set_theme, control: (
+        <SettingsSelect value={settings.theme} onChange={(v) => apply("theme", v)}
+          options={[["auto", T.set_themeAuto], ["light", T.set_themeLight], ["dark", T.set_themeDark]]}/>
+      )},
+      { title: T.set_advanced, sub: T.set_advancedSub, control: (
+        <window.Toggle on={!!settings.advanced} onChange={(v) => apply("advanced", v)}/>
+      )},
+    ]},
+    { key: "connection", title: T.set_groupConnection, rows: [
+      { title: T.set_autoconnect, sub: T.set_autoconnectSub, control: (
+        <window.Toggle on={!!settings.auto_reconnect} onChange={(v) => apply("auto_reconnect", v)}/>
+      )},
+      { title: T.set_killSwitch, sub: T.set_killSwitchSub, control: (
+        <window.Toggle on={!!settings.kill_switch} onChange={(v) => apply("kill_switch", v)}/>
+      )},
+      { title: T.set_tlsIntercept, sub: T.set_tlsInterceptSub, control: (
+        <window.Toggle on={!!settings.allow_tls_intercept} onChange={(v) => apply("allow_tls_intercept", v)}/>
+      )},
+    ]},
+    { key: "system", title: T.set_groupSystem, rows: [
+      { title: T.set_startup, sub: T.set_startupSub, control: (
+        <window.Toggle on={!!settings.start_at_boot} onChange={(v) => apply("start_at_boot", v)}/>
+      )},
+      { title: T.set_minimizeTray, sub: T.set_minimizeTraySub, control: (
+        <window.Toggle on={!!settings.minimize_to_tray} onChange={(v) => apply("minimize_to_tray", v)}/>
+      )},
+    ]},
+  ];
+
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 720 }}>
+    <section style={{ display: "flex", flexDirection: "column", gap: 22, maxWidth: 720 }}>
       <Header title={T.nav_settings} sub="outwarp-client · v0.0.1"/>
-      <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: "0 18px" }}>
-        <Row title={T.set_language} control={<Select value={settings.language} onChange={(v) => onSetting("language", v)} options={[["es", "Español"], ["en", "English"]]}/>}/>
-        <Row title={T.set_theme} control={<Select value={settings.theme} onChange={(v) => onSetting("theme", v)} options={[["auto", T.set_themeAuto], ["light", T.set_themeLight], ["dark", T.set_themeDark]]}/>}/>
-        <Row title={T.set_advanced} sub={T.set_advancedSub} control={<window.Toggle on={!!settings.advanced} onChange={(v) => onSetting("advanced", v)}/>}/>
-        <Row title={T.set_tlsIntercept} sub={T.set_tlsInterceptSub} control={<window.Toggle on={!!settings.allow_tls_intercept} onChange={(v) => onSetting("allow_tls_intercept", v)}/>}/>
-      </div>
+
+      {error && (
+        <div style={{
+          background: "color-mix(in srgb, var(--brand-bad) 12%, transparent)",
+          border: "1px solid color-mix(in srgb, var(--brand-bad) 35%, transparent)",
+          color: "var(--brand-bad)",
+          borderRadius: 12, padding: "12px 14px", fontSize: 13,
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>{T.set_errorTitle}</div>
+          <div style={{ color: "var(--text-2)", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.5 }}>{error}</div>
+        </div>
+      )}
+
+      {groups.map((g) => (
+        <SettingsCard key={g.key} title={g.title}>
+          {g.rows.map((r, i) => (
+            <SettingsRow key={r.title} title={r.title} sub={r.sub}
+              control={r.control} isLast={i === g.rows.length - 1}/>
+          ))}
+        </SettingsCard>
+      ))}
     </section>
   );
 };
