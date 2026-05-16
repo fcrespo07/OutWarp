@@ -120,6 +120,38 @@
 
 .ow-toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
+/* ── Inline link (About screen, etc.) ─────────────────────────────── */
+.ow-link {
+  all: unset;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--brand);
+  font-family: var(--font-mono);
+}
+.ow-link:hover { text-decoration: underline; }
+.ow-link:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 2px; }
+
+/* ── Logs scroller ────────────────────────────────────────────────── */
+/* Belt-and-braces: pywebview is started with text_select=True, but force
+   selectability on the log scroller so users can always grab a line. */
+.ow-logs, .ow-logs * {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.ow-logs-jump {
+  position: absolute; right: 16px; bottom: 16px;
+  padding: 6px 12px; border-radius: 999px;
+  background: var(--brand); color: #fff;
+  font-size: 12px; font-weight: 600; font-family: var(--font-sans);
+  border: none; cursor: pointer;
+  box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--brand) 60%, transparent);
+  transition: filter .12s, transform .04s;
+}
+.ow-logs-jump:hover { filter: brightness(1.1); }
+.ow-logs-jump:active { transform: translateY(1px); }
+.ow-logs-jump:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
 /* ── Modal ────────────────────────────────────────────────────────── */
 .ow-overlay {
   position: fixed; inset: 0; z-index: 50;

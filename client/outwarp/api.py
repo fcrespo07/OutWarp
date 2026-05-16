@@ -36,6 +36,7 @@ from outwarp.config import (
     original_config_path,
 )
 from outwarp.logs import MemoryLogHandler
+from outwarp.platforms import PlatformError, get_platform
 from outwarp.tunnel import TunnelManager, TunnelState
 from outwarp.wireguard import get_tunnel_stats
 
@@ -56,9 +57,9 @@ def _settings_path() -> Path:
 
 
 def _default_settings() -> dict[str, Any]:
-    # Only settings the client actually acts on. start_at_boot / kill_switch /
-    # auto_reconnect were dropped — they were persisted but never consumed, so
-    # the toggles misled the user. Reintroduce them once they're wired up.
+    # Only settings the client actually acts on. Each toggle below has a real
+    # consumer downstream — if you add a key, wire its consumer first, or you
+    # lie to the user with a no-op switch.
     return {
         "language": "es",
         "theme": "auto",
@@ -68,7 +69,41 @@ def _default_settings() -> dict[str, Any]:
         # where the outer cert is the proxy's, not the server's. WireGuard's
         # own crypto still protects the traffic. Off by default.
         "allow_tls_intercept": False,
+        # When False, an unexpectedly-closed tunnel goes straight to FAILED
+        # instead of looping through the reconnect schedule. Consumed by
+        # TunnelManager._run. Initial-connect failures still honour max_attempts.
+        "auto_reconnect": True,
+        # When True, app.py creates the main window hidden on startup so only
+        # the tray icon is visible. The user opens the window from the tray's
+        # "Open" entry. A fresh install (no profile yet) ignores this setting
+        # — the user needs the import screen visible to do anything at all.
+        "minimize_to_tray": True,
+        # Register OutWarp to start on user login. Wired to platform.
+        # install_autostart / uninstall_autostart in set_settings, so toggling
+        # the value writes the registry key (Windows) or .desktop file (Linux)
+        # immediately.
+        "start_at_boot": False,
+        # Block all outbound traffic any time the tunnel is unexpectedly down
+        # (RECONNECTING / FAILED). Released on CONNECTED or on a clean stop.
+        # Real implementation lives in WindowsPlatform; Linux/macOS raise a
+        # PlatformError when toggled on so the UI surfaces an honest error
+        # rather than pretending the switch works.
+        "kill_switch": False,
     }
+
+
+def _autostart_command() -> list[str]:
+    """Build the argv that the OS should run on login.
+
+    In a frozen PyInstaller bundle, ``sys.executable`` IS the OutWarp .exe and
+    no extra args are needed. In dev mode we re-launch via ``python -m outwarp``
+    so the same code path is testable end-to-end without packaging.
+    """
+    import sys
+
+    if getattr(sys, "frozen", False):
+        return [sys.executable]
+    return [sys.executable, "-m", "outwarp"]
 
 
 def _load_settings() -> dict[str, Any]:
@@ -140,14 +175,21 @@ class Api:
             "tx_total": 0, "rx_total": 0,
             "session_start": 0, "last_handshake": 0,
             "exit_ip": "",
+            "exit_location": "",
+            "latency_ms": 0,
         }
         self._stats_thread: threading.Thread | None = None
         self._stats_stop = threading.Event()
+        self._latency_thread: threading.Thread | None = None
+        self._latency_stop = threading.Event()
 
         if manager is not None:
             manager.add_listener(self._on_state_change)
             manager.allow_tls_intercept = bool(
                 self._settings.get("allow_tls_intercept", False)
+            )
+            manager.auto_reconnect = bool(
+                self._settings.get("auto_reconnect", True)
             )
 
     # ── pywebview wiring ──────────────────────────────────────────────────────
@@ -213,12 +255,20 @@ class Api:
 
     def _status_payload(self) -> dict[str, Any]:
         attempt, max_attempts = self._attempt_info()
+        phase = ""
+        if self._manager is not None:
+            p = getattr(self._manager, "phase", "")
+            if isinstance(p, str):
+                phase = p
         return {
             "status": self._status_str(),
             "active_profile_id": self._active_profile_id(),
             "error": self._error_str(),
             "attempt": attempt,
             "max_attempts": max_attempts,
+            # "" between attempts; "resolve"|"tls"|"wg"|"ws"|"done" while
+            # connecting. The UI uses it to drive the connecting stepper.
+            "phase": phase,
         }
 
     def connect(self, profile_id: str | None = None) -> dict[str, Any]:
@@ -249,21 +299,61 @@ class Api:
         # Trust the state we were handed over a re-read of the manager.
         payload["status"] = _STATE_TO_JS.get(state, "disconnected")
         self._emit("status", payload)
+        self._sync_kill_switch(state)
         if state is TunnelState.CONNECTED:
             self._stats["session_start"] = time.time()
             self._stats["last_handshake"] = time.time()
             self._stats["exit_ip"] = ""
+            self._stats["exit_location"] = ""
+            self._stats["latency_ms"] = 0
             self._start_stats_loop()
             self._start_exit_ip_probe()
+            self._start_latency_loop()
         else:
             self._stop_stats_loop()
+            self._stop_latency_loop()
             self._stats["exit_ip"] = ""
+            self._stats["exit_location"] = ""
+            self._stats["latency_ms"] = 0
             if state in (TunnelState.DISCONNECTED, TunnelState.FAILED):
                 self._stats["session_start"] = 0
+
+    def _sync_kill_switch(self, state: TunnelState) -> None:
+        """Engage/release the kill switch in response to a tunnel state change.
+
+        Engagement happens when the tunnel is unexpectedly down — the
+        RECONNECTING attempt window and the terminal FAILED state. Released on
+        a successful CONNECTED or a clean DISCONNECTED (user pressed stop).
+        CONNECTING (a fresh startup attempt) is left alone so a previously-
+        engaged switch isn't released the moment the user clicks Connect.
+        """
+        if not bool(self._settings.get("kill_switch", False)):
+            return
+        if self._manager is None:
+            return
+        try:
+            if state in (TunnelState.RECONNECTING, TunnelState.FAILED):
+                allowlist = list(self._manager.config.routing.bypass_ips)
+                if not allowlist:
+                    log.warning(
+                        "kill_switch: no bypass_ips in profile — refusing to "
+                        "engage (would lock the user out with no recovery path)"
+                    )
+                    return
+                get_platform().engage_kill_switch(allowlist)
+                self._record_log("warn", "kill switch engaged — outbound traffic blocked")
+            elif state in (TunnelState.CONNECTED, TunnelState.DISCONNECTED):
+                get_platform().release_kill_switch()
+        except PlatformError as exc:
+            log.warning("kill_switch sync failed: %s", exc)
+            self._record_log("error", f"kill switch error: {exc}")
 
     # ── profiles ──────────────────────────────────────────────────────────────
 
     def list_profiles(self) -> list[dict[str, Any]]:
+        # Single-profile model: returns either 0 entries (no profile imported)
+        # or 1 (the active one). The list shape is kept so the UI can render
+        # uniformly and so a future multi-profile rework doesn't break callers.
         if self._manager is None:
             return []
         return [_profile_from_config(self._manager.config)]
@@ -295,7 +385,9 @@ class Api:
         if old is not None:
             old.stop()
         new_manager = TunnelManager(
-            cfg, allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False))
+            cfg,
+            allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False)),
+            auto_reconnect=bool(self._settings.get("auto_reconnect", True)),
         )
         new_manager.add_listener(self._on_state_change)
         self._manager = new_manager
@@ -311,8 +403,8 @@ class Api:
         return {"ok": True, "profile": prof}
 
     def remove_profile(self, profile_id: str) -> dict[str, Any]:
-        # Multi-profile management isn't supported yet — there is at most one
-        # active config. "Remove" therefore means: stop the tunnel and forget it.
+        # Single-profile model: `profile_id` is ignored. There is at most one
+        # active config, so "remove" means stop the tunnel and forget it.
         if self._manager is None:
             return {"ok": True}
         self._manager.stop()
@@ -325,7 +417,8 @@ class Api:
         return {"ok": True}
 
     def set_active_profile(self, profile_id: str) -> dict[str, Any]:
-        # Only one profile today — accept and ignore.
+        # Single-profile model: there is nothing to switch between. Accept and
+        # ignore so the UI can call this without special-casing.
         return {"ok": True}
 
     def update_profile(self, profile_id: str, patch: dict[str, Any]) -> dict[str, Any]:
@@ -409,7 +502,9 @@ class Api:
             TunnelState.RECONNECTING,
         )
         new_manager = TunnelManager(
-            cfg, allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False))
+            cfg,
+            allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False)),
+            auto_reconnect=bool(self._settings.get("auto_reconnect", True)),
         )
         new_manager.add_listener(self._on_state_change)
         self._manager = new_manager
@@ -510,8 +605,53 @@ class Api:
         with self._lock:
             return dict(self._settings)
 
+    # ── about ─────────────────────────────────────────────────────────────────
+
+    def get_app_info(self) -> dict[str, Any]:
+        """Static metadata for the About screen. Pure read-only — no I/O."""
+        import platform as platform_mod
+        import sys
+
+        from outwarp import __version__
+
+        return {
+            "version": __version__,
+            "python": sys.version.split()[0],
+            "platform": platform_mod.platform(),
+            "repo_url": "https://github.com/fcrespo07/OutWarp",
+            "license": "MIT",
+            "third_party": [
+                {"name": "wstunnel",  "license": "BSD-3-Clause",
+                 "url": "https://github.com/erebe/wstunnel"},
+                {"name": "WireGuard", "license": "GPL-2.0",
+                 "url": "https://www.wireguard.com/"},
+                {"name": "pystray",   "license": "LGPL-3.0",
+                 "url": "https://github.com/moses-palmer/pystray"},
+                {"name": "pywebview", "license": "BSD-3-Clause",
+                 "url": "https://pywebview.flowrl.com/"},
+            ],
+        }
+
+    def open_url(self, url: str) -> dict[str, Any]:
+        """Open `url` in the user's default browser. Refuses non-http(s) so a
+        compromised renderer can't ask us to launch arbitrary handlers
+        (file://, javascript:, custom protocol handlers)."""
+        import webbrowser
+
+        if not isinstance(url, str) or not (
+            url.startswith("https://") or url.startswith("http://")
+        ):
+            return {"ok": False, "error": "only http(s) URLs are allowed"}
+        try:
+            webbrowser.open(url, new=2)
+        except Exception as exc:
+            log.exception("open_url failed for %s", url)
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
     def set_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
+            before = dict(self._settings)
             if isinstance(patch, dict):
                 for k, v in patch.items():
                     if k in self._settings:
@@ -521,9 +661,81 @@ class Api:
                 _save_settings(snapshot)
             except OSError as exc:
                 log.warning("could not persist settings: %s", exc)
-        if isinstance(patch, dict) and "allow_tls_intercept" in patch and self._manager:
-            self._manager.allow_tls_intercept = bool(snapshot["allow_tls_intercept"])
+
+        # Side effects after the lock is released: registry / desktop-file I/O
+        # can take a moment and we don't want to block other API calls.
+        if isinstance(patch, dict) and self._manager:
+            if "allow_tls_intercept" in patch:
+                self._manager.allow_tls_intercept = bool(snapshot["allow_tls_intercept"])
+            if "auto_reconnect" in patch:
+                self._manager.auto_reconnect = bool(snapshot["auto_reconnect"])
+
+        autostart_error: str | None = None
+        if isinstance(patch, dict) and "start_at_boot" in patch:
+            was = bool(before.get("start_at_boot", False))
+            now = bool(snapshot.get("start_at_boot", False))
+            if was != now:
+                try:
+                    plat = get_platform()
+                    if now:
+                        plat.install_autostart(_autostart_command())
+                    else:
+                        plat.uninstall_autostart()
+                except PlatformError as exc:
+                    # Side effect failed — roll back the persisted value so we
+                    # don't lie about a non-existent registration.
+                    log.warning("autostart toggle failed: %s", exc)
+                    autostart_error = str(exc)
+                    with self._lock:
+                        self._settings["start_at_boot"] = was
+                        snapshot = dict(self._settings)
+                        try:
+                            _save_settings(snapshot)
+                        except OSError:
+                            log.warning("could not roll back start_at_boot")
+
+        kill_switch_error: str | None = None
+        if isinstance(patch, dict) and "kill_switch" in patch:
+            was = bool(before.get("kill_switch", False))
+            now = bool(snapshot.get("kill_switch", False))
+            if was != now:
+                try:
+                    plat = get_platform()
+                    if now:
+                        # Activated mid-session: engage NOW if the tunnel is
+                        # already down, so the user isn't leaking while the
+                        # next state change waits to fire.
+                        if (
+                            self._manager is not None
+                            and self._manager.state in (
+                                TunnelState.RECONNECTING, TunnelState.FAILED,
+                            )
+                        ):
+                            allowlist = list(
+                                self._manager.config.routing.bypass_ips
+                            )
+                            if allowlist:
+                                plat.engage_kill_switch(allowlist)
+                    else:
+                        # Always release on disable — even if we never engaged
+                        # — to recover from any stale rule.
+                        plat.release_kill_switch()
+                except PlatformError as exc:
+                    log.warning("kill_switch toggle failed: %s", exc)
+                    kill_switch_error = str(exc)
+                    with self._lock:
+                        self._settings["kill_switch"] = was
+                        snapshot = dict(self._settings)
+                        try:
+                            _save_settings(snapshot)
+                        except OSError:
+                            log.warning("could not roll back kill_switch")
+
         self._emit("settings", snapshot)
+        if autostart_error is not None:
+            return {"ok": False, "error": autostart_error, "settings": snapshot}
+        if kill_switch_error is not None:
+            return {"ok": False, "error": kill_switch_error, "settings": snapshot}
         return {"ok": True, "settings": snapshot}
 
     # ── stats ─────────────────────────────────────────────────────────────────
@@ -574,11 +786,12 @@ class Api:
 
     def _start_exit_ip_probe(self) -> None:
         """After connecting, query our public IP so the UI can show the user
-        their traffic is actually exiting through the tunnel. Best-effort: a
-        few retries (routing may not be up the instant we go CONNECTED), short
-        timeouts, every failure swallowed."""
+        their traffic is actually exiting through the tunnel, then geolocate
+        it. Best-effort: a few retries (routing may not be up the instant we
+        go CONNECTED), short timeouts, every failure swallowed."""
         def _probe() -> None:
             import urllib.request
+            ip = ""
             for _ in range(3):
                 if self._stats.get("session_start", 0) == 0:
                     return  # disconnected before we got an answer
@@ -590,19 +803,72 @@ class Api:
                     if ip:
                         self._stats["exit_ip"] = ip
                         self._emit("stats", dict(self._stats))
-                        return
+                        break
                 except Exception:
                     pass
                 time.sleep(2)
+            if not ip or self._stats.get("session_start", 0) == 0:
+                return
+            try:
+                with urllib.request.urlopen(
+                    f"https://ipapi.co/{ip}/json/", timeout=5
+                ) as resp:
+                    data = json.loads(resp.read().decode("utf-8", "replace"))
+                loc = ", ".join(
+                    filter(None, [data.get("city"), data.get("country_name")])
+                )
+                if loc and self._stats.get("session_start", 0) != 0:
+                    self._stats["exit_location"] = loc
+                    self._emit("stats", dict(self._stats))
+            except Exception:
+                pass
 
         threading.Thread(target=_probe, daemon=True, name="outwarp-exit-ip").start()
+
+    def _start_latency_loop(self) -> None:
+        """Ping the WG peer (the server's in-tunnel IP) every 10s while
+        connected. Best-effort: any failure leaves latency at 0 and the UI
+        renders a dash."""
+        if self._latency_thread is not None and self._latency_thread.is_alive():
+            return
+        if self._manager is None:
+            return
+        target = self._manager.config.tunnel.remote_host
+        if not target:
+            return
+        self._latency_stop.clear()
+
+        def _loop(host: str) -> None:
+            from outwarp.network import measure_latency_ms
+            while not self._latency_stop.is_set():
+                ms = measure_latency_ms(host)
+                self._stats["latency_ms"] = int(ms) if ms is not None else 0
+                self._emit("stats", dict(self._stats))
+                if self._latency_stop.wait(10):
+                    break
+
+        self._latency_thread = threading.Thread(
+            target=_loop, args=(target,), daemon=True, name="outwarp-latency",
+        )
+        self._latency_thread.start()
+
+    def _stop_latency_loop(self) -> None:
+        self._latency_stop.set()
+        self._latency_thread = None
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
     def shutdown(self) -> None:
         self._stop_stats_loop()
+        self._stop_latency_loop()
         if self._manager is not None:
             try:
                 self._manager.stop()
             except Exception:
                 log.exception("manager.stop failed during shutdown")
+        # Release the kill switch on the way out — leaving it engaged would
+        # leave the user offline until they figure out where the rule lives.
+        try:
+            get_platform().release_kill_switch()
+        except Exception:
+            log.exception("kill-switch release during shutdown failed")

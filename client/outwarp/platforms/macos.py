@@ -25,3 +25,26 @@ class MacOSPlatform(Platform):
 
     def remove_host_route(self, ip: str) -> None:
         raise PlatformError(_NOT_IMPLEMENTED)
+
+    def install_autostart(self, command: list[str]) -> None:
+        # Will land at ~/Library/LaunchAgents/dev.outwarp.client.plist when
+        # macOS support gets implemented end-to-end.
+        raise PlatformError(_NOT_IMPLEMENTED)
+
+    def uninstall_autostart(self) -> None:
+        raise PlatformError(_NOT_IMPLEMENTED)
+
+    def is_autostart_installed(self) -> bool:
+        return False
+
+    def engage_kill_switch(self, allowlist_ips: list[str]) -> None:
+        raise PlatformError(
+            "Kill switch is not yet implemented on macOS. Disable the toggle "
+            "to keep using OutWarp on this machine."
+        )
+
+    def release_kill_switch(self) -> None:
+        return
+
+    def is_kill_switch_engaged(self) -> bool:
+        return False

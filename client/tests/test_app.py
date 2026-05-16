@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import uuid
@@ -16,6 +17,28 @@ def _unique_lock_args() -> dict[str, str]:
         "mutex_name": f"Local\\OutWarpClient-test-{tag}",
         "lock_file": f"outwarp-client-test-{tag}.lock",
     }
+
+
+# A minimal but schema-valid .owcfg payload for the tests below. The fingerprint
+# is exactly 32 hex octets joined by colons (95 chars) — the strict length the
+# config loader enforces.
+_VALID_OWCFG = {
+    "schema_version": 1,
+    "server": {"endpoint": "203.0.113.42", "port": 443,
+               "http_upgrade_path_prefix": "x"},
+    "tls": {"cert_fingerprint_sha256":
+            ("AB:CD:EF:01:23:45:67:89:" * 3) + "AB:CD:EF:01:23:45:67:89"},
+    "tunnel": {"local_port": 51820, "remote_host": "10.0.0.1",
+               "remote_port": 51820},
+    "wireguard": {
+        "tunnel_name": "OutWarp",
+        "client_address": "10.0.0.42/32",
+        "client_private_key": "dGVzdGtleQ==",
+        "server_public_key": "c2VydmVya2V5",
+        "dns": ["1.1.1.1"],
+    },
+    "routing": {"bypass_ips": ["203.0.113.42"]},
+}
 
 
 class TestSingleInstanceLock:
@@ -110,3 +133,85 @@ class TestMainEntryPoint:
         assert kwargs["title"] == "OutWarp"
         # Api was bound to the window — proves bind_window(window) was called
         assert kwargs["js_api"] is not None
+        # First run with no config must show the window even if minimize_to_tray
+        # is on — the user has nothing to do without the import screen.
+        assert kwargs["hidden"] is False
+
+    def test_minimize_to_tray_starts_window_hidden_when_config_exists(self, tmp_path) -> None:
+        """With a profile already imported and minimize_to_tray=True, the
+        webview window is created hidden so only the tray icon shows up.
+        The user opens the window via the tray's "Open" entry."""
+        from outwarp import app as app_mod
+
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(_VALID_OWCFG))
+        # minimize_to_tray defaults to True, but be explicit for the test.
+        (tmp_path / "settings.json").write_text(json.dumps({"minimize_to_tray": True}))
+
+        captured = {}
+        fake_window = MagicMock()
+        fake_webview = MagicMock()
+        fake_webview.create_window.return_value = fake_window
+        fake_webview.start.side_effect = lambda **kwargs: captured.setdefault("start_called", True)
+
+        class _FakeTrayApp:
+            def __init__(self, manager, on_show, on_quit):
+                pass
+            def run(self): pass
+            def stop(self): pass
+            def update_manager(self, m): pass
+
+        # The TunnelManager would otherwise spin up a real worker thread the
+        # moment _FakeTrayApp returns control. Patch it out — this test is
+        # only about windowing.
+        with (
+            patch("outwarp.app.default_config_path", return_value=config_path),
+            patch("outwarp.api.default_config_path", return_value=config_path),
+            patch("outwarp.tunnel.TunnelManager", return_value=MagicMock()),
+            patch.dict(sys.modules, {"webview": fake_webview}),
+            patch("outwarp.tray.TrayApp", _FakeTrayApp),
+            patch.object(app_mod._SingleInstanceLock, "acquire", return_value=True),
+            patch.object(app_mod._SingleInstanceLock, "release"),
+        ):
+            rc = app_mod.main()
+
+        assert rc == 0
+        kwargs = fake_webview.create_window.call_args.kwargs
+        assert kwargs["hidden"] is True
+
+    def test_minimize_to_tray_off_keeps_window_visible(self, tmp_path) -> None:
+        """With minimize_to_tray=False, the window is shown on launch even if
+        a profile already exists."""
+        from outwarp import app as app_mod
+
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(_VALID_OWCFG))
+        (tmp_path / "settings.json").write_text(json.dumps({"minimize_to_tray": False}))
+
+        captured = {}
+        fake_window = MagicMock()
+        fake_webview = MagicMock()
+        fake_webview.create_window.return_value = fake_window
+        fake_webview.start.side_effect = lambda **kwargs: captured.setdefault("start_called", True)
+
+        class _FakeTrayApp:
+            def __init__(self, manager, on_show, on_quit):
+                pass
+            def run(self): pass
+            def stop(self): pass
+            def update_manager(self, m): pass
+
+        with (
+            patch("outwarp.app.default_config_path", return_value=config_path),
+            patch("outwarp.api.default_config_path", return_value=config_path),
+            patch("outwarp.tunnel.TunnelManager", return_value=MagicMock()),
+            patch.dict(sys.modules, {"webview": fake_webview}),
+            patch("outwarp.tray.TrayApp", _FakeTrayApp),
+            patch.object(app_mod._SingleInstanceLock, "acquire", return_value=True),
+            patch.object(app_mod._SingleInstanceLock, "release"),
+        ):
+            rc = app_mod.main()
+
+        assert rc == 0
+        kwargs = fake_webview.create_window.call_args.kwargs
+        assert kwargs["hidden"] is False

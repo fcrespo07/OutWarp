@@ -32,3 +32,43 @@ class Platform(ABC):
     @abstractmethod
     def remove_host_route(self, ip: str) -> None:
         ...
+
+    # ── autostart on user login ───────────────────────────────────────────
+    # Each implementation decides where the registration lives
+    # (HKCU\…\Run on Windows, ~/.config/autostart on Linux, LaunchAgents on
+    # macOS). `command` is the argv list to run on login — the caller (api.py)
+    # builds it from sys.executable so frozen and dev-mode launches both work.
+
+    @abstractmethod
+    def install_autostart(self, command: list[str]) -> None:
+        ...
+
+    @abstractmethod
+    def uninstall_autostart(self) -> None:
+        ...
+
+    @abstractmethod
+    def is_autostart_installed(self) -> bool:
+        ...
+
+    # ── kill switch ──────────────────────────────────────────────────────
+    # When the user turns on the "kill switch" preference, api.py asks the
+    # platform to block all outbound traffic any time the tunnel is down
+    # (RECONNECTING / FAILED). `allowlist_ips` are the IPs that must keep
+    # outbound access so the wstunnel reconnect itself can succeed — usually
+    # ClientConfig.routing.bypass_ips of the active profile.
+    #
+    # release_kill_switch() must be safe to call when nothing is engaged
+    # (called unconditionally on app startup to recover from a crash).
+
+    @abstractmethod
+    def engage_kill_switch(self, allowlist_ips: list[str]) -> None:
+        ...
+
+    @abstractmethod
+    def release_kill_switch(self) -> None:
+        ...
+
+    @abstractmethod
+    def is_kill_switch_engaged(self) -> bool:
+        ...

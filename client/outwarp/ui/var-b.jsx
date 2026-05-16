@@ -161,7 +161,7 @@ const HomeB = ({ T, status }) => {
         {/* Connecting steps row */}
         {connecting && (
           <div style={{ borderTop: "1px solid var(--line-strong)", padding: 14, display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
-            {[T.step_resolve, T.step_tls, T.step_ws, T.step_wg, T.step_route].map((s, i) => {
+            {[T.step_resolve, T.step_tls, T.step_wg, T.step_ws].map((s, i) => {
               const cur = 3;
               return (
                 <div key={s} style={{
@@ -262,16 +262,6 @@ const ImportB = ({ T }) => (
         <ProfileRow         name="Casa"         host="home.fcrespo.dev" status="off"/>
         <ProfileRow         name="Cafe-Wifi"    host="89.32.144.19"   status="off"/>
 
-        <div style={{ marginTop: 6, border: "1px solid var(--line-strong)", padding: 14, background: "var(--bg-2)" }}>
-          <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-3)", textTransform: "uppercase", letterSpacing: ".1em" }}>{T.importQR}</div>
-          <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 14, marginTop: 10, alignItems: "center" }}>
-            <div style={{ background: "#fff", padding: 6, border: "1px solid var(--line-strong)" }}><FakeQRB/></div>
-            <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.5, fontFamily: "var(--font-mono)" }}>
-              <code style={{ color: "var(--text)" }}>outwarp-server</code><br/>
-              <code style={{ color: "var(--text)" }}>  add-client &lt;name&gt; --qr</code>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -347,14 +337,8 @@ const SettingsB = ({ T }) => {
       <div style={{ border: "1px solid var(--line-strong)", background: "var(--bg-2)" }}>
         <Row k="0x01" label={T.set_killSwitch}    sub={T.set_killSwitchSub}   control={<window.Toggle on/>}/>
         <Row k="0x02" label={T.set_autoconnect}   sub={T.set_autoconnectSub}  control={<window.Toggle on/>}/>
-        <Row k="0x03" label={T.set_splitTunnel}   sub={T.set_splitTunnelSub}  control={<window.Btn kind="ghost" size="sm">CONFIG</window.Btn>}/>
-        <Row k="0x04" label={T.set_minimizeTray}                              control={<window.Toggle on/>}/>
-        <Row k="0x05" label={T.set_advanced}      sub={T.set_advancedSub}     control={<window.Toggle on/>}/>
-      </div>
-
-      <div style={{ border: "1px solid var(--line-strong)", background: "var(--bg-2)" }}>
-        <Row k="0x06" label={T.set_dns}  control={<input defaultValue="1.1.1.1, 9.9.9.9" style={{ width: 220, height: 30, padding: "0 10px", border: "1px solid var(--line-strong)", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 12, borderRadius: 0 }}/>}/>
-        <Row k="0x07" label={T.set_mtu}  control={<input defaultValue="1280"            style={{ width: 90,  height: 30, padding: "0 10px", border: "1px solid var(--line-strong)", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 12, borderRadius: 0 }}/>}/>
+        <Row k="0x03" label={T.set_minimizeTray}                              control={<window.Toggle on/>}/>
+        <Row k="0x04" label={T.set_advanced}      sub={T.set_advancedSub}     control={<window.Toggle on/>}/>
       </div>
     </div>
   );
@@ -395,17 +379,6 @@ const BarMatrix = () => {
     </div>
   );
 };
-
-const FakeQRB = () => (
-  <svg viewBox="0 0 21 21" width="100" height="100" shapeRendering="crispEdges">
-    {Array.from({ length: 21 }).flatMap((_, y) => Array.from({ length: 21 }).map((_, x) => {
-      const seed = (x * 41 + y * 23 + 11) % 17;
-      const isFinder = (x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13);
-      const fill = isFinder ? ((Math.abs(x - (x>13?17:3)) <= 1 && Math.abs(y - (y>13?17:3)) <= 1) ? 1 : (Math.abs(x - (x>13?17:3)) === 3 || Math.abs(y - (y>13?17:3)) === 3) ? 1 : 0) : (seed > 8 ? 1 : 0);
-      return fill ? <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" fill="#0a0d12"/> : null;
-    }))}
-  </svg>
-);
 
 // Icons (B-prefixed to avoid clashes with var-a)
 const Ic = (d, s = 16) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{d}</svg>;

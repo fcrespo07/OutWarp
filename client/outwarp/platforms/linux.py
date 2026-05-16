@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -22,6 +23,16 @@ _IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 # `ip route add` returns this on stderr when the route is already present.
 # Treating it as success keeps add_host_route idempotent like its Windows peer.
 _ROUTE_EXISTS = "File exists"
+
+# Autostart spec: any compliant XDG desktop will pick up this file on session
+# start. We use ~/.config/autostart (XDG_CONFIG_HOME) — system-wide
+# /etc/xdg/autostart would need root and isn't right for a per-user toggle.
+_AUTOSTART_FILENAME = "outwarp.desktop"
+
+
+def _autostart_dir() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "autostart"
 
 
 class LinuxPlatform(Platform):
@@ -132,3 +143,62 @@ class LinuxPlatform(Platform):
                 "sudo is required when running the tray as a non-root user. "
                 "Install sudo or run the tray with elevated privileges."
             )
+
+    # ------------------------------------------------------------------
+    # Autostart
+    # ------------------------------------------------------------------
+    def install_autostart(self, command: list[str]) -> None:
+        if not command:
+            raise PlatformError("install_autostart: empty command")
+        path = _autostart_dir() / _AUTOSTART_FILENAME
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_render_desktop_entry(command), encoding="utf-8")
+        except OSError as exc:
+            raise PlatformError(f"Failed to write {path}: {exc}") from exc
+
+    def uninstall_autostart(self) -> None:
+        path = _autostart_dir() / _AUTOSTART_FILENAME
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise PlatformError(f"Failed to remove {path}: {exc}") from exc
+
+    def is_autostart_installed(self) -> bool:
+        return (_autostart_dir() / _AUTOSTART_FILENAME).exists()
+
+    # ------------------------------------------------------------------
+    # Kill switch
+    # ------------------------------------------------------------------
+    # An nftables/iptables-based implementation would be straightforward but
+    # needs the privileged helper extended with two new subcommands and a
+    # rollback path. Out of scope for the first kill-switch landing — we keep
+    # the toggle honest by failing loudly when the user enables it on Linux.
+    def engage_kill_switch(self, allowlist_ips: list[str]) -> None:
+        raise PlatformError(
+            "Kill switch is not yet implemented on Linux. Disable the toggle "
+            "to keep using OutWarp on this machine."
+        )
+
+    def release_kill_switch(self) -> None:
+        # Nothing to release: engage_kill_switch never succeeds on Linux.
+        # Stay quiet so the recovery-on-startup call in app.py is harmless.
+        return
+
+    def is_kill_switch_engaged(self) -> bool:
+        return False
+
+
+def _render_desktop_entry(command: list[str]) -> str:
+    # shlex.join produces a POSIX-quoted command line that survives the
+    # split-on-whitespace XDG handlers do for Exec= keys.
+    exec_line = shlex.join(command)
+    return (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=OutWarp\n"
+        f"Exec={exec_line}\n"
+        "X-GNOME-Autostart-enabled=true\n"
+        "NoDisplay=false\n"
+        "Terminal=false\n"
+    )

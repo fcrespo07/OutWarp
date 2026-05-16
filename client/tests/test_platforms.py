@@ -366,3 +366,347 @@ def test_linux_remove_host_route_no_op_when_helper_missing(tmp_path, monkeypatch
     monkeypatch.delenv("OUTWARP_HELPER", raising=False)
     p = LinuxPlatform(helper=tmp_path / "missing-helper", sudo=False)
     p.remove_host_route("203.0.113.42")  # must not raise
+
+
+# --- WindowsPlatform: autostart (HKCU\…\Run) ---
+
+class _FakeWinreg:
+    """In-memory stand-in for the stdlib winreg module.
+
+    Only the surface the autostart code actually touches is implemented:
+    OpenKey as a context manager, SetValueEx, QueryValueEx, DeleteValue."""
+    HKEY_CURRENT_USER = "HKCU"
+    KEY_SET_VALUE = 0x2
+    KEY_READ = 0x20019
+    REG_SZ = 1
+
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    def OpenKey(self, hive, subkey, reserved, access):  # noqa: N802
+        winreg_self = self
+
+        class _CtxKey:
+            def __enter__(self_inner):
+                return winreg_self
+            def __exit__(self_inner, *exc):
+                return False
+
+        return _CtxKey()
+
+    def SetValueEx(self, key, name, reserved, value_type, value):  # noqa: N802
+        self.values[name] = value
+
+    def QueryValueEx(self, key, name):  # noqa: N802
+        if name not in self.values:
+            raise FileNotFoundError(name)
+        return (self.values[name], self.REG_SZ)
+
+    def DeleteValue(self, key, name):  # noqa: N802
+        if name not in self.values:
+            raise FileNotFoundError(name)
+        del self.values[name]
+
+
+def test_windows_install_autostart_writes_run_key():
+    p = WindowsPlatform()
+    fake = _FakeWinreg()
+    with patch.dict(sys.modules, {"winreg": fake}):
+        p.install_autostart([r"C:\Program Files\OutWarp\outwarp.exe"])
+    # Path with a space gets quoted so cmd.exe parses it as one argv item.
+    assert fake.values["OutWarp"] == r'"C:\Program Files\OutWarp\outwarp.exe"'
+
+
+def test_windows_install_autostart_joins_multi_arg_command():
+    p = WindowsPlatform()
+    fake = _FakeWinreg()
+    with patch.dict(sys.modules, {"winreg": fake}):
+        p.install_autostart([r"C:\Python\python.exe", "-m", "outwarp"])
+    # No spaces in any argv item → no quoting added; just space-joined for cmd.
+    assert fake.values["OutWarp"] == r"C:\Python\python.exe -m outwarp"
+
+
+def test_windows_install_autostart_quotes_argv_item_with_space():
+    p = WindowsPlatform()
+    fake = _FakeWinreg()
+    with patch.dict(sys.modules, {"winreg": fake}):
+        p.install_autostart([r"C:\Program Files\Python\python.exe", "-m", "outwarp"])
+    # The path with a space must be quoted so cmd.exe parses it as one item.
+    assert fake.values["OutWarp"] == r'"C:\Program Files\Python\python.exe" -m outwarp'
+
+
+def test_windows_install_autostart_overwrites_existing():
+    p = WindowsPlatform()
+    fake = _FakeWinreg()
+    fake.values["OutWarp"] = "old-value"
+    with patch.dict(sys.modules, {"winreg": fake}):
+        p.install_autostart(["new.exe"])
+    assert fake.values["OutWarp"] == "new.exe"
+
+
+def test_windows_uninstall_autostart_removes_value():
+    p = WindowsPlatform()
+    fake = _FakeWinreg()
+    fake.values["OutWarp"] = "x"
+    with patch.dict(sys.modules, {"winreg": fake}):
+        p.uninstall_autostart()
+    assert "OutWarp" not in fake.values
+
+
+def test_windows_uninstall_autostart_idempotent_when_absent():
+    p = WindowsPlatform()
+    fake = _FakeWinreg()  # empty
+    with patch.dict(sys.modules, {"winreg": fake}):
+        p.uninstall_autostart()  # must not raise
+
+
+def test_windows_is_autostart_installed_reflects_value_presence():
+    p = WindowsPlatform()
+    fake = _FakeWinreg()
+    with patch.dict(sys.modules, {"winreg": fake}):
+        assert p.is_autostart_installed() is False
+        fake.values["OutWarp"] = "anything"
+        assert p.is_autostart_installed() is True
+
+
+def test_windows_install_autostart_rejects_empty_command():
+    p = WindowsPlatform()
+    with pytest.raises(PlatformError, match="empty command"):
+        p.install_autostart([])
+
+
+# --- LinuxPlatform: autostart (~/.config/autostart/outwarp.desktop) ---
+
+def test_linux_install_autostart_writes_desktop_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    p = LinuxPlatform(helper=tmp_path / "h", sudo=False)
+    p.install_autostart(["/usr/bin/outwarp"])
+    f = tmp_path / "autostart" / "outwarp.desktop"
+    assert f.exists()
+    body = f.read_text(encoding="utf-8")
+    assert "[Desktop Entry]" in body
+    assert "Type=Application" in body
+    assert "Exec=/usr/bin/outwarp" in body
+    assert "X-GNOME-Autostart-enabled=true" in body
+
+
+def test_linux_install_autostart_quotes_paths_with_spaces(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    p = LinuxPlatform(helper=tmp_path / "h", sudo=False)
+    p.install_autostart(["/opt/with space/outwarp", "--silent"])
+    body = (tmp_path / "autostart" / "outwarp.desktop").read_text(encoding="utf-8")
+    # shlex.join emits POSIX-quoted items so XDG handlers don't split on the space.
+    assert "Exec='/opt/with space/outwarp' --silent" in body
+
+
+def test_linux_install_autostart_overwrites_existing(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    (tmp_path / "autostart").mkdir()
+    (tmp_path / "autostart" / "outwarp.desktop").write_text("STALE\n")
+    p = LinuxPlatform(helper=tmp_path / "h", sudo=False)
+    p.install_autostart(["/usr/bin/outwarp"])
+    body = (tmp_path / "autostart" / "outwarp.desktop").read_text(encoding="utf-8")
+    assert "STALE" not in body
+    assert "Exec=/usr/bin/outwarp" in body
+
+
+def test_linux_uninstall_autostart_removes_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    (tmp_path / "autostart").mkdir()
+    f = tmp_path / "autostart" / "outwarp.desktop"
+    f.write_text("...")
+    p = LinuxPlatform(helper=tmp_path / "h", sudo=False)
+    p.uninstall_autostart()
+    assert not f.exists()
+
+
+def test_linux_uninstall_autostart_idempotent_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    p = LinuxPlatform(helper=tmp_path / "h", sudo=False)
+    p.uninstall_autostart()  # must not raise
+
+
+def test_linux_is_autostart_installed_reflects_file_presence(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    p = LinuxPlatform(helper=tmp_path / "h", sudo=False)
+    assert p.is_autostart_installed() is False
+    p.install_autostart(["/usr/bin/outwarp"])
+    assert p.is_autostart_installed() is True
+
+
+# --- MacOSPlatform: autostart (stub for now) ---
+
+def test_macos_autostart_methods_are_stubs():
+    p = MacOSPlatform()
+    with pytest.raises(PlatformError, match="not implemented"):
+        p.install_autostart(["x"])
+    with pytest.raises(PlatformError, match="not implemented"):
+        p.uninstall_autostart()
+    assert p.is_autostart_installed() is False
+
+
+# --- WindowsPlatform: kill switch (netsh advfirewall) ---
+
+def _is_netsh_add_rule(cmd, rule_name):
+    return (
+        len(cmd) >= 6
+        and cmd[:5] == ["netsh", "advfirewall", "firewall", "add", "rule"]
+        and any(a == f"name={rule_name}" for a in cmd)
+    )
+
+
+def _is_netsh_delete_rule(cmd, rule_name):
+    return (
+        len(cmd) >= 6
+        and cmd[:5] == ["netsh", "advfirewall", "firewall", "delete", "rule"]
+        and any(a == f"name={rule_name}" for a in cmd)
+    )
+
+
+def _is_netsh_show_rule(cmd, rule_name):
+    return (
+        len(cmd) >= 6
+        and cmd[:5] == ["netsh", "advfirewall", "firewall", "show", "rule"]
+        and any(a == f"name={rule_name}" for a in cmd)
+    )
+
+
+def test_windows_engage_kill_switch_adds_allow_then_block():
+    p = WindowsPlatform()
+    calls = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        # delete-rule probes report "no such rule" (rc != 0) so the wipe is
+        # a no-op; both add-rules succeed.
+        if cmd[3] == "delete":
+            return _mock_run(1, stderr="No rules match the specified criteria.")
+        return _mock_run(0)
+
+    with patch("subprocess.run", side_effect=fake_run):
+        p.engage_kill_switch(["203.0.113.42", "203.0.113.43"])
+
+    add_calls = [c for c in calls if c[3] == "add"]
+    assert len(add_calls) == 2
+    allow, block = add_calls
+    assert _is_netsh_add_rule(allow, "OutWarp-KillSwitch-Allow")
+    assert "remoteip=203.0.113.42,203.0.113.43" in allow
+    assert "action=allow" in allow
+    assert "dir=out" in allow
+    assert _is_netsh_add_rule(block, "OutWarp-KillSwitch-Block")
+    assert "action=block" in block
+
+
+def test_windows_engage_kill_switch_wipes_stale_rules_first():
+    """Idempotent engage: a half-applied previous run must not double-add."""
+    p = WindowsPlatform()
+    calls = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        return _mock_run(0)  # everything succeeds, including the wipe
+
+    with patch("subprocess.run", side_effect=fake_run):
+        p.engage_kill_switch(["1.1.1.1"])
+
+    delete_calls = [c for c in calls if c[3] == "delete"]
+    add_calls = [c for c in calls if c[3] == "add"]
+    # Two deletes (block then allow) before the two adds.
+    assert len(delete_calls) == 2
+    assert len(add_calls) == 2
+    # And they ran in that order.
+    first_add_idx = next(i for i, c in enumerate(calls) if c[3] == "add")
+    last_delete_idx = max(i for i, c in enumerate(calls) if c[3] == "delete")
+    assert last_delete_idx < first_add_idx
+
+
+def test_windows_engage_kill_switch_rejects_empty_allowlist():
+    p = WindowsPlatform()
+    with pytest.raises(PlatformError, match="empty allowlist"):
+        p.engage_kill_switch([])
+
+
+def test_windows_engage_kill_switch_rolls_back_allow_when_block_fails():
+    p = WindowsPlatform()
+    calls = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        if cmd[3] == "delete":
+            return _mock_run(1, stderr="No rules match the specified criteria.")
+        if cmd[3] == "add" and any("OutWarp-KillSwitch-Block" in s for s in cmd):
+            return _mock_run(1, stderr="boom")
+        return _mock_run(0)  # the allow add succeeds first
+
+    with patch("subprocess.run", side_effect=fake_run):
+        with pytest.raises(PlatformError, match="block rule"):
+            p.engage_kill_switch(["1.1.1.1"])
+
+    # After the block-rule add failed we should have deleted the allow rule
+    # we added, otherwise we leave a half-engaged switch behind.
+    rollback_deletes = [
+        c for c in calls
+        if c[3] == "delete" and any("OutWarp-KillSwitch-Allow" in s for s in c)
+    ]
+    # 1 from the wipe before the engage attempt + 1 rollback delete = 2.
+    assert len(rollback_deletes) == 2
+
+
+def test_windows_release_kill_switch_deletes_both_rules():
+    p = WindowsPlatform()
+    calls = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        return _mock_run(0)
+
+    with patch("subprocess.run", side_effect=fake_run):
+        p.release_kill_switch()
+
+    deleted = [c for c in calls if c[3] == "delete"]
+    names = {a for c in deleted for a in c if a.startswith("name=")}
+    assert "name=OutWarp-KillSwitch-Block" in names
+    assert "name=OutWarp-KillSwitch-Allow" in names
+
+
+def test_windows_release_kill_switch_idempotent_when_absent():
+    p = WindowsPlatform()
+    with patch(
+        "subprocess.run",
+        return_value=_mock_run(1, stderr="No rules match the specified criteria."),
+    ):
+        p.release_kill_switch()  # must not raise
+
+
+def test_windows_is_kill_switch_engaged_reflects_block_rule_presence():
+    p = WindowsPlatform()
+    # show-rule rc=0 means present
+    with patch("subprocess.run", return_value=_mock_run(0, stdout="...")):
+        assert p.is_kill_switch_engaged() is True
+    # rc=1 means absent
+    with patch("subprocess.run", return_value=_mock_run(1, stderr="No rules match")):
+        assert p.is_kill_switch_engaged() is False
+
+
+# --- LinuxPlatform: kill switch (stub for v0.1) ---
+
+def test_linux_engage_kill_switch_raises_not_implemented(linux_helper):
+    p = _linux_platform(linux_helper)
+    with pytest.raises(PlatformError, match="not yet implemented on Linux"):
+        p.engage_kill_switch(["1.1.1.1"])
+
+
+def test_linux_release_kill_switch_is_silent_no_op(linux_helper):
+    p = _linux_platform(linux_helper)
+    p.release_kill_switch()  # must not raise — startup cleanup hits this
+    assert p.is_kill_switch_engaged() is False
+
+
+# --- MacOSPlatform: kill switch (stub) ---
+
+def test_macos_engage_kill_switch_raises():
+    p = MacOSPlatform()
+    with pytest.raises(PlatformError, match="not yet implemented on macOS"):
+        p.engage_kill_switch(["1.1.1.1"])
+    p.release_kill_switch()  # silent no-op
+    assert p.is_kill_switch_engaged() is False
