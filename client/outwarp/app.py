@@ -130,10 +130,24 @@ def _resolve_ui_path() -> str:
     return str(base / "index.html")
 
 
+def _release_stale_kill_switch() -> None:
+    """If a previous session crashed with the kill switch engaged, the netsh
+    rules survive. Release unconditionally on every startup — it's a no-op
+    when nothing is engaged, and prevents the user from being locked out of
+    their network without realising why."""
+    try:
+        from outwarp.platforms import get_platform
+
+        get_platform().release_kill_switch()
+    except Exception:
+        log.exception("startup kill-switch cleanup failed (continuing)")
+
+
 def main() -> int:
     _ensure_elevated()
     memory_handler = setup_logging()
     log.info("OutWarp client v%s starting", __version__)
+    _release_stale_kill_switch()
 
     lock = _SingleInstanceLock()
     if not lock.acquire():

@@ -68,8 +68,8 @@ class FakePlatform(Platform):
         if ip in self.routes:
             self.routes.remove(ip)
 
-    # Autostart isn't exercised in tunnel tests — provide cheap stubs so the
-    # ABC instantiation check passes.
+    # Autostart / kill switch aren't exercised in tunnel tests — provide cheap
+    # stubs so the ABC instantiation check passes.
     def install_autostart(self, command):
         pass
 
@@ -77,6 +77,15 @@ class FakePlatform(Platform):
         pass
 
     def is_autostart_installed(self):
+        return False
+
+    def engage_kill_switch(self, allowlist_ips):
+        pass
+
+    def release_kill_switch(self):
+        pass
+
+    def is_kill_switch_engaged(self):
         return False
 
 

@@ -167,6 +167,27 @@ class LinuxPlatform(Platform):
     def is_autostart_installed(self) -> bool:
         return (_autostart_dir() / _AUTOSTART_FILENAME).exists()
 
+    # ------------------------------------------------------------------
+    # Kill switch
+    # ------------------------------------------------------------------
+    # An nftables/iptables-based implementation would be straightforward but
+    # needs the privileged helper extended with two new subcommands and a
+    # rollback path. Out of scope for the first kill-switch landing — we keep
+    # the toggle honest by failing loudly when the user enables it on Linux.
+    def engage_kill_switch(self, allowlist_ips: list[str]) -> None:
+        raise PlatformError(
+            "Kill switch is not yet implemented on Linux. Disable the toggle "
+            "to keep using OutWarp on this machine."
+        )
+
+    def release_kill_switch(self) -> None:
+        # Nothing to release: engage_kill_switch never succeeds on Linux.
+        # Stay quiet so the recovery-on-startup call in app.py is harmless.
+        return
+
+    def is_kill_switch_engaged(self) -> bool:
+        return False
+
 
 def _render_desktop_entry(command: list[str]) -> str:
     # shlex.join produces a POSIX-quoted command line that survives the

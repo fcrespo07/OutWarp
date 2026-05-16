@@ -83,6 +83,12 @@ def _default_settings() -> dict[str, Any]:
         # the value writes the registry key (Windows) or .desktop file (Linux)
         # immediately.
         "start_at_boot": False,
+        # Block all outbound traffic any time the tunnel is unexpectedly down
+        # (RECONNECTING / FAILED). Released on CONNECTED or on a clean stop.
+        # Real implementation lives in WindowsPlatform; Linux/macOS raise a
+        # PlatformError when toggled on so the UI surfaces an honest error
+        # rather than pretending the switch works.
+        "kill_switch": False,
     }
 
 
@@ -281,6 +287,7 @@ class Api:
         # Trust the state we were handed over a re-read of the manager.
         payload["status"] = _STATE_TO_JS.get(state, "disconnected")
         self._emit("status", payload)
+        self._sync_kill_switch(state)
         if state is TunnelState.CONNECTED:
             self._stats["session_start"] = time.time()
             self._stats["last_handshake"] = time.time()
@@ -292,6 +299,36 @@ class Api:
             self._stats["exit_ip"] = ""
             if state in (TunnelState.DISCONNECTED, TunnelState.FAILED):
                 self._stats["session_start"] = 0
+
+    def _sync_kill_switch(self, state: TunnelState) -> None:
+        """Engage/release the kill switch in response to a tunnel state change.
+
+        Engagement happens when the tunnel is unexpectedly down — the
+        RECONNECTING attempt window and the terminal FAILED state. Released on
+        a successful CONNECTED or a clean DISCONNECTED (user pressed stop).
+        CONNECTING (a fresh startup attempt) is left alone so a previously-
+        engaged switch isn't released the moment the user clicks Connect.
+        """
+        if not bool(self._settings.get("kill_switch", False)):
+            return
+        if self._manager is None:
+            return
+        try:
+            if state in (TunnelState.RECONNECTING, TunnelState.FAILED):
+                allowlist = list(self._manager.config.routing.bypass_ips)
+                if not allowlist:
+                    log.warning(
+                        "kill_switch: no bypass_ips in profile — refusing to "
+                        "engage (would lock the user out with no recovery path)"
+                    )
+                    return
+                get_platform().engage_kill_switch(allowlist)
+                self._record_log("warn", "kill switch engaged — outbound traffic blocked")
+            elif state in (TunnelState.CONNECTED, TunnelState.DISCONNECTED):
+                get_platform().release_kill_switch()
+        except PlatformError as exc:
+            log.warning("kill_switch sync failed: %s", exc)
+            self._record_log("error", f"kill switch error: {exc}")
 
     # ── profiles ──────────────────────────────────────────────────────────────
 
@@ -591,9 +628,48 @@ class Api:
                         except OSError:
                             log.warning("could not roll back start_at_boot")
 
+        kill_switch_error: str | None = None
+        if isinstance(patch, dict) and "kill_switch" in patch:
+            was = bool(before.get("kill_switch", False))
+            now = bool(snapshot.get("kill_switch", False))
+            if was != now:
+                try:
+                    plat = get_platform()
+                    if now:
+                        # Activated mid-session: engage NOW if the tunnel is
+                        # already down, so the user isn't leaking while the
+                        # next state change waits to fire.
+                        if (
+                            self._manager is not None
+                            and self._manager.state in (
+                                TunnelState.RECONNECTING, TunnelState.FAILED,
+                            )
+                        ):
+                            allowlist = list(
+                                self._manager.config.routing.bypass_ips
+                            )
+                            if allowlist:
+                                plat.engage_kill_switch(allowlist)
+                    else:
+                        # Always release on disable — even if we never engaged
+                        # — to recover from any stale rule.
+                        plat.release_kill_switch()
+                except PlatformError as exc:
+                    log.warning("kill_switch toggle failed: %s", exc)
+                    kill_switch_error = str(exc)
+                    with self._lock:
+                        self._settings["kill_switch"] = was
+                        snapshot = dict(self._settings)
+                        try:
+                            _save_settings(snapshot)
+                        except OSError:
+                            log.warning("could not roll back kill_switch")
+
         self._emit("settings", snapshot)
         if autostart_error is not None:
             return {"ok": False, "error": autostart_error, "settings": snapshot}
+        if kill_switch_error is not None:
+            return {"ok": False, "error": kill_switch_error, "settings": snapshot}
         return {"ok": True, "settings": snapshot}
 
     # ── stats ─────────────────────────────────────────────────────────────────
@@ -676,3 +752,9 @@ class Api:
                 self._manager.stop()
             except Exception:
                 log.exception("manager.stop failed during shutdown")
+        # Release the kill switch on the way out — leaving it engaged would
+        # leave the user offline until they figure out where the rule lives.
+        try:
+            get_platform().release_kill_switch()
+        except Exception:
+            log.exception("kill-switch release during shutdown failed")

@@ -543,3 +543,170 @@ def test_macos_autostart_methods_are_stubs():
     with pytest.raises(PlatformError, match="not implemented"):
         p.uninstall_autostart()
     assert p.is_autostart_installed() is False
+
+
+# --- WindowsPlatform: kill switch (netsh advfirewall) ---
+
+def _is_netsh_add_rule(cmd, rule_name):
+    return (
+        len(cmd) >= 6
+        and cmd[:5] == ["netsh", "advfirewall", "firewall", "add", "rule"]
+        and any(a == f"name={rule_name}" for a in cmd)
+    )
+
+
+def _is_netsh_delete_rule(cmd, rule_name):
+    return (
+        len(cmd) >= 6
+        and cmd[:5] == ["netsh", "advfirewall", "firewall", "delete", "rule"]
+        and any(a == f"name={rule_name}" for a in cmd)
+    )
+
+
+def _is_netsh_show_rule(cmd, rule_name):
+    return (
+        len(cmd) >= 6
+        and cmd[:5] == ["netsh", "advfirewall", "firewall", "show", "rule"]
+        and any(a == f"name={rule_name}" for a in cmd)
+    )
+
+
+def test_windows_engage_kill_switch_adds_allow_then_block():
+    p = WindowsPlatform()
+    calls = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        # delete-rule probes report "no such rule" (rc != 0) so the wipe is
+        # a no-op; both add-rules succeed.
+        if cmd[3] == "delete":
+            return _mock_run(1, stderr="No rules match the specified criteria.")
+        return _mock_run(0)
+
+    with patch("subprocess.run", side_effect=fake_run):
+        p.engage_kill_switch(["203.0.113.42", "203.0.113.43"])
+
+    add_calls = [c for c in calls if c[3] == "add"]
+    assert len(add_calls) == 2
+    allow, block = add_calls
+    assert _is_netsh_add_rule(allow, "OutWarp-KillSwitch-Allow")
+    assert "remoteip=203.0.113.42,203.0.113.43" in allow
+    assert "action=allow" in allow
+    assert "dir=out" in allow
+    assert _is_netsh_add_rule(block, "OutWarp-KillSwitch-Block")
+    assert "action=block" in block
+
+
+def test_windows_engage_kill_switch_wipes_stale_rules_first():
+    """Idempotent engage: a half-applied previous run must not double-add."""
+    p = WindowsPlatform()
+    calls = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        return _mock_run(0)  # everything succeeds, including the wipe
+
+    with patch("subprocess.run", side_effect=fake_run):
+        p.engage_kill_switch(["1.1.1.1"])
+
+    delete_calls = [c for c in calls if c[3] == "delete"]
+    add_calls = [c for c in calls if c[3] == "add"]
+    # Two deletes (block then allow) before the two adds.
+    assert len(delete_calls) == 2
+    assert len(add_calls) == 2
+    # And they ran in that order.
+    first_add_idx = next(i for i, c in enumerate(calls) if c[3] == "add")
+    last_delete_idx = max(i for i, c in enumerate(calls) if c[3] == "delete")
+    assert last_delete_idx < first_add_idx
+
+
+def test_windows_engage_kill_switch_rejects_empty_allowlist():
+    p = WindowsPlatform()
+    with pytest.raises(PlatformError, match="empty allowlist"):
+        p.engage_kill_switch([])
+
+
+def test_windows_engage_kill_switch_rolls_back_allow_when_block_fails():
+    p = WindowsPlatform()
+    calls = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        if cmd[3] == "delete":
+            return _mock_run(1, stderr="No rules match the specified criteria.")
+        if cmd[3] == "add" and any("OutWarp-KillSwitch-Block" in s for s in cmd):
+            return _mock_run(1, stderr="boom")
+        return _mock_run(0)  # the allow add succeeds first
+
+    with patch("subprocess.run", side_effect=fake_run):
+        with pytest.raises(PlatformError, match="block rule"):
+            p.engage_kill_switch(["1.1.1.1"])
+
+    # After the block-rule add failed we should have deleted the allow rule
+    # we added, otherwise we leave a half-engaged switch behind.
+    rollback_deletes = [
+        c for c in calls
+        if c[3] == "delete" and any("OutWarp-KillSwitch-Allow" in s for s in c)
+    ]
+    # 1 from the wipe before the engage attempt + 1 rollback delete = 2.
+    assert len(rollback_deletes) == 2
+
+
+def test_windows_release_kill_switch_deletes_both_rules():
+    p = WindowsPlatform()
+    calls = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        return _mock_run(0)
+
+    with patch("subprocess.run", side_effect=fake_run):
+        p.release_kill_switch()
+
+    deleted = [c for c in calls if c[3] == "delete"]
+    names = {a for c in deleted for a in c if a.startswith("name=")}
+    assert "name=OutWarp-KillSwitch-Block" in names
+    assert "name=OutWarp-KillSwitch-Allow" in names
+
+
+def test_windows_release_kill_switch_idempotent_when_absent():
+    p = WindowsPlatform()
+    with patch(
+        "subprocess.run",
+        return_value=_mock_run(1, stderr="No rules match the specified criteria."),
+    ):
+        p.release_kill_switch()  # must not raise
+
+
+def test_windows_is_kill_switch_engaged_reflects_block_rule_presence():
+    p = WindowsPlatform()
+    # show-rule rc=0 means present
+    with patch("subprocess.run", return_value=_mock_run(0, stdout="...")):
+        assert p.is_kill_switch_engaged() is True
+    # rc=1 means absent
+    with patch("subprocess.run", return_value=_mock_run(1, stderr="No rules match")):
+        assert p.is_kill_switch_engaged() is False
+
+
+# --- LinuxPlatform: kill switch (stub for v0.1) ---
+
+def test_linux_engage_kill_switch_raises_not_implemented(linux_helper):
+    p = _linux_platform(linux_helper)
+    with pytest.raises(PlatformError, match="not yet implemented on Linux"):
+        p.engage_kill_switch(["1.1.1.1"])
+
+
+def test_linux_release_kill_switch_is_silent_no_op(linux_helper):
+    p = _linux_platform(linux_helper)
+    p.release_kill_switch()  # must not raise — startup cleanup hits this
+    assert p.is_kill_switch_engaged() is False
+
+
+# --- MacOSPlatform: kill switch (stub) ---
+
+def test_macos_engage_kill_switch_raises():
+    p = MacOSPlatform()
+    with pytest.raises(PlatformError, match="not yet implemented on macOS"):
+        p.engage_kill_switch(["1.1.1.1"])
+    p.release_kill_switch()  # silent no-op
+    assert p.is_kill_switch_engaged() is False

@@ -22,6 +22,15 @@ _NO_WINDOW = subprocess.CREATE_NO_WINDOW
 _AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _AUTOSTART_VALUE = "OutWarp"
 
+# Two-rule kill switch: an "allow outbound to endpoint(s)" rule that lets the
+# wstunnel reconnect attempt reach the server, plus a "block all outbound"
+# rule. Allow rules win over block rules on more specific matches in Windows
+# Filtering Platform, so the endpoint stays reachable while everything else
+# is blocked. Loopback (127.0.0.0/8 and ::1) is exempt by default and stays
+# reachable too.
+_KILL_RULE_ALLOW = "OutWarp-KillSwitch-Allow"
+_KILL_RULE_BLOCK = "OutWarp-KillSwitch-Block"
+
 
 def _quote_arg(arg: str) -> str:
     """Wrap an argv item in double quotes if it contains a space, escaping any
@@ -184,3 +193,71 @@ class WindowsPlatform(Platform):
         except OSError:
             return False
         return True
+
+    # ── kill switch ───────────────────────────────────────────────────────
+
+    def engage_kill_switch(self, allowlist_ips: list[str]) -> None:
+        if not allowlist_ips:
+            raise PlatformError(
+                "engage_kill_switch refusing to run with an empty allowlist — "
+                "the wstunnel reconnect would never get out and the user would "
+                "have no way back online."
+            )
+        # Idempotent: wipe any prior pair before adding fresh rules. Safer than
+        # editing in place — if a previous run died mid-way and only one rule
+        # exists, this brings the pair back to a known state.
+        self._delete_killswitch_rules()
+
+        ip_csv = ",".join(allowlist_ips)
+        allow = _run([
+            "netsh", "advfirewall", "firewall", "add", "rule",
+            f"name={_KILL_RULE_ALLOW}",
+            "dir=out", "action=allow", "profile=any", "enable=yes",
+            f"remoteip={ip_csv}",
+        ])
+        if allow.returncode != 0:
+            raise PlatformError(
+                f"Failed to add kill-switch allow rule: "
+                f"{(allow.stderr or allow.stdout).strip()}"
+            )
+        block = _run([
+            "netsh", "advfirewall", "firewall", "add", "rule",
+            f"name={_KILL_RULE_BLOCK}",
+            "dir=out", "action=block", "profile=any", "enable=yes",
+        ])
+        if block.returncode != 0:
+            # Roll back the allow rule so we don't leave a half-applied state.
+            _run(["netsh", "advfirewall", "firewall", "delete", "rule",
+                  f"name={_KILL_RULE_ALLOW}"])
+            raise PlatformError(
+                f"Failed to add kill-switch block rule: "
+                f"{(block.stderr or block.stdout).strip()}"
+            )
+
+    def release_kill_switch(self) -> None:
+        # Best-effort: delete-rule returns non-zero when the rule is absent,
+        # which is exactly the recovered-from-crash path. Surface only real
+        # errors (anything that isn't "not found").
+        self._delete_killswitch_rules()
+
+    def is_kill_switch_engaged(self) -> bool:
+        # `show rule` exits 0 when the rule exists, 1 when it does not.
+        result = _run([
+            "netsh", "advfirewall", "firewall", "show", "rule",
+            f"name={_KILL_RULE_BLOCK}",
+        ])
+        return result.returncode == 0
+
+    def _delete_killswitch_rules(self) -> None:
+        for name in (_KILL_RULE_BLOCK, _KILL_RULE_ALLOW):
+            r = _run([
+                "netsh", "advfirewall", "firewall", "delete", "rule",
+                f"name={name}",
+            ])
+            if r.returncode != 0:
+                # netsh prints "No rules match the specified criteria." when
+                # absent. Ignore that, log anything else.
+                msg = (r.stderr or r.stdout).strip()
+                if "No rules match" not in msg:
+                    log.warning("netsh delete rule %s returned %d: %s",
+                                name, r.returncode, msg)

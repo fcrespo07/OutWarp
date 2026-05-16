@@ -36,3 +36,15 @@ class MacOSPlatform(Platform):
 
     def is_autostart_installed(self) -> bool:
         return False
+
+    def engage_kill_switch(self, allowlist_ips: list[str]) -> None:
+        raise PlatformError(
+            "Kill switch is not yet implemented on macOS. Disable the toggle "
+            "to keep using OutWarp on this machine."
+        )
+
+    def release_kill_switch(self) -> None:
+        return
+
+    def is_kill_switch_engaged(self) -> bool:
+        return False

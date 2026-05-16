@@ -284,6 +284,204 @@ def test_set_start_at_boot_rolls_back_on_platform_error(tmp_path):
     assert saved["start_at_boot"] is False
 
 
+# --- kill_switch ---
+
+def _mgr_with_bypass(state, bypass_ips):
+    mgr = MagicMock()
+    mgr.state = state
+    mgr.config.routing.bypass_ips = bypass_ips
+    mgr.config.server.endpoint = "1.2.3.4"
+    mgr.config.server.port = 443
+    mgr.config.wireguard.tunnel_name = "WG"
+    return mgr
+
+
+def test_default_settings_include_kill_switch_off(tmp_path):
+    with patch("outwarp.api.default_config_path",
+               return_value=tmp_path / "config.json"):
+        api, _ = _make_api()
+    assert api.get_settings()["kill_switch"] is False
+
+
+def test_kill_switch_engages_on_failed_when_enabled(tmp_path):
+    fake_plat = MagicMock()
+    (tmp_path / "settings.json").write_text(json.dumps({"kill_switch": True}))
+    mgr = _mgr_with_bypass(TunnelState.CONNECTED, ["203.0.113.42"])
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api(mgr)
+        api._on_state_change(TunnelState.FAILED)
+    fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42"])
+    fake_plat.release_kill_switch.assert_not_called()
+
+
+def test_kill_switch_engages_on_reconnecting_too(tmp_path):
+    """RECONNECTING is the actual leak window — the WG iface is gone but the
+    user hasn't given up yet. The switch must engage there, not only on FAILED."""
+    fake_plat = MagicMock()
+    (tmp_path / "settings.json").write_text(json.dumps({"kill_switch": True}))
+    mgr = _mgr_with_bypass(TunnelState.CONNECTED, ["203.0.113.42"])
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api(mgr)
+        api._on_state_change(TunnelState.RECONNECTING)
+    fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42"])
+
+
+def test_kill_switch_releases_on_connected(tmp_path):
+    fake_plat = MagicMock()
+    (tmp_path / "settings.json").write_text(json.dumps({"kill_switch": True}))
+    mgr = _mgr_with_bypass(TunnelState.RECONNECTING, ["203.0.113.42"])
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api(mgr)
+        api._on_state_change(TunnelState.CONNECTED)
+    fake_plat.release_kill_switch.assert_called_once()
+    fake_plat.engage_kill_switch.assert_not_called()
+
+
+def test_kill_switch_releases_on_clean_disconnected(tmp_path):
+    fake_plat = MagicMock()
+    (tmp_path / "settings.json").write_text(json.dumps({"kill_switch": True}))
+    mgr = _mgr_with_bypass(TunnelState.FAILED, ["203.0.113.42"])
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api(mgr)
+        api._on_state_change(TunnelState.DISCONNECTED)
+    fake_plat.release_kill_switch.assert_called_once()
+
+
+def test_kill_switch_disabled_does_not_engage(tmp_path):
+    """Default off — state changes must not touch the firewall."""
+    fake_plat = MagicMock()
+    mgr = _mgr_with_bypass(TunnelState.CONNECTED, ["203.0.113.42"])
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api(mgr)
+        api._on_state_change(TunnelState.FAILED)
+    fake_plat.engage_kill_switch.assert_not_called()
+    fake_plat.release_kill_switch.assert_not_called()
+
+
+def test_kill_switch_refuses_to_engage_without_bypass_ips(tmp_path):
+    """A profile without bypass_ips would mean the user has no recovery path
+    once we engage. Refuse and log instead of locking them out."""
+    fake_plat = MagicMock()
+    (tmp_path / "settings.json").write_text(json.dumps({"kill_switch": True}))
+    mgr = _mgr_with_bypass(TunnelState.CONNECTED, [])
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api(mgr)
+        api._on_state_change(TunnelState.FAILED)
+    fake_plat.engage_kill_switch.assert_not_called()
+
+
+def test_set_kill_switch_off_releases_immediately(tmp_path):
+    """Disabling the toggle should always release any stale rule, even when
+    we never engaged ourselves (e.g. recovering from a previous session)."""
+    fake_plat = MagicMock()
+    (tmp_path / "settings.json").write_text(json.dumps({"kill_switch": True}))
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api()
+        r = api.set_settings({"kill_switch": False})
+    assert r["ok"] is True
+    fake_plat.release_kill_switch.assert_called_once()
+
+
+def test_set_kill_switch_on_engages_now_if_tunnel_is_down(tmp_path):
+    """Activating the toggle while the tunnel is already FAILED must engage
+    immediately — otherwise the user keeps leaking until the next state change."""
+    fake_plat = MagicMock()
+    mgr = _mgr_with_bypass(TunnelState.FAILED, ["203.0.113.42"])
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api(mgr)
+        r = api.set_settings({"kill_switch": True})
+    assert r["ok"] is True
+    fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42"])
+
+
+def test_set_kill_switch_on_no_op_if_tunnel_is_connected(tmp_path):
+    """When the tunnel is up, just persist the value — actual engagement
+    waits for the next FAILED/RECONNECTING transition."""
+    fake_plat = MagicMock()
+    mgr = _mgr_with_bypass(TunnelState.CONNECTED, ["203.0.113.42"])
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api(mgr)
+        r = api.set_settings({"kill_switch": True})
+    assert r["ok"] is True
+    fake_plat.engage_kill_switch.assert_not_called()
+
+
+def test_set_kill_switch_rolls_back_on_platform_error(tmp_path):
+    """The Linux/macOS path raises PlatformError when enabling. Must surface
+    {ok: False, error: ...} and revert the persisted value so the UI doesn't
+    show a falsely-active switch."""
+    from outwarp.platforms import PlatformError
+
+    fake_plat = MagicMock()
+    fake_plat.engage_kill_switch.side_effect = PlatformError(
+        "Kill switch is not yet implemented on Linux"
+    )
+    mgr = _mgr_with_bypass(TunnelState.FAILED, ["203.0.113.42"])
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api(mgr)
+        r = api.set_settings({"kill_switch": True})
+    assert r["ok"] is False
+    assert "not yet implemented" in r["error"]
+    assert r["settings"]["kill_switch"] is False
+    saved = json.loads((tmp_path / "settings.json").read_text())
+    assert saved["kill_switch"] is False
+
+
+def test_shutdown_releases_kill_switch(tmp_path):
+    """Leaving the rule engaged after the app exits would brick the user's
+    network until they figure out where the rule lives."""
+    fake_plat = MagicMock()
+    mgr = _mgr_with_bypass(TunnelState.CONNECTED, ["203.0.113.42"])
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api(mgr)
+        api.shutdown()
+    fake_plat.release_kill_switch.assert_called_once()
+
+
 def test_state_change_emits_status_event():
     mgr = MagicMock()
     mgr.state = TunnelState.DISCONNECTED
