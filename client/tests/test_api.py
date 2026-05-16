@@ -203,6 +203,87 @@ def test_settings_propagated_to_manager_on_construction(tmp_path):
     assert mgr.auto_reconnect is False
 
 
+# --- start_at_boot ---
+
+def test_default_settings_include_start_at_boot_off(tmp_path):
+    with patch("outwarp.api.default_config_path",
+               return_value=tmp_path / "config.json"):
+        api, _ = _make_api()
+    assert api.get_settings()["start_at_boot"] is False
+
+
+def test_set_start_at_boot_true_calls_install_autostart(tmp_path):
+    fake_plat = MagicMock()
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api()
+        r = api.set_settings({"start_at_boot": True})
+    assert r["ok"] is True
+    fake_plat.install_autostart.assert_called_once()
+    fake_plat.uninstall_autostart.assert_not_called()
+    # The argv passed should be a non-empty list (sys.executable + maybe -m).
+    cmd = fake_plat.install_autostart.call_args[0][0]
+    assert isinstance(cmd, list) and len(cmd) >= 1
+
+
+def test_set_start_at_boot_false_calls_uninstall_autostart(tmp_path):
+    fake_plat = MagicMock()
+    # Pre-seed settings.json with start_at_boot=True so the False patch is
+    # an actual transition (the side effect only fires on a change).
+    (tmp_path / "settings.json").write_text(json.dumps({"start_at_boot": True}))
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api()
+        r = api.set_settings({"start_at_boot": False})
+    assert r["ok"] is True
+    fake_plat.uninstall_autostart.assert_called_once()
+    fake_plat.install_autostart.assert_not_called()
+
+
+def test_set_start_at_boot_no_op_when_value_unchanged(tmp_path):
+    """Toggling to the same value shouldn't touch the registry / desktop file
+    — that would be wasted I/O and could prompt UAC in scary edge cases."""
+    fake_plat = MagicMock()
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api()
+        # Default is False; setting to False again is a no-op.
+        api.set_settings({"start_at_boot": False})
+    fake_plat.install_autostart.assert_not_called()
+    fake_plat.uninstall_autostart.assert_not_called()
+
+
+def test_set_start_at_boot_rolls_back_on_platform_error(tmp_path):
+    """If install_autostart raises, the persisted setting is reverted so the
+    UI doesn't show 'on' when no registration actually exists."""
+    from outwarp.platforms import PlatformError
+
+    fake_plat = MagicMock()
+    fake_plat.install_autostart.side_effect = PlatformError("registry locked")
+    with (
+        patch("outwarp.api.default_config_path",
+              return_value=tmp_path / "config.json"),
+        patch("outwarp.api.get_platform", return_value=fake_plat),
+    ):
+        api, _ = _make_api()
+        r = api.set_settings({"start_at_boot": True})
+    assert r["ok"] is False
+    assert "registry locked" in r["error"]
+    assert r["settings"]["start_at_boot"] is False
+    # Persisted value reverted too — not just the in-memory snapshot.
+    saved = json.loads((tmp_path / "settings.json").read_text())
+    assert saved["start_at_boot"] is False
+
+
 def test_state_change_emits_status_event():
     mgr = MagicMock()
     mgr.state = TunnelState.DISCONNECTED

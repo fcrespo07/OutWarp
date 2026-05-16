@@ -25,3 +25,14 @@ class MacOSPlatform(Platform):
 
     def remove_host_route(self, ip: str) -> None:
         raise PlatformError(_NOT_IMPLEMENTED)
+
+    def install_autostart(self, command: list[str]) -> None:
+        # Will land at ~/Library/LaunchAgents/dev.outwarp.client.plist when
+        # macOS support gets implemented end-to-end.
+        raise PlatformError(_NOT_IMPLEMENTED)
+
+    def uninstall_autostart(self) -> None:
+        raise PlatformError(_NOT_IMPLEMENTED)
+
+    def is_autostart_installed(self) -> bool:
+        return False

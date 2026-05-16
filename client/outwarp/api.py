@@ -36,6 +36,7 @@ from outwarp.config import (
     original_config_path,
 )
 from outwarp.logs import MemoryLogHandler
+from outwarp.platforms import PlatformError, get_platform
 from outwarp.tunnel import TunnelManager, TunnelState
 from outwarp.wireguard import get_tunnel_stats
 
@@ -77,7 +78,26 @@ def _default_settings() -> dict[str, Any]:
         # "Open" entry. A fresh install (no profile yet) ignores this setting
         # — the user needs the import screen visible to do anything at all.
         "minimize_to_tray": True,
+        # Register OutWarp to start on user login. Wired to platform.
+        # install_autostart / uninstall_autostart in set_settings, so toggling
+        # the value writes the registry key (Windows) or .desktop file (Linux)
+        # immediately.
+        "start_at_boot": False,
     }
+
+
+def _autostart_command() -> list[str]:
+    """Build the argv that the OS should run on login.
+
+    In a frozen PyInstaller bundle, ``sys.executable`` IS the OutWarp .exe and
+    no extra args are needed. In dev mode we re-launch via ``python -m outwarp``
+    so the same code path is testable end-to-end without packaging.
+    """
+    import sys
+
+    if getattr(sys, "frozen", False):
+        return [sys.executable]
+    return [sys.executable, "-m", "outwarp"]
 
 
 def _load_settings() -> dict[str, Any]:
@@ -528,6 +548,7 @@ class Api:
 
     def set_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
+            before = dict(self._settings)
             if isinstance(patch, dict):
                 for k, v in patch.items():
                     if k in self._settings:
@@ -537,12 +558,42 @@ class Api:
                 _save_settings(snapshot)
             except OSError as exc:
                 log.warning("could not persist settings: %s", exc)
+
+        # Side effects after the lock is released: registry / desktop-file I/O
+        # can take a moment and we don't want to block other API calls.
         if isinstance(patch, dict) and self._manager:
             if "allow_tls_intercept" in patch:
                 self._manager.allow_tls_intercept = bool(snapshot["allow_tls_intercept"])
             if "auto_reconnect" in patch:
                 self._manager.auto_reconnect = bool(snapshot["auto_reconnect"])
+
+        autostart_error: str | None = None
+        if isinstance(patch, dict) and "start_at_boot" in patch:
+            was = bool(before.get("start_at_boot", False))
+            now = bool(snapshot.get("start_at_boot", False))
+            if was != now:
+                try:
+                    plat = get_platform()
+                    if now:
+                        plat.install_autostart(_autostart_command())
+                    else:
+                        plat.uninstall_autostart()
+                except PlatformError as exc:
+                    # Side effect failed — roll back the persisted value so we
+                    # don't lie about a non-existent registration.
+                    log.warning("autostart toggle failed: %s", exc)
+                    autostart_error = str(exc)
+                    with self._lock:
+                        self._settings["start_at_boot"] = was
+                        snapshot = dict(self._settings)
+                        try:
+                            _save_settings(snapshot)
+                        except OSError:
+                            log.warning("could not roll back start_at_boot")
+
         self._emit("settings", snapshot)
+        if autostart_error is not None:
+            return {"ok": False, "error": autostart_error, "settings": snapshot}
         return {"ok": True, "settings": snapshot}
 
     # ── stats ─────────────────────────────────────────────────────────────────

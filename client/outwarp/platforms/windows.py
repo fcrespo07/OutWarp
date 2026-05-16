@@ -17,6 +17,21 @@ _WG_CONF_DIR = Path(r"C:\ProgramData\WireGuard")
 _IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW
 
+# HKCU is the right hive for per-user autostart: HKLM\…\Run would require
+# admin to write and would launch OutWarp for every user on the box.
+_AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_AUTOSTART_VALUE = "OutWarp"
+
+
+def _quote_arg(arg: str) -> str:
+    """Wrap an argv item in double quotes if it contains a space, escaping any
+    embedded quote. Windows' command line is a single string, so the Run-key
+    value has to be one — properly quoted so a path like `C:\\Program Files\\…`
+    doesn't get split."""
+    if not arg or any(c in arg for c in ' \t"'):
+        return '"' + arg.replace('"', r'\"') + '"'
+    return arg
+
 
 def _run(*args: str, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(*args, capture_output=True, text=True,
@@ -122,3 +137,50 @@ class WindowsPlatform(Platform):
                 f"WireGuard for Windows not found at {_WIREGUARD_EXE}. "
                 "Install it from https://www.wireguard.com/install/ and retry."
             )
+
+    # ── autostart ─────────────────────────────────────────────────────────
+
+    def install_autostart(self, command: list[str]) -> None:
+        if not command:
+            raise PlatformError("install_autostart: empty command")
+        import winreg
+
+        value = " ".join(_quote_arg(a) for a in command)
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE
+            ) as key:
+                winreg.SetValueEx(key, _AUTOSTART_VALUE, 0, winreg.REG_SZ, value)
+        except OSError as exc:
+            raise PlatformError(
+                f"Failed to register autostart in HKCU\\{_AUTOSTART_KEY}: {exc}"
+            ) from exc
+
+    def uninstall_autostart(self) -> None:
+        import winreg
+
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE
+            ) as key:
+                winreg.DeleteValue(key, _AUTOSTART_VALUE)
+        except FileNotFoundError:
+            return  # already absent — nothing to do
+        except OSError as exc:
+            raise PlatformError(
+                f"Failed to unregister autostart from HKCU\\{_AUTOSTART_KEY}: {exc}"
+            ) from exc
+
+    def is_autostart_installed(self) -> bool:
+        import winreg
+
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY, 0, winreg.KEY_READ
+            ) as key:
+                winreg.QueryValueEx(key, _AUTOSTART_VALUE)
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return False
+        return True

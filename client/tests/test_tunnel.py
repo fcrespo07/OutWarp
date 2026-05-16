@@ -68,6 +68,17 @@ class FakePlatform(Platform):
         if ip in self.routes:
             self.routes.remove(ip)
 
+    # Autostart isn't exercised in tunnel tests — provide cheap stubs so the
+    # ABC instantiation check passes.
+    def install_autostart(self, command):
+        pass
+
+    def uninstall_autostart(self):
+        pass
+
+    def is_autostart_installed(self):
+        return False
+
 
 # --- find_wstunnel ---
 
