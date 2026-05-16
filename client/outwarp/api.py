@@ -175,9 +175,13 @@ class Api:
             "tx_total": 0, "rx_total": 0,
             "session_start": 0, "last_handshake": 0,
             "exit_ip": "",
+            "exit_location": "",
+            "latency_ms": 0,
         }
         self._stats_thread: threading.Thread | None = None
         self._stats_stop = threading.Event()
+        self._latency_thread: threading.Thread | None = None
+        self._latency_stop = threading.Event()
 
         if manager is not None:
             manager.add_listener(self._on_state_change)
@@ -300,11 +304,17 @@ class Api:
             self._stats["session_start"] = time.time()
             self._stats["last_handshake"] = time.time()
             self._stats["exit_ip"] = ""
+            self._stats["exit_location"] = ""
+            self._stats["latency_ms"] = 0
             self._start_stats_loop()
             self._start_exit_ip_probe()
+            self._start_latency_loop()
         else:
             self._stop_stats_loop()
+            self._stop_latency_loop()
             self._stats["exit_ip"] = ""
+            self._stats["exit_location"] = ""
+            self._stats["latency_ms"] = 0
             if state in (TunnelState.DISCONNECTED, TunnelState.FAILED):
                 self._stats["session_start"] = 0
 
@@ -776,11 +786,12 @@ class Api:
 
     def _start_exit_ip_probe(self) -> None:
         """After connecting, query our public IP so the UI can show the user
-        their traffic is actually exiting through the tunnel. Best-effort: a
-        few retries (routing may not be up the instant we go CONNECTED), short
-        timeouts, every failure swallowed."""
+        their traffic is actually exiting through the tunnel, then geolocate
+        it. Best-effort: a few retries (routing may not be up the instant we
+        go CONNECTED), short timeouts, every failure swallowed."""
         def _probe() -> None:
             import urllib.request
+            ip = ""
             for _ in range(3):
                 if self._stats.get("session_start", 0) == 0:
                     return  # disconnected before we got an answer
@@ -792,17 +803,64 @@ class Api:
                     if ip:
                         self._stats["exit_ip"] = ip
                         self._emit("stats", dict(self._stats))
-                        return
+                        break
                 except Exception:
                     pass
                 time.sleep(2)
+            if not ip or self._stats.get("session_start", 0) == 0:
+                return
+            try:
+                with urllib.request.urlopen(
+                    f"https://ipapi.co/{ip}/json/", timeout=5
+                ) as resp:
+                    data = json.loads(resp.read().decode("utf-8", "replace"))
+                loc = ", ".join(
+                    filter(None, [data.get("city"), data.get("country_name")])
+                )
+                if loc and self._stats.get("session_start", 0) != 0:
+                    self._stats["exit_location"] = loc
+                    self._emit("stats", dict(self._stats))
+            except Exception:
+                pass
 
         threading.Thread(target=_probe, daemon=True, name="outwarp-exit-ip").start()
+
+    def _start_latency_loop(self) -> None:
+        """Ping the WG peer (the server's in-tunnel IP) every 10s while
+        connected. Best-effort: any failure leaves latency at 0 and the UI
+        renders a dash."""
+        if self._latency_thread is not None and self._latency_thread.is_alive():
+            return
+        if self._manager is None:
+            return
+        target = self._manager.config.tunnel.remote_host
+        if not target:
+            return
+        self._latency_stop.clear()
+
+        def _loop(host: str) -> None:
+            from outwarp.network import measure_latency_ms
+            while not self._latency_stop.is_set():
+                ms = measure_latency_ms(host)
+                self._stats["latency_ms"] = int(ms) if ms is not None else 0
+                self._emit("stats", dict(self._stats))
+                if self._latency_stop.wait(10):
+                    break
+
+        self._latency_thread = threading.Thread(
+            target=_loop, args=(target,), daemon=True, name="outwarp-latency",
+        )
+        self._latency_thread.start()
+
+    def _stop_latency_loop(self) -> None:
+        self._latency_stop.set()
+        self._latency_thread = None
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
     def shutdown(self) -> None:
         self._stop_stats_loop()
+        self._stop_latency_loop()
         if self._manager is not None:
             try:
                 self._manager.stop()

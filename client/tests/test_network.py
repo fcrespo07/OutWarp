@@ -7,6 +7,7 @@ import pytest
 from outwarp.network import (
     NetworkError,
     get_tls_fingerprint,
+    measure_latency_ms,
     tcp_probe,
     verify_tls_fingerprint,
 )
@@ -84,3 +85,62 @@ def test_verify_tls_fingerprint_raises_on_mismatch():
     with patch("outwarp.network.get_tls_fingerprint", return_value="AB:CD"):
         with pytest.raises(NetworkError, match="fingerprint mismatch"):
             verify_tls_fingerprint("h", 443, "FF:FF")
+
+
+# --- measure_latency_ms ---
+
+def _ping_result(stdout: str, returncode: int = 0) -> MagicMock:
+    r = MagicMock()
+    r.stdout = stdout
+    r.returncode = returncode
+    return r
+
+
+def test_measure_latency_ms_parses_linux_iputils_output():
+    out = (
+        "PING 10.0.0.1 (10.0.0.1) 56(84) bytes of data.\n"
+        "64 bytes from 10.0.0.1: icmp_seq=1 ttl=64 time=12.3 ms\n"
+    )
+    with patch("outwarp.network.subprocess.run", return_value=_ping_result(out)):
+        assert measure_latency_ms("10.0.0.1") == 12
+
+
+def test_measure_latency_ms_parses_windows_english_output():
+    out = "Reply from 10.0.0.1: bytes=32 time=8ms TTL=64\n"
+    with patch("outwarp.network.subprocess.run", return_value=_ping_result(out)):
+        assert measure_latency_ms("10.0.0.1") == 8
+
+
+def test_measure_latency_ms_parses_windows_spanish_output():
+    out = "Respuesta desde 10.0.0.1: bytes=32 tiempo=42ms TTL=64\n"
+    with patch("outwarp.network.subprocess.run", return_value=_ping_result(out)):
+        assert measure_latency_ms("10.0.0.1") == 42
+
+
+def test_measure_latency_ms_parses_sub_millisecond_reply():
+    out = "Reply from 10.0.0.1: bytes=32 time<1ms TTL=64\n"
+    with patch("outwarp.network.subprocess.run", return_value=_ping_result(out)):
+        assert measure_latency_ms("10.0.0.1") == 1
+
+
+def test_measure_latency_ms_returns_none_when_ping_fails():
+    with patch("outwarp.network.subprocess.run",
+               return_value=_ping_result("Request timed out.\n", returncode=1)):
+        assert measure_latency_ms("10.0.0.1") is None
+
+
+def test_measure_latency_ms_returns_none_when_output_unparseable():
+    with patch("outwarp.network.subprocess.run", return_value=_ping_result("garbage\n")):
+        assert measure_latency_ms("10.0.0.1") is None
+
+
+def test_measure_latency_ms_returns_none_when_ping_binary_missing():
+    with patch("outwarp.network.subprocess.run", side_effect=FileNotFoundError):
+        assert measure_latency_ms("10.0.0.1") is None
+
+
+def test_measure_latency_ms_returns_none_on_empty_host():
+    # Don't even shell out for an empty host.
+    with patch("outwarp.network.subprocess.run") as run:
+        assert measure_latency_ms("") is None
+        run.assert_not_called()

@@ -44,6 +44,21 @@ const fmtBytes = (n) => {
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 };
+const fmtAgo = (epoch, lang) => {
+  if (!epoch) return "—";
+  const d = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
+  try {
+    const rtf = new Intl.RelativeTimeFormat(lang || "es", { numeric: "auto" });
+    if (d < 60) return rtf.format(-d, "second");
+    if (d < 3600) return rtf.format(-Math.floor(d / 60), "minute");
+    return rtf.format(-Math.floor(d / 3600), "hour");
+  } catch (_) {
+    if (d < 60) return `${d}s`;
+    if (d < 3600) return `${Math.floor(d / 60)}m`;
+    return `${Math.floor(d / 3600)}h`;
+  }
+};
+
 const fmtDuration = (sec) => {
   sec = Math.max(0, Math.floor(sec));
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
@@ -246,6 +261,7 @@ function App() {
         {screen === "home" && (
           <Home
             T={T}
+            lang={lang}
             status={status}
             active={active}
             stats={stats}
@@ -352,11 +368,11 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
 };
 
 // ── Home ───────────────────────────────────────────────────────────
-const Home = ({ T, status, active, stats, advanced, busyMsg, connError, attemptInfo, phase, onConnect, onDisconnect, onReconnect, onImport }) => {
+const Home = ({ T, lang, status, active, stats, advanced, busyMsg, connError, attemptInfo, phase, onConnect, onDisconnect, onReconnect, onImport }) => {
   if (status === "empty" || !active) {
     return <EmptyHome T={T} onImport={onImport}/>;
   }
-  if (status === "connected") return <ConnectedHome T={T} active={active} stats={stats} advanced={advanced} onDisconnect={onDisconnect}/>;
+  if (status === "connected") return <ConnectedHome T={T} lang={lang} active={active} stats={stats} advanced={advanced} onDisconnect={onDisconnect}/>;
   if (status === "connecting" || status === "reconnecting") {
     return <ConnectingHome T={T} active={active} busyMsg={busyMsg} reconnecting={status === "reconnecting"} attemptInfo={attemptInfo} phase={phase}/>;
   }
@@ -502,7 +518,7 @@ const StepIcon = ({ state }) => {
   );
 };
 
-const ConnectedHome = ({ T, active, stats, advanced, onDisconnect }) => {
+const ConnectedHome = ({ T, lang, active, stats, advanced, onDisconnect }) => {
   const sessionSec = stats.session_start ? (Date.now() / 1000 - stats.session_start) : 0;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -537,6 +553,12 @@ const ConnectedHome = ({ T, active, stats, advanced, onDisconnect }) => {
         <Stat label={T.download} value={fmtBps(stats.rx_bps)} sub={`↓ ${fmtBytes(stats.rx_total)} total`}/>
         <Stat label={T.upload}    value={fmtBps(stats.tx_bps)} sub={`↑ ${fmtBytes(stats.tx_total)} total`}/>
         <Stat label={T.sessionTime} value={fmtDuration(sessionSec)}/>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+        <Stat label={T.latency}       value={stats.latency_ms ? `${stats.latency_ms} ms` : "—"}/>
+        <Stat label={T.lastHandshake} value={fmtAgo(stats.last_handshake, lang)}/>
+        <Stat label={T.location}      value={stats.exit_location || "—"}/>
       </div>
 
       {advanced && (

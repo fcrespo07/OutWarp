@@ -600,6 +600,50 @@ def test_state_change_emits_status_event():
     assert status_calls, "no outwarp:status event was emitted"
     assert '"status": "connected"' in status_calls[0]
     api._stop_stats_loop()
+    api._stop_latency_loop()
+
+
+def test_default_stats_include_latency_and_location_keys():
+    api, _ = _make_api()
+    assert api._stats["latency_ms"] == 0
+    assert api._stats["exit_location"] == ""
+
+
+def test_disconnect_resets_latency_and_location(tmp_path):
+    cfg = _real_config(tmp_path)
+    mgr = _mgr_with_config(cfg, state=TunnelState.DISCONNECTED)
+    api, _ = _make_api(mgr)
+    api._stats["latency_ms"] = 42
+    api._stats["exit_location"] = "Madrid, Spain"
+    api._stats["exit_ip"] = "1.2.3.4"
+    api._on_state_change(TunnelState.DISCONNECTED)
+    assert api._stats["latency_ms"] == 0
+    assert api._stats["exit_location"] == ""
+    assert api._stats["exit_ip"] == ""
+
+
+def test_start_latency_loop_noop_without_manager():
+    api, _ = _make_api()
+    api._start_latency_loop()
+    assert api._latency_thread is None
+
+
+def test_start_latency_loop_starts_thread_with_manager(tmp_path):
+    cfg = _real_config(tmp_path)
+    mgr = _mgr_with_config(cfg, state=TunnelState.CONNECTED)
+    api, _ = _make_api(mgr)
+    with patch("outwarp.network.measure_latency_ms", return_value=17):
+        api._start_latency_loop()
+        try:
+            import time
+            # Wait briefly for the loop to take its first sample.
+            for _ in range(50):
+                if api._stats["latency_ms"] == 17:
+                    break
+                time.sleep(0.01)
+            assert api._stats["latency_ms"] == 17
+        finally:
+            api._stop_latency_loop()
 
 
 def test_get_logs_returns_buffer():
