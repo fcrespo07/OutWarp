@@ -142,6 +142,50 @@ def test_is_wg_tunnel_active_false_when_service_not_found():
         assert p.is_wg_tunnel_active("MyTunnel") is False
 
 
+def test_is_wg_tunnel_active_true_with_spanish_sc_output():
+    # Regression: `sc query` translates the state name on non-English Windows
+    # (e.g. "EN EJECUCIÓN" on Spanish locales). We must rely on the numeric
+    # state code, not the localised string, or the watchdog will wrongly
+    # decide the tunnel has died on every poll.
+    spanish_output = (
+        "NOMBRE_DE_SERVICIO: WireGuardTunnel$MyTunnel\n"
+        "        TIPO               : 30  WIN32_OWN_PROCESS\n"
+        "        ESTADO             : 4  EN EJECUCIÓN\n"
+        "                                (STOPPABLE, NOT_PAUSABLE, ACCEPTS_SHUTDOWN)\n"
+        "        WIN32_EXIT_CODE    : 0  (0x0)\n"
+    )
+    p = WindowsPlatform()
+    with patch("subprocess.run", return_value=_mock_run(0, stdout=spanish_output)):
+        assert p.is_wg_tunnel_active("MyTunnel") is True
+
+
+def test_is_wg_tunnel_active_false_with_spanish_stopped_output():
+    spanish_output = (
+        "NOMBRE_DE_SERVICIO: WireGuardTunnel$MyTunnel\n"
+        "        TIPO               : 30  WIN32_OWN_PROCESS\n"
+        "        ESTADO             : 1  DETENIDO\n"
+        "        WIN32_EXIT_CODE    : 0  (0x0)\n"
+    )
+    p = WindowsPlatform()
+    with patch("subprocess.run", return_value=_mock_run(0, stdout=spanish_output)):
+        assert p.is_wg_tunnel_active("MyTunnel") is False
+
+
+def test_is_wg_tunnel_active_skips_type_and_exit_code_lines():
+    # The TYPE line has a multi-digit code (e.g. "30") and the EXIT_CODE line
+    # is "0  (0x...)" — the parser must skip both and pick the STATE line.
+    # If the regex ever matched TYPE we'd get state=3 (StopPending) and the
+    # tunnel would look like it's mid-shutdown.
+    output = (
+        "        TYPE               : 30  WIN32_OWN_PROCESS\n"
+        "        STATE              : 4  RUNNING\n"
+        "        WIN32_EXIT_CODE    : 0  (0x0)\n"
+    )
+    p = WindowsPlatform()
+    with patch("subprocess.run", return_value=_mock_run(0, stdout=output)):
+        assert p.is_wg_tunnel_active("MyTunnel") is True
+
+
 # --- WindowsPlatform: gateway ---
 
 def test_get_default_gateway_parses_ipv4():

@@ -47,6 +47,30 @@ def _run(*args: str, **kwargs) -> subprocess.CompletedProcess:
                           creationflags=_NO_WINDOW, **kwargs)
 
 
+# Windows SCM service state codes (SERVICE_STATUS.dwCurrentState).
+# Locale-independent; the state *name* in `sc query` output is translated
+# (e.g. "EN EJECUCIÓN" on Spanish Windows) but the numeric code is not.
+_SC_STATE_RUNNING = 4
+# Captures lines of the form `<key> : <digit>  <name>` from `sc query` output.
+# Matches a single digit (state codes are 1-7) followed by a non-digit,
+# non-'(' character — that excludes TYPE lines (multi-digit, e.g. 30) and
+# WIN32_EXIT_CODE lines (digit followed by "(0x...)").
+_SC_STATE_LINE_RE = re.compile(r":\s+(\d)\s+[^\d(]")
+
+
+def _sc_service_state(name: str) -> int | None:
+    """Return the WinAPI service-state code for a service, or None if the
+    service doesn't exist. Locale-independent."""
+    result = _run(["sc", "query", name])
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        m = _SC_STATE_LINE_RE.search(line)
+        if m:
+            return int(m.group(1))
+    return None
+
+
 class WindowsPlatform(Platform):
     def __init__(self) -> None:
         self._conf_dir = _WG_CONF_DIR
@@ -73,15 +97,14 @@ class WindowsPlatform(Platform):
         # /installtunnelservice returns before the service reaches RUNNING; poll until it does
         # so that is_wg_tunnel_active() returns True by the time wstunnel starts.
         deadline = time.monotonic() + 15.0
-        last_state = "(no output)"
+        last_state: int | None = None
         while time.monotonic() < deadline:
-            query = _run(["sc", "query", f"WireGuardTunnel${name}"])
-            last_state = query.stdout.strip() or f"(rc={query.returncode})"
-            if "RUNNING" in query.stdout:
+            last_state = _sc_service_state(f"WireGuardTunnel${name}")
+            if last_state == _SC_STATE_RUNNING:
                 break
             time.sleep(0.25)
         else:
-            log.warning("WireGuard service state at timeout:\n%s", last_state)
+            log.warning("WireGuard service state at timeout: code=%s", last_state)
             _run([str(_WIREGUARD_EXE), "/uninstalltunnelservice", name])
             raise PlatformError(
                 f"WireGuard tunnel '{name}' did not reach RUNNING within 15 s — "
@@ -112,7 +135,7 @@ class WindowsPlatform(Platform):
         conf_path.unlink(missing_ok=True)
 
     def is_wg_tunnel_active(self, name: str) -> bool:
-        return "RUNNING" in _run(["sc", "query", f"WireGuardTunnel${name}"]).stdout
+        return _sc_service_state(f"WireGuardTunnel${name}") == _SC_STATE_RUNNING
 
     def get_default_gateway(self) -> str:
         result = _run([
