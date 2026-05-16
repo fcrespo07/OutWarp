@@ -98,6 +98,7 @@ class Tunnel:
         platform: Platform | None = None,
         wstunnel_bin: Path | None = None,
         allow_tls_intercept: bool = False,
+        phase_callback: Callable[[str], None] | None = None,
     ) -> None:
         self._config = config
         self._platform = platform or get_platform()
@@ -112,6 +113,10 @@ class Tunnel:
         # so the outer TLS pin is belt-and-suspenders there. Mutable so a live
         # settings change takes effect on the next connect attempt.
         self.allow_tls_intercept = allow_tls_intercept
+        # Notified at each milestone of connect() so the UI can light up the
+        # corresponding step in the "Connecting…" view. None means no-op
+        # (tests that don't care about phases pass nothing).
+        self._phase_cb: Callable[[str], None] = phase_callback or (lambda _p: None)
 
     def _drain_stdout(self) -> None:
         assert self._proc is not None
@@ -125,6 +130,11 @@ class Tunnel:
 
     def connect(self) -> None:
         s = self._config.server
+        # Phases (resolve / tls / wg / ws) match the actual blocking work the
+        # connect path does. There is no separate "route" phase: we exclude
+        # bypass IPs from the WG AllowedIPs at config-build time instead of
+        # adding host routes after the fact.
+        self._phase_cb("resolve")
         if not tcp_probe(s.endpoint, s.port):
             raise TunnelError(
                 f"Cannot reach {s.endpoint}:{s.port}. The server may be down, the port "
@@ -132,6 +142,7 @@ class Tunnel:
                 "outbound connections to that port."
             )
 
+        self._phase_cb("tls")
         try:
             verify_tls_fingerprint(s.endpoint, s.port, self._config.tls.cert_fingerprint_sha256)
         except FingerprintMismatch as exc:
@@ -148,10 +159,12 @@ class Tunnel:
             raise TunnelError(str(exc)) from exc
 
         try:
+            self._phase_cb("wg")
             wg_conf = build_wg_conf(self._config)
             self._platform.install_wg_tunnel(self._config.wireguard.tunnel_name, wg_conf)
             self._wg_installed = True
 
+            self._phase_cb("ws")
             cmd = build_wstunnel_command(self._config, self._wstunnel_bin)
             log.info("Starting wstunnel: %s", " ".join(cmd))
             self._proc = subprocess.Popen(
@@ -220,7 +233,16 @@ class TunnelManager:
         auto_reconnect: bool = True,
     ) -> None:
         self._config = config
-        self._tunnel = tunnel or Tunnel(config, allow_tls_intercept=allow_tls_intercept)
+        # Granular progress flag set by the Tunnel mid-connect ("resolve",
+        # "tls", "wg", "ws", "done"). Empty string between attempts. Listeners
+        # fire on every phase change as well as state changes so the UI can
+        # animate the connecting stepper.
+        self._phase: str = ""
+        self._tunnel = tunnel or Tunnel(
+            config,
+            allow_tls_intercept=allow_tls_intercept,
+            phase_callback=self._set_phase,
+        )
         self._stability = stability_seconds
         self._poll = poll_interval
         self._state = TunnelState.DISCONNECTED
@@ -281,6 +303,31 @@ class TunnelManager:
         # do not touch a retry that's already in flight.
         self._auto_reconnect = bool(value)
 
+    @property
+    def phase(self) -> str:
+        with self._lock:
+            return self._phase
+
+    def _set_phase(self, phase: str) -> None:
+        """Update the connect-phase flag and notify listeners.
+
+        Listeners receive the current state (unchanged) so they can re-emit a
+        status payload that includes the new phase. Status listeners must be
+        idempotent on same-state — they already are: api._on_state_change
+        re-emits status and the kill-switch sync is a no-op when nothing has
+        actually changed."""
+        with self._lock:
+            if self._phase == phase:
+                return
+            self._phase = phase
+            state = self._state
+            listeners = list(self._listeners)
+        for cb in listeners:
+            try:
+                cb(state)
+            except Exception:
+                log.exception("Phase listener raised")
+
     def _set_error(self, msg: str | None) -> None:
         with self._lock:
             self._last_error = msg
@@ -312,6 +359,7 @@ class TunnelManager:
             log.exception("Error while disconnecting tunnel during stop()")
         self._set_error(None)
         self._set_attempt(0)
+        self._set_phase("")
         self._set_state(TunnelState.DISCONNECTED)
 
     def _set_state(self, state: TunnelState) -> None:
@@ -333,6 +381,8 @@ class TunnelManager:
         self._set_attempt(0)
 
         while not self._stop_event.is_set():
+            # Each attempt restarts the stepper from the beginning.
+            self._set_phase("")
             self._set_state(
                 TunnelState.CONNECTING if attempt == 0 else TunnelState.RECONNECTING
             )
@@ -351,6 +401,10 @@ class TunnelManager:
                 continue
 
             self._set_error(None)
+            # Mark the stepper complete just before flipping to CONNECTED so
+            # the UI's last "active" step settles into "done" alongside the
+            # state transition rather than after it.
+            self._set_phase("done")
             self._set_state(TunnelState.CONNECTED)
             connected_at = time.monotonic()
             stability_reset = False

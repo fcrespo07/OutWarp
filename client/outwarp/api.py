@@ -251,12 +251,20 @@ class Api:
 
     def _status_payload(self) -> dict[str, Any]:
         attempt, max_attempts = self._attempt_info()
+        phase = ""
+        if self._manager is not None:
+            p = getattr(self._manager, "phase", "")
+            if isinstance(p, str):
+                phase = p
         return {
             "status": self._status_str(),
             "active_profile_id": self._active_profile_id(),
             "error": self._error_str(),
             "attempt": attempt,
             "max_attempts": max_attempts,
+            # "" between attempts; "resolve"|"tls"|"wg"|"ws"|"done" while
+            # connecting. The UI uses it to drive the connecting stepper.
+            "phase": phase,
         }
 
     def connect(self, profile_id: str | None = None) -> dict[str, Any]:

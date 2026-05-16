@@ -194,6 +194,102 @@ def test_auto_reconnect_setter_is_live():
     assert m.auto_reconnect is True
 
 
+# --- phase reporting ---
+
+class _PhaseCallbackTunnel:
+    """Test stub whose connect() drives the phase callback wired by
+    TunnelManager. Mirrors how the real Tunnel reports progress mid-connect."""
+    def __init__(self):
+        self.connect_calls = 0
+        self.alive = True
+        # Filled in by TunnelManager via the phase_callback kwarg of Tunnel().
+        # We don't get one here — TunnelManager only injects it when it
+        # constructs the Tunnel itself, so this fake plays the role of a
+        # caller-injected tunnel that already has the callback.
+        self.phase_cb = None
+
+    def connect(self) -> None:
+        self.connect_calls += 1
+        if self.phase_cb is None:
+            return
+        for p in ("resolve", "tls", "wg", "ws"):
+            self.phase_cb(p)
+
+    def disconnect(self) -> None:
+        self.alive = False
+
+    @property
+    def is_active(self) -> bool:
+        return self.alive
+
+
+def test_phase_starts_empty():
+    m = _make_manager(_make_config(), FakeTunnel())
+    assert m.phase == ""
+
+
+def test_phase_progresses_to_done_on_successful_connect():
+    """The manager flips phase to 'done' just before transitioning to
+    CONNECTED so a status listener reading both fields gets a coherent
+    snapshot ('connected' + 'done')."""
+    m = _make_manager(_make_config(), FakeTunnel())
+    m.start()
+    assert _wait_until(lambda: m.state == TunnelState.CONNECTED)
+    assert m.phase == "done"
+    m.stop(timeout=2)
+
+
+def test_phase_resets_to_empty_on_stop():
+    m = _make_manager(_make_config(), FakeTunnel())
+    m.start()
+    assert _wait_until(lambda: m.state == TunnelState.CONNECTED)
+    m.stop(timeout=2)
+    assert m.phase == ""
+
+
+def test_phase_callback_notifies_listeners():
+    """Listeners must fire on phase changes too — otherwise the UI can't
+    advance the connecting stepper while status stays 'connecting'."""
+    fake = _PhaseCallbackTunnel()
+    m = _make_manager(_make_config(), fake)
+    fake.phase_cb = m._set_phase  # wire the callback the way Tunnel.__init__ does
+
+    seen_phases: list[str] = []
+    def listener(_state):
+        seen_phases.append(m.phase)
+    m.add_listener(listener)
+
+    m.start()
+    assert _wait_until(lambda: m.state == TunnelState.CONNECTED)
+    m.stop(timeout=2)
+
+    # The order matters: each phase reported by the tunnel arrives before
+    # the next one, and 'done' lands before the listeners stop firing.
+    distinct = []
+    for p in seen_phases:
+        if not distinct or distinct[-1] != p:
+            distinct.append(p)
+    # We don't assert the literal list (timing of stop() can append a final
+    # ""), but the connect-time sequence must be monotonic.
+    assert "resolve" in distinct
+    assert distinct.index("resolve") < distinct.index("tls")
+    assert distinct.index("tls") < distinct.index("wg")
+    assert distinct.index("wg") < distinct.index("ws")
+    assert distinct.index("ws") < distinct.index("done")
+
+
+def test_phase_idempotent_set_does_not_refire_listeners():
+    """Setting the same phase twice in a row should be a no-op so the UI
+    doesn't get spurious status events."""
+    m = _make_manager(_make_config(), FakeTunnel())
+    fired = []
+    m.add_listener(lambda _s: fired.append(m.phase))
+    m._set_phase("resolve")
+    m._set_phase("resolve")
+    m._set_phase("resolve")
+    assert fired.count("resolve") == 1
+
+
 # --- stability resets attempt counter ---
 
 def test_stability_resets_attempt_counter():

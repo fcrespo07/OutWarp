@@ -173,7 +173,7 @@ const HomeDisconnectedA = ({ T }) => (
 );
 
 const HomeConnectingA = ({ T }) => {
-  const steps = [T.step_resolve, T.step_tls, T.step_ws, T.step_wg, T.step_route];
+  const steps = [T.step_resolve, T.step_tls, T.step_wg, T.step_ws];
   const cur = 3;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>

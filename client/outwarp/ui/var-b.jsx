@@ -161,7 +161,7 @@ const HomeB = ({ T, status }) => {
         {/* Connecting steps row */}
         {connecting && (
           <div style={{ borderTop: "1px solid var(--line-strong)", padding: 14, display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
-            {[T.step_resolve, T.step_tls, T.step_ws, T.step_wg, T.step_route].map((s, i) => {
+            {[T.step_resolve, T.step_tls, T.step_wg, T.step_ws].map((s, i) => {
               const cur = 3;
               return (
                 <div key={s} style={{

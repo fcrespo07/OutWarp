@@ -131,12 +131,12 @@ const STR = {
     logs_levelAll: "Todos",
     logs_exported: "✓ Registro exportado",
 
-    // Connecting steps
+    // Connecting steps. No "step_route" — bypass IPs are excluded from
+    // WG AllowedIPs at config-build time, not added as host routes after.
     step_resolve: "Resolviendo endpoint",
     step_tls: "Verificando certificado",
-    step_ws: "Estableciendo WebSocket",
-    step_wg: "Negociando WireGuard",
-    step_route: "Aplicando rutas",
+    step_wg: "Levantando interfaz WireGuard",
+    step_ws: "Abriendo túnel WebSocket",
     step_done: "Listo",
 
     // Misc
@@ -264,9 +264,8 @@ const STR = {
 
     step_resolve: "Resolving endpoint",
     step_tls: "Verifying certificate",
-    step_ws: "Establishing WebSocket",
-    step_wg: "Negotiating WireGuard",
-    step_route: "Applying routes",
+    step_wg: "Bringing up WireGuard interface",
+    step_ws: "Opening WebSocket tunnel",
     step_done: "Done",
 
     profile: "Profile",

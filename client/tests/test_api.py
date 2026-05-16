@@ -482,6 +482,40 @@ def test_shutdown_releases_kill_switch(tmp_path):
     fake_plat.release_kill_switch.assert_called_once()
 
 
+# --- phase in status payload ---
+
+def test_get_status_includes_empty_phase_without_manager():
+    api, _ = _make_api()
+    s = api.get_status()
+    assert s["phase"] == ""
+
+
+def test_get_status_returns_managers_phase():
+    mgr = MagicMock()
+    mgr.state = TunnelState.CONNECTING
+    mgr.config.server.endpoint = "x"
+    mgr.config.server.port = 1
+    mgr.config.wireguard.tunnel_name = "t"
+    mgr.phase = "wg"
+    api, _ = _make_api(mgr)
+    s = api.get_status()
+    assert s["phase"] == "wg"
+
+
+def test_get_status_coerces_non_string_phase_to_empty():
+    """Defence in depth — if a future bug stuffs a non-string into phase, the
+    bridge serialiser shouldn't blow up. Coerce to empty string instead."""
+    mgr = MagicMock()
+    mgr.state = TunnelState.CONNECTING
+    mgr.config.server.endpoint = "x"
+    mgr.config.server.port = 1
+    mgr.config.wireguard.tunnel_name = "t"
+    mgr.phase = 12345  # nonsense
+    api, _ = _make_api(mgr)
+    s = api.get_status()
+    assert s["phase"] == ""
+
+
 def test_state_change_emits_status_event():
     mgr = MagicMock()
     mgr.state = TunnelState.DISCONNECTED

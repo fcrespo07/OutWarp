@@ -169,6 +169,56 @@ def test_connect_happy_path():
     assert t._proc is fake_proc
 
 
+def test_connect_reports_phases_in_order():
+    """Each blocking step fires the phase callback once, in the order the UI
+    stepper renders ('resolve' → 'tls' → 'wg' → 'ws')."""
+    cfg = _make_config()
+    plat = FakePlatform()
+    fake_proc = MagicMock()
+    fake_proc.poll.return_value = None
+    phases: list[str] = []
+
+    with (
+        patch("outwarp.tunnel.tcp_probe", return_value=True),
+        patch("outwarp.tunnel.verify_tls_fingerprint"),
+        patch("outwarp.tunnel.subprocess.Popen", return_value=fake_proc),
+    ):
+        t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"),
+                   phase_callback=phases.append)
+        t.connect()
+
+    assert phases == ["resolve", "tls", "wg", "ws"]
+
+
+def test_connect_phase_stops_at_resolve_when_endpoint_unreachable():
+    cfg = _make_config()
+    plat = FakePlatform()
+    phases: list[str] = []
+    with patch("outwarp.tunnel.tcp_probe", return_value=False):
+        t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"),
+                   phase_callback=phases.append)
+        with pytest.raises(TunnelError, match="Cannot reach"):
+            t.connect()
+    assert phases == ["resolve"]
+
+
+def test_connect_phase_stops_at_tls_on_fingerprint_mismatch():
+    from outwarp.network import FingerprintMismatch
+    cfg = _make_config()
+    plat = FakePlatform()
+    phases: list[str] = []
+    with (
+        patch("outwarp.tunnel.tcp_probe", return_value=True),
+        patch("outwarp.tunnel.verify_tls_fingerprint",
+              side_effect=FingerprintMismatch("nope")),
+    ):
+        t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"),
+                   phase_callback=phases.append)
+        with pytest.raises(TunnelError):
+            t.connect()
+    assert phases == ["resolve", "tls"]
+
+
 def test_connect_aborts_when_endpoint_unreachable():
     cfg = _make_config()
     plat = FakePlatform()

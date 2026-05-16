@@ -106,6 +106,9 @@ function App() {
   const [busyMsg, setBusyMsg] = useState("");
   const [connError, setConnError] = useState("");
   const [attemptInfo, setAttemptInfo] = useState({ attempt: 0, max_attempts: 0 });
+  // Connect-progress hint emitted by the manager: "" between attempts,
+  // "resolve"|"tls"|"wg"|"ws"|"done" while connecting. Drives the stepper.
+  const [phase, setPhase] = useState("");
   const [ready, setReady] = useState(false);
   const [confirm, confirmDialog] = useConfirmState();
 
@@ -121,6 +124,7 @@ function App() {
       setStats(s.stats);
       setConnError(s.error || "");
       setAttemptInfo({ attempt: s.attempt || 0, max_attempts: s.max_attempts || 0 });
+      setPhase(s.phase || "");
       setProfiles(ps);
       setSettings(st);
       setLogs(lg);
@@ -133,6 +137,7 @@ function App() {
     setActiveId(d.active_profile_id);
     setConnError(d.error || "");
     setAttemptInfo({ attempt: d.attempt || 0, max_attempts: d.max_attempts || 0 });
+    setPhase(d.phase || "");
     if (d.status === "connected" || d.status === "disconnected" || d.status === "empty") setBusyMsg("");
   }, []));
   useBridgeEvent("stats",   useCallback((d) => setStats(d), []));
@@ -155,6 +160,7 @@ function App() {
         setStats(s.stats);
         setConnError(s.error || "");
         setAttemptInfo({ attempt: s.attempt || 0, max_attempts: s.max_attempts || 0 });
+        setPhase(s.phase || "");
       } catch (_) {}
       if (alive) setTimeout(tick, 1000);
     };
@@ -247,6 +253,7 @@ function App() {
             busyMsg={busyMsg}
             connError={connError}
             attemptInfo={attemptInfo}
+            phase={phase}
             onConnect={onConnect}
             onDisconnect={onDisconnect}
             onReconnect={onReconnect}
@@ -343,13 +350,13 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
 };
 
 // ── Home ───────────────────────────────────────────────────────────
-const Home = ({ T, status, active, stats, advanced, busyMsg, connError, attemptInfo, onConnect, onDisconnect, onReconnect, onImport }) => {
+const Home = ({ T, status, active, stats, advanced, busyMsg, connError, attemptInfo, phase, onConnect, onDisconnect, onReconnect, onImport }) => {
   if (status === "empty" || !active) {
     return <EmptyHome T={T} onImport={onImport}/>;
   }
   if (status === "connected") return <ConnectedHome T={T} active={active} stats={stats} advanced={advanced} onDisconnect={onDisconnect}/>;
   if (status === "connecting" || status === "reconnecting") {
-    return <ConnectingHome T={T} active={active} busyMsg={busyMsg} reconnecting={status === "reconnecting"} attemptInfo={attemptInfo}/>;
+    return <ConnectingHome T={T} active={active} busyMsg={busyMsg} reconnecting={status === "reconnecting"} attemptInfo={attemptInfo} phase={phase}/>;
   }
   if (status === "error") return <ErrorHome T={T} active={active} connError={connError} onReconnect={onReconnect} onImport={onImport}/>;
   return <DisconnectedHome T={T} active={active} onConnect={onConnect}/>;
@@ -390,8 +397,24 @@ const DisconnectedHome = ({ T, active, onConnect }) => (
   </div>
 );
 
-const ConnectingHome = ({ T, active, busyMsg, reconnecting, attemptInfo }) => {
+// Order matches outwarp.tunnel.Tunnel.connect(): probe TCP, verify TLS pin,
+// install the WG service, launch wstunnel, settle on CONNECTED. There is no
+// separate "route" step — bypass IPs are excluded from WG AllowedIPs at
+// config-build time.
+const CONNECT_STEPS = [
+  ["resolve", "step_resolve"],
+  ["tls",     "step_tls"],
+  ["wg",      "step_wg"],
+  ["ws",      "step_ws"],
+  ["done",    "step_done"],
+];
+
+const ConnectingHome = ({ T, active, busyMsg, reconnecting, attemptInfo, phase }) => {
   const showAttempt = reconnecting && attemptInfo && attemptInfo.attempt > 0;
+  // -1 when phase is empty (between attempts) so every step renders pending.
+  const currentIdx = phase
+    ? Math.max(0, CONNECT_STEPS.findIndex(([k]) => k === phase))
+    : -1;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <Header title={T.nav_home} sub={T.home_ribbon}/>
@@ -404,19 +427,76 @@ const ConnectingHome = ({ T, active, busyMsg, reconnecting, attemptInfo }) => {
                 {reconnecting ? T.reconnecting : T.connecting}
               </span>
             </div>
-            <div style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-0.02em" }}>{T.handshake}</div>
+            <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em" }}>{active.name}</div>
             <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{active.endpoint}</div>
             {showAttempt && (
               <div style={{ fontSize: 12, color: "var(--brand-warn)", marginTop: 8, fontFamily: "var(--font-mono)" }}>
                 {T.reconnectAttempt} {attemptInfo.attempt}/{attemptInfo.max_attempts}
               </div>
             )}
-            {busyMsg && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8, fontFamily: "var(--font-mono)" }}>{busyMsg}</div>}
           </div>
           <Dial pulsing/>
         </div>
+        <Stepper T={T} currentIdx={currentIdx}/>
+        {busyMsg && (
+          <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 14, fontFamily: "var(--font-mono)" }}>
+            {busyMsg}
+          </div>
+        )}
       </section>
     </div>
+  );
+};
+
+const Stepper = ({ T, currentIdx }) => (
+  <ol style={{
+    listStyle: "none", padding: 0, margin: "24px 0 0",
+    display: "flex", flexDirection: "column", gap: 10,
+  }}>
+    {CONNECT_STEPS.map(([key, strKey], i) => {
+      const state = i < currentIdx ? "done" : i === currentIdx ? "active" : "pending";
+      return (
+        <li key={key} style={{
+          display: "grid", gridTemplateColumns: "20px 1fr",
+          gap: 12, alignItems: "center",
+        }}>
+          <StepIcon state={state}/>
+          <div style={{
+            fontSize: 13,
+            fontWeight: state === "active" ? 600 : 500,
+            color: state === "pending" ? "var(--text-3)"
+                 : state === "active"  ? "var(--text)"
+                 :                       "var(--text-2)",
+          }}>
+            {T[strKey]}
+          </div>
+        </li>
+      );
+    })}
+  </ol>
+);
+
+const StepIcon = ({ state }) => {
+  if (state === "done") return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+         stroke="var(--brand-2)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" fill="color-mix(in srgb, var(--brand-2) 14%, transparent)" stroke="none"/>
+      <path d="M7 12 L11 16 L17 9"/>
+    </svg>
+  );
+  if (state === "active") return (
+    <span style={{ position: "relative", display: "inline-block", width: 20, height: 20 }}>
+      <span style={{
+        position: "absolute", inset: 0, borderRadius: 999,
+        border: "2px solid var(--brand-warn)", borderTopColor: "transparent",
+        animation: "ws-spin 0.9s linear infinite",
+      }}/>
+    </span>
+  );
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="var(--line-strong)" strokeWidth="1.5"/>
+    </svg>
   );
 };
 
