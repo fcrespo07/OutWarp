@@ -642,101 +642,218 @@ const Dial = ({ active, pulsing }) => (
 // ── Import / Profiles ──────────────────────────────────────────────
 const Import = ({ T, api, active, confirm, onImported, onRemove, onProfilesChanged }) => {
   const fileRef = useRef(null);
+  const [mode, setMode] = useState("file");      // "file" | "paste"
+  const [paste, setPaste] = useState("");
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [showEditor, setShowEditor] = useState(false);
 
-  const handleFile = async (file) => {
-    if (!file) return;
+  // Single import path used by both the file picker / drop and the textarea.
+  // `source` only controls a UX detail (clearing the textarea after a paste).
+  const submit = async (text, source) => {
     setError("");
+    if (!text || !text.trim()) {
+      setError(T.errorUnknown);
+      return;
+    }
+    // Replacing an existing profile: confirm first regardless of source.
+    if (active) {
+      const ok = await confirm({
+        title: T.profiles_replaceTitle,
+        message: T.profiles_replaceWarn,
+        confirmLabel: T.confirm_continue,
+        cancelLabel: T.cancel,
+      });
+      if (!ok) return;
+    }
     setMsg(T.importReading);
     try {
-      const text = await file.text();
       const r = await api.import_profile(text);
       if (r.ok) {
         setMsg(`✓ ${r.profile.name}`);
-        setError("");
+        if (source === "paste") setPaste("");
         onImported(r.profile);
       } else {
         setMsg("");
         setError(r.error || T.errorUnknown);
       }
     } catch (e) {
+      setMsg("");
       setError(String(e));
     }
   };
 
-  // Importing replaces the single active profile — make that explicit.
-  const onAddClick = async () => {
-    const ok = await confirm({
-      title: T.profiles_replaceTitle,
-      message: T.profiles_replaceWarn,
-      confirmLabel: T.confirm_continue,
-      cancelLabel: T.cancel,
-    });
-    if (ok) fileRef.current?.click();
+  const handleFile = async (file) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      await submit(text, "file");
+    } catch (e) {
+      setError(String(e));
+    }
   };
 
-  // First run: no profile yet — the drag-and-drop importer is the whole screen.
-  if (!active) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 720 }}>
-        <Header title={T.welcomeTitle} sub={T.welcomeSub}/>
-        <div style={{
-          border: "1.5px dashed var(--line-strong)", borderRadius: 14, padding: 32,
-          background: "var(--bg-2)", textAlign: "center",
-        }}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}
-        >
-          <input ref={fileRef} type="file" accept=".owcfg,.warpcfg,.json,.txt" hidden onChange={(e) => handleFile(e.target.files[0])}/>
-          <div style={{ width: 48, height: 48, borderRadius: 12, background: "color-mix(in srgb, var(--brand) 12%, transparent)", color: "var(--brand)", display: "grid", placeItems: "center", margin: "0 auto" }}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16 V4 M6 10 L12 4 L18 10"/><path d="M4 20 H20"/></svg>
-          </div>
-          <div style={{ fontSize: 15, fontWeight: 600, marginTop: 10 }}>{T.importDrop}</div>
-          <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>{T.importHint}</div>
-          <div style={{ marginTop: 16 }}>
-            <window.Btn kind="primary" size="md" onClick={() => fileRef.current?.click()}>{T.importFile}</window.Btn>
-          </div>
-          {msg && <div style={{ marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-2)" }}>{msg}</div>}
-          {error && <div style={{ marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>{error}</div>}
-        </div>
-      </div>
-    );
-  }
+  // Container-level drop so dropping anywhere on the Import screen works —
+  // not just on the dashed dropzone, and not just on the empty-state view.
+  // Useful when a profile already exists and the user drops a replacement.
+  const onContainerDragOver = (e) => e.preventDefault();
+  const onContainerDrop = (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files?.[0];
+    if (f) handleFile(f);
+  };
 
-  // A profile exists: list it with an "Añadir" action top-right; no drag zone.
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 720 }}>
-      <input ref={fileRef} type="file" accept=".owcfg,.warpcfg,.json,.txt" hidden onChange={(e) => handleFile(e.target.files[0])}/>
-      <Header title={T.profiles_title} sub={T.welcomeSub} right={
-        <window.Btn kind="primary" size="md" onClick={onAddClick}>{T.profiles_add}</window.Btn>
-      }/>
-      {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>{error}</div>}
-      <div>
-        <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 12, padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{active.name}</div>
-            <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)" }}>{active.endpoint}</div>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <window.Btn kind="ghost" size="sm" onClick={() => setShowEditor((v) => !v)}>{T.edit_open}</window.Btn>
-            <window.Btn kind="danger" size="sm" onClick={onRemove}>{T.profiles_remove}</window.Btn>
-          </div>
-        </div>
-        {showEditor && (
-          <div style={{ marginTop: 10 }}>
-            <ProfileEditor
-              T={T} api={api} active={active} confirm={confirm}
-              onUpdated={onProfilesChanged}
-              onClose={() => setShowEditor(false)}
-            />
-          </div>
-        )}
+    <div onDragOver={onContainerDragOver} onDrop={onContainerDrop}
+         style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 720 }}>
+      <Header
+        title={active ? T.profiles_title : T.welcomeTitle}
+        sub={T.welcomeSub}
+      />
+
+      <input ref={fileRef} type="file"
+             accept=".owcfg,.warpcfg,.json,.txt" hidden
+             onChange={(e) => handleFile(e.target.files[0])}/>
+
+      <div style={{
+        display: "inline-flex", gap: 4, padding: 4,
+        background: "var(--bg-sunk)", borderRadius: 10, width: "fit-content",
+      }}>
+        <ImportTabBtn active={mode === "file"}  onClick={() => setMode("file")}>{T.import_tabFile}</ImportTabBtn>
+        <ImportTabBtn active={mode === "paste"} onClick={() => setMode("paste")}>{T.import_tabPaste}</ImportTabBtn>
       </div>
+
+      {mode === "file" && (
+        <DropZone T={T}
+          onPick={() => fileRef.current?.click()}
+          onFile={handleFile}/>
+      )}
+      {mode === "paste" && (
+        <PasteArea T={T}
+          value={paste}
+          onChange={setPaste}
+          onSubmit={() => submit(paste, "paste")}
+          disabled={!paste.trim()}/>
+      )}
+
+      {msg && (
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-2)" }}>
+          {msg}
+        </div>
+      )}
+      {error && (
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>
+          {error}
+        </div>
+      )}
+
+      {active && (
+        <ProfileCard active={active}
+          editLabel={T.edit_open}
+          removeLabel={T.profiles_remove}
+          onEdit={() => setShowEditor((v) => !v)}
+          onRemove={onRemove}/>
+      )}
+      {showEditor && active && (
+        <div>
+          <ProfileEditor
+            T={T} api={api} active={active} confirm={confirm}
+            onUpdated={onProfilesChanged}
+            onClose={() => setShowEditor(false)}/>
+        </div>
+      )}
     </div>
   );
 };
+
+const ImportTabBtn = ({ active, onClick, children }) => (
+  <button onClick={onClick} type="button"
+    style={{
+      all: "unset", padding: "6px 14px", borderRadius: 8, cursor: "pointer",
+      fontSize: 12, fontWeight: 600,
+      background: active ? "var(--bg)" : "transparent",
+      color: active ? "var(--text)" : "var(--text-3)",
+      boxShadow: active ? "0 1px 2px rgba(0,0,0,.12)" : "none",
+      transition: "background .15s, color .15s",
+    }}>{children}</button>
+);
+
+const DropZone = ({ T, onPick, onFile }) => (
+  <div
+    onDragOver={(e) => e.preventDefault()}
+    onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) onFile(f); }}
+    style={{
+      border: "1.5px dashed var(--line-strong)", borderRadius: 14, padding: 32,
+      background: "var(--bg-2)", textAlign: "center",
+    }}>
+    <div style={{
+      width: 48, height: 48, borderRadius: 12,
+      background: "color-mix(in srgb, var(--brand) 12%, transparent)",
+      color: "var(--brand)", display: "grid", placeItems: "center",
+      margin: "0 auto",
+    }}>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 16 V4 M6 10 L12 4 L18 10"/><path d="M4 20 H20"/>
+      </svg>
+    </div>
+    <div style={{ fontSize: 15, fontWeight: 600, marginTop: 10 }}>{T.importDrop}</div>
+    <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>{T.importHint}</div>
+    <div style={{ marginTop: 16 }}>
+      <window.Btn kind="primary" size="md" onClick={onPick}>{T.importFile}</window.Btn>
+    </div>
+  </div>
+);
+
+const PasteArea = ({ T, value, onChange, onSubmit, disabled }) => (
+  <div style={{
+    background: "var(--bg-2)", border: "1px solid var(--line)",
+    borderRadius: 14, padding: 18,
+  }}>
+    <div style={{ fontSize: 13, fontWeight: 600 }}>{T.importPaste}</div>
+    <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>{T.importHint}</div>
+    <textarea
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      spellCheck={false}
+      placeholder='{ "server": { ... }, "wireguard": { ... } }'
+      style={{
+        marginTop: 12, width: "100%", height: 220, resize: "vertical",
+        background: "var(--bg)", color: "var(--text)",
+        border: "1px solid var(--line-strong)", borderRadius: 10,
+        padding: "10px 12px", outline: "none",
+        fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.55,
+        boxSizing: "border-box",
+      }}/>
+    <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+      <window.Btn kind="primary" size="md" disabled={disabled} onClick={onSubmit}>
+        {T.import_loadFromPaste}
+      </window.Btn>
+    </div>
+  </div>
+);
+
+const ProfileCard = ({ active, onEdit, onRemove, editLabel, removeLabel }) => (
+  <div style={{
+    background: "var(--bg-2)", border: "1px solid var(--line)",
+    borderRadius: 12, padding: 16,
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    gap: 12,
+  }}>
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>{active.name}</div>
+      <div style={{
+        fontSize: 12, color: "var(--text-3)", marginTop: 2,
+        fontFamily: "var(--font-mono)",
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+      }}>{active.endpoint}</div>
+    </div>
+    <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+      <window.Btn kind="ghost"  size="sm" onClick={onEdit}>{editLabel}</window.Btn>
+      <window.Btn kind="danger" size="sm" onClick={onRemove}>{removeLabel}</window.Btn>
+    </div>
+  </div>
+);
 
 // ── Profile editor ─────────────────────────────────────────────────
 // Lets the user tweak the connection settings the server baked into the
