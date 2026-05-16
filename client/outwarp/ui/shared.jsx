@@ -40,7 +40,7 @@ const STR = {
 
     // Nav / sections
     nav_home: "Conexión",
-    nav_profiles: "Perfiles",
+    nav_profiles: "Perfil",
     nav_logs: "Registro",
     nav_settings: "Ajustes",
     nav_about: "Acerca de",
@@ -81,8 +81,8 @@ const STR = {
     logs_filter: "Filtrar…",
 
     // Profiles
-    profiles_title: "Perfiles",
-    profiles_add: "Añadir perfil",
+    profiles_title: "Perfil",
+    profiles_add: "Reemplazar perfil",
     profiles_active: "Activo",
     profiles_replaceWarn: "Ya tienes una conexión configurada. Importar otra reemplazará la actual. ¿Continuar?",
 
@@ -187,7 +187,7 @@ const STR = {
     fingerprint: "TLS fingerprint",
 
     nav_home: "Connection",
-    nav_profiles: "Profiles",
+    nav_profiles: "Profile",
     nav_logs: "Logs",
     nav_settings: "Settings",
     nav_about: "About",
@@ -225,8 +225,8 @@ const STR = {
     logs_export: "Export",
     logs_filter: "Filter…",
 
-    profiles_title: "Profiles",
-    profiles_add: "Add profile",
+    profiles_title: "Profile",
+    profiles_add: "Replace profile",
     profiles_active: "Active",
     profiles_replaceWarn: "You already have a connection configured. Importing another will replace the current one. Continue?",
 

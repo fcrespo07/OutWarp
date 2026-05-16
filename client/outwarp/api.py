@@ -341,6 +341,9 @@ class Api:
     # ── profiles ──────────────────────────────────────────────────────────────
 
     def list_profiles(self) -> list[dict[str, Any]]:
+        # Single-profile model: returns either 0 entries (no profile imported)
+        # or 1 (the active one). The list shape is kept so the UI can render
+        # uniformly and so a future multi-profile rework doesn't break callers.
         if self._manager is None:
             return []
         return [_profile_from_config(self._manager.config)]
@@ -390,8 +393,8 @@ class Api:
         return {"ok": True, "profile": prof}
 
     def remove_profile(self, profile_id: str) -> dict[str, Any]:
-        # Multi-profile management isn't supported yet — there is at most one
-        # active config. "Remove" therefore means: stop the tunnel and forget it.
+        # Single-profile model: `profile_id` is ignored. There is at most one
+        # active config, so "remove" means stop the tunnel and forget it.
         if self._manager is None:
             return {"ok": True}
         self._manager.stop()
@@ -404,7 +407,8 @@ class Api:
         return {"ok": True}
 
     def set_active_profile(self, profile_id: str) -> dict[str, Any]:
-        # Only one profile today — accept and ignore.
+        # Single-profile model: there is nothing to switch between. Accept and
+        # ignore so the UI can call this without special-casing.
         return {"ok": True}
 
     def update_profile(self, profile_id: str, patch: dict[str, Any]) -> dict[str, Any]:
