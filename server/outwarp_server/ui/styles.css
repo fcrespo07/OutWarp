@@ -56,7 +56,69 @@
   100% { transform: translateY(-50%); }
 }
 
+@keyframes ow-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ow-pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes ow-drawer-in {
+  from { transform: translateX(20px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
 /* a tiny scrollbar so phones/inner panes feel right */
 .ws-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
 .ws-scroll::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
 .ws-scroll { scrollbar-width: thin; }
+
+/* ── Modal ─────────────────────────────────────────────────────────── */
+.ow-overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: blur(2px);
+  display: grid; place-items: center;
+  animation: ow-fade-in .12s ease-out;
+}
+.ow-modal {
+  background: var(--bg-2); border: 1px solid var(--line-strong);
+  border-radius: 14px; box-shadow: var(--shadow);
+  width: min(420px, calc(100vw - 48px)); padding: 20px;
+  animation: ow-pop-in .14s ease-out;
+}
+
+/* ── Inline link (About, drawer headers) ──────────────────────────── */
+.ow-link {
+  all: unset;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--brand);
+  font-family: var(--font-mono);
+}
+.ow-link:hover { text-decoration: underline; }
+.ow-link:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 2px; }
+
+/* ── Icon-only buttons (drawer close, table sort headers, etc.) ───── */
+.ow-iconbtn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ── Client detail drawer ─────────────────────────────────────────── */
+.ow-drawer {
+  position: fixed; right: 0; top: 0; bottom: 0; width: 480px;
+  background: var(--bg-2); border-left: 1px solid var(--line);
+  box-shadow: -16px 0 32px -16px rgba(0,0,0,.25);
+  display: flex; flex-direction: column; overflow: auto;
+  z-index: 30;
+  animation: ow-drawer-in .22s ease-out;
+}
+
+/* ── Bridge-lost banner ───────────────────────────────────────────── */
+.ow-bridge-banner {
+  background: color-mix(in srgb, var(--brand-bad) 16%, transparent);
+  color: var(--brand-bad);
+  font-size: 12px; font-weight: 500;
+  padding: 8px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-bad) 30%, transparent);
+}

@@ -198,6 +198,38 @@ class Api:
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
             return {"ip": None, "error": str(exc)}
 
+    def get_app_info(self) -> dict[str, Any]:
+        import platform as _platform
+        import sys as _sys
+        from outwarp_server import __version__
+        return {
+            "version": __version__,
+            "python": _sys.version.split()[0],
+            "platform": _platform.platform(),
+            "repo_url": "https://github.com/fcrespo07/OutWarp",
+            "license": "MIT",
+            "third_party": [
+                {"name": "wstunnel",  "license": "BSD-3-Clause",
+                 "url": "https://github.com/erebe/wstunnel"},
+                {"name": "WireGuard", "license": "GPL-2.0",
+                 "url": "https://www.wireguard.com/"},
+                {"name": "pywebview", "license": "BSD-3-Clause",
+                 "url": "https://pywebview.flowrl.com/"},
+                {"name": "rich",      "license": "MIT",
+                 "url": "https://github.com/Textualize/rich"},
+                {"name": "cryptography", "license": "Apache-2.0 / BSD-3-Clause",
+                 "url": "https://cryptography.io/"},
+            ],
+        }
+
+    def open_url(self, url: str) -> dict[str, Any]:
+        import webbrowser
+        try:
+            webbrowser.open(url, new=2)
+            return {"ok": True}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
     def run_diagnostics(self) -> dict[str, Any]:
         """Run the full diagnostics battery and return a JSON-serialisable report.
 
@@ -375,6 +407,51 @@ class Api:
             return {"ok": False, "error": f"could not write: {exc}"}
         return {"ok": True, "path": path}
 
+    def get_client(self, name: str) -> dict[str, Any]:
+        """Extended client info: list_clients() row + public key + allowed IPs."""
+        if self._manager is None:
+            return {"ok": False, "error": "server not configured"}
+        rows = self.list_clients()
+        row = next((r for r in rows if r["name"] == name), None)
+        if row is None:
+            return {"ok": False, "error": "client not found"}
+        entry = next((c for c in self._manager.config.clients if c.name == name), None)
+        allowed = [f"{entry.address.split('/')[0]}/32"] if entry else []
+        return {"ok": True, **row, "allowed_ips": allowed}
+
+    def regenerate_owcfg(self, name: str) -> dict[str, Any]:
+        """Rewrite a client's .owcfg.
+
+        The server doesn't keep the client's private key, so a true "rebuild"
+        is cryptographically impossible — this rotates keys under the hood
+        and returns the new file. The UI must warn the user that the old
+        .owcfg is invalidated; the confirm prompt is identical to rotate.
+        """
+        return self.rotate_client_keys(name)
+
+    def rotate_client_keys(self, name: str) -> dict[str, Any]:
+        if self._manager is None:
+            return {"ok": False, "error": "server not configured"}
+        try:
+            owcfg_path, new_public = self._manager.rotate_client_keys(name)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            log.exception("rotate_client_keys failed")
+            return {"ok": False, "error": str(exc)}
+        try:
+            owcfg_bytes = owcfg_path.read_bytes()
+        except OSError as exc:
+            return {"ok": False, "error": f"could not read generated owcfg: {exc}"}
+        self._emit("clients", self.list_clients())
+        return {
+            "ok": True,
+            "name": name,
+            "path": str(owcfg_path),
+            "public_key": new_public,
+            "owcfg_base64": base64.b64encode(owcfg_bytes).decode("ascii"),
+        }
+
     def revoke_client(self, name: str) -> dict[str, Any]:
         if self._manager is None:
             return {"ok": False, "error": "server not configured"}
@@ -386,6 +463,9 @@ class Api:
         return {"ok": True}
 
     # ── setup wizard ─────────────────────────────────────────────────────────
+
+    def _emit_setup(self, phase: str, status: str, message: str = "") -> None:
+        self._emit("setup_progress", {"phase": phase, "status": status, "message": message})
 
     def run_setup(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self._manager is not None:
@@ -410,17 +490,36 @@ class Api:
             or f"{subnet.split('/')[0].rsplit('.', 1)[0]}.1/24"
         ).strip()
 
+        # Phase: deps
+        self._emit_setup("deps", "running")
+        wstunnel_bin = shutil.which("wstunnel")
+        wg_bin = shutil.which("wg")
+        if not wstunnel_bin or not wg_bin:
+            missing = ", ".join(n for n, v in (("wstunnel", wstunnel_bin), ("wg", wg_bin)) if not v)
+            self._emit_setup("deps", "fail", missing)
+            err = f"missing dependencies: {missing}"
+            self._emit("setup_done", {"ok": False, "error": err})
+            return {"ok": False, "error": err}
+        self._emit_setup("deps", "ok", f"wstunnel={wstunnel_bin}, wg={wg_bin}")
+
+        # Phase: cert
+        self._emit_setup("cert", "running")
         cfg_dir = default_config_dir()
         try:
             import secrets
             upgrade_path = secrets.token_urlsafe(32)
             cert_path, key_path, fingerprint = generate_tls_cert(endpoint, cfg_dir / "tls")
-            wg_bin = shutil.which("wg")
             wg_priv, wg_pub = generate_wg_keypair(Path(wg_bin) if wg_bin else None)
         except Exception as exc:
             log.exception("setup: crypto generation failed")
+            self._emit_setup("cert", "fail", str(exc))
+            self._emit("setup_done", {"ok": False, "error": f"crypto: {exc}"})
             return {"ok": False, "error": f"crypto: {exc}"}
+        self._emit_setup("cert", "ok", fingerprint)
 
+        # Phase: systemd (write config to disk + replace manager — the actual
+        # service install happens later when the user clicks Start)
+        self._emit_setup("systemd", "running")
         new_config = ServerConfig(
             schema_version=1,
             endpoint=endpoint,
@@ -439,6 +538,8 @@ class Api:
         try:
             new_config.save(default_config_path())
         except OSError as exc:
+            self._emit_setup("systemd", "fail", str(exc))
+            self._emit("setup_done", {"ok": False, "error": f"could not save config: {exc}"})
             return {"ok": False, "error": f"could not save config: {exc}"}
 
         new_manager = ServerManager(new_config)
@@ -449,14 +550,200 @@ class Api:
                 self._on_manager_replaced(new_manager)
             except Exception:
                 log.exception("on_manager_replaced raised")
+        self._emit_setup("systemd", "ok", str(default_config_path()))
 
+        # Phase: probe — runs in background so the wizard can complete quickly.
+        # The external check can take up to 10s; gating setup on it would mean
+        # the user sees a spinner that long, and an unreachable port shouldn't
+        # block configuration (the service is still installed correctly).
+        self._emit_setup("probe", "running")
+        threading.Thread(
+            target=self._run_setup_probe, daemon=True, name="outwarp-setup-probe",
+        ).start()
+
+        self._emit_setup("done", "ok")
+        self._emit("setup_done", {"ok": True, "fingerprint": fingerprint})
         return {"ok": True, "fingerprint": fingerprint}
+
+    def _run_setup_probe(self) -> None:
+        try:
+            probe = self.probe_external_port()
+            if probe.get("reachable"):
+                self._emit_setup("probe", "ok", probe.get("detail", ""))
+            else:
+                self._emit_setup("probe", "warn", probe.get("detail", "unreachable"))
+        except Exception as exc:
+            self._emit_setup("probe", "warn", str(exc))
+
+    def update_server_config(self, patch: dict[str, Any]) -> dict[str, Any]:
+        """Update editable server fields (port, wg_listen_port, endpoint) and restart.
+
+        Any field omitted from the patch stays unchanged. After persisting the
+        new config the service is restarted so wstunnel re-binds to the new
+        port / endpoint. Existing client .owcfg files keep working only if
+        their pinned endpoint remains reachable.
+        """
+        if self._manager is None:
+            return {"ok": False, "error": "server not configured"}
+        cfg = self._manager.config
+
+        new_port = cfg.port
+        new_wg_port = cfg.wg_listen_port
+        new_endpoint = cfg.endpoint
+
+        if "port" in patch:
+            try:
+                new_port = int(patch["port"])
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "invalid port"}
+            if not (1 <= new_port <= 65535):
+                return {"ok": False, "error": "port out of range"}
+        if "wg_listen_port" in patch:
+            try:
+                new_wg_port = int(patch["wg_listen_port"])
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "invalid wg_listen_port"}
+            if not (1 <= new_wg_port <= 65535):
+                return {"ok": False, "error": "wg_listen_port out of range"}
+        if "endpoint" in patch:
+            ep = str(patch["endpoint"] or "").strip()
+            if not ep:
+                return {"ok": False, "error": "endpoint required"}
+            new_endpoint = ep
+
+        from dataclasses import replace as _replace
+        new_cfg = _replace(cfg, port=new_port, wg_listen_port=new_wg_port, endpoint=new_endpoint)
+        try:
+            from outwarp_server.config import default_config_path as _path
+            new_cfg.save(_path())
+        except OSError as exc:
+            return {"ok": False, "error": f"could not save config: {exc}"}
+
+        # Swap the manager's config and bounce the service so the new values
+        # take effect. We don't re-create the manager — same lifetime, same listeners.
+        self._manager._config = new_cfg  # noqa: SLF001 (intentional poke)
+
+        def _bounce() -> None:
+            try:
+                self._manager.restart()
+            except Exception:
+                log.exception("update_server_config: restart failed")
+
+        threading.Thread(target=_bounce, daemon=True, name="api-cfg-update").start()
+        self._emit("status", {
+            "status": _STATE_TO_JS.get(self._manager.state, "stopped"),
+            "config_present": True,
+        })
+        return {"ok": True}
+
+    def rotate_tls_cert(self) -> dict[str, Any]:
+        """Regenerate the self-signed TLS certificate and restart wstunnel.
+
+        Every .owcfg already distributed pins the OLD fingerprint and will
+        stop validating until clients re-import the new one. UI must warn.
+        """
+        if self._manager is None:
+            return {"ok": False, "error": "server not configured"}
+        cfg = self._manager.config
+        try:
+            cert_dir = Path(cfg.cert_path).parent
+            cert_path, key_path, fingerprint = generate_tls_cert(cfg.endpoint, cert_dir)
+        except Exception as exc:
+            log.exception("rotate_tls_cert: cert generation failed")
+            return {"ok": False, "error": str(exc)}
+
+        from dataclasses import replace as _replace
+        new_cfg = _replace(
+            cfg,
+            cert_path=str(cert_path),
+            key_path=str(key_path),
+            cert_fingerprint_sha256=fingerprint,
+        )
+        try:
+            from outwarp_server.config import default_config_path as _path
+            new_cfg.save(_path())
+        except OSError as exc:
+            return {"ok": False, "error": f"could not save config: {exc}"}
+
+        self._manager._config = new_cfg  # noqa: SLF001
+
+        def _bounce() -> None:
+            try:
+                self._manager.restart()
+            except Exception:
+                log.exception("rotate_tls_cert: restart failed")
+        threading.Thread(target=_bounce, daemon=True, name="api-cert-rotate").start()
+        self._emit("status", {
+            "status": _STATE_TO_JS.get(self._manager.state, "stopped"),
+            "config_present": True,
+            "cert_fingerprint_sha256": fingerprint,
+        })
+        return {"ok": True, "fingerprint": fingerprint}
+
+    def probe_external_port(self) -> dict[str, Any]:
+        """Probe whether the configured WSS port is reachable from the public internet.
+
+        Uses ifconfig.co's /port/<n> endpoint, which initiates a TCP connect back
+        to the source IP from a third-party host. Returns reachable=False with
+        detail on any failure — a transient false negative shouldn't be alarming.
+        """
+        if self._manager is None:
+            return {"ok": False, "reachable": False, "detail": "server not configured"}
+        cfg = self._manager.config
+        port = cfg.port
+        host = cfg.endpoint
+        try:
+            req = urllib.request.Request(
+                f"https://ifconfig.co/port/{port}",
+                headers={"Accept": "application/json", "User-Agent": "outwarp-server"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as r:
+                body = json.loads(r.read().decode("utf-8", "replace"))
+            reachable = bool(body.get("reachable"))
+            return {
+                "ok": True,
+                "reachable": reachable,
+                "detail": f"{host}:{port} → {'reachable' if reachable else 'closed/blocked'}",
+            }
+        except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError) as exc:
+            return {"ok": False, "reachable": False, "detail": str(exc)}
 
     # ── logs ─────────────────────────────────────────────────────────────────
 
     def get_logs(self, since: int = 0) -> list[dict[str, Any]]:
         with self._lock:
             return [e for e in self._logs if e["seq"] > since]
+
+    def clear_logs(self) -> dict[str, Any]:
+        with self._lock:
+            self._logs.clear()
+        return {"ok": True}
+
+    def export_logs(self) -> dict[str, Any]:
+        if self._window is None:
+            return {"ok": False, "error": "no window"}
+        try:
+            import webview
+            chosen = self._window.create_file_dialog(
+                webview.SAVE_DIALOG, save_filename="outwarp-server-logs.txt"
+            )
+        except Exception as exc:
+            log.exception("export_logs: file dialog failed")
+            return {"ok": False, "error": str(exc)}
+        if not chosen:
+            return {"ok": False, "error": "cancelled"}
+        path = chosen if isinstance(chosen, str) else chosen[0]
+        try:
+            with self._lock:
+                lines = [
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(e['ts']))} "
+                    f"[{e['level'].upper()}] {e['msg']}"
+                    for e in self._logs
+                ]
+            Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "path": path}
 
     def _record_log(self, level: str, msg: str) -> None:
         with self._lock:

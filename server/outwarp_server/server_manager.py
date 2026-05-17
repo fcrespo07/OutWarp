@@ -155,6 +155,50 @@ class ServerManager:
         log.info("Client '%s' added — .owcfg at %s", name, warpcfg_path)
         return warpcfg_path
 
+    def rotate_client_keys(self, name: str) -> tuple[Path, str]:
+        """Generate a new WG keypair for an existing client and rewrite its .owcfg.
+
+        The old public key is removed from the peer list; the new one is added.
+        Returns (path_to_new_owcfg, new_public_key). The previous .owcfg becomes
+        invalid as soon as this returns — the new file must reach the client.
+        """
+        config = self._config
+        target = next((c for c in config.clients if c.name == name), None)
+        if target is None:
+            raise ValueError(f"Client '{name}' not found")
+
+        wg_bin = shutil.which("wg")
+        new_private, new_public = generate_wg_keypair(Path(wg_bin) if wg_bin else None)
+
+        try:
+            remove_peer_live(target.public_key)
+        except Exception as exc:
+            log.warning("Could not hot-remove old peer: %s", exc)
+        try:
+            add_peer_live(new_public, target.address)
+        except Exception as exc:
+            log.warning("Could not hot-add rotated peer: %s", exc)
+
+        updated_clients = [
+            ClientEntry(name=c.name, public_key=new_public, address=c.address)
+            if c.name == name else c
+            for c in config.clients
+        ]
+        updated = replace(config, clients=updated_clients)
+        updated.save(default_config_path())
+        self._config = updated
+
+        try:
+            get_server_platform().install_wg_config(_get_wg_conf(updated))
+        except PlatformError as exc:
+            log.warning("Could not persist WG config: %s", exc)
+
+        warpcfg = build_owcfg(updated, name, new_private, target.address)
+        warpcfg_path = Path.cwd() / f"{name}.owcfg"
+        write_owcfg(warpcfg, warpcfg_path)
+        log.info("Client '%s' keys rotated — new .owcfg at %s", name, warpcfg_path)
+        return warpcfg_path, new_public
+
     def revoke_client(self, name: str) -> None:
         config = self._config
 

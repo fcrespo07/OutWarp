@@ -2,17 +2,24 @@
 const SRV_STR = {
   es: {
     appName: "OutWarp Server",
+
+    // ── Nav
     nav_dashboard: "Panel",
     nav_clients: "Clientes",
     nav_service: "Servicio",
     nav_logs: "Registro",
     nav_settings: "Ajustes",
+    nav_about: "Acerca de",
 
+    // ── Service status
     serverStatus: "Estado del servicio",
     running: "En ejecución",
     stopped: "Detenido",
+    starting: "Iniciando…",
     degraded: "Degradado",
+    error: "Error",
 
+    // ── Dashboard metrics
     metric_clientsOnline: "Clientes conectados",
     metric_clientsTotal: "Clientes totales",
     metric_traffic: "Tráfico total",
@@ -22,12 +29,26 @@ const SRV_STR = {
     metric_peakClients: "Pico de clientes",
     metric_peakTraffic: "Pico de tráfico",
 
+    // ── Dashboard labels
+    dash_subnet: "Subred WG",
+    dash_wgPort: "Puerto WG",
+    dash_techDetails: "Detalles del servidor",
+    dash_endpoint: "Endpoint",
+    dash_wgAddr: "WG addr",
+    dash_tlsFingerprint: "Huella TLS",
+
+    // ── Generic actions
     addClient: "Añadir cliente",
     revoke: "Revocar",
     download: "Descargar .owcfg",
     showQR: "Ver QR",
     copyConfig: "Copiar config",
+    cancel: "Cancelar",
+    close: "Cerrar",
+    loading: "Cargando…",
+    retry: "Reintentar",
 
+    // ── Clients table
     clientName: "Nombre",
     lastHandshake: "Último handshake",
     transferred: "Transferido",
@@ -35,24 +56,77 @@ const SRV_STR = {
     online: "En línea",
     offline: "Desconectado",
     never: "Nunca",
+    clients_colStatus: "Estado",
+    clients_colEndpoint: "Endpoint",
+    clients_empty: "Aún no hay clientes. Usa {add} para generar el primero.",
+    clients_generating: "Generando…",
+    clients_saveFailed: "no se pudo guardar",
+    clients_savedTo: "✓ guardado en {path}",
 
-    setup_title: "Generar nuevo cliente",
-    setup_sub: "Crea un perfil .owcfg para un nuevo dispositivo. El servidor genera claves WireGuard y firma una huella TLS pinada.",
-    setup_name: "Nombre del cliente",
-    setup_namePh: "ej. ana-laptop",
-    setup_allowedIps: "Allowed IPs",
-    setup_dns: "DNS",
-    setup_generate: "Generar perfil",
+    // ── Add-client form (within ClientsScreen)
+    addClient_title: "Generar nuevo cliente",
+    addClient_sub: "Crea un perfil .owcfg para un nuevo dispositivo. El servidor genera claves WireGuard y firma una huella TLS pinada.",
+    addClient_name: "Nombre del cliente",
+    addClient_namePh: "ej. ana-laptop",
+    addClient_generate: "Generar perfil",
 
+    // ── Client detail drawer
+    clientDetail_pubkey: "Clave pública",
+    clientDetail_allowed: "Allowed IPs",
+    clientDetail_regenOwcfg: "Regenerar .owcfg",
+    clientDetail_rotate: "Rotar claves",
+    clientDetail_rotateTitle: "Rotar las claves del cliente",
+    clientDetail_rotateConfirm: "Generar nuevas claves invalida el .owcfg actual del cliente. Tendrás que reenviarle el nuevo. ¿Continuar?",
+
+    // ── Setup wizard
+    setup_title: "Configuración inicial",
+    setup_sub: "Levanta el servicio wstunnel + WireGuard en este servidor.",
+    setup_missingDeps: "Faltan dependencias. Instálalas antes de continuar.",
+    setup_depNotFound: "no encontrado en $PATH",
+    setup_lblEndpoint: "Endpoint (IP o dominio)",
+    setup_lblPortWSS: "Puerto WSS",
+    setup_lblPortWG: "Puerto WireGuard (loopback)",
+    setup_lblSubnet: "Subred WG",
+    setup_lblSrvAddr: "Dirección del servidor WG",
+    setup_installing: "Instalando…",
+    setup_install: "Instalar",
+    setup_detectIp: "Detectar IP pública",
+    setup_errPort: "Puerto inválido (1-65535)",
+    setup_errSubnet: "Formato CIDR inválido (ej. 10.0.0.0/24)",
+    setup_errAddr: "Dirección inválida",
+    setup_errEndpoint: "Endpoint requerido",
+    setup_probeRetry: "Reintentar probe",
+    setup_probeSkip: "Continuar sin probar",
+    setup_phaseDeps: "Comprobando dependencias",
+    setup_phaseCert: "Generando certificado TLS",
+    setup_phaseService: "Instalando servicio",
+    setup_phaseProbe: "Probando conectividad externa",
+    setup_phaseDone: "Listo",
+
+    // ── Service screen
     service_wstunnel: "wstunnel.service",
     service_wg: "wg-quick@wg0.service",
     service_restart: "Reiniciar",
+    service_start: "Iniciar",
+    service_stop: "Parar",
+    service_starting: "Iniciando…",
+    service_error: "Error",
     service_regen: "Regenerar config",
     service_uninstall: "Desinstalar",
 
+    // ── Logs screen
     logs_title: "Registro del servidor",
     logs_sub: "journalctl -u wstunnel -u wg-quick@wg0 · live",
+    logs_filter: "Filtrar…",
+    logs_clear: "Limpiar",
+    logs_empty: "— sin entradas —",
+    logs_level: "Nivel",
+    logs_levelAll: "Todos",
+    logs_export: "Exportar",
+    logs_exported: "✓ Registro exportado",
+    logs_jumpBottom: "Saltar al final",
 
+    // ── Settings basic
     set_port: "Puerto",
     set_iface: "Interfaz",
     set_subnet: "Subred WireGuard",
@@ -61,9 +135,35 @@ const SRV_STR = {
     set_regen: "Regenerar",
     set_domain: "Dominio (opcional)",
     set_domainSub: "Sólo si tienes uno apuntando al servidor; no es necesario para OutWarp",
+    set_language: "Idioma",
+    set_theme: "Tema",
+    set_themeAuto: "Auto",
+    set_themeLight: "Claro",
+    set_themeDark: "Oscuro",
+    set_advanced: "Modo avanzado",
+    set_advancedSub: "Cambia la estética y muestra detalles técnicos",
 
+    // ── Server config editor (Settings → ServerConfigEditor)
+    srvCfg_title: "Configuración del servidor",
+    srvCfg_sub: "Cambios que requieren reiniciar el servicio.",
+    srvCfg_apply: "Aplicar cambios",
+    srvCfg_applyTitle: "Aplicar cambios",
+    srvCfg_applyConfirm: "El servicio se reiniciará para aplicar los cambios. Las conexiones activas se cortarán durante unos segundos. ¿Continuar?",
+    srvCfg_applied: "✓ Cambios aplicados",
+    srvCfg_rotateGroup: "Rotar certificado TLS",
+    srvCfg_rotateGroupSub: "Genera un certificado auto-firmado nuevo. Todos los .owcfg emitidos dejarán de validar — tendrás que regenerarlos.",
+    srvCfg_rotate: "Rotar certificado",
+    srvCfg_rotateTitle: "Rotar certificado TLS",
+    srvCfg_rotateConfirm: "Esto invalidará todos los .owcfg que hayas distribuido. Tendrás que regenerar y reenviar uno nuevo por cliente. ¿Continuar?",
+    srvCfg_rotated: "✓ Certificado rotado · fp={fp}",
+    srvCfg_probePort: "Probar puerto desde fuera",
+    srvCfg_probeOk: "✓ Puerto alcanzable desde internet",
+    srvCfg_probeFail: "✗ Puerto no alcanzable: {detail}",
+
+    // ── Confirm + revoke
     revokeConfirm: "¿Revocar a {name}? Su .owcfg dejará de funcionar inmediatamente.",
 
+    // ── Doctor
     doctor_title: "Doctor",
     doctor_sub: "Comprueba que todo lo necesario para que el túnel funcione está en orden.",
     doctor_run: "Ejecutar comprobaciones",
@@ -76,19 +176,37 @@ const SRV_STR = {
     doctor_remediation: "Acciones sugeridas",
     doctor_copy: "Copiar",
     doctor_copied: "Copiado",
+
+    // ── About
+    about_sub: "Versión, licencias y créditos.",
+    about_blurb: "outwarp-server orquesta wstunnel y WireGuard como servicio del sistema. " +
+                 "Genera certificados auto-firmados y .owcfg por cliente — sin dominio ni CA.",
+    about_openRepo: "Abrir repositorio",
+    about_thirdParty: "Componentes de terceros",
+    about_openUrl: "Abrir →",
+    about_disclaimer: "WireGuard es marca registrada de Jason A. Donenfeld. " +
+                      "wstunnel se distribuye bajo BSD-3-Clause. " +
+                      "OutWarp se distribuye bajo licencia MIT.",
+
+    // ── Bridge banner
+    bridgeLost: "Conexión perdida con la app. Reinicia OutWarp Server.",
   },
   en: {
     appName: "OutWarp Server",
+
     nav_dashboard: "Dashboard",
     nav_clients: "Clients",
     nav_service: "Service",
     nav_logs: "Logs",
     nav_settings: "Settings",
+    nav_about: "About",
 
     serverStatus: "Service status",
     running: "Running",
     stopped: "Stopped",
+    starting: "Starting…",
     degraded: "Degraded",
+    error: "Error",
 
     metric_clientsOnline: "Clients online",
     metric_clientsTotal: "Total clients",
@@ -99,11 +217,22 @@ const SRV_STR = {
     metric_peakClients: "Peak clients",
     metric_peakTraffic: "Peak traffic",
 
+    dash_subnet: "WG subnet",
+    dash_wgPort: "WG port",
+    dash_techDetails: "Server details",
+    dash_endpoint: "Endpoint",
+    dash_wgAddr: "WG addr",
+    dash_tlsFingerprint: "TLS fingerprint",
+
     addClient: "Add client",
     revoke: "Revoke",
     download: "Download .owcfg",
     showQR: "Show QR",
     copyConfig: "Copy config",
+    cancel: "Cancel",
+    close: "Close",
+    loading: "Loading…",
+    retry: "Retry",
 
     clientName: "Name",
     lastHandshake: "Last handshake",
@@ -112,23 +241,70 @@ const SRV_STR = {
     online: "Online",
     offline: "Offline",
     never: "Never",
+    clients_colStatus: "Status",
+    clients_colEndpoint: "Endpoint",
+    clients_empty: "No clients yet. Use {add} to generate the first one.",
+    clients_generating: "Generating…",
+    clients_saveFailed: "could not save",
+    clients_savedTo: "✓ saved to {path}",
 
-    setup_title: "Generate new client",
-    setup_sub: "Create a .owcfg profile for a new device. The server generates WireGuard keys and a pinned TLS fingerprint.",
-    setup_name: "Client name",
-    setup_namePh: "e.g. ana-laptop",
-    setup_allowedIps: "Allowed IPs",
-    setup_dns: "DNS",
-    setup_generate: "Generate profile",
+    addClient_title: "Generate new client",
+    addClient_sub: "Create a .owcfg profile for a new device. The server generates WireGuard keys and a pinned TLS fingerprint.",
+    addClient_name: "Client name",
+    addClient_namePh: "e.g. ana-laptop",
+    addClient_generate: "Generate profile",
+
+    clientDetail_pubkey: "Public key",
+    clientDetail_allowed: "Allowed IPs",
+    clientDetail_regenOwcfg: "Regenerate .owcfg",
+    clientDetail_rotate: "Rotate keys",
+    clientDetail_rotateTitle: "Rotate client keys",
+    clientDetail_rotateConfirm: "Generating new keys invalidates the client's current .owcfg. You'll have to send the new one. Continue?",
+
+    setup_title: "Initial setup",
+    setup_sub: "Bring up the wstunnel + WireGuard service on this server.",
+    setup_missingDeps: "Missing dependencies. Install them before continuing.",
+    setup_depNotFound: "not found in $PATH",
+    setup_lblEndpoint: "Endpoint (IP or domain)",
+    setup_lblPortWSS: "WSS port",
+    setup_lblPortWG: "WireGuard port (loopback)",
+    setup_lblSubnet: "WG subnet",
+    setup_lblSrvAddr: "WG server address",
+    setup_installing: "Installing…",
+    setup_install: "Install",
+    setup_detectIp: "Detect public IP",
+    setup_errPort: "Invalid port (1-65535)",
+    setup_errSubnet: "Invalid CIDR (e.g. 10.0.0.0/24)",
+    setup_errAddr: "Invalid address",
+    setup_errEndpoint: "Endpoint required",
+    setup_probeRetry: "Retry probe",
+    setup_probeSkip: "Skip probe and continue",
+    setup_phaseDeps: "Checking dependencies",
+    setup_phaseCert: "Generating TLS certificate",
+    setup_phaseService: "Installing service",
+    setup_phaseProbe: "Probing external connectivity",
+    setup_phaseDone: "Done",
 
     service_wstunnel: "wstunnel.service",
     service_wg: "wg-quick@wg0.service",
     service_restart: "Restart",
+    service_start: "Start",
+    service_stop: "Stop",
+    service_starting: "Starting…",
+    service_error: "Error",
     service_regen: "Regenerate config",
     service_uninstall: "Uninstall",
 
     logs_title: "Server log",
     logs_sub: "journalctl -u wstunnel -u wg-quick@wg0 · live",
+    logs_filter: "Filter…",
+    logs_clear: "Clear",
+    logs_empty: "— no entries —",
+    logs_level: "Level",
+    logs_levelAll: "All",
+    logs_export: "Export",
+    logs_exported: "✓ Log exported",
+    logs_jumpBottom: "Jump to bottom",
 
     set_port: "Port",
     set_iface: "Interface",
@@ -138,6 +314,29 @@ const SRV_STR = {
     set_regen: "Regenerate",
     set_domain: "Domain (optional)",
     set_domainSub: "Only if you have one pointing to the server; not required for OutWarp",
+    set_language: "Language",
+    set_theme: "Theme",
+    set_themeAuto: "Auto",
+    set_themeLight: "Light",
+    set_themeDark: "Dark",
+    set_advanced: "Advanced mode",
+    set_advancedSub: "Changes the chassis and reveals technical details",
+
+    srvCfg_title: "Server configuration",
+    srvCfg_sub: "Changes that require restarting the service.",
+    srvCfg_apply: "Apply changes",
+    srvCfg_applyTitle: "Apply changes",
+    srvCfg_applyConfirm: "The service will restart to apply changes. Active connections will drop for a few seconds. Continue?",
+    srvCfg_applied: "✓ Changes applied",
+    srvCfg_rotateGroup: "Rotate TLS certificate",
+    srvCfg_rotateGroupSub: "Generates a new self-signed certificate. All issued .owcfg files will stop validating — you'll have to regenerate them.",
+    srvCfg_rotate: "Rotate certificate",
+    srvCfg_rotateTitle: "Rotate TLS certificate",
+    srvCfg_rotateConfirm: "This invalidates every .owcfg you've distributed. You'll need to regenerate and resend a new one to every client. Continue?",
+    srvCfg_rotated: "✓ Certificate rotated · fp={fp}",
+    srvCfg_probePort: "Probe port from outside",
+    srvCfg_probeOk: "✓ Port reachable from internet",
+    srvCfg_probeFail: "✗ Port unreachable: {detail}",
 
     revokeConfirm: "Revoke {name}? Their .owcfg will stop working immediately.",
 
@@ -153,9 +352,22 @@ const SRV_STR = {
     doctor_remediation: "Suggested actions",
     doctor_copy: "Copy",
     doctor_copied: "Copied",
+
+    about_sub: "Version, licenses and credits.",
+    about_blurb: "outwarp-server orchestrates wstunnel and WireGuard as a system service. " +
+                 "It generates self-signed certificates and per-client .owcfg files — no domain or CA required.",
+    about_openRepo: "Open repository",
+    about_thirdParty: "Third-party components",
+    about_openUrl: "Open →",
+    about_disclaimer: "WireGuard is a registered trademark of Jason A. Donenfeld. " +
+                      "wstunnel is distributed under BSD-3-Clause. " +
+                      "OutWarp is distributed under the MIT license.",
+
+    bridgeLost: "Lost connection to the app. Restart OutWarp Server.",
   },
 };
 
+// Sample data used by the static srv-a / srv-b previews (not by the runtime shell).
 const SAMPLE_CLIENTS = [
   { name: "ana-laptop",   ip: "10.66.0.2",  online: true,  hs: "00:00:42", rx: "19.7 MB", tx: "2.1 MB",  endpoint: "85.213.44.21:54122",  added: "2026-04-12" },
   { name: "luis-phone",   ip: "10.66.0.3",  online: true,  hs: "00:01:15", rx: "4.2 MB",  tx: "812 KB",  endpoint: "187.92.10.4:51899",  added: "2026-04-15" },
