@@ -444,6 +444,154 @@ def test_rotate_tls_cert_happy_path(tmp_path):
     assert r["fingerprint"] == "NEW:FP:FP"
 
 
+# ── Bug-1/Bug-2 fix: platform-aware bouncing ───────────────────────────────
+# The bounce runs in a background thread; these tests patch threading.Thread
+# to fire the target synchronously so we can assert about what got called.
+
+
+def _sync_thread():
+    """Replacement for threading.Thread that runs target synchronously on .start()."""
+    class _T:
+        def __init__(self, target=None, daemon=None, name=None, args=(), kwargs=None):
+            self._target = target
+            self._args = args
+            self._kwargs = kwargs or {}
+        def start(self):
+            if self._target is not None:
+                self._target(*self._args, **self._kwargs)
+    return _T
+
+
+def test_update_server_config_restarts_systemd_when_running(tmp_path):
+    mgr = _make_mgr()
+    mgr._config = mgr.config
+    mgr._wstunnel = None  # subprocess path inactive
+    api, _ = _make_api(mgr)
+
+    fake_platform = MagicMock()
+    fake_platform.is_wstunnel_running.return_value = True
+    fake_platform.is_wg_active.return_value = True
+
+    with (
+        patch("outwarp_server.api.default_config_path", return_value=tmp_path / "srv.json"),
+        patch.object(ServerConfig, "save"),
+        patch("outwarp_server.api.get_server_platform", return_value=fake_platform),
+        patch("outwarp_server.api.threading.Thread", _sync_thread()),
+        patch("outwarp_server.api.shutil.which", return_value="/usr/bin/wstunnel"),
+    ):
+        r = api.update_server_config({"port": 8443})
+
+    assert r["ok"] is True
+    # Port changed → install_wstunnel_service rewrites the unit AND restart fires.
+    fake_platform.install_wstunnel_service.assert_called_once()
+    fake_platform.restart_wstunnel_service.assert_called_once()
+    # Subprocess path is inactive — manager.restart() must NOT be called.
+    mgr.restart.assert_not_called()
+
+
+def test_update_server_config_bounces_subprocess_when_no_systemd(tmp_path):
+    mgr = _make_mgr()
+    mgr._config = mgr.config
+    # Pretend the subprocess flow is active (GUI dev mode).
+    mgr._wstunnel = MagicMock()
+    api, _ = _make_api(mgr)
+
+    fake_platform = MagicMock()
+    fake_platform.is_wstunnel_running.return_value = False
+    fake_platform.is_wg_active.return_value = False
+
+    with (
+        patch("outwarp_server.api.default_config_path", return_value=tmp_path / "srv.json"),
+        patch.object(ServerConfig, "save"),
+        patch("outwarp_server.api.get_server_platform", return_value=fake_platform),
+        patch("outwarp_server.api.threading.Thread", _sync_thread()),
+    ):
+        r = api.update_server_config({"endpoint": "9.9.9.9"})
+
+    assert r["ok"] is True
+    # No systemd-managed service → don't touch it.
+    fake_platform.install_wstunnel_service.assert_not_called()
+    fake_platform.restart_wstunnel_service.assert_not_called()
+    # Subprocess present → bounce it.
+    mgr.restart.assert_called_once()
+
+
+def test_update_server_config_restarts_wg_on_port_change(tmp_path):
+    mgr = _make_mgr()
+    mgr._config = mgr.config
+    mgr._wstunnel = None
+    api, _ = _make_api(mgr)
+
+    fake_platform = MagicMock()
+    fake_platform.is_wstunnel_running.return_value = False
+    fake_platform.is_wg_active.return_value = True
+
+    with (
+        patch("outwarp_server.api.default_config_path", return_value=tmp_path / "srv.json"),
+        patch.object(ServerConfig, "save"),
+        patch("outwarp_server.api.get_server_platform", return_value=fake_platform),
+        patch("outwarp_server.api.threading.Thread", _sync_thread()),
+    ):
+        r = api.update_server_config({"wg_listen_port": 51999})
+
+    assert r["ok"] is True
+    # wg_listen_port changed → must do a full restart_wg, not just install_wg_config
+    # (syncconf cannot change ListenPort on a live interface).
+    fake_platform.restart_wg.assert_called_once()
+    fake_platform.install_wg_config.assert_not_called()
+
+
+def test_update_server_config_only_syncconf_when_wg_port_unchanged(tmp_path):
+    mgr = _make_mgr()
+    mgr._config = mgr.config
+    mgr._wstunnel = None
+    api, _ = _make_api(mgr)
+
+    fake_platform = MagicMock()
+    fake_platform.is_wstunnel_running.return_value = False
+    fake_platform.is_wg_active.return_value = True
+
+    with (
+        patch("outwarp_server.api.default_config_path", return_value=tmp_path / "srv.json"),
+        patch.object(ServerConfig, "save"),
+        patch("outwarp_server.api.get_server_platform", return_value=fake_platform),
+        patch("outwarp_server.api.threading.Thread", _sync_thread()),
+    ):
+        r = api.update_server_config({"endpoint": "5.5.5.5"})
+
+    assert r["ok"] is True
+    # WG port unchanged → install_wg_config (which does syncconf), no full restart.
+    fake_platform.restart_wg.assert_not_called()
+    fake_platform.install_wg_config.assert_called_once()
+
+
+def test_rotate_tls_cert_restarts_systemd_when_running(tmp_path):
+    mgr = _make_mgr()
+    mgr._config = mgr.config
+    mgr._wstunnel = None
+    api, _ = _make_api(mgr)
+
+    fake_platform = MagicMock()
+    fake_platform.is_wstunnel_running.return_value = True
+
+    with (
+        patch("outwarp_server.api.generate_tls_cert",
+              return_value=(tmp_path / "c.pem", tmp_path / "k.pem", "ROTATED:FP")),
+        patch("outwarp_server.api.default_config_path", return_value=tmp_path / "srv.json"),
+        patch.object(ServerConfig, "save"),
+        patch("outwarp_server.api.get_server_platform", return_value=fake_platform),
+        patch("outwarp_server.api.threading.Thread", _sync_thread()),
+    ):
+        r = api.rotate_tls_cert()
+
+    assert r["ok"] is True
+    assert r["fingerprint"] == "ROTATED:FP"
+    # Cert files overwritten in place; no need to rewrite the systemd unit,
+    # but the running service MUST be restarted to re-read the cert.
+    fake_platform.install_wstunnel_service.assert_not_called()
+    fake_platform.restart_wstunnel_service.assert_called_once()
+
+
 # ── B.6 setup wizard + external port probe ────────────────────────────────
 
 def test_run_setup_emits_progress_and_done_events(tmp_path):

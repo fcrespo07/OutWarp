@@ -915,10 +915,24 @@ const LogsScreen = ({ T, api, logs, onClear }) => {
 
   const doExport = async () => {
     if (!api) return;
-    const r = await api.export_logs();
-    if (r && r.ok) {
-      setExportMsg(T.logs_exported);
-      setTimeout(() => setExportMsg(""), 3000);
+    setExportMsg("");
+    try {
+      const r = await api.export_logs();
+      if (r && r.ok) {
+        setExportMsg(T.logs_exported);
+        setTimeout(() => setExportMsg(""), 3000);
+      } else if (r && r.error && r.error !== "cancelled") {
+        // Show why the dialog didn't open / write didn't succeed — silent
+        // failure here is what made this look like "the button does nothing".
+        setExportMsg("✗ " + r.error);
+        setTimeout(() => setExportMsg(""), 6000);
+      }
+    } catch (exc) {
+      // export_logs not exposed by the bridge (stale build / missing method)
+      // surfaces as a JS-side exception. Make it visible instead of silent.
+      console.error("export_logs failed:", exc);
+      setExportMsg("✗ " + String(exc));
+      setTimeout(() => setExportMsg(""), 6000);
     }
   };
 
@@ -953,7 +967,12 @@ const LogsScreen = ({ T, api, logs, onClear }) => {
         </div>
       </header>
       {exportMsg && (
-        <div style={{ fontSize: 12, color: "var(--brand-2)", fontFamily: "var(--font-mono)" }}>{exportMsg}</div>
+        <div style={{
+          fontSize: 12,
+          color: exportMsg.startsWith("✗") ? "var(--brand-bad)" : "var(--brand-2)",
+          fontFamily: "var(--font-mono)",
+          wordBreak: "break-word",
+        }}>{exportMsg}</div>
       )}
       <div ref={ref} onScroll={onScroll} style={{
         background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 12,

@@ -37,6 +37,7 @@ from outwarp_server.config import (
 )
 from outwarp_server.crypto import generate_tls_cert, generate_wg_keypair
 from outwarp_server.logs import MemoryLogHandler
+from outwarp_server.platforms import get_server_platform
 from outwarp_server.server_manager import ServerManager, ServerState
 from outwarp_server.wireguard import get_live_peers
 
@@ -575,6 +576,47 @@ class Api:
         except Exception as exc:
             self._emit_setup("probe", "warn", str(exc))
 
+    def _bounce_wstunnel(self, port_changed: bool = False) -> None:
+        """Restart whichever wstunnel is actually serving traffic.
+
+        In headless deployments wstunnel runs under systemd
+        (LinuxServerPlatform.install_wstunnel_service); in GUI dev mode it's a
+        subprocess managed by ServerManager. We restart whichever applies so
+        the user's change takes effect regardless of how the server was set up.
+
+        port_changed=True triggers a full systemd unit rewrite (the ExecStart
+        line bakes in the port, so a plain `systemctl restart` would re-bind
+        to the old port).
+        """
+        platform = get_server_platform()
+        cfg = self._manager.config if self._manager else None
+
+        try:
+            if platform.is_wstunnel_running():
+                if port_changed:
+                    wstunnel_bin = shutil.which("wstunnel")
+                    if wstunnel_bin and cfg is not None:
+                        # Rewrite the unit so ExecStart points at the new port,
+                        # then explicitly restart — `enable --now` does NOT
+                        # apply a new ExecStart to an already-running service.
+                        platform.install_wstunnel_service(
+                            port=cfg.port,
+                            cert_path=Path(cfg.cert_path),
+                            key_path=Path(cfg.key_path),
+                            upgrade_path=cfg.http_upgrade_path_prefix,
+                            wg_listen_port=cfg.wg_listen_port,
+                            wstunnel_bin=Path(wstunnel_bin),
+                        )
+                platform.restart_wstunnel_service()
+        except Exception:
+            log.exception("_bounce_wstunnel: systemd path failed")
+
+        try:
+            if self._manager is not None and self._manager._wstunnel is not None:  # noqa: SLF001
+                self._manager.restart()
+        except Exception:
+            log.exception("_bounce_wstunnel: subprocess path failed")
+
     def update_server_config(self, patch: dict[str, Any]) -> dict[str, Any]:
         """Update editable server fields (port, wg_listen_port, endpoint) and restart.
 
@@ -619,15 +661,37 @@ class Api:
         except OSError as exc:
             return {"ok": False, "error": f"could not save config: {exc}"}
 
-        # Swap the manager's config and bounce the service so the new values
-        # take effect. We don't re-create the manager — same lifetime, same listeners.
+        wss_port_changed = new_cfg.port != cfg.port
+        wg_port_changed = new_cfg.wg_listen_port != cfg.wg_listen_port
+
+        if wss_port_changed:
+            log.warning(
+                "WSS port changed %d → %d. Remember to open the new port in "
+                "ufw / iptables / cloud firewall — this code does not touch "
+                "the firewall.",
+                cfg.port, new_cfg.port,
+            )
+
         self._manager._config = new_cfg  # noqa: SLF001 (intentional poke)
 
         def _bounce() -> None:
+            # 1) Restart wstunnel (systemd unit rewrite if WSS port changed,
+            #    plain restart otherwise; also bounce the GUI subprocess).
+            self._bounce_wstunnel(port_changed=wss_port_changed)
+
+            # 2) WG: install_wg_config does syncconf for peer changes, but
+            #    syncconf cannot change ListenPort or replay PostUp/PostDown.
+            #    Force a full down/up when the WG port (or subnet — handled
+            #    by future patches) really has to change.
+            platform = get_server_platform()
             try:
-                self._manager.restart()
+                if wg_port_changed and platform.is_wg_active():
+                    platform.restart_wg()
+                else:
+                    from outwarp_server.server_manager import _get_wg_conf
+                    platform.install_wg_config(_get_wg_conf(new_cfg))
             except Exception:
-                log.exception("update_server_config: restart failed")
+                log.exception("update_server_config: wg bounce failed")
 
         threading.Thread(target=_bounce, daemon=True, name="api-cfg-update").start()
         self._emit("status", {
@@ -668,10 +732,10 @@ class Api:
         self._manager._config = new_cfg  # noqa: SLF001
 
         def _bounce() -> None:
-            try:
-                self._manager.restart()
-            except Exception:
-                log.exception("rotate_tls_cert: restart failed")
+            # Cert files were overwritten in place, so the systemd ExecStart
+            # path still points at the right files — a plain restart is enough.
+            self._bounce_wstunnel(port_changed=False)
+
         threading.Thread(target=_bounce, daemon=True, name="api-cert-rotate").start()
         self._emit("status", {
             "status": _STATE_TO_JS.get(self._manager.state, "stopped"),
@@ -720,19 +784,38 @@ class Api:
         return {"ok": True}
 
     def export_logs(self) -> dict[str, Any]:
+        """Write the current in-memory log buffer to a file the user picks
+        via the native save dialog.
+
+        pywebview's create_file_dialog on Windows can refuse to open the
+        dialog when called without a starting directory, so we mirror
+        save_owcfg and pass one explicitly.
+        """
         if self._window is None:
+            log.warning("export_logs called before window was bound")
             return {"ok": False, "error": "no window"}
+
+        downloads = Path.home() / "Downloads"
+        if not downloads.is_dir():
+            downloads = Path.home()
+
         try:
             import webview
             chosen = self._window.create_file_dialog(
-                webview.SAVE_DIALOG, save_filename="outwarp-server-logs.txt"
+                webview.SAVE_DIALOG,
+                directory=str(downloads),
+                save_filename="outwarp-server-logs.txt",
             )
         except Exception as exc:
             log.exception("export_logs: file dialog failed")
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": f"dialog failed: {exc}"}
+
         if not chosen:
             return {"ok": False, "error": "cancelled"}
-        path = chosen if isinstance(chosen, str) else chosen[0]
+        path = chosen if isinstance(chosen, str) else (chosen[0] if chosen else None)
+        if not path:
+            return {"ok": False, "error": "cancelled"}
+
         try:
             with self._lock:
                 lines = [
@@ -742,7 +825,8 @@ class Api:
                 ]
             Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
         except OSError as exc:
-            return {"ok": False, "error": str(exc)}
+            log.exception("export_logs: write failed")
+            return {"ok": False, "error": f"could not write: {exc}"}
         return {"ok": True, "path": path}
 
     def _record_log(self, level: str, msg: str) -> None:
