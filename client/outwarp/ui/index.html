@@ -6,8 +6,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSI+PHBhdGggZD0iTTggMTQgTDE4IDI0IEw4IDM0IiBzdHJva2U9IiMwYTBkMTIiIHN0cm9rZS13aWR0aD0iNSIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InNxdWFyZSIgc3Ryb2tlLWxpbmVqb2luPSJtaXRlciIgb3BhY2l0eT0iMC4yNSIvPjxwYXRoIGQ9Ik0xOCAxNCBMMjggMjQgTDE4IDM0IiBzdHJva2U9IiMwYTBkMTIiIHN0cm9rZS13aWR0aD0iNSIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InNxdWFyZSIgc3Ryb2tlLWxpbmVqb2luPSJtaXRlciIgb3BhY2l0eT0iMC41NSIvPjxwYXRoIGQ9Ik0yOCAxNCBMMzggMjQgTDI4IDM0IiBzdHJva2U9IiMyNTYzZmYiIHN0cm9rZS13aWR0aD0iNSIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InNxdWFyZSIgc3Ryb2tlLWxpbmVqb2luPSJtaXRlciIvPjwvc3ZnPg==" type="image/svg+xml"/>
   <!-- No CDN: OutWarp is a VPN client and must render even with no working
-       network. React/ReactDOM/Babel are vendored under ui/vendor/, and the
-       font stack falls back to the system UI font (Segoe UI / -apple-system). -->
+       network. React/ReactDOM are vendored under ui/vendor/, the JSX is
+       pre-compiled to ui/bundle.js by scripts/build_ui.py, and the font
+       stack falls back to the system UI font (Segoe UI / -apple-system). -->
   <link rel="stylesheet" href="styles.css"/>
   <style>
     html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-sans); overflow: hidden; }
@@ -15,21 +16,9 @@
   </style>
   <script src="vendor/react.production.min.js"></script>
   <script src="vendor/react-dom.production.min.js"></script>
-  <script src="vendor/babel.min.js"></script>
 </head>
 <body>
   <div id="root"></div>
-
-  <script type="text/babel">
-    // Pass-through replacement for the design canvas' WindowsFrame.
-    // The native pywebview window already provides chrome.
-    window.WindowsFrame = ({ children }) => <div style={{ height: "100%", width: "100%" }}>{children}</div>;
-  </script>
-
-  <script type="text/babel" src="brand.jsx"></script>
-  <script type="text/babel" src="shared.jsx"></script>
-  <script type="text/babel" src="var-a.jsx"></script>
-  <script type="text/babel" src="var-b.jsx"></script>
-  <script type="text/babel" src="app.jsx"></script>
+  <script src="bundle.js"></script>
 </body>
 </html>
