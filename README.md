@@ -18,7 +18,11 @@ No domain name required. The server generates a self-signed TLS certificate and 
 
 That's it. Shortcuts land on your desktop and in the Start menu; WireGuard for Windows and `wstunnel.exe` ship inside the installer.
 
-> Until the `.exe` is code-signed, Windows SmartScreen shows a blue warning on first launch. Click **More info → Run anyway**.
+> **First-launch warnings** — until the installer is code-signed, Windows shows two prompts:
+> 1. **SmartScreen**: a blue "Windows protected your PC" panel. Click *More info → Run anyway*.
+> 2. **UAC**: an "Unknown publisher" dialog (yellow header instead of blue). Click *Yes*.
+>
+> These go away once we ship a signed build. They do not indicate malware — they're Windows' default behaviour for any executable without a trusted code-signing certificate.
 
 For automated / unattended deploys (Intune, Ansible, …) see [`scripts/install-from-release.ps1`](scripts/install-from-release.ps1).
 
