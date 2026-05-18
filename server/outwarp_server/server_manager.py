@@ -27,6 +27,19 @@ _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 _MONITOR_INTERVAL = 5.0
 
 
+def _find_wstunnel() -> str | None:
+    """Locate wstunnel.exe, preferring the binary shipped alongside a frozen
+    PyInstaller build (Inno Setup drops it next to the .exe) before falling
+    back to the system PATH."""
+    binary_name = "wstunnel.exe" if sys.platform == "win32" else "wstunnel"
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        for candidate in (exe_dir / binary_name, exe_dir.parent / binary_name):
+            if candidate.exists():
+                return str(candidate)
+    return shutil.which("wstunnel")
+
+
 class ServerState(Enum):
     STOPPED = "stopped"
     STARTING = "starting"
@@ -271,7 +284,7 @@ class ServerManager:
                 self._set_state(ServerState.ERROR)
                 return
 
-            wstunnel_bin = shutil.which("wstunnel")
+            wstunnel_bin = _find_wstunnel()
             if wstunnel_bin is None:
                 log.error("wstunnel binary not found in PATH")
                 self._set_state(ServerState.ERROR)

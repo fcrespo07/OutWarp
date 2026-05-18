@@ -59,6 +59,15 @@ def find_wstunnel() -> Path:
         return p
 
     binary_name = "wstunnel.exe" if sys.platform == "win32" else "wstunnel"
+
+    # PyInstaller frozen build: the Inno Setup installer drops wstunnel.exe
+    # next to outwarp.exe (or one level up in the shared install root).
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        for candidate in (exe_dir / binary_name, exe_dir.parent / binary_name):
+            if candidate.exists():
+                return candidate
+
     standard = Path(user_data_dir(_APP_NAME)) / "bin" / binary_name
     if standard.exists():
         return standard

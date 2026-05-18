@@ -45,6 +45,10 @@ outwarp-server-gui = "outwarp_server.server_app:main"
 [tool.hatch.build.targets.wheel]
 packages = ["outwarp_server"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"outwarp_server/resources" = "outwarp_server/resources"
+"outwarp_server/ui" = "outwarp_server/ui"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

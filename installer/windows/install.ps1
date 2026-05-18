@@ -1,56 +1,31 @@
-# OutWarp - Windows installer / bootstrapper
+# OutWarp - Windows installer bootstrapper
 #
-# Two ways to run:
-#   1. Remote (via irm | iex):
-#      irm https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/windows/install.ps1 | iex
-#   2. Local (from a clone):
-#      powershell -ExecutionPolicy Bypass -File installer\windows\install.ps1
+# Downloads the latest OutWarpSetup-*.exe from GitHub Releases and runs it
+# with elevation. Replaces the previous from-source installer.
 #
-# Environment overrides:
-#   $env:OUTWARP_COMPONENT  = server|client     Skip the interactive prompt
-#   $env:OUTWARP_REPO_DIR   = C:\path\to\clone  Use existing repo instead of cloning
-#   $env:OUTWARP_RUN_WIZARD = 0                 Skip the setup wizard (server only)
-#   $env:WSTUNNEL_VERSION   = v10.5.2           Pin a specific wstunnel release
+# Usage:
+#   irm https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/windows/install.ps1 | iex
+#
+# Optional environment overrides (read by the .exe as command-line flags):
+#   $env:OUTWARP_VERSION    = '0.1.0'         Pin a specific release tag
+#   $env:OUTWARP_COMPONENT  = 'server'|'client'|'full'
+#   $env:OUTWARP_SILENT     = '1'             Pass /VERYSILENT to the installer
 #
 # Requires: Windows 10/11, PowerShell 5.1+, Administrator privileges
-# The GUI uses pywebview's Edge WebView2 backend, which ships natively on
-# Windows 10 1803+ / Windows 11. No extra runtime install needed.
+# (the installer itself re-elevates if you start it without admin).
 
 $ErrorActionPreference = 'Stop'
 
-# ---------------------------------------------------------------------------
-# Log transcript (written regardless of success/failure)
-# ---------------------------------------------------------------------------
-$script:LOG_FILE = Join-Path $env:TEMP "outwarp-install-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
-Start-Transcript -Path $script:LOG_FILE -Force | Out-Null
+$REPO            = 'fcrespo07/OutWarp'
+$RELEASE_API     = "https://api.github.com/repos/$REPO/releases/latest"
+$RELEASE_API_TAG = "https://api.github.com/repos/$REPO/releases/tags/{0}"
+$ASSET_PATTERN   = 'OutWarpSetup-*.exe'
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-$OUTWARP_DIR               = Join-Path $env:ProgramFiles "OutWarp"
-$INSTALL_PREFIX            = Join-Path $OUTWARP_DIR "server"
-$CLIENT_PREFIX             = Join-Path $OUTWARP_DIR "client"
-$WSTUNNEL_BIN              = Join-Path $OUTWARP_DIR "wstunnel.exe"
-$WG_EXE                    = 'C:\Program Files\WireGuard\wireguard.exe'
-$DEFAULT_REPO_DIR          = Join-Path $env:USERPROFILE "OutWarp"
-$GITHUB_REPO               = "fcrespo07/OutWarp"
-$GITHUB_REPO_URL           = "https://github.com/$GITHUB_REPO"
-$WSTUNNEL_FALLBACK_VERSION = "v10.5.2"
-$PYTHON_FALLBACK_VERSION   = "3.12.8"   # used when winget is not available
-
-# ---------------------------------------------------------------------------
-# UI helpers
-# ---------------------------------------------------------------------------
 function Write-Info { param([string]$Msg) Write-Host "==> $Msg" -ForegroundColor Cyan }
 function Write-OK   { param([string]$Msg) Write-Host "  [OK] $Msg" -ForegroundColor Green }
-function Write-Warn { param([string]$Msg) Write-Host "  [!]  $Msg" -ForegroundColor Yellow }
-
 function Write-Fail {
     param([string]$Msg)
     Write-Host "  [X]  $Msg" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  Full log: $script:LOG_FILE" -ForegroundColor Yellow
-    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
     Read-Host "  Press Enter to exit"
     exit 1
 }
@@ -67,625 +42,78 @@ function Show-Banner {
 
 '@
     Write-Host $art -ForegroundColor Cyan
-    Write-Host "  WireGuard over WebSocket - Windows installer" -ForegroundColor DarkGray
+    Write-Host "  WireGuard over WebSocket - Windows bootstrap" -ForegroundColor DarkGray
     Write-Host ""
 }
 
-# ---------------------------------------------------------------------------
-# Elevation check
-# ---------------------------------------------------------------------------
-function Assert-Admin {
-    $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
-    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Fail "This installer requires Administrator. Re-run from an elevated PowerShell prompt."
+function Get-ReleaseAsset {
+    $version = $env:OUTWARP_VERSION
+    if ($version) {
+        $url = [string]::Format($RELEASE_API_TAG, $version)
+        Write-Info "Fetching release metadata for tag $version"
+    } else {
+        $url = $RELEASE_API
+        Write-Info "Fetching latest release metadata"
     }
-    Write-OK "Running as Administrator"
-}
 
-# ---------------------------------------------------------------------------
-# Python 3.11+
-# ---------------------------------------------------------------------------
-$script:PYTHON_BIN = $null
-
-function Test-PythonExe {
-    # Returns the resolved sys.executable if the candidate is a usable Python >=3.11,
-    # otherwise $null. The candidate may be a Microsoft Store App Execution Alias —
-    # if Python is actually installed those aliases resolve to the real interpreter,
-    # so we invoke them instead of pre-filtering by path. Stubs without a real
-    # Python behind them write nothing to stdout and are skipped via the output
-    # check below.
-    param([string]$Exe, [string[]]$ExtraArgs = @())
-    if (-not $Exe) { return $null }
-    # Use single-quoted f-string inside Python so the whole code can live in a
-    # PowerShell double-quoted string without quote-escaping pitfalls.
-    $code = "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor};{sys.executable}')"
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
+    $headers = @{ 'User-Agent' = 'OutWarp-Installer' }
     try {
-        $out = & $Exe @ExtraArgs -c $code 2>$null
+        $release = Invoke-RestMethod -Uri $url -Headers $headers -UseBasicParsing
     } catch {
-        return $null
-    } finally {
-        $ErrorActionPreference = $prev
+        Write-Fail "Failed to query GitHub Releases: $($_.Exception.Message)"
     }
-    if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
-    $line = ($out | Select-Object -First 1).ToString().Trim()
-    if ($line -notmatch '^(\d+)\.(\d+);(.+)$') { return $null }
-    if ([int]$Matches[1] -ne 3 -or [int]$Matches[2] -lt 11) { return $null }
-    $resolved = $Matches[3].Trim()
-    if (-not (Test-Path $resolved)) { return $null }
-    return $resolved
+
+    $asset = $release.assets | Where-Object { $_.name -like $ASSET_PATTERN } | Select-Object -First 1
+    if (-not $asset) {
+        Write-Fail "No asset matching '$ASSET_PATTERN' in release $($release.tag_name)."
+    }
+    Write-OK "Release: $($release.tag_name) — asset $($asset.name)"
+    return $asset
 }
 
-function Find-Python311 {
-    # 1) Prefer the py.exe launcher (canonical on Windows). Try newest first.
-    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
-    if ($pyLauncher) {
-        foreach ($flag in '-3.13', '-3.12', '-3.11', '-3') {
-            $resolved = Test-PythonExe -Exe $pyLauncher.Source -ExtraArgs @($flag)
-            if ($resolved) { $script:PYTHON_BIN = $resolved; return $true }
+function Download-Installer {
+    param([Parameter(Mandatory)]$Asset)
+    $dest = Join-Path $env:TEMP $Asset.name
+    Write-Info "Downloading $($Asset.name) (~$([math]::Round($Asset.size / 1MB, 1)) MB)"
+    Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $dest -UseBasicParsing
+    Write-OK "Saved to $dest"
+    return $dest
+}
+
+function Invoke-Installer {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $args = @()
+    if ($env:OUTWARP_SILENT -eq '1') {
+        $args += '/VERYSILENT'
+        $args += '/SUPPRESSMSGBOXES'
+    }
+    if ($env:OUTWARP_COMPONENT) {
+        switch ($env:OUTWARP_COMPONENT.ToLower()) {
+            'client' { $args += '/TYPE=client';  $args += '/COMPONENTS=client,wstunnel,wireguard' }
+            'server' { $args += '/TYPE=server';  $args += '/COMPONENTS=server\gui,server\cli,wstunnel,wireguard' }
+            'full'   { $args += '/TYPE=full'; }
+            default  { Write-Host "  [!] Unknown OUTWARP_COMPONENT=$($env:OUTWARP_COMPONENT) — ignoring" -ForegroundColor Yellow }
         }
     }
 
-    # 2) Fall back to PATH lookups, skipping the Store stub.
-    foreach ($name in 'python3.13', 'python3.12', 'python3.11', 'python3', 'python') {
-        $cmd = Get-Command $name -ErrorAction SilentlyContinue
-        if (-not $cmd) { continue }
-        $resolved = Test-PythonExe -Exe $cmd.Source
-        if ($resolved) { $script:PYTHON_BIN = $resolved; return $true }
-    }
-    return $false
-}
-
-function Refresh-SessionPath {
-    $env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' +
-                [System.Environment]::GetEnvironmentVariable('PATH', 'User')
-}
-
-function Install-Python-Direct {
-    # Fallback when winget is not available: download the MSI from python.org.
-    $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
-        'AMD64' { 'amd64' }
-        'ARM64' { 'arm64' }
-        default { 'amd64' }
-    }
-    $pyInstaller = "python-${PYTHON_FALLBACK_VERSION}-${arch}.exe"
-    $pyUrl       = "https://www.python.org/ftp/python/${PYTHON_FALLBACK_VERSION}/${pyInstaller}"
-    $tmpPath     = Join-Path $env:TEMP $pyInstaller
-
-    Write-Info "Downloading Python $PYTHON_FALLBACK_VERSION from python.org..."
-    Invoke-WebRequest -Uri $pyUrl -OutFile $tmpPath -UseBasicParsing
-
-    Write-Info "Running Python installer (silent, system-wide)..."
-    $proc = Start-Process -FilePath $tmpPath `
-        -ArgumentList '/quiet', 'InstallAllUsers=1', 'PrependPath=1', 'Include_test=0' `
-        -Wait -PassThru
-    Remove-Item $tmpPath -ErrorAction SilentlyContinue
-
+    Write-Info "Launching installer: $Path $($args -join ' ')"
+    # Start-Process re-prompts UAC on its own — the user gets the standard
+    # Windows consent dialog, exactly like double-clicking the .exe.
+    $proc = Start-Process -FilePath $Path -ArgumentList $args -Verb runAs -Wait -PassThru
     if ($proc.ExitCode -ne 0) {
-        Write-Fail "Python installer exited with code $($proc.ExitCode). Install manually from https://python.org and retry."
+        Write-Fail "Installer exited with code $($proc.ExitCode). See setup log under %TEMP%\\Setup Log*.txt"
     }
+    Write-OK "Installer finished"
 }
 
-function Install-Python {
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Info "Installing Python 3.12 via winget..."
-        & winget install --id Python.Python.3.12 --source winget --silent --accept-package-agreements --accept-source-agreements
-    } else {
-        Write-Warn "winget not found - falling back to direct download from python.org"
-        Install-Python-Direct
-    }
-    Refresh-SessionPath
-    if (-not (Find-Python311)) {
-        Write-Fail "Python 3.11+ install failed. Install manually from https://python.org and retry."
-    }
-}
-
-function Ensure-Python {
-    if (Find-Python311) {
-        Write-OK "Python: $($script:PYTHON_BIN) ($( & $script:PYTHON_BIN --version))"
-    } else {
-        Write-Warn "Python 3.11+ not found - installing"
-        Install-Python
-        Write-OK "Python installed: $($script:PYTHON_BIN)"
-    }
-}
-
-# ---------------------------------------------------------------------------
-# wstunnel binary
-# ---------------------------------------------------------------------------
-function Get-LatestWstunnelVersion {
-    try {
-        $resp = Invoke-RestMethod -Uri "https://api.github.com/repos/erebe/wstunnel/releases/latest" `
-                                  -TimeoutSec 15 -UseBasicParsing
-        return $resp.tag_name
-    } catch {
-        Write-Warn "GitHub API query failed: $($_.Exception.Message)"
-        return $null
-    }
-}
-
-function Ensure-Wstunnel {
-    if (Test-Path $WSTUNNEL_BIN) {
-        $ver = (& $WSTUNNEL_BIN --version 2>&1) | Select-Object -First 1
-        Write-OK "wstunnel: $ver"
-        return
-    }
-
-    Write-Info "Installing wstunnel..."
-
-    $version = $env:WSTUNNEL_VERSION
-    if (-not $version) {
-        Write-Info "Querying GitHub for latest wstunnel release"
-        $version = Get-LatestWstunnelVersion
-        if (-not $version) {
-            Write-Warn "Could not determine latest version - falling back to $WSTUNNEL_FALLBACK_VERSION"
-            $version = $WSTUNNEL_FALLBACK_VERSION
-        }
-    }
-    Write-OK "wstunnel version: $version"
-
-    # Match the naming used by wstunnel's GitHub releases (Go-style: amd64/arm64,
-    # same convention as the Linux installer).
-    $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
-        'AMD64' { 'amd64' }
-        'ARM64' { 'arm64' }
-        default { Write-Fail "Unsupported architecture: $($env:PROCESSOR_ARCHITECTURE)" }
-    }
-
-    $vnum       = $version.TrimStart('v')
-    $tarballName = "wstunnel_${vnum}_windows_${arch}.tar.gz"
-    $url         = "https://github.com/erebe/wstunnel/releases/download/$version/$tarballName"
-
-    $tmpDir     = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
-    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-    $tarballPath = Join-Path $tmpDir $tarballName
-
-    Write-Info "Downloading $url (~5 MB)"
-    Invoke-WebRequest -Uri $url -OutFile $tarballPath -UseBasicParsing
-
-    # tar.exe is bundled with Windows 10 1803+ / Windows 11. wstunnel only
-    # ships .tar.gz for Windows (no .zip variant).
-    if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
-        Write-Fail "tar.exe not found. Requires Windows 10 1803+ or Windows 11."
-    }
-    & tar -xzf $tarballPath -C $tmpDir
-    if ($LASTEXITCODE -ne 0) { Write-Fail "Failed to extract $tarballName (tar exit code $LASTEXITCODE)" }
-
-    New-Item -ItemType Directory -Path $OUTWARP_DIR -Force | Out-Null
-
-    $wstunnelExe = Get-ChildItem -Path $tmpDir -Filter 'wstunnel.exe' -Recurse | Select-Object -First 1
-    if (-not $wstunnelExe) { Write-Fail "wstunnel.exe not found in downloaded archive" }
-    Copy-Item $wstunnelExe.FullName -Destination $WSTUNNEL_BIN
-    Remove-Item -Recurse -Force $tmpDir
-
-    Add-ToSystemPath $OUTWARP_DIR
-    Write-OK "wstunnel installed: $WSTUNNEL_BIN"
-}
-
-# ---------------------------------------------------------------------------
-# PATH helper
-# ---------------------------------------------------------------------------
-function Add-ToSystemPath {
-    param([string]$Dir)
-    $current = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine')
-    $dirs    = $current -split ';' | Where-Object { $_.Trim() }
-    if ($Dir -notin $dirs) {
-        [System.Environment]::SetEnvironmentVariable('PATH', "$current;$Dir", 'Machine')
-        $env:PATH += ";$Dir"
-        Write-OK "Added $Dir to system PATH"
-    }
-}
-
-# ---------------------------------------------------------------------------
-# Repo location
-# ---------------------------------------------------------------------------
-$script:REPO_DIR = $null
-
-function Resolve-Repo {
-    # 1. Env override
-    if ($env:OUTWARP_REPO_DIR) {
-        $script:REPO_DIR = $env:OUTWARP_REPO_DIR
-        if (-not (Test-Path $script:REPO_DIR)) {
-            Write-Fail "OUTWARP_REPO_DIR=$($script:REPO_DIR) does not exist"
-        }
-        Write-OK "Using repo at: $($script:REPO_DIR)"
-        return
-    }
-
-    # 2. Running from inside a clone (local -File usage)
-    if ($PSScriptRoot) {
-        $resolved = Resolve-Path (Join-Path $PSScriptRoot '..\..')  -ErrorAction SilentlyContinue
-        if ($resolved) {
-            $candidate = $resolved.Path
-            if ((Test-Path (Join-Path $candidate 'CLAUDE.md')) -and
-                (Test-Path (Join-Path $candidate 'server'))) {
-                $script:REPO_DIR = $candidate
-                Write-OK "Using local checkout: $($script:REPO_DIR)"
-                return
-            }
-        }
-    }
-
-    # 3. Clone
-    Write-Info "Repository not found locally - cloning"
-
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            Write-Fail "git and winget not found. Install Git from https://git-scm.com and retry."
-        }
-        Write-Info "Installing Git via winget..."
-        & winget install --id Git.Git --source winget --silent --accept-package-agreements --accept-source-agreements
-        Refresh-SessionPath
-    }
-
-    $script:REPO_DIR = $DEFAULT_REPO_DIR
-    if (Test-Path $script:REPO_DIR) {
-        # Validate it actually looks like a clone, not a stale directory left over
-        # from a previous failed run (git missing, network error, etc.).
-        if ((Test-Path (Join-Path $script:REPO_DIR 'CLAUDE.md')) -and
-            (Test-Path (Join-Path $script:REPO_DIR 'client'))    -and
-            (Test-Path (Join-Path $script:REPO_DIR 'server'))) {
-            Write-Warn "Directory $($script:REPO_DIR) already exists - pulling latest changes"
-            & git -C $script:REPO_DIR pull
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warn "git pull failed (offline?) - continuing with existing checkout"
-            }
-            return
-        }
-        Write-Warn "Directory $($script:REPO_DIR) exists but looks incomplete - recloning"
-        Remove-Item -Recurse -Force $script:REPO_DIR
-    }
-
-    # Native exe stderr + 2>&1 in PS 5.1 = NativeCommandError that aborts
-    # under $ErrorActionPreference='Stop'. Let git/gh write naturally and
-    # rely on $LASTEXITCODE for success/failure.
-    $ghCmd = Get-Command gh -ErrorAction SilentlyContinue
-    if ($ghCmd) {
-        & gh auth status *> $null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Info "Cloning via gh (authenticated)"
-            & gh repo clone $GITHUB_REPO $script:REPO_DIR
-            if ($LASTEXITCODE -eq 0) {
-                Write-OK "Cloned to: $($script:REPO_DIR)"
-                return
-            }
-            Write-Warn "gh repo clone failed - falling back to HTTPS git clone"
-        }
-    }
-
-    Write-Warn "gh not authenticated - trying HTTPS clone (will fail fast if repo is private)"
-    $env:GIT_TERMINAL_PROMPT = '0'
-    try {
-        & git clone $GITHUB_REPO_URL $script:REPO_DIR
-        $cloneExit = $LASTEXITCODE
-    } finally {
-        Remove-Item Env:GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue
-    }
-    if ($cloneExit -ne 0) {
-        Write-Fail @"
-git clone failed. If the repo is private, either:
-  1) Install + auth gh:  gh auth login  and re-run this installer
-  2) Clone manually then re-run with:
-       `$env:OUTWARP_REPO_DIR = 'C:\path\to\OutWarp'; .\install.ps1
-"@
-    }
-    Write-OK "Cloned to: $($script:REPO_DIR)"
-}
-
-# ---------------------------------------------------------------------------
-# Venv helper (validates and recreates if broken)
-# ---------------------------------------------------------------------------
-function Ensure-Venv {
-    param([string]$Prefix, [string]$Label)
-    $pip = Join-Path $Prefix '.venv\Scripts\pip.exe'
-    if (-not (Test-Path $pip)) {
-        $venvDir = Join-Path $Prefix '.venv'
-        if (Test-Path $venvDir) {
-            Write-Warn "Existing $Label venv is broken - recreating"
-            Remove-Item -Recurse -Force $venvDir
-        }
-        Write-Info "Creating $Label venv with $($script:PYTHON_BIN)"
-        & $script:PYTHON_BIN -m venv $venvDir
-    } else {
-        Write-OK "$Label venv already exists - reusing"
-    }
-}
-
-function Ensure-WireGuard {
-    if (Test-Path $WG_EXE) {
-        Write-OK "WireGuard for Windows: found"
-        return
-    }
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Fail "winget not found and WireGuard is missing. Install from https://www.wireguard.com/install/ and retry."
-    }
-    Write-Info "Installing WireGuard for Windows via winget..."
-    & winget install --id WireGuard.WireGuard --source winget --silent --accept-package-agreements --accept-source-agreements
-    if (-not (Test-Path $WG_EXE)) {
-        Write-Fail "WireGuard install failed. Install from https://www.wireguard.com/install/ and retry."
-    }
-    Write-OK "WireGuard installed"
-}
-
-# ---------------------------------------------------------------------------
-# Server install
-# ---------------------------------------------------------------------------
-function Install-Server {
-    Write-Info "Installing OutWarp server to $INSTALL_PREFIX"
-
-    if (-not (Test-Path (Join-Path $script:REPO_DIR 'server'))) {
-        Write-Fail "Server source not found at $($script:REPO_DIR)\server"
-    }
-
-    Ensure-WireGuard
-
-    New-Item -ItemType Directory -Path $INSTALL_PREFIX -Force | Out-Null
-    # Recreate venv if the Python version changed (stale venv from a previous install).
-    $venvPython = Join-Path $INSTALL_PREFIX '.venv\Scripts\python.exe'
-    if (Test-Path $venvPython) {
-        $venvVer = & $venvPython -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
-        $sysVer  = & $script:PYTHON_BIN -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
-        if ($venvVer -ne $sysVer) {
-            Write-Warn "Venv was created with Python $venvVer, current interpreter is $sysVer — recreating"
-            Remove-Item -Recurse -Force (Join-Path $INSTALL_PREFIX '.venv')
-        }
-    }
-    Ensure-Venv -Prefix $INSTALL_PREFIX -Label 'server'
-
-    $pip = Join-Path $INSTALL_PREFIX '.venv\Scripts\pip.exe'
-
-    # Install with the [gui] extra: pywebview + pystray + Pillow for the
-    # server-gui tray + window. Core CLI deps come in as transitive.
-    Write-Info "Installing server + GUI dependencies (pywebview, pystray, pillow)..."
-    $serverSpec = (Join-Path $script:REPO_DIR 'server') + '[gui]'
-    & $pip install --disable-pip-version-check -e $serverSpec
-    $pipExit = $LASTEXITCODE
-    if ($pipExit -ne 0) {
-        Write-Fail "pip install (server[gui]) failed with exit code $pipExit. See output above."
-    }
-    Write-OK "Server dependencies installed"
-
-    # CLI shim in $OUTWARP_DIR (which is in PATH)
-    $cliExe  = Join-Path $INSTALL_PREFIX '.venv\Scripts\outwarp-server.exe'
-    $cliShim = Join-Path $OUTWARP_DIR 'outwarp-server.bat'
-    "@echo off`r`n`"$cliExe`" %*" | Out-File -FilePath $cliShim -Encoding ascii
-    Write-OK "outwarp-server -> $cliExe"
-
-    $guiExe     = Join-Path $INSTALL_PREFIX '.venv\Scripts\outwarp-server-gui.exe'
-    $script:GUI_AVAILABLE = $false
-    $guiReady = $false
-
-    # Verify the GUI packages actually import (catches broken wheels, missing DLLs).
-    Write-Info "Verifying GUI imports (pywebview, pystray, Pillow)..."
-    & $venvPython -c "import webview; import pystray; import PIL" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warn "GUI packages installed but fail to import (see output above)."
-        Write-Warn "The GUI tray app will not be available — the CLI ($cliShim) still works."
-    } elseif (-not (Test-Path $guiExe)) {
-        Write-Warn "outwarp-server-gui.exe not found — regenerating entry points..."
-        & $pip install --quiet --disable-pip-version-check --force-reinstall --no-deps -e $serverSpec
-        if (Test-Path $guiExe) { $guiReady = $true }
-        else { Write-Warn "Entry point still missing after reinstall — GUI not available." }
-    } else {
-        $guiReady = $true
-    }
-
-    if ($guiReady) {
-        $script:GUI_AVAILABLE = $true
-
-        $guiShim = Join-Path $OUTWARP_DIR 'outwarp-server-gui.bat'
-        "@echo off`r`n`"$guiExe`" %*" | Out-File -FilePath $guiShim -Encoding ascii
-        Write-OK "outwarp-server-gui -> $guiExe"
-
-        $iconFile   = Join-Path $script:REPO_DIR 'server\outwarp_server\resources\app_icon.ico'
-        $wsh        = New-Object -ComObject WScript.Shell
-        $startupDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
-
-        # Patch byte 0x15 in the .lnk file to set "Run as administrator" flag (bit 5).
-        # This avoids needing the user to right-click → "Run as administrator" every time,
-        # since the server requires elevated privileges.
-        function Set-RunAsAdmin {
-            param([string]$LnkPath)
-            $bytes = [System.IO.File]::ReadAllBytes($LnkPath)
-            $bytes[0x15] = $bytes[0x15] -bor 0x20
-            [System.IO.File]::WriteAllBytes($LnkPath, $bytes)
-        }
-
-        $startupLnk = Join-Path $startupDir 'OutWarp Server.lnk'
-        $startupSc = $wsh.CreateShortcut($startupLnk)
-        $startupSc.TargetPath       = $guiExe
-        $startupSc.WorkingDirectory = Split-Path $guiExe
-        $startupSc.WindowStyle      = 7
-        if (Test-Path $iconFile) { $startupSc.IconLocation = $iconFile }
-        $startupSc.Save()
-        Set-RunAsAdmin $startupLnk
-        Write-OK "Startup shortcut: $startupLnk"
-
-        $desktopDir = $wsh.SpecialFolders('Desktop')
-        $desktopLnk = Join-Path $desktopDir 'OutWarp Server.lnk'
-        $desktopSc  = $wsh.CreateShortcut($desktopLnk)
-        $desktopSc.TargetPath       = $guiExe
-        $desktopSc.WorkingDirectory = Split-Path $guiExe
-        if (Test-Path $iconFile) { $desktopSc.IconLocation = $iconFile }
-        $desktopSc.Save()
-        Set-RunAsAdmin $desktopLnk
-        Write-OK "Desktop shortcut: $desktopLnk"
-    }
-
-    Write-OK "Server installed"
-}
-
-function Invoke-SetupWizard {
-    if ($env:OUTWARP_RUN_WIZARD -eq '0') {
-        Write-Info "Skipping setup wizard (OUTWARP_RUN_WIZARD=0)"
-        Write-Host ""
-        if ($script:GUI_AVAILABLE) {
-            Write-Host "  Run the server GUI later with:"
-            Write-Host "    outwarp-server-gui"
-            Write-Host "  Or use the desktop shortcut: 'OutWarp Server'"
-        } else {
-            Write-Host "  Run the CLI setup wizard with:"
-            Write-Host "    outwarp-server setup"
-        }
-        Write-Host ""
-        return
-    }
-
-    Write-Host ""
-    if ($script:GUI_AVAILABLE) {
-        Write-Info "Launching OutWarp Server GUI..."
-        Write-Host "  The setup wizard will open automatically on first run." -ForegroundColor DarkGray
-        Write-Host ""
-        $guiExe = Join-Path $INSTALL_PREFIX '.venv\Scripts\outwarp-server-gui.exe'
-        Start-Process -FilePath $guiExe
-    } else {
-        Write-Info "Launching CLI setup wizard (GUI not available)..."
-        Write-Host ""
-        $cliExe = Join-Path $INSTALL_PREFIX '.venv\Scripts\outwarp-server.exe'
-        & $cliExe setup
-    }
-}
-
-# ---------------------------------------------------------------------------
-# Client install
-# ---------------------------------------------------------------------------
-function Install-Client {
-    Write-Info "Installing OutWarp client to $CLIENT_PREFIX"
-
-    if (-not (Test-Path (Join-Path $script:REPO_DIR 'client'))) {
-        Write-Fail "Client source not found at $($script:REPO_DIR)\client"
-    }
-
-    Ensure-WireGuard
-
-    New-Item -ItemType Directory -Path $CLIENT_PREFIX -Force | Out-Null
-    Ensure-Venv -Prefix $CLIENT_PREFIX -Label 'client'
-
-    $pip = Join-Path $CLIENT_PREFIX '.venv\Scripts\pip.exe'
-    Write-Info "Installing Python dependencies (this may take ~30-60s)"
-    & $pip install --upgrade --disable-pip-version-check pip
-    # pywebview + pystray + Pillow + platformdirs come in as core deps from pyproject.
-    & $pip install --disable-pip-version-check -e (Join-Path $script:REPO_DIR 'client')
-    if ($LASTEXITCODE -ne 0) {
-        Write-Fail "pip install (client) failed with exit code $LASTEXITCODE. See output above."
-    }
-
-    # Verify pywebview imports cleanly so the user finds out now, not on first launch.
-    $venvPython = Join-Path $CLIENT_PREFIX '.venv\Scripts\python.exe'
-    & $venvPython -c "import webview; import pystray; import PIL" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warn "pywebview / pystray / Pillow failed to import (see output above)."
-        Write-Warn "The window may not open. On Windows the GUI needs Edge WebView2 (built into Win10 1803+/Win11)."
-    }
-
-    # `outwarp` is a gui-script in pyproject.toml; on Windows pip generates a
-    # GUI-subsystem .exe (pythonw.exe-backed) so launching it doesn't pop a console.
-    $exePath  = Join-Path $CLIENT_PREFIX '.venv\Scripts\outwarp.exe'
-
-    # Shim in $OUTWARP_DIR (in PATH)
-    $shimPath = Join-Path $OUTWARP_DIR 'outwarp.bat'
-    "@echo off`r`n`"$exePath`" %*" | Out-File -FilePath $shimPath -Encoding ascii
-    Write-OK "outwarp -> $exePath"
-
-    # Startup shortcut (launch tray at login)
-    $startupDir   = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
-    $iconFile     = Join-Path $script:REPO_DIR 'client\outwarp\resources\app_icon.ico'
-    $wsh          = New-Object -ComObject WScript.Shell
-
-    $startupSc = $wsh.CreateShortcut((Join-Path $startupDir 'OutWarp.lnk'))
-    $startupSc.TargetPath       = $exePath
-    $startupSc.WorkingDirectory = Split-Path $exePath
-    $startupSc.WindowStyle      = 7  # minimized (tray apps start without a visible window)
-    if (Test-Path $iconFile) { $startupSc.IconLocation = $iconFile }
-    $startupSc.Save()
-    Write-OK "Startup shortcut: $(Join-Path $startupDir 'OutWarp.lnk')"
-
-    # Desktop shortcut
-    $desktopDir = $wsh.SpecialFolders('Desktop')
-    $desktopSc  = $wsh.CreateShortcut((Join-Path $desktopDir 'OutWarp.lnk'))
-    $desktopSc.TargetPath       = $exePath
-    $desktopSc.WorkingDirectory = Split-Path $exePath
-    if (Test-Path $iconFile) { $desktopSc.IconLocation = $iconFile }
-    $desktopSc.Save()
-    Write-OK "Desktop shortcut: $(Join-Path $desktopDir 'OutWarp.lnk')"
-
-    Write-Host ""
-    Write-Host "  Client installed." -ForegroundColor Green
-    Write-Host ""
-    Write-Host "  Next steps:"
-    Write-Host "    1. Drop your .owcfg file somewhere accessible."
-    Write-Host "    2. Launch OutWarp from the desktop shortcut or run: outwarp"
-    Write-Host "    3. The first run opens the import wizard to load your .owcfg."
-    Write-Host ""
-    Write-Host "  Startup entry : $(Join-Path $startupDir 'OutWarp.lnk')"
-    Write-Host "  Desktop       : $(Join-Path $desktopDir 'OutWarp.lnk')"
-    Write-Host ""
-}
-
-# ---------------------------------------------------------------------------
-# Component picker
-# ---------------------------------------------------------------------------
-function Select-Component {
-    $component = $env:OUTWARP_COMPONENT
-
-    if (-not $component) {
-        Write-Host ""
-        Write-Host "Which component do you want to install?" -ForegroundColor White
-        Write-Host "  1) Server  - runs wstunnel + WireGuard, accepts client connections"
-        Write-Host "  2) Client  - connects to an OutWarp server"
-        Write-Host ""
-
-        while (-not $component) {
-            $choice = Read-Host "Choice [1/2] (default 1)"
-            if (-not $choice) { $choice = '1' }
-            switch ($choice.ToLower()) {
-                { $_ -in '1', 'server' } { $component = 'server' }
-                { $_ -in '2', 'client' } { $component = 'client' }
-                default                  { Write-Host "  Invalid choice - pick 1 or 2" }
-            }
-        }
-    }
-
-    switch ($component) {
-        'server' {
-            Install-Server
-            Write-Host ""
-            Write-Host "  Server installed." -ForegroundColor Green
-            Write-Host ""
-            Write-Host "  Next steps:"
-            Write-Host "    1. The setup wizard will open automatically on first launch."
-            Write-Host "    2. Use 'Add client' to generate .owcfg files for each user."
-            Write-Host "    3. Send each .owcfg to the corresponding client device."
-            Write-Host ""
-            if ($script:GUI_AVAILABLE) {
-                Write-Host "  Desktop shortcut : 'OutWarp Server'"
-            }
-            Write-Host "  CLI (admin PS)   : outwarp-server <subcommand>"
-            Write-Host ""
-            Invoke-SetupWizard
-        }
-        'client' { Install-Client }
-        default  { Write-Fail "Unknown component: $component (must be 'server' or 'client')" }
-    }
-}
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 function Main {
     Show-Banner
-    Assert-Admin
-    Write-Info "Preparing system dependencies"
-    Ensure-Python
-    Ensure-Wstunnel
-    Resolve-Repo
-    Select-Component
+    $asset   = Get-ReleaseAsset
+    $exePath = Download-Installer -Asset $asset
+    Invoke-Installer -Path $exePath
     Write-Host ""
-    Write-OK "All done."
-    Write-Host "  Log: $script:LOG_FILE" -ForegroundColor DarkGray
-    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+    Write-OK "All done. Open OutWarp from the Start menu or your desktop."
 }
 
 try {
@@ -693,9 +121,6 @@ try {
 } catch {
     Write-Host ""
     Write-Host "  [X]  Unexpected error: $_" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  Full log: $script:LOG_FILE" -ForegroundColor Yellow
-    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
     Read-Host "  Press Enter to exit"
     exit 1
 }
