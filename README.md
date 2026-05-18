@@ -10,6 +10,18 @@ No domain name required. The server generates a self-signed TLS certificate and 
 
 ## Installation
 
+### Windows (client or server)
+
+1. Go to the [latest release](https://github.com/fcrespo07/OutWarp/releases/latest) and download **`OutWarpSetup-x.y.z.exe`**.
+2. Double-click the installer. Accept the UAC prompt.
+3. In the wizard, pick **client**, **server**, or **both**, then click *Install*.
+
+That's it. Shortcuts land on your desktop and in the Start menu; WireGuard for Windows and `wstunnel.exe` ship inside the installer.
+
+> Until the `.exe` is code-signed, Windows SmartScreen shows a blue warning on first launch. Click **More info → Run anyway**.
+
+For automated / unattended deploys (Intune, Ansible, …) see [`scripts/install-from-release.ps1`](scripts/install-from-release.ps1).
+
 ### Linux (client or server)
 
 ```bash
@@ -17,14 +29,6 @@ curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/li
 ```
 
 The installer will ask whether you want to set up the **client** or the **server** and guide you through the rest.
-
-### Windows (client or server)
-
-Open PowerShell as Administrator and run:
-
-```powershell
-irm https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/windows/install.ps1 | iex
-```
 
 ### macOS
 

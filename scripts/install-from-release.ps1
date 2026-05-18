@@ -1,10 +1,15 @@
-# OutWarp - Windows installer bootstrapper
+# OutWarp - Windows install-from-release helper
 #
-# Downloads the latest OutWarpSetup-*.exe from GitHub Releases and runs it
-# with elevation. Replaces the previous from-source installer.
+# Convenience script for automated / unattended deployments (Intune,
+# Ansible, kiosk imaging, …). It downloads the latest OutWarpSetup-*.exe
+# from GitHub Releases and runs it with elevation.
+#
+# Regular end users do NOT need this script — they should just download
+# OutWarpSetup-x.y.z.exe directly from
+# https://github.com/fcrespo07/OutWarp/releases/latest and double-click it.
 #
 # Usage:
-#   irm https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/windows/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/fcrespo07/OutWarp/main/scripts/install-from-release.ps1 | iex
 #
 # Optional environment overrides (read by the .exe as command-line flags):
 #   $env:OUTWARP_VERSION    = '0.1.0'         Pin a specific release tag

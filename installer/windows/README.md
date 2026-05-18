@@ -89,15 +89,13 @@ The version surfaces in three places — keep them aligned:
 3. Upload `installer\windows\output\OutWarpSetup-0.1.0.exe` to the
    GitHub Release named `v0.1.0`.
 
-End users run:
+End users download the `.exe` from the Release page and double-click
+it. UAC asks for permission, Inno Setup takes over from there — no
+PowerShell, no terminal commands, no `irm | iex`.
 
-```powershell
-irm https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/windows/install.ps1 | iex
-```
-
-The PS1 hits the GitHub Releases API, downloads the latest asset
-matching `OutWarpSetup-*.exe`, and launches it with `runAs`. UAC kicks
-in and Inno Setup takes over from there.
+For unattended deployments (Intune, Ansible, kiosk imaging) the helper
+script `scripts/install-from-release.ps1` automates the download +
+silent-install flow. Regular users should not need it.
 
 ## What ends up installed
 
