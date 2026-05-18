@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: outwarp-server
+  labels:
+    app: outwarp-server
+spec:
+  replicas: 1  # WireGuard is stateful — do not scale horizontally
+  selector:
+    matchLabels:
+      app: outwarp-server
+  template:
+    metadata:
+      labels:
+        app: outwarp-server
+    spec:
+      # WireGuard requires the kernel module on the node.
+      # Tested on: Ubuntu 20.04+, Debian 11+, Amazon Linux 2023.
+      initContainers:
+        - name: outwarp-init
+          image: outwarp-server:latest
+          imagePullPolicy: IfNotPresent
+          command: ["outwarp-server", "--config-dir", "/data", "init"]
+          envFrom:
+            - configMapRef:
+                name: outwarp-config
+          volumeMounts:
+            - name: data
+              mountPath: /data
+
+      containers:
+        - name: outwarp-server
+          image: outwarp-server:latest
+          imagePullPolicy: IfNotPresent
+          command: ["outwarp-server", "--config-dir", "/data", "serve"]
+          envFrom:
+            - configMapRef:
+                name: outwarp-config
+          ports:
+            - name: wss
+              containerPort: 443
+              protocol: TCP
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN  # required for wg-quick + iptables
+                - NET_RAW    # required for iptables MASQUERADE
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            # emptyDir so wg0.conf is always regenerated from /data/server_config.json
+            # on pod restart — no stale interface config survives a restart.
+            - name: wireguard
+              mountPath: /etc/wireguard
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: outwarp-server-data
+        - name: wireguard
+          emptyDir: {}

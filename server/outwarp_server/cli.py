@@ -36,7 +36,7 @@ console = Console()
 # Anything not in this set runs without a root check (--version, --help).
 _PRIVILEGED_COMMANDS = frozenset({
     "setup", "add-client", "list-clients", "revoke-client",
-    "status", "restart", "uninstall", "doctor",
+    "status", "restart", "uninstall", "doctor", "init", "serve",
 })
 
 
@@ -87,6 +87,46 @@ def _cmd_setup(args: argparse.Namespace) -> int:
 
     config_dir = Path(args.config_dir) if args.config_dir else default_config_dir()
     return run_setup(config_dir)
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    """Non-interactive init for Docker/Kubernetes — reads config from env vars."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    from outwarp_server.k8s_init import run_init
+
+    config_dir = Path(args.config_dir) if args.config_dir else default_config_dir()
+    return run_init(config_dir)
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    """Run the server in foreground — intended for Docker/Kubernetes.
+
+    Loads server_config.json, starts wstunnel + WireGuard via ServerManager,
+    and blocks until SIGTERM or SIGINT.
+    """
+    import signal
+    import threading
+
+    from outwarp_server.server_manager import ServerManager
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    config = _load_config(args)
+    manager = ServerManager(config)
+    manager.add_listener(lambda state: log.info("Server state: %s", state.value))
+    manager.start()
+
+    stop_event = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop_event.set())
+    signal.signal(signal.SIGINT, lambda *_: stop_event.set())
+
+    log.info("OutWarp server running. Send SIGTERM or Ctrl+C to stop.")
+    stop_event.wait()
+
+    log.info("Shutting down...")
+    manager.stop()
+    log.info("Done.")
+    return 0
 
 
 def _cmd_add_client(args: argparse.Namespace) -> int:
@@ -537,6 +577,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("setup", help="Run the interactive setup wizard")
 
+    sub.add_parser(
+        "init",
+        help="Non-interactive init from env vars (Docker/Kubernetes) — "
+             "generates config + TLS cert + WG keys without prompts",
+    )
+
+    sub.add_parser(
+        "serve",
+        help="Run the server in foreground (Docker/Kubernetes entrypoint) — "
+             "starts wstunnel + WireGuard and blocks until SIGTERM",
+    )
+
     p_add = sub.add_parser("add-client", help="Register a new client")
     p_add.add_argument("name", help="Client name (used as filename for .owcfg)")
 
@@ -569,6 +621,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 _COMMANDS: dict[str, callable] = {
     "setup": _cmd_setup,
+    "init": _cmd_init,
+    "serve": _cmd_serve,
     "add-client": _cmd_add_client,
     "list-clients": _cmd_list_clients,
     "revoke-client": _cmd_revoke_client,

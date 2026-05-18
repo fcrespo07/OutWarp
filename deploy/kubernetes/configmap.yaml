@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: outwarp-config
+data:
+  # Required: public IP or domain that clients will connect to.
+  OUTWARP_ENDPOINT: "YOUR_SERVER_IP_OR_DOMAIN"
+  # Optional overrides (defaults shown):
+  OUTWARP_PORT: "443"
+  OUTWARP_WG_PORT: "51820"
+  OUTWARP_SUBNET: "10.0.0.0/24"
+  OUTWARP_SERVER_ADDRESS: "10.0.0.1/24"
+  # OUTWARP_UPGRADE_PATH: ""  # auto-generated random secret if not set
