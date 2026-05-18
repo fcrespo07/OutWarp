@@ -34,6 +34,7 @@ readonly BIN_LINK="/usr/local/bin/outwarp-server"
 readonly GUI_BIN_LINK="/usr/local/bin/outwarp-server-gui"
 readonly CLIENT_PREFIX="/opt/outwarp-client"
 readonly CLIENT_BIN_LINK="/usr/local/bin/outwarp"
+readonly CLIENT_CLI_BIN_LINK="/usr/local/bin/outwarp-cli"
 readonly CLIENT_SUDOERS="/etc/sudoers.d/outwarp"
 readonly CLIENT_HELPER="/usr/local/libexec/outwarp-priv"
 readonly WSTUNNEL_BIN="/usr/local/bin/wstunnel"
@@ -698,6 +699,13 @@ install_client() {
     $SUDO ln -sf "$CLIENT_PREFIX/.venv/bin/outwarp" "$CLIENT_BIN_LINK"
     ok "Linked: ${BOLD}${CLIENT_BIN_LINK}${RESET} -> ${CLIENT_PREFIX}/.venv/bin/outwarp"
 
+    # outwarp-cli is the console-mode entry point — works on headless servers
+    # (no DISPLAY/Wayland needed) and is what systemd units should ExecStart.
+    if [[ -x "$CLIENT_PREFIX/.venv/bin/outwarp-cli" ]]; then
+        $SUDO ln -sf "$CLIENT_PREFIX/.venv/bin/outwarp-cli" "$CLIENT_CLI_BIN_LINK"
+        ok "Linked: ${BOLD}${CLIENT_CLI_BIN_LINK}${RESET} -> ${CLIENT_PREFIX}/.venv/bin/outwarp-cli"
+    fi
+
     write_client_helper
     write_client_sudoers
     write_client_autostart
@@ -706,10 +714,16 @@ install_client() {
 
 ${BOLD}${GREEN}Client installed.${RESET}
 
-  ${BOLD}Next steps:${RESET}
+  ${BOLD}GUI:${RESET}
     1. Drop your ${BOLD}.owcfg${RESET} file somewhere accessible by ${TARGET_USER}.
     2. Launch ${BOLD}outwarp${RESET} (or log out/in to trigger autostart).
     3. The first run prompts for the .owcfg via the import wizard.
+
+  ${BOLD}Console (headless / SSH / systemd):${RESET}
+    1. ${BOLD}outwarp-cli import /path/to/profile.owcfg${RESET}
+    2. ${BOLD}outwarp-cli connect${RESET}        # foreground, Ctrl+C to stop
+       ${BOLD}outwarp-cli status${RESET}         # one-shot state probe
+       ${BOLD}outwarp-cli logs --follow${RESET}  # tail -f the log file
 
   ${DIM}Autostart entry: $TARGET_HOME/.config/autostart/outwarp.desktop${RESET}
   ${DIM}Privileged helper: $CLIENT_HELPER${RESET}

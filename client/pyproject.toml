@@ -44,6 +44,7 @@ outwarp = "outwarp.app:main"
 
 [project.scripts]
 outwarp-uninstall = "outwarp.uninstall:main"
+outwarp-cli = "outwarp.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["outwarp"]
