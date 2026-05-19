@@ -49,6 +49,15 @@ ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile={#RepoRoot}\client\outwarp\resources\app_icon.ico
 UninstallDisplayIcon={app}\client\{#ClientExeName}
 UninstallDisplayName={#AppName} {#AppVersion}
+
+; If either the client or the server is running, Inno Setup pops a modal
+; asking the user to close them before continuing — applies to install,
+; upgrade and uninstall. Mutex names match the ones each app creates at
+; startup for single-instance detection (see app.py / server_app.py).
+AppMutex=Global\OutWarpClient,Global\OutWarpServer
+; Same hint for the uninstaller phase specifically.
+CloseApplications=yes
+RestartApplications=no
 WizardSmallImageFile=
 LicenseFile=
 ; The PS1 one-liner downloads us; let it pass component/skip-wizard hints.

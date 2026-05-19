@@ -5,6 +5,8 @@
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_submodules
+
 ROOT = Path(SPECPATH).resolve().parent.parent.parent
 SERVER_PKG = ROOT / "server" / "outwarp_server"
 ICON_PATH = SERVER_PKG / "resources" / "app_icon.ico"
@@ -17,11 +19,14 @@ datas = [
     (str(SERVER_PKG / "resources"), "resources"),
 ]
 
+# pystray and pywebview pick their OS backend at runtime via dynamic
+# imports that PyInstaller's static analysis misses, so collect every
+# submodule explicitly.
 hiddenimports = [
-    "pystray._win32",
+    *collect_submodules("pystray"),
+    *collect_submodules("webview"),
     "PIL.Image",
     "PIL.ImageDraw",
-    "webview.platforms.edgechromium",
     "cryptography.hazmat.backends.openssl",
 ]
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -10,7 +11,17 @@ from outwarp.tunnel import TunnelManager, TunnelState
 
 log = logging.getLogger(__name__)
 
-_RESOURCES = Path(__file__).parent / "resources"
+
+def _resources_dir() -> Path:
+    """Locate the resources/ directory both in dev and in PyInstaller
+    one-folder builds. PyInstaller stores datas at the root of _MEIPASS,
+    not inside the module's parent."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "resources"
+    return Path(__file__).parent / "resources"
+
+
+_RESOURCES = _resources_dir()
 _BASE_ICON = _RESOURCES / "app_icon.png"
 
 _STATE_COLORS: dict[TunnelState, tuple[int, int, int]] = {

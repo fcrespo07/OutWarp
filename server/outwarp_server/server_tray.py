@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -10,7 +11,14 @@ from outwarp_server.server_manager import ServerManager, ServerState
 
 log = logging.getLogger(__name__)
 
-_RESOURCES = Path(__file__).parent / "resources"
+
+def _resources_dir() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "resources"
+    return Path(__file__).parent / "resources"
+
+
+_RESOURCES = _resources_dir()
 
 _STATE_COLORS: dict[ServerState, tuple[int, int, int]] = {
     ServerState.STOPPED:  (128, 128, 128),

@@ -59,6 +59,21 @@ def _ensure_pyinstaller() -> str:
         return sys.executable
 
 
+def _ensure_runtime_deps(python_bin: str) -> None:
+    """Make sure the client + server runtime deps are importable.
+
+    PyInstaller only bundles what's physically importable in the current
+    interpreter at Analysis time. If pywebview / pystray / cryptography /
+    etc. aren't installed, the resulting .exe imports them at runtime
+    and crashes with ModuleNotFoundError. Install both packages in
+    editable mode so any imports they declare are resolvable.
+    """
+    print("\n=== [pre-flight] installing client + server[gui] runtime deps ===")
+    _run([python_bin, "-m", "pip", "install", "--upgrade", "pip"])
+    _run([python_bin, "-m", "pip", "install", "-e", str(ROOT / "client")])
+    _run([python_bin, "-m", "pip", "install", "-e", f"{ROOT / 'server'}[gui]"])
+
+
 def step_ui() -> None:
     print("\n=== [1/4] building UI bundles (esbuild) ===")
     _run([sys.executable, str(ROOT / "scripts" / "build_ui.py")])
@@ -89,11 +104,15 @@ def step_installer(version: str) -> None:
         raise SystemExit(f"missing Inno Setup script: {iss}")
     iscc = shutil.which("iscc") or shutil.which("ISCC")
     if iscc is None:
-        # Common install locations for Inno Setup 6.
-        for candidate in (
+        # Common install locations for Inno Setup 6 (system-wide and per-user).
+        candidates = [
             r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
             r"C:\Program Files\Inno Setup 6\ISCC.exe",
-        ):
+        ]
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        if local_appdata:
+            candidates.append(str(Path(local_appdata) / "Programs" / "Inno Setup 6" / "ISCC.exe"))
+        for candidate in candidates:
             if Path(candidate).exists():
                 iscc = candidate
                 break
@@ -124,6 +143,7 @@ def main() -> int:
     if not args.skip_fetch:
         step_fetch()
     if not args.skip_pyinstaller:
+        _ensure_runtime_deps(python_bin)
         step_pyinstaller(python_bin, clean=not args.no_clean)
     if not args.no_installer:
         step_installer(args.version)
