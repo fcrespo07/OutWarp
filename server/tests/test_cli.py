@@ -33,9 +33,11 @@ def _write_server_config(tmp_path: Path, **overrides: object) -> Path:
 
 
 def test_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    from outwarp_server import __version__
+
     with pytest.raises(SystemExit, match="0"):
         main(["--version"])
-    assert "0.0.1" in capsys.readouterr().out
+    assert __version__ in capsys.readouterr().out
 
 
 def test_no_command_raises() -> None:

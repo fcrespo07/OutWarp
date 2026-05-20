@@ -60,8 +60,11 @@ a_gui = Analysis(
     noarchive=False,
 )
 
+# Entry point must be __main__.py (it calls sys.exit(main())); cli.py has no
+# __main__ guard, so pointing PyInstaller at it builds an exe that imports the
+# module and exits 0 without ever parsing argv.
 a_cli = Analysis(
-    [str(SERVER_PKG / "cli.py")],
+    [str(SERVER_PKG / "__main__.py")],
     pathex=[str(ROOT / "server")],
     binaries=[],
     datas=[
