@@ -20,7 +20,8 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import shutil
+import os
+import sys
 import threading
 import time
 import urllib.error
@@ -30,6 +31,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from outwarp_server.binaries import find_wg, find_wstunnel
 from outwarp_server.config import (
     ServerConfig,
     default_config_dir,
@@ -62,7 +64,66 @@ def _default_settings() -> dict[str, Any]:
         "language": "es",
         "theme": "auto",
         "advanced": False,
+        "cli_on_path": False,
     }
+
+
+def _cli_dir() -> Path | None:
+    """Directory holding outwarp-server.exe — only meaningful in a frozen
+    install, where the CLI exe sits next to the GUI exe ({app}\\server)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return None
+
+
+def _paths_equal(a: str, b: str) -> bool:
+    try:
+        return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+    except Exception:
+        return a == b
+
+
+def _read_user_path() -> tuple[list[str], int]:
+    """Return (entries, value_type) from HKCU\\Environment\\Path.
+
+    Missing value -> ([], REG_EXPAND_SZ). Reading the *user* hive (not the
+    expanded process PATH) is what lets us edit it without clobbering machine
+    entries or needing admin.
+    """
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_READ) as key:
+        try:
+            value, vtype = winreg.QueryValueEx(key, "Path")
+        except FileNotFoundError:
+            return [], winreg.REG_EXPAND_SZ
+    return [e for e in str(value).split(";") if e], vtype
+
+
+def _write_user_path(entries: list[str], vtype: int) -> None:
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
+        winreg.SetValueEx(key, "Path", 0, vtype or winreg.REG_EXPAND_SZ, ";".join(entries))
+    _broadcast_env_change()
+
+
+_HWND_BROADCAST = 0xFFFF
+_WM_SETTINGCHANGE = 0x001A
+_SMTO_ABORTIFHUNG = 0x0002
+
+
+def _broadcast_env_change() -> None:
+    """Tell already-open shells the environment changed so new terminals pick
+    up the edited PATH without a logoff."""
+    try:
+        import ctypes
+        result = ctypes.c_long()
+        ctypes.windll.user32.SendMessageTimeoutW(
+            _HWND_BROADCAST, _WM_SETTINGCHANGE, 0,
+            ctypes.c_wchar_p("Environment"), _SMTO_ABORTIFHUNG, 5000,
+            ctypes.byref(result),
+        )
+    except Exception:
+        log.debug("WM_SETTINGCHANGE broadcast failed", exc_info=True)
 
 
 def _load_settings() -> dict[str, Any]:
@@ -190,7 +251,8 @@ class Api:
         }
 
     def get_deps(self) -> dict[str, str | None]:
-        return {"wstunnel": shutil.which("wstunnel"), "wg": shutil.which("wg")}
+        ws, wg = find_wstunnel(), find_wg()
+        return {"wstunnel": str(ws) if ws else None, "wg": str(wg) if wg else None}
 
     def detect_public_ip(self) -> dict[str, Any]:
         try:
@@ -202,6 +264,7 @@ class Api:
     def get_app_info(self) -> dict[str, Any]:
         import platform as _platform
         import sys as _sys
+
         from outwarp_server import __version__
         return {
             "version": __version__,
@@ -493,8 +556,8 @@ class Api:
 
         # Phase: deps
         self._emit_setup("deps", "running")
-        wstunnel_bin = shutil.which("wstunnel")
-        wg_bin = shutil.which("wg")
+        wstunnel_bin = find_wstunnel()
+        wg_bin = find_wg()
         if not wstunnel_bin or not wg_bin:
             missing = ", ".join(n for n, v in (("wstunnel", wstunnel_bin), ("wg", wg_bin)) if not v)
             self._emit_setup("deps", "fail", missing)
@@ -594,7 +657,7 @@ class Api:
         try:
             if platform.is_wstunnel_running():
                 if port_changed:
-                    wstunnel_bin = shutil.which("wstunnel")
+                    wstunnel_bin = find_wstunnel()
                     if wstunnel_bin and cfg is not None:
                         # Rewrite the unit so ExecStart points at the new port,
                         # then explicitly restart — `enable --now` does NOT
@@ -874,6 +937,61 @@ class Api:
         _save_settings(snapshot)
         self._emit("settings", snapshot)
         return {"ok": True, "settings": snapshot}
+
+    # ── console CLI activation ────────────────────────────────────────────────
+
+    def get_cli_status(self) -> dict[str, Any]:
+        """Report whether the console CLI can be / is exposed on the user PATH.
+
+        supported  — running on Windows (the toggle only makes sense there)
+        available  — the outwarp-server.exe console build exists on disk
+        enabled    — its directory is currently on the user's PATH
+        """
+        if sys.platform != "win32":
+            return {"supported": False, "available": False, "enabled": False, "cli_dir": None}
+        cdir = _cli_dir()
+        exe = (cdir / "outwarp-server.exe") if cdir else None
+        available = bool(exe and exe.exists())
+        enabled = False
+        if available:
+            try:
+                entries, _ = _read_user_path()
+                enabled = any(_paths_equal(e, str(cdir)) for e in entries)
+            except OSError:
+                log.exception("get_cli_status: could not read user PATH")
+        return {
+            "supported": True,
+            "available": available,
+            "enabled": enabled,
+            "cli_dir": str(cdir) if cdir else None,
+        }
+
+    def set_cli_enabled(self, enabled: bool) -> dict[str, Any]:
+        if sys.platform != "win32":
+            return {"ok": False, "error": "only supported on Windows"}
+        cdir = _cli_dir()
+        if cdir is None or not (cdir / "outwarp-server.exe").exists():
+            return {"ok": False, "error": "CLI executable not found in this build"}
+        target = str(cdir)
+        try:
+            entries, vtype = _read_user_path()
+            present = any(_paths_equal(e, target) for e in entries)
+            if enabled and not present:
+                entries.append(target)
+                _write_user_path(entries, vtype)
+            elif not enabled and present:
+                entries = [e for e in entries if not _paths_equal(e, target)]
+                _write_user_path(entries, vtype)
+        except OSError as exc:
+            log.exception("set_cli_enabled failed")
+            return {"ok": False, "error": str(exc)}
+
+        with self._lock:
+            self._settings["cli_on_path"] = bool(enabled)
+            snapshot = dict(self._settings)
+        _save_settings(snapshot)
+        self._emit("settings", snapshot)
+        return {"ok": True, "enabled": bool(enabled), "cli_dir": target}
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 

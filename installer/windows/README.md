@@ -19,8 +19,7 @@ installer/windows/
 └── build/
     ├── build.py              ← orchestrator (UI → PyInstaller → ISCC)
     ├── outwarp-client.spec
-    ├── outwarp-server-gui.spec
-    ├── outwarp-server-cli.spec
+    ├── outwarp-server.spec   ← GUI + dormant CLI in one bundle
     ├── version_info_client.txt
     └── version_info_server.txt
 ```
@@ -57,9 +56,10 @@ That does, in order:
    `bundle.js` (client + server).
 2. `scripts/fetch_bundled_binaries.py` — downloads `wstunnel.exe` and
    the WireGuard installer into `installer/windows/bundle/`.
-3. `PyInstaller` × 3 — produces `dist/outwarp-client/`,
-   `dist/outwarp-server-gui/`, `dist/outwarp-server-cli/`
-   (one-folder mode, mandatory because pystray is LGPL).
+3. `PyInstaller` × 2 — produces `dist/outwarp-client/` and
+   `dist/outwarp-server/` (the latter holds both `outwarp-server-gui.exe`
+   and the dormant `outwarp-server.exe` CLI sharing one `_internal/`).
+   One-folder mode, mandatory because pystray is LGPL.
 4. `ISCC outwarp.iss` — packs everything into
    `installer/windows/output/OutWarpSetup-<version>.exe`.
 
@@ -106,10 +106,18 @@ C:\Program Files\OutWarp\
 │   ├── outwarp.exe                 ← tray app
 │   └── _internal\…                 ← Python runtime + ui/ + resources/
 └── server\
-    ├── outwarp-server-gui.exe      ← admin GUI + tray
-    ├── outwarp-server.exe          ← CLI (also on PATH)
+    ├── outwarp-server-gui.exe      ← admin GUI + tray (the default)
+    ├── outwarp-server.exe          ← console CLI (dormant; not on PATH
+    │                                  until enabled in Settings)
     └── _internal\…
 ```
+
+The server install is GUI-first: nothing is added to PATH and no CLI shortcut
+is created. The `outwarp-server.exe` console build ships alongside the GUI but
+stays dormant until the user flips **Settings → "CLI de consola"**, which adds
+`{app}\server` to the *per-user* PATH (HKCU, no admin). The GUI itself never
+needs PATH — it finds `wstunnel.exe` in `{app}` and `wg.exe` in the WireGuard
+install dir directly.
 
 User data (config, logs, settings) stays under
 `%LOCALAPPDATA%\OutWarp\` and survives upgrades / uninstalls.
@@ -121,8 +129,8 @@ If you want to verify a PyInstaller build before running Inno Setup:
 ```powershell
 python installer\windows\build\build.py --no-installer
 .\dist\outwarp-client\outwarp.exe
-.\dist\outwarp-server-gui\outwarp-server-gui.exe
-.\dist\outwarp-server-cli\outwarp-server.exe --help
+.\dist\outwarp-server\outwarp-server-gui.exe
+.\dist\outwarp-server\outwarp-server.exe --help
 ```
 
 Drop a `wstunnel.exe` next to the `.exe` (or set

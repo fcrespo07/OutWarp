@@ -142,6 +142,9 @@ const SRV_STR = {
     set_themeDark: "Oscuro",
     set_advanced: "Modo avanzado",
     set_advancedSub: "Cambia la estética y muestra detalles técnicos",
+    set_cli: "CLI de consola",
+    set_cliSub: "Permite usar el comando outwarp-server desde una terminal (añade su carpeta al PATH de tu usuario)",
+    set_cliUnavailable: "Disponible solo en la versión instalada para Windows",
 
     // ── Server config editor (Settings → ServerConfigEditor)
     srvCfg_title: "Configuración del servidor",
@@ -321,6 +324,9 @@ const SRV_STR = {
     set_themeDark: "Dark",
     set_advanced: "Advanced mode",
     set_advancedSub: "Changes the chassis and reveals technical details",
+    set_cli: "Command-line interface",
+    set_cliSub: "Lets you run the outwarp-server command from a terminal (adds its folder to your user PATH)",
+    set_cliUnavailable: "Available only in the installed Windows build",
 
     srvCfg_title: "Server configuration",
     srvCfg_sub: "Changes that require restarting the service.",

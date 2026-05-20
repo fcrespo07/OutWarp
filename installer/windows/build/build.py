@@ -7,7 +7,7 @@ Pipeline:
   1. scripts/build_ui.py            (esbuild — requires Node on PATH)
   2. scripts/fetch_bundled_binaries.py
                                     (downloads wstunnel.exe + WireGuard)
-  3. PyInstaller × 3                (client, server-gui, server-cli)
+  3. PyInstaller × 2                (client, server [GUI + CLI in one bundle])
   4. (optional) ISCC outwarp.iss    (Inno Setup compiler — must be on PATH)
 
 Usage:
@@ -36,8 +36,7 @@ WORK_DIR = ROOT / "build"
 
 SPECS = [
     BUILD_DIR / "outwarp-client.spec",
-    BUILD_DIR / "outwarp-server-gui.spec",
-    BUILD_DIR / "outwarp-server-cli.spec",
+    BUILD_DIR / "outwarp-server.spec",
 ]
 
 
@@ -85,7 +84,7 @@ def step_fetch() -> None:
 
 
 def step_pyinstaller(python_bin: str, *, clean: bool) -> None:
-    print("\n=== [3/4] running PyInstaller ===")
+    print("\n=== [3/4] running PyInstaller (client + server) ===")
     if clean:
         for d in (DIST_DIR, WORK_DIR):
             if d.exists():

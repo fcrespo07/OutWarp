@@ -27,15 +27,9 @@ class LivePeer:
 
 
 def _find_wg_bin() -> Path | None:
-    """Locate the wg binary, trying common hard-coded paths as fallback."""
-    found = __import__("shutil").which("wg")
-    if found:
-        return Path(found)
-    for candidate in ("/usr/bin/wg", "/usr/local/bin/wg", "/sbin/wg"):
-        p = Path(candidate)
-        if p.exists():
-            return p
-    return None
+    """Locate the wg binary (PATH, then OS-specific install locations)."""
+    from outwarp_server.binaries import find_wg
+    return find_wg()
 
 
 # Module-level deduplication for the periodic poll: the JS-side poll calls

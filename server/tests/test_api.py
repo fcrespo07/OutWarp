@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from outwarp_server.api import Api
@@ -57,10 +58,68 @@ def test_status_when_running():
     assert s["clients_count"] == 0
 
 
-def test_deps_returns_shutil_which():
+def test_deps_returns_resolved_paths():
     api, _ = _make_api()
-    with patch("outwarp_server.api.shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
-        assert api.get_deps() == {"wstunnel": "/usr/bin/wstunnel", "wg": "/usr/bin/wg"}
+    with patch("outwarp_server.api.find_wstunnel", return_value=Path("/usr/bin/wstunnel")), \
+         patch("outwarp_server.api.find_wg", return_value=Path("/usr/bin/wg")):
+        assert api.get_deps() == {
+            "wstunnel": str(Path("/usr/bin/wstunnel")),
+            "wg": str(Path("/usr/bin/wg")),
+        }
+
+
+def test_deps_returns_none_when_missing():
+    api, _ = _make_api()
+    with patch("outwarp_server.api.find_wstunnel", return_value=None), \
+         patch("outwarp_server.api.find_wg", return_value=None):
+        assert api.get_deps() == {"wstunnel": None, "wg": None}
+
+
+def test_cli_status_unsupported_off_windows():
+    api, _ = _make_api()
+    with patch("outwarp_server.api.sys.platform", "linux"):
+        assert api.get_cli_status() == {
+            "supported": False, "available": False, "enabled": False, "cli_dir": None,
+        }
+    with patch("outwarp_server.api.sys.platform", "linux"):
+        assert api.set_cli_enabled(True)["ok"] is False
+
+
+def test_cli_enable_disable_edits_user_path(tmp_path):
+    api, _ = _make_api()
+    (tmp_path / "outwarp-server.exe").write_text("x")
+    store = {"entries": [r"C:\Windows\System32"], "type": 2}
+
+    def _read():
+        return list(store["entries"]), store["type"]
+
+    def _write(entries, vtype):
+        store["entries"] = list(entries)
+        store["type"] = vtype
+
+    with patch("outwarp_server.api.sys.platform", "win32"), \
+         patch("outwarp_server.api._cli_dir", return_value=tmp_path), \
+         patch("outwarp_server.api._read_user_path", side_effect=_read), \
+         patch("outwarp_server.api._write_user_path", side_effect=_write), \
+         patch("outwarp_server.api._save_settings"):
+        st0 = api.get_cli_status()
+        assert st0["supported"] and st0["available"] and not st0["enabled"]
+
+        assert api.set_cli_enabled(True)["ok"] is True
+        assert str(tmp_path) in store["entries"]
+        assert api.get_cli_status()["enabled"] is True
+
+        assert api.set_cli_enabled(False)["ok"] is True
+        assert str(tmp_path) not in store["entries"]
+
+
+def test_cli_enable_fails_without_exe(tmp_path):
+    api, _ = _make_api()
+    with patch("outwarp_server.api.sys.platform", "win32"), \
+         patch("outwarp_server.api._cli_dir", return_value=tmp_path):
+        # no outwarp-server.exe present in tmp_path
+        r = api.set_cli_enabled(True)
+    assert r["ok"] is False
 
 
 def test_detect_public_ip_happy_path():
@@ -204,7 +263,8 @@ def test_run_setup_happy_path(tmp_path):
         patch("outwarp_server.api.generate_tls_cert",
               return_value=(tmp_path / "c.pem", tmp_path / "k.pem", "FP:FP:FP")),
         patch("outwarp_server.api.generate_wg_keypair", return_value=("priv", "pub")),
-        patch("outwarp_server.api.shutil.which", return_value="/usr/bin/wg"),
+        patch("outwarp_server.api.find_wstunnel", return_value=Path("/usr/bin/wstunnel")),
+        patch("outwarp_server.api.find_wg", return_value=Path("/usr/bin/wg")),
         patch.object(ServerConfig, "save", fake_save),
     ):
         r = api.run_setup({
@@ -477,7 +537,7 @@ def test_update_server_config_restarts_systemd_when_running(tmp_path):
         patch.object(ServerConfig, "save"),
         patch("outwarp_server.api.get_server_platform", return_value=fake_platform),
         patch("outwarp_server.api.threading.Thread", _sync_thread()),
-        patch("outwarp_server.api.shutil.which", return_value="/usr/bin/wstunnel"),
+        patch("outwarp_server.api.find_wstunnel", return_value=Path("/usr/bin/wstunnel")),
     ):
         r = api.update_server_config({"port": 8443})
 
@@ -605,7 +665,8 @@ def test_run_setup_emits_progress_and_done_events(tmp_path):
         patch("outwarp_server.api.generate_tls_cert",
               return_value=(tmp_path / "c.pem", tmp_path / "k.pem", "FP:FP")),
         patch("outwarp_server.api.generate_wg_keypair", return_value=("priv", "pub")),
-        patch("outwarp_server.api.shutil.which", return_value="/usr/bin/wg"),
+        patch("outwarp_server.api.find_wstunnel", return_value=Path("/usr/bin/wstunnel")),
+        patch("outwarp_server.api.find_wg", return_value=Path("/usr/bin/wg")),
         patch.object(ServerConfig, "save", fake_save),
         patch.object(Api, "_run_setup_probe"),  # don't hit network in tests
     ):
@@ -626,7 +687,8 @@ def test_run_setup_fails_when_deps_missing(tmp_path):
     api, _ = _make_api()
     fake_window = MagicMock()
     api._window = fake_window
-    with patch("outwarp_server.api.shutil.which", return_value=None):
+    with patch("outwarp_server.api.find_wstunnel", return_value=None), \
+         patch("outwarp_server.api.find_wg", return_value=None):
         r = api.run_setup({"endpoint": "1.2.3.4"})
     assert r["ok"] is False
     assert "missing dependencies" in r["error"]

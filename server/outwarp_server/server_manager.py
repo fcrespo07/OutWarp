@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import shutil
 import subprocess
 import sys
 import threading
@@ -10,6 +9,7 @@ from dataclasses import replace
 from enum import Enum
 from pathlib import Path
 
+from outwarp_server.binaries import find_wg
 from outwarp_server.config import ClientEntry, ServerConfig, default_config_path
 from outwarp_server.crypto import generate_wg_keypair
 from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
@@ -28,16 +28,11 @@ _MONITOR_INTERVAL = 5.0
 
 
 def _find_wstunnel() -> str | None:
-    """Locate wstunnel.exe, preferring the binary shipped alongside a frozen
-    PyInstaller build (Inno Setup drops it next to the .exe) before falling
-    back to the system PATH."""
-    binary_name = "wstunnel.exe" if sys.platform == "win32" else "wstunnel"
-    if getattr(sys, "frozen", False):
-        exe_dir = Path(sys.executable).resolve().parent
-        for candidate in (exe_dir / binary_name, exe_dir.parent / binary_name):
-            if candidate.exists():
-                return str(candidate)
-    return shutil.which("wstunnel")
+    """Locate wstunnel: bundled next to the frozen .exe (or one level up, the
+    shared install root the installer drops it in) before the system PATH."""
+    from outwarp_server.binaries import find_wstunnel
+    found = find_wstunnel()
+    return str(found) if found else None
 
 
 class ServerState(Enum):
@@ -137,7 +132,7 @@ class ServerManager:
             if c.name == name:
                 raise ValueError(f"Client '{name}' already exists")
 
-        wg_bin = shutil.which("wg")
+        wg_bin = find_wg()
         private_key, public_key = generate_wg_keypair(Path(wg_bin) if wg_bin else None)
 
         allocated = [c.address for c in config.clients]
@@ -180,7 +175,7 @@ class ServerManager:
         if target is None:
             raise ValueError(f"Client '{name}' not found")
 
-        wg_bin = shutil.which("wg")
+        wg_bin = find_wg()
         new_private, new_public = generate_wg_keypair(Path(wg_bin) if wg_bin else None)
 
         try:

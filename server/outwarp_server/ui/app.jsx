@@ -1171,6 +1171,40 @@ const DoctorPanel = ({ T, api }) => {
   );
 };
 
+// ── CLI activation toggle (Windows only) ───────────────────────────
+// Mirrors the installer concept: the console CLI ships dormant; flipping this
+// adds {app}\server to the user PATH so `outwarp-server` works in a terminal.
+const CliToggleRow = ({ T, api }) => {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api?.get_cli_status?.().then((s) => { if (alive) setSt(s); });
+    return () => { alive = false; };
+  }, [api]);
+  if (!st || !st.supported) return null;
+  const toggle = async (v) => {
+    if (busy || !st.available || !api) return;
+    setBusy(true);
+    try {
+      const r = await api.set_cli_enabled(v);
+      if (r && r.ok) setSt((s) => ({ ...s, enabled: v }));
+    } finally { setBusy(false); }
+  };
+  const sub = st.available ? T.set_cliSub : T.set_cliUnavailable;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, alignItems: "center", padding: "14px 0", borderBottom: "1px solid var(--line)" }}>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 500 }}>{T.set_cli}</div>
+        <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>{sub}</div>
+      </div>
+      <div style={{ opacity: st.available && !busy ? 1 : 0.45, pointerEvents: st.available && !busy ? "auto" : "none" }}>
+        <window.Toggle on={!!st.enabled} onChange={toggle}/>
+      </div>
+    </div>
+  );
+};
+
 // ── Settings ───────────────────────────────────────────────────────
 const SettingsScreen = ({ T, settings, onSetting, status, api, confirm }) => {
   const Row = ({ title, sub, control }) => (
@@ -1193,6 +1227,7 @@ const SettingsScreen = ({ T, settings, onSetting, status, api, confirm }) => {
           <option value="auto">{T.set_themeAuto}</option><option value="light">{T.set_themeLight}</option><option value="dark">{T.set_themeDark}</option>
         </select>}/>
         <Row title={T.set_advanced} sub={T.set_advancedSub} control={<window.Toggle on={!!settings.advanced} onChange={(v) => onSetting("advanced", v)}/>}/>
+        <CliToggleRow T={T} api={api}/>
       </div>
       <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: "0 18px" }}>
         <Row title={T.dash_subnet} control={<span style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{status.subnet}</span>}/>
