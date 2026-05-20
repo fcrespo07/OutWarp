@@ -127,7 +127,7 @@ def step_installer(version: str) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--version", default=os.environ.get("OUTWARP_VERSION", "0.1.1"))
+    ap.add_argument("--version", default=os.environ.get("OUTWARP_VERSION", "0.1.2"))
     ap.add_argument("--skip-ui", action="store_true")
     ap.add_argument("--skip-fetch", action="store_true")
     ap.add_argument("--skip-pyinstaller", action="store_true")

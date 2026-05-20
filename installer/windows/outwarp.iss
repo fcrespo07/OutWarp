@@ -137,15 +137,20 @@ Filename: "{tmp}\wireguard-installer.exe"; Parameters: "/S"; \
 
 ; Launch the server GUI at the end of setup (which kicks the setup wizard
 ; on first run if there's no server_config.json yet).
+; shellexec (not the default CreateProcess): both apps ship a
+; requireAdministrator manifest, and Inno runs postinstall entries with a
+; non-elevated token — CreateProcess of an elevation-requiring exe fails with
+; "code 740 (operation requires elevation)". ShellExecuteEx honours the
+; manifest and elevates. shellexec also implies no-wait, so `nowait` is dropped.
 Filename: "{app}\server\{#ServerGuiExe}"; \
     Description: "Lanzar OutWarp Server y abrir el asistente"; \
-    Flags: nowait postinstall skipifsilent; \
+    Flags: postinstall skipifsilent shellexec; \
     Tasks: runwizard
 
 ; Launch the client at the end of setup if only the client was selected.
 Filename: "{app}\client\{#ClientExeName}"; \
     Description: "Lanzar OutWarp Client"; \
-    Flags: nowait postinstall skipifsilent; \
+    Flags: postinstall skipifsilent shellexec; \
     Components: client; Check: NotInstallingServer
 
 [UninstallRun]
