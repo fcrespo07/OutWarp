@@ -262,7 +262,7 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 ## Estado actual
 
-**Versión actual: `0.1.4`** (en código; instaladores `.exe` publicados de 0.1.0 a 0.1.4, tags hasta `v0.1.2`). El proyecto pasó de las fases de scaffolding a **releases versionados y bugfixing post-lanzamiento** (~130 commits en `main`).
+**Versión actual: `0.2.0`** (en código; instaladores `.exe` publicados de 0.1.0 a 0.1.4, tags hasta `v0.1.2`). La 0.2.0 añade el **auto-updater in-app** (botón "Actualizar" en About) y la **ventana frameless con title bar propio**. El proyecto pasó de las fases de scaffolding a **releases versionados y bugfixing post-lanzamiento** (~130 commits en `main`).
 
 ### Cliente
 
