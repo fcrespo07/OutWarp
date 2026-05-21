@@ -13,12 +13,14 @@ Events fired:
   outwarp:stats     -> 1Hz traffic counters (rx/tx bytes per second + totals)
   outwarp:log       -> a single log line was emitted
   outwarp:settings  -> persisted user preferences changed
+  outwarp:window    -> window chrome state changed (maximized true/false)
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import sys
 import tempfile
 import threading
 import time
@@ -27,6 +29,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from outwarp import updater
 from outwarp.config import (
     ClientConfig,
     ConfigError,
@@ -49,6 +52,14 @@ _STATE_TO_JS = {
     TunnelState.CONNECTED:    "connected",
     TunnelState.RECONNECTING: "reconnecting",
     TunnelState.FAILED:       "error",
+}
+
+# Win32 non-client hit-test codes for the frameless title bar's native drag /
+# edge-resize (see Api._native_nc_press).
+_WM_NCLBUTTONDOWN = 0x00A1
+_HTCAPTION = 2
+_RESIZE_HT = {
+    "l": 10, "r": 11, "t": 12, "tl": 13, "tr": 14, "b": 15, "bl": 16, "br": 17,
 }
 
 
@@ -89,6 +100,10 @@ def _default_settings() -> dict[str, Any]:
         # PlatformError when toggled on so the UI surfaces an honest error
         # rather than pretending the switch works.
         "kill_switch": False,
+        # When True, the About screen runs check_for_updates() once on mount so
+        # the user sees a pending release without having to click. Consumed by
+        # the About component in app.jsx.
+        "check_updates_on_start": False,
     }
 
 
@@ -159,9 +174,14 @@ class Api:
         on_manager_replaced: Callable[[TunnelManager], None] | None = None,
     ) -> None:
         self._window: Any = None
+        self._maximized = False
         self._memory_handler = memory_handler
         self._manager: TunnelManager | None = manager
         self._on_manager_replaced = on_manager_replaced
+        # Clean-shutdown callback wired by app.py via set_quit_handler. Used by
+        # apply_update() to quit the process after launching the installer so it
+        # can replace our files. None in headless/test contexts.
+        self._on_quit: Callable[[], None] | None = None
 
         self._lock = threading.Lock()
         self._settings = _load_settings()
@@ -205,7 +225,95 @@ class Api:
         for line in self._memory_handler.snapshot():
             self._record_log("info", line)
         self._window = window
+        # Keep the custom title bar's maximize/restore glyph in sync when the
+        # window state changes outside our buttons (Aero Snap, Win+Up, the
+        # taskbar). pywebview fires these on the GUI thread.
+        try:
+            window.events.maximized += self._on_window_maximized
+            window.events.restored += self._on_window_restored
+        except Exception:
+            log.debug("window state events unavailable on this backend", exc_info=True)
         self._start_log_watcher()
+
+    # ── window chrome (custom frameless title bar) ─────────────────────────────
+
+    def get_window_caps(self) -> dict[str, Any]:
+        """Tells the UI what the host window can do so it renders the right
+        chrome: native edge-resize + system drag are Windows-only; elsewhere
+        the title bar falls back to pywebview's drag-region."""
+        return {"native_drag_resize": sys.platform == "win32", "maximized": self._maximized}
+
+    def _on_window_maximized(self, *_a: Any) -> None:
+        self._maximized = True
+        self._emit("window", {"maximized": True})
+
+    def _on_window_restored(self, *_a: Any) -> None:
+        self._maximized = False
+        self._emit("window", {"maximized": False})
+
+    def window_minimize(self) -> None:
+        if self._window is not None:
+            self._window.minimize()
+
+    def window_toggle_maximize(self) -> None:
+        if self._window is None:
+            return
+        if self._maximized:
+            self._window.restore()
+        else:
+            self._window.maximize()
+
+    def window_close(self) -> None:
+        # Mirror the native close button: tear the window down, which ends
+        # webview.start() and exits the process (the tray "Quit" path does the
+        # same teardown via app.py).
+        if self._window is not None:
+            self._window.destroy()
+
+    def window_start_move(self) -> None:
+        """Begin a native window drag (Windows). Gives real Aero Snap and
+        double-click-to-maximize, which a JS move loop cannot. No-op elsewhere;
+        non-Windows uses the pywebview-drag-region class instead."""
+        self._native_nc_press(_HTCAPTION)
+
+    def window_start_resize(self, edge: str) -> None:
+        """Begin a native edge/corner resize (Windows). `edge` is one of
+        t/b/l/r/tl/tr/bl/br."""
+        code = _RESIZE_HT.get(edge)
+        if code is not None:
+            self._native_nc_press(code)
+
+    def _native_nc_press(self, ht: int) -> None:
+        if sys.platform != "win32" or self._window is None:
+            return
+        native = getattr(self._window, "native", None)
+        if native is None:
+            return
+        try:
+            import ctypes
+
+            hwnd = native.Handle.ToInt32()
+            user32 = ctypes.windll.user32
+
+            def _do() -> None:
+                # Standard WebView2 custom-chrome trick: drop any capture the
+                # host holds, then hand the non-client button-down to DefWindowProc
+                # so Windows runs its own modal move/resize loop (snap included).
+                user32.ReleaseCapture()
+                user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, ht, 0)
+
+            # Must run on the GUI thread (js_api calls arrive on a worker
+            # thread); BeginInvoke posts it and returns without blocking us.
+            from System import Action
+
+            native.BeginInvoke(Action(_do))
+        except Exception:
+            log.debug("native window drag/resize unavailable", exc_info=True)
+
+    def set_quit_handler(self, fn: Callable[[], None]) -> None:
+        """Wire the app's clean-shutdown callback so apply_update() can quit the
+        process after launching the installer. Called once by app.py."""
+        self._on_quit = fn
 
     def _emit(self, name: str, payload: dict[str, Any]) -> None:
         if self._window is None:
@@ -651,6 +759,126 @@ class Api:
             log.exception("open_url failed for %s", url)
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
+
+    # ── updates ─────────────────────────────────────────────────────────────────
+
+    def check_for_updates(self) -> dict[str, Any]:
+        """Query GitHub Releases for a newer version. Synchronous (5s timeout,
+        never raises). On Linux there is no in-app apply, so the manual install
+        command is attached for the UI to display."""
+        from outwarp import __version__
+
+        result = updater.check_for_update(__version__)
+        if sys.platform != "win32":
+            result["manual"] = True
+            result["command"] = updater.LINUX_UPDATE_COMMAND
+        return result
+
+    def apply_update(self) -> dict[str, Any]:
+        """Windows only: download the latest installer, bring the tunnel down,
+        launch the installer elevated and quit so it can replace our files (its
+        post-install step relaunches us). On Linux returns the manual command —
+        there is no .exe to apply and the GUI can't run non-interactive sudo.
+
+        Returns immediately; progress is reported via the outwarp:update event
+        ({phase, progress, latest, error})."""
+        if sys.platform != "win32":
+            return {
+                "ok": False,
+                "manual": True,
+                "command": updater.LINUX_UPDATE_COMMAND,
+            }
+        threading.Thread(
+            target=self._run_update, daemon=True, name="api-apply-update"
+        ).start()
+        return {"ok": True}
+
+    def _run_update(self) -> None:
+        from outwarp import __version__
+
+        self._emit("update", {"phase": "checking", "progress": 0})
+        info = updater.check_for_update(__version__)
+        if info.get("error"):
+            self._emit("update", {"phase": "error", "error": info["error"]})
+            return
+        if not info.get("available"):
+            self._emit("update", {"phase": "current", "latest": info.get("latest", "")})
+            return
+        url = info.get("asset_url")
+        if not url:
+            self._emit("update", {
+                "phase": "error",
+                "error": "the latest release has no Windows installer asset",
+            })
+            return
+
+        latest = info.get("latest", "")
+        dest = Path(tempfile.gettempdir()) / (info.get("asset_name") or "OutWarpSetup.exe")
+        try:
+            self._emit("update", {"phase": "downloading", "progress": 0, "latest": latest})
+            updater.download_installer(
+                url,
+                dest,
+                lambda pct: self._emit(
+                    "update", {"phase": "downloading", "progress": pct, "latest": latest}
+                ),
+            )
+        except Exception as exc:
+            log.exception("update download failed")
+            self._emit("update", {"phase": "error", "error": str(exc)})
+            return
+
+        self._emit("update", {"phase": "applying", "latest": latest})
+
+        # Bring the tunnel down cleanly first so wstunnel.exe and the WireGuard
+        # service/routes are released — otherwise the installer can't replace
+        # files and a child process would be orphaned.
+        if self._manager is not None:
+            try:
+                self._manager.stop()
+            except Exception:
+                log.exception("tunnel stop before update failed (continuing)")
+
+        if not self._launch_installer(dest):
+            self._emit("update", {
+                "phase": "error",
+                "error": "could not launch the installer (elevation declined?)",
+            })
+            return
+
+        # Hand off to the installer and quit so it can replace our files and
+        # relaunch us via its post-install 'Launch OutWarp Client' step.
+        self._quit_for_update()
+
+    def _launch_installer(self, path: Path) -> bool:
+        """ShellExecute the installer with 'runas'. Interactive (no /VERYSILENT)
+        so the installer's post-install relaunch checkbox applies. Returns True
+        if the shell accepted the launch (HINSTANCE > 32)."""
+        import ctypes
+
+        try:
+            ret = ctypes.windll.shell32.ShellExecuteW(
+                None, "runas", str(path), None, None, 1
+            )
+        except Exception:
+            log.exception("ShellExecuteW for installer failed")
+            return False
+        return ret > 32
+
+    def _quit_for_update(self) -> None:
+        if self._on_quit is not None:
+            try:
+                self._on_quit()
+                return
+            except Exception:
+                log.exception("quit handler failed during update")
+        # Fallback (no handler wired, e.g. headless): best-effort hard exit so
+        # the file locks release for the installer.
+        try:
+            self.shutdown()
+        finally:
+            import os
+            os._exit(0)
 
     def set_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         with self._lock:

@@ -226,6 +226,14 @@ def main() -> int:
             background_color="#f6f5f1",
             resizable=True,
             hidden=start_hidden,
+            # Frameless: the native OS title bar clashes with the app's palette,
+            # so we draw our own (see ui/app.jsx TitleBar). Drag + edge-resize
+            # are re-implemented natively on Windows via api.window_* (and via
+            # the pywebview-drag-region class elsewhere); easy_drag must be off
+            # or the whole client area becomes a drag handle.
+            frameless=True,
+            easy_drag=False,
+            shadow=True,
             # pywebview disables text selection by default; users need to be
             # able to copy log lines, fingerprints, error messages, etc.
             text_select=True,
@@ -249,6 +257,10 @@ def main() -> int:
                 window.destroy()
             except Exception:
                 pass
+
+        # Let apply_update() quit the app after launching the installer so it
+        # can replace our files and relaunch us.
+        api.set_quit_handler(_on_quit)
 
         tray = TrayApp(manager=manager, on_show=_show_window, on_quit=_on_quit)
         _stage("tray constructed")

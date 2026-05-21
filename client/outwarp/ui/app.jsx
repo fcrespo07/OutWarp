@@ -125,6 +125,10 @@ function App() {
   // "resolve"|"tls"|"wg"|"ws"|"done" while connecting. Drives the stepper.
   const [phase, setPhase] = useState("");
   const [ready, setReady] = useState(false);
+  // Frameless window chrome: caps tells us whether the host supports native
+  // drag/edge-resize (Windows); maximized drives the max/restore glyph.
+  const [caps, setCaps] = useState({ native_drag_resize: false, maximized: false });
+  const [maximized, setMaximized] = useState(false);
   const [confirm, confirmDialog] = useConfirmState();
   // Rolling window of (rx_bps, tx_bps) samples for the Home throughput chart.
   // Fed from the outwarp:stats heartbeat (1 Hz) so the chart and the stat
@@ -135,8 +139,9 @@ function App() {
   useEffect(() => {
     waitForBridge().then(async (a) => {
       setApi(a);
-      const [s, ps, st, lg] = await Promise.all([
+      const [s, ps, st, lg, wc] = await Promise.all([
         a.get_status(), a.list_profiles(), a.get_settings(), a.get_logs(0),
+        a.get_window_caps(),
       ]);
       setStatus(s.status);
       setActiveId(s.active_profile_id);
@@ -147,6 +152,7 @@ function App() {
       setProfiles(ps);
       setSettings(st);
       setLogs(lg);
+      if (wc) { setCaps(wc); setMaximized(!!wc.maximized); }
       setReady(true);
     });
   }, []);
@@ -168,6 +174,7 @@ function App() {
   }, []));
   useBridgeEvent("log",     useCallback((e) => setLogs((l) => [...l.slice(-1999), e]), []));
   useBridgeEvent("settings", useCallback((d) => setSettings(d), []));
+  useBridgeEvent("window",   useCallback((d) => setMaximized(!!d.maximized), []));
 
   // Reset the throughput history whenever the tunnel isn't actively
   // transferring — leaving stale samples on screen after a disconnect would
@@ -256,53 +263,127 @@ function App() {
 
   // Hold the first paint until the bridge has answered — otherwise the app
   // briefly renders the "empty / import" screen even when a profile exists.
+  // The title bar renders in both states so the window stays draggable and
+  // closable while the bridge is still warming up.
   if (!ready) {
     return (
-      <div data-theme={theme} style={{ display: "grid", placeItems: "center", height: "100%", background: "var(--bg)" }}>
-        <window.WSLogoMark size={40} color="var(--text-3)" accent="var(--brand)"/>
+      <div data-theme={theme} className="ow-root">
+        <TitleBar T={T} api={api} caps={caps} maximized={maximized}/>
+        <div style={{ flex: 1, display: "grid", placeItems: "center", minHeight: 0 }}>
+          <window.WSLogoMark size={40} color="var(--text-3)" accent="var(--brand)"/>
+        </div>
       </div>
     );
   }
 
   return (
-    <div data-theme={theme} style={{ display: "grid", gridTemplateColumns: "232px 1fr", height: "100%", background: "var(--bg)", color: "var(--text)" }}>
-      <Sidebar
-        T={T}
-        screen={screen}
-        onScreen={setScreen}
-        status={status}
-        profileName={active?.name}
-        advanced={!!settings.advanced}
-      />
-      <main style={{ overflow: "auto", padding: "28px 36px 36px", minWidth: 0 }} className="ws-scroll">
-        {screen === "home" && (
-          <Home
-            T={T}
-            lang={lang}
-            status={status}
-            active={active}
-            stats={stats}
-            history={history}
-            advanced={!!settings.advanced}
-            busyMsg={busyMsg}
-            connError={connError}
-            attemptInfo={attemptInfo}
-            phase={phase}
-            onConnect={onConnect}
-            onDisconnect={onDisconnect}
-            onReconnect={onReconnect}
-            onImport={() => setScreen("import")}
-          />
-        )}
-        {screen === "import"  && <Import T={T} api={api} active={active} confirm={confirm} onImported={(p) => { setActiveId(p.id); setProfiles([p]); setScreen("home"); }} onRemove={onRemoveProfile} onProfilesChanged={refreshProfiles}/>}
-        {screen === "logs"     && <Logs T={T} logs={logs} api={api} onClear={() => setLogs([])}/>}
-        {screen === "settings" && <Settings T={T} settings={settings} onSetting={onSetting}/>}
-        {screen === "about"    && <About T={T} api={api}/>}
-      </main>
+    <div data-theme={theme} className="ow-root">
+      <TitleBar T={T} api={api} caps={caps} maximized={maximized}/>
+      <div className="ow-body">
+        <Sidebar
+          T={T}
+          screen={screen}
+          onScreen={setScreen}
+          status={status}
+          profileName={active?.name}
+          advanced={!!settings.advanced}
+        />
+        <main style={{ overflow: "auto", padding: "28px 36px 36px", minWidth: 0 }} className="ws-scroll">
+          {screen === "home" && (
+            <Home
+              T={T}
+              lang={lang}
+              status={status}
+              active={active}
+              stats={stats}
+              history={history}
+              advanced={!!settings.advanced}
+              busyMsg={busyMsg}
+              connError={connError}
+              attemptInfo={attemptInfo}
+              phase={phase}
+              onConnect={onConnect}
+              onDisconnect={onDisconnect}
+              onReconnect={onReconnect}
+              onImport={() => setScreen("import")}
+            />
+          )}
+          {screen === "import"  && <Import T={T} api={api} active={active} confirm={confirm} onImported={(p) => { setActiveId(p.id); setProfiles([p]); setScreen("home"); }} onRemove={onRemoveProfile} onProfilesChanged={refreshProfiles}/>}
+          {screen === "logs"     && <Logs T={T} logs={logs} api={api} onClear={() => setLogs([])}/>}
+          {screen === "settings" && <Settings T={T} settings={settings} onSetting={onSetting}/>}
+          {screen === "about"    && <About T={T} api={api} settings={settings}/>}
+        </main>
+      </div>
+      {caps.native_drag_resize && !maximized && <ResizeHandles api={api}/>}
       {confirmDialog}
     </div>
   );
 }
+
+// ── Custom title bar (frameless window chrome) ─────────────────────
+// The native OS title bar is hidden (frameless=True); this draws one in the
+// app's palette. Dragging + double-click-maximize + edge-resize are native on
+// Windows (api.window_start_move / window_start_resize → WM_NCLBUTTONDOWN);
+// elsewhere the drag region uses pywebview's built-in "pywebview-drag-region".
+const TitleBar = ({ T, api, caps, maximized }) => {
+  const native = !!caps.native_drag_resize;
+
+  const onDragMouseDown = (e) => {
+    if (e.button !== 0 || !native || !api) return;
+    // Let clicks on the window buttons through (they're outside this element,
+    // but guard anyway) and hand the press to the OS move loop.
+    api.window_start_move();
+  };
+  // Native caption already handles double-click; only wire it for the
+  // drag-region fallback so non-Windows still gets double-click-to-maximize.
+  const onDragDoubleClick = () => { if (!native && api) api.window_toggle_maximize(); };
+
+  return (
+    <div className="ow-titlebar">
+      <div
+        className={native ? "ow-titlebar-drag" : "ow-titlebar-drag pywebview-drag-region"}
+        onMouseDown={onDragMouseDown}
+        onDoubleClick={onDragDoubleClick}
+      >
+        <window.WSWordmark size={13} color="var(--text)" accent="var(--brand)"/>
+      </div>
+      <div className="ow-titlebar-controls">
+        <button className="ow-winbtn" title={T.win_minimize} aria-label={T.win_minimize}
+          onClick={() => api && api.window_minimize()}>
+          <svg width="11" height="11" viewBox="0 0 12 12"><line x1="2" y1="6.5" x2="10" y2="6.5" stroke="currentColor" strokeWidth="1.1"/></svg>
+        </button>
+        <button className="ow-winbtn" title={maximized ? T.win_restore : T.win_maximize} aria-label={maximized ? T.win_restore : T.win_maximize}
+          onClick={() => api && api.window_toggle_maximize()}>
+          {maximized ? (
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.1">
+              <rect x="2" y="3.5" width="6" height="6"/><path d="M4 3.5 V2 H10 V8 H8.5"/>
+            </svg>
+          ) : (
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.1">
+              <rect x="2.2" y="2.2" width="7.6" height="7.6"/>
+            </svg>
+          )}
+        </button>
+        <button className="ow-winbtn close" title={T.win_close} aria-label={T.win_close}
+          onClick={() => api && api.window_close()}>
+          <svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" strokeWidth="1.1"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"/></svg>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// Invisible native edge/corner grips for the frameless window (Windows only).
+// mousedown hands the matching hit-test code to the OS resize loop.
+const RESIZE_EDGES = ["t", "b", "l", "r", "tl", "tr", "bl", "br"];
+const ResizeHandles = ({ api }) => (
+  <>
+    {RESIZE_EDGES.map((edge) => (
+      <div key={edge} className={`ow-resize-h ${edge}`}
+        onMouseDown={(e) => { if (e.button === 0 && api) { e.preventDefault(); api.window_start_resize(edge); } }}/>
+    ))}
+  </>
+);
 
 // ── Sidebar (clickable, mirrors VarA/VarB design) ──────────────────
 const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
@@ -331,10 +412,7 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
       borderRight: advanced ? "1px solid var(--line-strong)" : "1px solid var(--line)",
       display: "flex", flexDirection: "column", padding: "22px 14px",
     }}>
-      <div style={{ padding: "0 8px 22px" }}>
-        <window.WSWordmark size={16} color="var(--text)" accent="var(--brand)"/>
-      </div>
-
+      {/* Wordmark moved to the window title bar (frameless chrome). */}
       {advanced && (
         <div style={{ padding: "0 8px 14px", fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-3)", letterSpacing: ".08em", textTransform: "uppercase" }}>
           dev mode
@@ -1264,6 +1342,9 @@ const Settings = ({ T, settings, onSetting }) => {
       { title: T.set_minimizeTray, sub: T.set_minimizeTraySub, control: (
         <window.Toggle on={!!settings.minimize_to_tray} onChange={(v) => apply("minimize_to_tray", v)}/>
       )},
+      { title: T.set_checkUpdates, sub: T.set_checkUpdatesSub, control: (
+        <window.Toggle on={!!settings.check_updates_on_start} onChange={(v) => apply("check_updates_on_start", v)}/>
+      )},
     ]},
   ];
 
@@ -1295,8 +1376,128 @@ const Settings = ({ T, settings, onSetting }) => {
   );
 };
 
+// ── Update panel (lives inside About) ──────────────────────────────
+// Drives the "check for updates" → "update now" flow. Checking is synchronous
+// over the bridge; applying (Windows) runs in the background and reports
+// download progress + phases via the outwarp:update event. On Linux there is
+// no .exe to apply, so check_for_updates() returns {manual, command} and we
+// show the install one-liner instead.
+const UpdatePanel = ({ T, api, autoCheck }) => {
+  const [state, setState] = useState("idle"); // idle|checking|current|available|downloading|applying|error
+  const [info, setInfo] = useState(null);
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const doCheck = useCallback(async () => {
+    if (!api) return;
+    setState("checking");
+    setError("");
+    const r = await api.check_for_updates();
+    setInfo(r);
+    if (r.error) { setState("error"); setError(r.error); return; }
+    setState(r.available ? "available" : "current");
+  }, [api]);
+
+  // Auto-check once on mount when the user opted in.
+  useEffect(() => { if (autoCheck) doCheck(); }, [autoCheck, doCheck]);
+
+  // Progress + phase events emitted by apply_update() on Windows.
+  useBridgeEvent("update", useCallback((d) => {
+    if (d.phase === "downloading") { setState("downloading"); setProgress(d.progress || 0); }
+    else if (d.phase === "applying") { setState("applying"); }
+    else if (d.phase === "error") { setState("error"); setError(d.error || ""); }
+    else if (d.phase === "current") { setState("current"); }
+  }, []));
+
+  const doApply = async () => { if (api) await api.apply_update(); };
+  const copyCmd = async (cmd) => {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {}
+  };
+
+  const wrap = { marginTop: 18, paddingTop: 18, borderTop: "1px solid var(--line)" };
+
+  if (state === "checking")
+    return <div style={wrap}><span style={{ fontSize: 13, color: "var(--text-3)" }}>{T.upd_checking}</span></div>;
+
+  if (state === "downloading")
+    return (
+      <div style={{ ...wrap, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: 13, color: "var(--text-2)" }}>{T.upd_downloading} {progress}%</div>
+        <div style={{ height: 6, borderRadius: 4, background: "var(--line)", overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${progress}%`, background: "var(--brand)", transition: "width .2s" }}/>
+        </div>
+      </div>
+    );
+
+  if (state === "applying")
+    return <div style={wrap}><span style={{ fontSize: 13, color: "var(--text-2)" }}>{T.upd_applying}</span></div>;
+
+  if (state === "error")
+    return (
+      <div style={{ ...wrap, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: 13, color: "var(--brand-bad)" }}>{T.upd_error}</div>
+        {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)", wordBreak: "break-all" }}>{error}</div>}
+        <div style={{ display: "flex", gap: 8 }}>
+          <window.Btn kind="ghost" size="sm" onClick={doCheck}>{T.upd_check}</window.Btn>
+          {info?.html_url && <window.Btn kind="ghost" size="sm" onClick={() => api?.open_url(info.html_url)}>{T.upd_seeReleases}</window.Btn>}
+        </div>
+      </div>
+    );
+
+  if (state === "current")
+    return (
+      <div style={{ ...wrap, display: "flex", alignItems: "center", gap: 10 }}>
+        <window.Pill tone="good">v{info?.latest || info?.current}</window.Pill>
+        <span style={{ fontSize: 13, color: "var(--text-2)", flex: 1 }}>{T.upd_current}</span>
+        <window.Btn kind="ghost" size="sm" onClick={doCheck}>{T.upd_check}</window.Btn>
+      </div>
+    );
+
+  if (state === "available" && info)
+    return (
+      <div style={{ ...wrap, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 13, color: "var(--text-2)" }}>{T.upd_available}</span>
+          <window.Pill tone="brand">v{info.latest}</window.Pill>
+        </div>
+        {info.notes && (
+          <div className="ws-scroll" style={{
+            background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 10,
+            padding: "10px 12px", fontSize: 12, color: "var(--text-2)", lineHeight: 1.5,
+            whiteSpace: "pre-wrap", maxHeight: 160, overflow: "auto",
+          }}>{info.notes}</div>
+        )}
+        {info.manual ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 13, color: "var(--text-2)" }}>{T.upd_linux}</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+              <code style={{
+                flex: 1, fontFamily: "var(--font-mono)", fontSize: 12, background: "var(--bg)",
+                border: "1px solid var(--line)", borderRadius: 8, padding: "8px 10px",
+                color: "var(--text)", wordBreak: "break-all",
+              }}>{info.command}</code>
+              <window.Btn kind="ghost" size="sm" onClick={() => copyCmd(info.command)}>{copied ? T.upd_copied : T.upd_copy}</window.Btn>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8 }}>
+            <window.Btn kind="primary" size="md" onClick={doApply}>{T.upd_now}</window.Btn>
+            <window.Btn kind="ghost" size="md" onClick={() => api?.open_url(info.html_url)}>{T.upd_seeReleases}</window.Btn>
+          </div>
+        )}
+      </div>
+    );
+
+  return <div style={wrap}><window.Btn kind="ghost" size="sm" onClick={doCheck}>{T.upd_check}</window.Btn></div>;
+};
+
 // ── About ──────────────────────────────────────────────────────────
-const About = ({ T, api }) => {
+const About = ({ T, api, settings }) => {
   const [info, setInfo] = useState(null);
   useEffect(() => {
     if (!api) return;
@@ -1344,6 +1545,8 @@ const About = ({ T, api }) => {
             {T.about_openRepo}
           </window.Btn>
         </div>
+
+        <UpdatePanel T={T} api={api} autoCheck={!!settings?.check_updates_on_start}/>
       </div>
 
       <div>

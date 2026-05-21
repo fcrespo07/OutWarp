@@ -2,6 +2,11 @@
 
 const STR = {
   es: {
+    // Window title bar
+    win_minimize: "Minimizar",
+    win_maximize: "Maximizar",
+    win_restore: "Restaurar",
+    win_close: "Cerrar",
     // Empty state
     welcomeTitle: "Conéctate a tu túnel",
     welcomeSub: "Importa un archivo de configuración .owcfg que te haya enviado tu servidor.",
@@ -50,8 +55,23 @@ const STR = {
     about_thirdParty: "Componentes de terceros",
     about_openUrl: "Abrir →",
     about_disclaimer: "OutWarp se distribuye bajo licencia MIT. WireGuard es marca registrada de Jason A. Donenfeld. wstunnel es un proyecto independiente de erebe.",
+    // Updates
+    upd_check: "Buscar actualizaciones",
+    upd_checking: "Buscando…",
+    upd_current: "Estás en la última versión.",
+    upd_available: "Nueva versión disponible:",
+    upd_now: "Actualizar ahora",
+    upd_downloading: "Descargando…",
+    upd_applying: "Cerrando y aplicando la actualización…",
+    upd_error: "No se pudo comprobar la actualización.",
+    upd_seeReleases: "Ver releases",
+    upd_linux: "Para actualizar en Linux, ejecuta este comando:",
+    upd_copy: "Copiar",
+    upd_copied: "Copiado",
 
     // Settings
+    set_checkUpdates: "Buscar actualizaciones al iniciar",
+    set_checkUpdatesSub: "Comprobar si hay una versión nueva al abrir la pantalla Acerca de.",
     set_killSwitch: "Kill switch",
     set_killSwitchSub: "Bloquea todo el tráfico de internet si el túnel se cae.",
     set_autoconnect: "Reintento automático",
@@ -158,6 +178,11 @@ const STR = {
     notConnected: "Sin túnel activo",
   },
   en: {
+    // Window title bar
+    win_minimize: "Minimize",
+    win_maximize: "Maximize",
+    win_restore: "Restore",
+    win_close: "Close",
     welcomeTitle: "Connect to your tunnel",
     welcomeSub: "Import a .owcfg configuration file shared by your server.",
     importFile: "Import file",
@@ -201,7 +226,22 @@ const STR = {
     about_thirdParty: "Third-party components",
     about_openUrl: "Open →",
     about_disclaimer: "OutWarp is distributed under the MIT license. WireGuard is a registered trademark of Jason A. Donenfeld. wstunnel is an independent project by erebe.",
+    // Updates
+    upd_check: "Check for updates",
+    upd_checking: "Checking…",
+    upd_current: "You're on the latest version.",
+    upd_available: "New version available:",
+    upd_now: "Update now",
+    upd_downloading: "Downloading…",
+    upd_applying: "Closing and applying the update…",
+    upd_error: "Couldn't check for updates.",
+    upd_seeReleases: "View releases",
+    upd_linux: "To update on Linux, run this command:",
+    upd_copy: "Copy",
+    upd_copied: "Copied",
 
+    set_checkUpdates: "Check for updates on startup",
+    set_checkUpdatesSub: "Check for a newer version when opening the About screen.",
     set_killSwitch: "Kill switch",
     set_killSwitchSub: "Block all internet traffic if the tunnel drops.",
     set_autoconnect: "Automatic retry",

@@ -737,3 +737,98 @@ def test_reset_profile_without_baseline_errors(tmp_path):
     with patch("outwarp.api.default_config_path", return_value=tmp_path / "config.json"):
         r = api.reset_profile("OutWarp")
     assert r["ok"] is False
+
+
+# ── updates ─────────────────────────────────────────────────────────────────
+
+# Patching outwarp.api.sys.platform mutates the real sys module, which
+# platformdirs reads during Api() construction — so build the Api first, then
+# patch only around the call under test. Keeps these tests OS-independent.
+
+@patch("outwarp.api.updater.check_for_update", return_value={"available": True, "latest": "9.9.9"})
+def test_check_for_updates_windows_passes_through(_mock):
+    api, _ = _make_api()
+    with patch("outwarp.api.sys.platform", "win32"):
+        r = api.check_for_updates()
+    assert r == {"available": True, "latest": "9.9.9"}
+    assert "manual" not in r
+
+
+@patch("outwarp.api.updater.check_for_update", return_value={"available": True, "latest": "9.9.9"})
+def test_check_for_updates_linux_adds_manual_command(_mock):
+    api, _ = _make_api()
+    with patch("outwarp.api.sys.platform", "linux"):
+        r = api.check_for_updates()
+    assert r["manual"] is True
+    assert "install.sh" in r["command"]
+
+
+def test_apply_update_linux_returns_manual():
+    api, _ = _make_api()
+    with patch("outwarp.api.sys.platform", "linux"):
+        r = api.apply_update()
+    assert r["ok"] is False
+    assert r["manual"] is True
+    assert "install.sh" in r["command"]
+
+
+def test_apply_update_windows_dispatches_background_thread():
+    api, _ = _make_api()
+    with patch("outwarp.api.sys.platform", "win32"), \
+         patch("outwarp.api.threading.Thread") as mock_thread:
+        r = api.apply_update()
+    assert r == {"ok": True}
+    mock_thread.assert_called_once()
+    assert mock_thread.call_args.kwargs["target"] == api._run_update
+
+
+@patch("outwarp.api.updater.check_for_update", return_value={"available": False, "latest": "0.1.4"})
+def test_run_update_emits_current_when_up_to_date(_mock):
+    api, _ = _make_api()
+    api._emit = MagicMock()
+    api._run_update()
+    phases = [c.args[1]["phase"] for c in api._emit.call_args_list]
+    assert phases[0] == "checking"
+    assert "current" in phases
+
+
+@patch("outwarp.api.updater.download_installer")
+@patch(
+    "outwarp.api.updater.check_for_update",
+    return_value={
+        "available": True, "latest": "9.9.9",
+        "asset_url": "https://x/OutWarpSetup-9.9.9.exe",
+        "asset_name": "OutWarpSetup-9.9.9.exe",
+    },
+)
+def test_run_update_downloads_launches_and_quits(_mock_check, mock_dl):
+    api, _ = _make_api()
+    api._emit = MagicMock()
+    api._launch_installer = MagicMock(return_value=True)
+    api._quit_for_update = MagicMock()
+    api._run_update()
+    mock_dl.assert_called_once()
+    api._launch_installer.assert_called_once()
+    api._quit_for_update.assert_called_once()
+    phases = [c.args[1]["phase"] for c in api._emit.call_args_list]
+    assert "applying" in phases
+
+
+@patch("outwarp.api.updater.download_installer")
+@patch(
+    "outwarp.api.updater.check_for_update",
+    return_value={
+        "available": True, "latest": "9.9.9",
+        "asset_url": "https://x/OutWarpSetup-9.9.9.exe",
+        "asset_name": "OutWarpSetup-9.9.9.exe",
+    },
+)
+def test_run_update_does_not_quit_if_installer_launch_fails(_mock_check, _mock_dl):
+    api, _ = _make_api()
+    api._emit = MagicMock()
+    api._launch_installer = MagicMock(return_value=False)
+    api._quit_for_update = MagicMock()
+    api._run_update()
+    api._quit_for_update.assert_not_called()
+    phases = [c.args[1]["phase"] for c in api._emit.call_args_list]
+    assert phases[-1] == "error"

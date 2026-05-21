@@ -39,6 +39,50 @@
 
 * { box-sizing: border-box; }
 
+/* ── Frameless window chrome ───────────────────────────────────────── */
+.ow-root {
+  position: relative;
+  display: flex; flex-direction: column;
+  height: 100%;
+  background: var(--bg); color: var(--text);
+}
+.ow-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 232px 1fr; }
+
+.ow-titlebar {
+  flex: 0 0 38px; height: 38px;
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg-2); border-bottom: 1px solid var(--line);
+  user-select: none; -webkit-user-select: none;
+}
+.ow-titlebar-drag {
+  display: flex; align-items: center;
+  flex: 1; min-width: 0; height: 100%;
+  padding: 0 14px;
+}
+.ow-titlebar-controls { display: flex; height: 100%; }
+.ow-winbtn {
+  all: unset;
+  width: 46px; height: 100%;
+  display: grid; place-items: center;
+  color: var(--text-2); cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.ow-winbtn:hover { background: var(--chip); color: var(--text); }
+.ow-winbtn.close:hover { background: #e81123; color: #fff; }
+.ow-winbtn:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+/* Invisible native resize grips (Windows frameless). Sit above content at the
+   window edges; corners are wider and layered last so they win over edges. */
+.ow-resize-h { position: absolute; z-index: 60; }
+.ow-resize-h.t { top: 0; left: 8px; right: 8px; height: 5px; cursor: ns-resize; }
+.ow-resize-h.b { bottom: 0; left: 8px; right: 8px; height: 5px; cursor: ns-resize; }
+.ow-resize-h.l { left: 0; top: 8px; bottom: 8px; width: 5px; cursor: ew-resize; }
+.ow-resize-h.r { right: 0; top: 8px; bottom: 8px; width: 5px; cursor: ew-resize; }
+.ow-resize-h.tl { top: 0; left: 0; width: 9px; height: 9px; cursor: nwse-resize; z-index: 61; }
+.ow-resize-h.tr { top: 0; right: 0; width: 9px; height: 9px; cursor: nesw-resize; z-index: 61; }
+.ow-resize-h.bl { bottom: 0; left: 0; width: 9px; height: 9px; cursor: nesw-resize; z-index: 61; }
+.ow-resize-h.br { bottom: 0; right: 0; width: 9px; height: 9px; cursor: nwse-resize; z-index: 61; }
+
 /* shared keyframes for the tunnel viz / status pulses */
 @keyframes ws-pulse {
   0%   { transform: scale(1);   opacity: .7; }
