@@ -67,7 +67,7 @@ class ServerPlatform(ABC):
     def wg_interface_name(self) -> str:
         """The name of the WireGuard interface this platform manages.
 
-        Linux/macOS use 'wg0' (wg-quick convention); Windows uses
+        Linux uses 'wg0' (wg-quick convention); Windows uses
         'OutWarp-Server' (wireguard.exe service name). Callers that need
         to query the running interface should use this instead of
         hardcoding 'wg0'.
@@ -78,7 +78,7 @@ class ServerPlatform(ABC):
         """One-time OS-level setup: IP forwarding, NAT, firewall rules.
 
         Called once after first-run setup wizard completes.
-        The default implementation is a no-op (Linux/macOS use PostUp hooks).
+        The default implementation is a no-op (Linux uses PostUp hooks).
         """
 
     def install_prefix(self) -> Path | None:

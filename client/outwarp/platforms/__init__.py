@@ -9,9 +9,6 @@ def get_platform() -> Platform:
     if sys.platform == "win32":
         from .windows import WindowsPlatform
         return WindowsPlatform()
-    if sys.platform == "darwin":
-        from .macos import MacOSPlatform
-        return MacOSPlatform()
     if sys.platform.startswith("linux"):
         from .linux import LinuxPlatform
         return LinuxPlatform()

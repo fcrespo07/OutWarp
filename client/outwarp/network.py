@@ -63,9 +63,6 @@ def measure_latency_ms(host: str, timeout_ms: int = 2000) -> int | None:
         # `-n 1` = one echo, `-w` is in ms on Windows.
         cmd = ["ping", "-n", "1", "-w", str(timeout_ms), host]
         extra["creationflags"] = subprocess.CREATE_NO_WINDOW
-    elif sys.platform == "darwin":
-        # macOS BSD ping: `-W` is in ms.
-        cmd = ["ping", "-c", "1", "-W", str(timeout_ms), host]
     else:
         # iputils ping on Linux: `-W` is in seconds (rounded up).
         seconds = max(1, (timeout_ms + 999) // 1000)

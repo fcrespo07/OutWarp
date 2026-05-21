@@ -247,7 +247,7 @@ class ServerManager:
         try:
             platform = get_server_platform()
 
-            # OS-level setup (IP forwarding, NAT, firewall) — idempotent no-op on Linux/macOS.
+            # OS-level setup (IP forwarding, NAT, firewall) — idempotent no-op on Linux.
             try:
                 platform.prepare_system(self._config.subnet, self._config.port)
             except PlatformError as exc:

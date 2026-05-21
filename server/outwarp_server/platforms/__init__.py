@@ -14,9 +14,6 @@ def get_server_platform() -> ServerPlatform:
     if sys.platform == "win32":
         from outwarp_server.platforms.windows import WindowsServerPlatform
         return WindowsServerPlatform()
-    if sys.platform == "darwin":
-        from outwarp_server.platforms.macos import MacOSServerPlatform
-        return MacOSServerPlatform()
     from outwarp_server.platforms.linux import LinuxServerPlatform
     return LinuxServerPlatform()
 

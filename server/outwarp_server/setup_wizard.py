@@ -69,7 +69,7 @@ def run_setup(config_dir: Path) -> int:
     if not _check_root():
         console.print(
             "[red]Error:[/red] This wizard must be run as root (or Administrator on Windows).\n"
-            "  On Linux/macOS: [bold]sudo outwarp-server setup[/bold]"
+            "  On Linux: [bold]sudo outwarp-server setup[/bold]"
         )
         return 1
 

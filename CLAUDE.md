@@ -17,15 +17,16 @@ El script original se mantiene intacto como referencia. **No lo modifiques** —
 
 OutWarp es una herramienta **genérica**: cualquier persona con un servidor propio debe poder usarla. No está atada a ninguna infraestructura concreta.
 
-- **Cliente**: app de bandeja del sistema (tray) multiplataforma que lanza wstunnel y gestiona el túnel WireGuard asociado.
-- **Servidor**: wizard CLI que instala y configura wstunnel como servicio en cualquier OS.
-- **Cliente y servidor pueden estar en OS distintos** (ej. servidor Linux + cliente Windows, o servidor Windows + cliente macOS).
+- **Cliente**: app de bandeja del sistema (tray) que lanza wstunnel y gestiona el túnel WireGuard asociado.
+- **Servidor**: wizard (CLI o GUI) que instala y configura wstunnel como servicio en Windows o Linux.
+- **Cliente y servidor pueden estar en OS distintos** (ej. servidor Linux + cliente Windows).
 
 ### Plataformas soportadas (cliente y servidor)
 
 - Windows 10/11
 - Linux (distros con systemd)
-- macOS
+
+> **macOS queda fuera de alcance.** No se publicará ninguna versión para macOS. El dispatch por `sys.platform` solo contempla Windows y Linux; un arranque en Darwin lanza `PlatformError("Unsupported platform")`.
 
 ## Stack técnico
 
@@ -40,19 +41,18 @@ Se valoró C# + WinForms (descartado: no cross-platform sin reescribir UI entera
 | Tray icon | `pystray` |
 | UI (ventana principal + wizard) | HTML/CSS/React 18 + `pywebview` (bridge `window.pywebview.api`) |
 | Packaging | `PyInstaller` (one-folder) |
-| Installer Windows | Inno Setup → `.exe` wizard |
-| Installer Linux | `.deb` / AppImage / script |
-| Installer macOS | `.app` + `.dmg` |
+| Installer Windows | PyInstaller + Inno Setup → `.exe` wizard |
+| Installer Linux | `install.sh` (bootstrap + venv + `pip install`) |
 
 El HTML se sirve **desde el filesystem** (`file://…/ui/index.html`) directamente a la ventana pywebview, no por HTTP. La clase `Api` (`outwarp/api.py`) se expone con `js_api=api` al crear la ventana; el JS la invoca como `window.pywebview.api.<método>` y recibe eventos vía `window.addEventListener('outwarp:<name>', …)` (Python emite con `window.evaluate_js`). Sin FastAPI ni uvicorn — el JS bridge directo es el modelo definitivo.
 
-**Versión TUI futura**: hay un acuerdo de hacer una segunda versión del cliente como TUI (probablemente con [`textual`](https://textual.textualize.io/)) cuando la versión GUI sea estable. Encajaría como cliente alternativo del mismo `TunnelManager` — la lógica de túnel ya está separada de la UI y puede compartirse.
+**Versión TUI futura**: hay un acuerdo de hacer una segunda versión del cliente como TUI (probablemente con [`textual`](https://textual.textualize.io/)) cuando la versión GUI sea estable. Encajaría como cliente alternativo del mismo `TunnelManager` — la lógica de túnel ya está separada de la UI y puede compartirse. (Ya existe `outwarp-cli`, un cliente headless por consola para Linux sin escritorio.)
 
 ### Servidor
 
 - Wizard CLI interactivo (`rich` + `prompt_toolkit`) — sigue siendo el flujo recomendado en VPS headless (`sudo outwarp-server setup`).
 - Wizard GUI con la misma estética que el cliente (pywebview + HTML) en `outwarp-server-gui` para administradores con escritorio.
-- Instalación como servicio nativo: **systemd** (Linux), **launchd** (macOS), **Windows Service Manager** (Windows).
+- Instalación como servicio nativo: **systemd** (Linux) y **Windows Service Manager** (Windows). También despliegue **Docker/Kubernetes** vía manifests.
 - Genera un `.owcfg` por cliente, listo para importar.
 
 ## Arquitectura
@@ -63,6 +63,7 @@ OutWarp/
 │   ├── outwarp/
 │   │   ├── app.py            # Entry point: crea Api, abre pywebview, arranca tray
 │   │   ├── api.py            # Clase Api expuesta como window.pywebview.api
+│   │   ├── cli.py            # outwarp-cli (cliente headless para Linux)
 │   │   ├── tray.py           # pystray + menú contextual
 │   │   ├── tunnel.py         # Gestión del proceso wstunnel + watchdog + reconexión
 │   │   ├── wireguard.py      # Fachada WireGuard (delega en platforms/)
@@ -71,7 +72,7 @@ OutWarp/
 │   │   ├── logs.py           # Logger + rotación + MemoryLogHandler
 │   │   ├── uninstall.py      # outwarp-uninstall CLI
 │   │   ├── ui/               # HTML/JS de la UI (Claude Design)
-│   │   │   ├── index.html    # Carga react + babel + scripts
+│   │   │   ├── index.html    # Carga react + scripts (bundle JSX pre-compilado)
 │   │   │   ├── app.jsx       # Shell interactivo cableado al Api
 │   │   │   ├── var-a.jsx     # Variante "consumer" del diseño (referencia)
 │   │   │   ├── var-b.jsx     # Variante "developer/instrument" (referencia)
@@ -82,8 +83,7 @@ OutWarp/
 │   │   └── platforms/
 │   │       ├── base.py       # Interfaz abstracta
 │   │       ├── windows.py
-│   │       ├── linux.py
-│   │       └── macos.py
+│   │       └── linux.py
 │   ├── requirements.txt
 │   └── pyproject.toml
 │
@@ -95,13 +95,16 @@ OutWarp/
 │   │   ├── server_manager.py # ServerManager (start/stop/add-client/revoke)
 │   │   ├── server_tray.py    # Tray del modo GUI
 │   │   ├── setup_wizard.py   # Wizard rich del CLI
+│   │   ├── crypto.py         # TLS cert self-signed + fingerprint + WG keypairs
+│   │   ├── ip_pool.py        # Asignación de IPs del pool de clientes
+│   │   ├── wireguard.py      # build_server_wg_conf + add/remove peer (hot-reload)
 │   │   ├── owcfg.py          # build_owcfg / write_owcfg
 │   │   ├── ui/               # HTML/JS del servidor (Claude Design)
-│   │   └── platforms/        # systemd / launchd / SCM
+│   │   └── platforms/        # systemd (linux) / SCM (windows) / k8s manifests (kubernetes)
 │   └── pyproject.toml
 │
 ├── installer/
-│   ├── windows/install.ps1
+│   ├── windows/             # outwarp.iss (Inno Setup) + build/ (PyInstaller specs) + bundle/
 │   └── linux/install.sh
 │
 ├── config.example.owcfg
@@ -113,27 +116,23 @@ OutWarp/
 
 El patrón: `platforms/base.py` define la interfaz; cada OS tiene su implementación. `wireguard.py` y `network.py` no contienen lógica específica de OS, solo importan el módulo correcto según `sys.platform`.
 
-| Operación | Windows | Linux | macOS |
-|---|---|---|---|
-| Levantar tunnel WG | `wireguard.exe /installtunnelservice` | `wg-quick up` + systemd | `wg-quick up` (Homebrew) |
-| Rutas estáticas | `route add X MASK Y Z` | `ip route add X via Y` | `route -n add -net X Y` |
-| Config WG | `.conf.dpapi` (DPAPI) | `.conf` plano (`/etc/wireguard/`) | `.conf` plano |
-| Servicio del servidor | SCM (pywin32) | systemd unit | launchd plist |
+| Operación | Windows | Linux |
+|---|---|---|
+| Levantar tunnel WG | `wireguard.exe /installtunnelservice` | `wg-quick up` + systemd |
+| Rutas estáticas | `route add X MASK Y Z` | `ip route add X via Y` |
+| Config WG | `.conf.dpapi` (DPAPI) | `.conf` plano (`/etc/wireguard/`) |
+| Servicio del servidor | SCM (pywin32) | systemd unit |
 
 ## Distribución e instalación
 
-Un único one-liner por OS:
+- **Windows (cliente o servidor)**: instalador `.exe` (PyInstaller one-folder + Inno Setup) desde GitHub Releases. El wizard pregunta si instala cliente, servidor o ambos. WireGuard for Windows y `wstunnel.exe` van bundleados — el usuario no necesita Python.
+- **Linux (cliente o servidor)**: `curl -fsSL <url>/install.sh | sudo bash`. El script pregunta cliente o servidor, instala Python 3.11+ si falta, crea un venv, instala las deps y lanza el wizard correspondiente.
 
-- Linux/macOS: `curl -fsSL <url>/install.sh | bash`
-- Windows: `irm <url>/install.ps1 | iex`
+**Modelo de empaquetado**: en Windows, cliente y servidor se distribuyen como un único instalador `.exe`; el usuario no necesita Python. En Linux, instalación desde fuente vía `install.sh` (crea venv + `pip install`, non-editable).
 
-El script bootstrap pregunta al usuario si instala **cliente** o **servidor**, descarga el repo, instala Python 3.11+ si falta, instala las deps y lanza el wizard correspondiente.
+**Registro como servicio**: el instalador registra automáticamente el binario como servicio del SO al final del wizard (Windows Service / systemd unit). El usuario no tiene que hacer nada extra para que arranque al iniciar sesión.
 
-**Modelo de empaquetado (fase inicial)**: instalación desde fuente con `pip install -e .` para ambos, cliente y servidor. El cliente migrará a binarios PyInstaller pre-construidos vía GitHub Releases cuando haya CI montada (evita el requisito de Python en la máquina del usuario). El servidor se queda con instalación desde fuente.
-
-**Registro como servicio**: el `install.sh`/`install.ps1` registra automáticamente el binario como servicio del SO al final del wizard (Windows Service / systemd unit / launchd plist). El usuario no tiene que hacer nada extra para que arranque al iniciar sesión.
-
-Hosting del script: pendiente de decidir entre dominio propio y `raw.githubusercontent.com`. No bloquea el desarrollo.
+Hosting del script: pendiente de decidir entre dominio propio y `raw.githubusercontent.com`. No bloquea el desarrollo (el `install.sh` ya apunta a `raw.githubusercontent.com`).
 
 ## TLS y endpoint del servidor
 
@@ -150,7 +149,7 @@ Sí. Cuando WireGuard captura todo el tráfico (`AllowedIPs = 0.0.0.0/0`), el pr
 
 - Si el servidor está detrás de Cloudflare/CDN, son las IPs del proxy (varias).
 - Si el servidor es directo, es **una sola IP** (la pública del servidor).
-- El servidor calcula sus propias IPs de bypass durante la instalación y las **embebe en el `.owcfg`** — el cliente las aplica tal cual, sin pedirlas al usuario.
+- El servidor calcula sus propias IPs de bypass durante la instalación y las **embebe en el `.owcfg`** — el cliente las aplica tal cual, sin pedirlas al usuario. Si el endpoint es un hostname, el cliente lo resuelve a IPs antes de añadir las rutas de bypass.
 
 ## Apertura de puertos
 
@@ -200,7 +199,7 @@ El servidor genera **un fichero `.owcfg` por cliente** (formato JSON). Cada `.ow
 
 **El `.owcfg` es sensible**: contiene la clave privada WireGuard del cliente. Quien tenga el fichero ES ese cliente. Tratarlo como una credencial.
 
-El cliente, al importar el `.owcfg`, lo guarda como `config.json` en la ruta de configuración del usuario (`%APPDATA%\OutWarp\` en Windows, `~/.config/outwarp/` en Linux/macOS).
+El cliente, al importar el `.owcfg`, lo guarda como `config.json` en la ruta de configuración del usuario (`%APPDATA%\OutWarp\` en Windows, `~/.config/outwarp/` en Linux).
 
 ### Comandos del servidor
 
@@ -235,7 +234,7 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 | WireGuard (kernel/tools/Windows) | GPL-2.0 | Invocado vía subprocess, no linked → no contamina. Instalado por el OS package manager, no bundleado. Sin obligaciones GPL mientras no se incluya el binario en el instalador. |
 | Protocolo WireGuard | Sin patente | Libre. |
 | pystray | LGPL-3.0 | ⚠️ En binarios PyInstaller usar modo **one-folder** (no one-file) para que el usuario pueda reemplazar la lib. Incluir texto LGPL en `THIRD_PARTY_LICENSES`. |
-| customtkinter | MIT | Sin restricciones. |
+| pywebview | BSD-3-Clause | UI host. Sin restricciones relevantes. |
 | Pillow | MIT-CMU (HPND) | Sin restricciones. |
 | platformdirs | MIT | Sin restricciones. |
 | Python (CPython) | PSF (BSD-style) | Sin restricciones. |
@@ -249,91 +248,66 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 - [ ] Confirmar licencia MIT (o cambiar a Apache-2.0 si se esperan contribuciones corporativas).
 - [ ] Añadir fichero `LICENSE` en la raíz con el texto MIT.
-- [ ] Añadir fichero `THIRD_PARTY_LICENSES` con BSD-3-Clause de wstunnel + LGPL-3.0 de pystray.
-- [ ] Verificar que no queden referencias a `vpn.fcrespo.tech`, `ClaveSegura123`, `10.43.9.43`, `PortatilDesbloqueado` ni IPs del autor.
+- [ ] Añadir fichero `THIRD_PARTY_LICENSES` con BSD-3-Clause de wstunnel + LGPL-3.0 de pystray + BSD-3-Clause de pywebview.
+- [x] Verificar que no queden referencias a `vpn.fcrespo.tech`, `ClaveSegura123`, `10.43.9.43`, `PortatilDesbloqueado` ni IPs del autor. *(El código está limpio; las únicas menciones viven en este checklist.)*
+- [ ] Firmar el instalador Windows (eliminar warnings de SmartScreen/UAC en primer arranque).
 
 ## Convenciones de código
 
 - Python 3.11+, type hints obligatorios.
-- `ruff` + `black` para formato/lint.
+- `ruff` es el gate de lint del repo (no se corre `black`). Hay deuda de lint preexistente; no introducir violaciones nuevas.
 - Docstrings solo cuando el "por qué" no sea obvio del nombre (regla estándar del repo).
 - Sin comentarios inline triviales.
 - Tests donde tenga sentido (lógica de config, parser de logs, abstracciones de plataforma mockeables).
 
 ## Estado actual
 
-**Fase 0 — Planificación** ✅
-**Fase 1 — Scaffolding del cliente Python** ✅
-**Fase 2 — Schema y loader del `.owcfg`** ✅
-**Fase 3 — Abstracción de plataforma** ✅
-**Fase 4a — Orquestador del túnel** ✅ (`wireguard.py`, `network.py`, `tunnel.py`: build de la conf WG, TLS pinning en Python, `Tunnel.connect()/disconnect()`)
-**Fase 4b — Watchdog y reconexión** ✅ (`TunnelManager` con thread de monitorización, backoff de la config, máquina de estados `DISCONNECTED/CONNECTING/CONNECTED/RECONNECTING/FAILED`, listeners para que el tray se enganche)
-**Fase 5a — Tray icon y logs** ✅ (`tray.py` con pystray: icono con punto de color por estado, menú contextual con Ver logs / Reconectar / Importar .owcfg / Salir. `logs.py` con rotación 512 KB y `MemoryLogHandler` para ventana de logs en vivo)
-**Fase 5b — Wizard y app.py end-to-end** ✅ (`app.py`: entry point real con mutex de instancia única — `CreateMutexW` en Windows, `fcntl.flock` en POSIX —, carga de config o flujo de import, instanciación de `TunnelManager` + `TrayApp`, cleanup al salir)
+**Versión actual: `0.1.4`** (en código; instaladores `.exe` publicados de 0.1.0 a 0.1.4, tags hasta `v0.1.2`). El proyecto pasó de las fases de scaffolding a **releases versionados y bugfixing post-lanzamiento** (~130 commits en `main`).
 
-**Fase UI — Nueva UI OutWarp (Claude Design)** ✅ (rama `new-uidesign`: rebrand `WarpSocket`→`OutWarp` y `.warpcfg`→`.owcfg`. `customtkinter` reemplazado por HTML/React 18 + pywebview con JS bridge directo. `Api` class en `outwarp/api.py` y `outwarp_server/api.py`. Shell interactivo en `app.jsx` con VarA/VarB toggle vía `settings.advanced`. Wizard de setup del servidor reimplementado en la UI.)
+### Cliente
 
-**~85 tests del cliente** pasando (subprocess/socket/ssl/pywebview mockeado; corren en cualquier OS).
+- **Windows**: ✅ completo y en producción. Instalador `.exe` (PyInstaller + Inno Setup) que bundlea WireGuard for Windows y `wstunnel.exe`. GUI pywebview + tray.
+- **Linux**: ✅ completo, validado end-to-end. `install.sh` con bootstrap (detecta/instala Python, crea venv, recrea venv corrupto, registra systemd unit). Incluye `outwarp-cli` headless para máquinas sin escritorio.
+- **macOS**: ❌ fuera de alcance, no se implementará.
 
-**Flujo end-to-end**: el usuario abre OutWarp → si no hay config, ve la pantalla "Importar perfil" → arrastra o selecciona el `.owcfg` → `Api.import_profile` lo valida, lo guarda y arranca un `TunnelManager` nuevo → tray icon refleja el estado en tiempo real → menú permite reconectar, ver logs, salir.
+Fases originales del cliente (todas ✅): scaffolding, schema/loader del `.owcfg`, abstracción de plataforma, orquestador del túnel (`tunnel.py`/`wireguard.py`/`network.py` con TLS pinning en Python), watchdog + reconexión (`TunnelManager` con máquina de estados `DISCONNECTED/CONNECTING/CONNECTED/RECONNECTING/FAILED`), tray + logs (rotación 512 KB + `MemoryLogHandler`), app.py end-to-end con mutex de instancia única (`CreateMutexW` en Windows, `fcntl.flock` en POSIX).
 
----
+### Servidor
 
-**Fase Servidor S1 — Scaffolding + Config** ✅ (`server/`: pyproject.toml con entry point `outwarp-server`, `config.py` con `ServerConfig` + `ClientEntry` dataclasses, `cli.py` con argparse + 5 subcomandos)
-**Fase Servidor S2 — Crypto** ✅ (`crypto.py`: `generate_tls_cert` con EC P-256 self-signed + SAN automático IP/DNS, `compute_cert_fingerprint` SHA-256, `generate_wg_keypair` via `wg genkey`/`wg pubkey`)
-**Fase Servidor S3 — IP Pool + WG server config** ✅ (`ip_pool.py` con `next_available_ip` y `PoolExhaustedError`, `wireguard.py` con `build_server_wg_conf` + `add_peer_live`/`remove_peer_live` para hot-reload)
-**Fase Servidor S4 — warpcfg + comandos de gestión** ✅ (`warpcfg.py` que construye el dict compatible con `ClientConfig` del cliente; `add-client`, `list-clients`, `revoke-client` implementados con rich tables)
-**Fase Servidor S5 — Plataforma Linux + setup wizard** ✅ (`platforms/`: ABC `ServerPlatform` + `LinuxServerPlatform` con systemd unit + `wg-quick`/`wg syncconf`; macOS y Windows como stubs. `setup_wizard.py` interactivo con rich: detección de IP pública, generación de cert/keys, instalación de servicios, probe localhost)
-**Fase Servidor S6 — Status command** ✅ (`outwarp-server status` con tabla rich mostrando endpoint, subnet, contador de clientes y estado de wstunnel/WG)
+- **Linux**: ✅ completo (systemd + `wg-quick`/`wg syncconf`, setup wizard rich, detección de IP pública, cert self-signed EC P-256, probe de conectividad, `is_wg_active` sin root).
+- **Windows**: ✅ implementado (SCM vía pywin32; single-bundle GUI-first con CLI opt-in).
+- **Docker/Kubernetes**: ✅ añadido (`platforms/kubernetes.py` + manifests) — no estaba en el plan original.
+- **macOS**: ❌ fuera de alcance.
 
-**~100 tests del servidor** pasando (cryptography real + subprocess/urllib/pywebview mockeado; corren en cualquier OS).
+Fases del servidor (todas ✅): scaffolding + config, crypto (`crypto.py`), IP pool + WG server config (`ip_pool.py`/`wireguard.py` con hot-reload), `owcfg` + comandos de gestión, plataforma Linux + setup wizard, status command. Subcomandos: `setup`, `add-client`, `list-clients`, `revoke-client`, `status`.
 
-**Siguiente**: pruebas manuales en una VM Linux real (Ubuntu/Debian) — `sudo outwarp-server setup`, `add-client test`, copiar el `.owcfg` al cliente Windows y validar el túnel end-to-end. Tras validar, implementar `LinuxPlatform` del cliente, luego macOS (cliente y servidor), luego Windows en el servidor. La UI nueva (rama `new-uidesign`) debe validarse en Windows con `outwarp` (cliente GUI) y `outwarp-server-gui` (servidor GUI) — el JS bridge sólo se ha probado con pyteststub aquí.
+### UI (Claude Design)
+
+✅ Mergeada a `main` (la rama `new-uidesign` ya no existe). customtkinter sustituido por HTML/React 18 + pywebview con JS bridge directo (sin FastAPI/uvicorn). Los bundles JSX se pre-compilan (se eliminó Babel in-browser + React por CDN). Añadidos posteriores: **editor de perfil en la UI** (editar nombre, MTU, DNS, IP, routing, reconnect sin re-importar el `.owcfg`), **gráfica de throughput en vivo** en Home, About screen, stepper de "connecting", logs seleccionables con botón jump-to-bottom.
+
+### Tests
+
+**~245 tests del cliente + ~174 del servidor** pasando (subprocess/socket/ssl/pywebview mockeado en el cliente; `cryptography` real + subprocess/urllib/pywebview mockeado en el servidor; corren en cualquier OS).
+
+### Pendiente para la primera versión estable
+
+- ❌ Faltan los ficheros `LICENSE` y `THIRD_PARTY_LICENSES` en la raíz (ver checklist de licencias).
+- ⚠️ Instalador Windows sin firmar → warnings de SmartScreen/UAC en primer arranque.
+- ⚠️ README aún marcado como "under active development, not yet ready for production".
+- ✅ Sin referencias del autor (`vpn.fcrespo.tech`, `ClaveSegura123`, etc.) en el código.
 
 El repo está en GitHub como privado: https://github.com/fcrespo07/OutWarp
 
-## Optimizaciones de rendimiento pendientes
+## Optimizaciones de rendimiento (aplicadas ✅)
 
-El túnel funciona end-to-end (speed test: Download 34.76 Mbps / Upload 24.16 Mbps, Ping 62–118 ms en LAN). Dos cambios sencillos mejorarán la latencia y el throughput:
+El túnel funciona end-to-end (speed test de referencia: Download 34.76 Mbps / Upload 24.16 Mbps, Ping 62–118 ms en LAN). Las dos optimizaciones que estaban pendientes ya están en código:
 
-### 1. Connection pooling — `--connection-min-idle 3` en wstunnel
-
-**Archivo**: `client/outwarp/tunnel.py` → `build_wstunnel_command()`
-
-```python
-return [
-    str(wstunnel_bin),
-    "client",
-    "--connection-min-idle", "3",   # mantiene 3 conexiones TLS pre-establecidas
-    "-L",
-    forward,
-    "--http-upgrade-path-prefix",
-    s.http_upgrade_path_prefix,
-    f"wss://{s.endpoint}:{s.port}",
-]
-```
-
-Sin esto, cada sesión UDP de WireGuard abre una conexión TCP+TLS+WebSocket nueva (~30–50 ms de handshake). Con `--connection-min-idle 3`, wstunnel tiene conexiones listas de antemano.
-
-### 2. MTU correcto — `MTU = 1380` en el config WireGuard
-
-**Archivo**: `client/outwarp/wireguard.py` → `build_wg_conf()`, sección `[Interface]`
-
-```
-[Interface]
-PrivateKey = ...
-Address = ...
-MTU = 1380
-DNS = ...
-```
-
-Cálculo: 1500 (Ethernet) − 40 (IP/TCP) − 40 (TLS) − 8 (WebSocket frame) − 4 (wstunnel header) − 28 (WireGuard overhead) = 1380. El default 1420 está calibrado para WG-over-UDP; sobre TCP/TLS provoca fragmentación y jitter (62 vs 118 ms observados).
-
-**Verificación**: tras el cambio, repetir speed test. El ping debería estabilizarse y el throughput mejorar en transferencias grandes. Confirmar en los logs: `Starting wstunnel: ... --connection-min-idle 3 ...`
+1. **Connection pooling**: `--connection-min-idle 3` en `client/outwarp/tunnel.py` (`build_wstunnel_command()`). Mantiene 3 conexiones TLS pre-establecidas, evitando el handshake de ~30–50 ms por cada sesión UDP nueva.
+2. **MTU correcto**: el MTU del config WireGuard ya **no está hardcodeado** — es **editable por perfil** desde la UI. `wireguard.py` → `build_wg_conf()` lee `wg.mtu`, validado a 576–1500 en `config.py`. El cálculo de referencia para WG-over-TCP/TLS sigue siendo ~1380 (1500 − 40 IP/TCP − 40 TLS − 8 WS − 4 wstunnel − 28 WG); el default 1420 está calibrado para WG-over-UDP y sobre TCP/TLS provoca fragmentación y jitter.
 
 ---
 
-## Nueva UI (Claude Design) — implementada en la rama `new-uidesign`
+## Nueva UI (Claude Design) — mergeada a `main`
 
 La UI customtkinter se sustituyó por los HTML/JSX exportados de **Claude Design**, con un rebrand del proyecto a **OutWarp** (`.warpcfg` → `.owcfg`). El backend Python (tunnel, wireguard, network, config, logs, platforms, server_manager, crypto) **no cambia** — los cambios se concentran en la capa de presentación.
 
@@ -393,5 +367,5 @@ Eventos:
 ## Notas para futuras sesiones
 
 - El directorio hermano `C:\Users\ferra\Documents\wstunnel_10.5.2_windows_amd64.tar\script portable\` contiene el script PowerShell original. Úsalo como referencia funcional (flujo de reconexión, estructura de menú, manejo de errores), pero **no** copies literales — la arquitectura Python es distinta.
-- El autor prefiere iterar: no diseñar todo de golpe. Tras el scaffolding, priorizar que el cliente en Windows funcione end-to-end, luego portar a Linux, luego macOS, luego servidor.
+- El autor prefiere iterar: no diseñar todo de golpe. El orden seguido fue: cliente Windows end-to-end → Linux → servidor. macOS queda descartado.
 - Antes de publicar el repo (privado primero, público después): revisar que no queden referencias a `vpn.fcrespo.tech`, `ClaveSegura123`, `10.43.9.43`, `PortatilDesbloqueado` ni IPs específicas del autor.

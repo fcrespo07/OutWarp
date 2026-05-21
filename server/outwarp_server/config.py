@@ -58,8 +58,6 @@ class ServerConfig:
 def default_config_dir() -> Path:
     if sys.platform == "win32":
         base = Path(r"C:\ProgramData")
-    elif sys.platform == "darwin":
-        base = Path("/Library/Application Support")
     else:
         base = Path("/etc")
     return base / "outwarp"

@@ -8,7 +8,6 @@ import pytest
 
 from outwarp.platforms import Platform, PlatformError, get_platform
 from outwarp.platforms.linux import LinuxPlatform
-from outwarp.platforms.macos import MacOSPlatform
 from outwarp.platforms.windows import WindowsPlatform
 
 
@@ -28,9 +27,10 @@ def test_get_platform_returns_linux(monkeypatch):
     assert isinstance(get_platform(), LinuxPlatform)
 
 
-def test_get_platform_returns_macos(monkeypatch):
+def test_get_platform_raises_for_macos(monkeypatch):
     monkeypatch.setattr("sys.platform", "darwin")
-    assert isinstance(get_platform(), MacOSPlatform)
+    with pytest.raises(PlatformError, match="Unsupported platform"):
+        get_platform()
 
 
 def test_get_platform_raises_for_unknown(monkeypatch):
@@ -229,14 +229,6 @@ def test_remove_host_route_idempotent():
     p = WindowsPlatform()
     with patch("subprocess.run", return_value=_mock_run(1, stderr="not found")):
         p.remove_host_route("203.0.113.42")  # must not raise
-
-
-# --- Stubs raise on macOS ---
-
-def test_macos_stub_raises_for_install():
-    p = MacOSPlatform()
-    with pytest.raises(PlatformError, match="not implemented"):
-        p.install_wg_tunnel("x", "...")
 
 
 def test_platform_is_abstract():
@@ -578,17 +570,6 @@ def test_linux_is_autostart_installed_reflects_file_presence(tmp_path, monkeypat
     assert p.is_autostart_installed() is True
 
 
-# --- MacOSPlatform: autostart (stub for now) ---
-
-def test_macos_autostart_methods_are_stubs():
-    p = MacOSPlatform()
-    with pytest.raises(PlatformError, match="not implemented"):
-        p.install_autostart(["x"])
-    with pytest.raises(PlatformError, match="not implemented"):
-        p.uninstall_autostart()
-    assert p.is_autostart_installed() is False
-
-
 # --- WindowsPlatform: kill switch (netsh advfirewall) ---
 
 def _is_netsh_add_rule(cmd, rule_name):
@@ -743,14 +724,4 @@ def test_linux_engage_kill_switch_raises_not_implemented(linux_helper):
 def test_linux_release_kill_switch_is_silent_no_op(linux_helper):
     p = _linux_platform(linux_helper)
     p.release_kill_switch()  # must not raise — startup cleanup hits this
-    assert p.is_kill_switch_engaged() is False
-
-
-# --- MacOSPlatform: kill switch (stub) ---
-
-def test_macos_engage_kill_switch_raises():
-    p = MacOSPlatform()
-    with pytest.raises(PlatformError, match="not yet implemented on macOS"):
-        p.engage_kill_switch(["1.1.1.1"])
-    p.release_kill_switch()  # silent no-op
     assert p.is_kill_switch_engaged() is False

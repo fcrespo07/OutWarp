@@ -35,8 +35,8 @@ class Platform(ABC):
 
     # ── autostart on user login ───────────────────────────────────────────
     # Each implementation decides where the registration lives
-    # (HKCU\…\Run on Windows, ~/.config/autostart on Linux, LaunchAgents on
-    # macOS). `command` is the argv list to run on login — the caller (api.py)
+    # (HKCU\…\Run on Windows, ~/.config/autostart on Linux).
+    # `command` is the argv list to run on login — the caller (api.py)
     # builds it from sys.executable so frozen and dev-mode launches both work.
 
     @abstractmethod

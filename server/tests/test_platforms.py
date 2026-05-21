@@ -158,13 +158,6 @@ class TestLinuxPlatform:
 
 
 class TestStubPlatforms:
-    def test_macos_raises_not_implemented(self) -> None:
-        from outwarp_server.platforms.macos import MacOSServerPlatform
-
-        p = MacOSServerPlatform()
-        with pytest.raises(PlatformError, match="not implemented"):
-            p.is_wstunnel_running()
-
     def test_windows_wstunnel_service_is_noop(self) -> None:
         from outwarp_server.platforms.windows import WindowsServerPlatform
         from unittest.mock import patch

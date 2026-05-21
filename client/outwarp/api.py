@@ -85,7 +85,7 @@ def _default_settings() -> dict[str, Any]:
         "start_at_boot": False,
         # Block all outbound traffic any time the tunnel is unexpectedly down
         # (RECONNECTING / FAILED). Released on CONNECTED or on a clean stop.
-        # Real implementation lives in WindowsPlatform; Linux/macOS raise a
+        # Real implementation lives in WindowsPlatform; Linux raises a
         # PlatformError when toggled on so the UI surfaces an honest error
         # rather than pretending the switch works.
         "kill_switch": False,

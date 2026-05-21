@@ -443,7 +443,7 @@ def test_set_kill_switch_on_no_op_if_tunnel_is_connected(tmp_path):
 
 
 def test_set_kill_switch_rolls_back_on_platform_error(tmp_path):
-    """The Linux/macOS path raises PlatformError when enabling. Must surface
+    """The Linux path raises PlatformError when enabling. Must surface
     {ok: False, error: ...} and revert the persisted value so the UI doesn't
     show a falsely-active switch."""
     from outwarp.platforms import PlatformError
