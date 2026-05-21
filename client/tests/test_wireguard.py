@@ -55,13 +55,40 @@ def test_build_wg_conf_omits_dns_when_empty():
     assert "DNS" not in text
 
 
-def test_build_wg_conf_routes_all_traffic():
-    # With no bypass IPs, AllowedIPs should be the full default route.
+def test_build_wg_conf_always_excludes_endpoint_even_without_bypass():
+    # Even with an empty bypass list, the server endpoint itself must be carved
+    # out of AllowedIPs — otherwise wstunnel's connection to the server would be
+    # captured by the tunnel and loop, so the WG handshake never completes.
     cfg = _make_config()
     from dataclasses import replace
     cfg = replace(cfg, routing=RoutingConfig(bypass_ips=[]))
     text = build_wg_conf(cfg)
-    assert "AllowedIPs = 0.0.0.0/0" in text
+    assert "AllowedIPs = 0.0.0.0/0" not in text
+    assert "203.0.113.42" not in text       # endpoint (203.0.113.42) excluded
+    assert "203.0.113.43/32" in text        # neighbouring /32 stays tunneled
+
+
+def test_build_wg_conf_resolves_domain_endpoint_for_bypass(monkeypatch):
+    # A domain endpoint must be resolved to its current IP and excluded; the raw
+    # hostname used to reach ipaddress.ip_network() and fail every connect.
+    import outwarp.wireguard as wg
+
+    def fake_getaddrinfo(host, *args, **kwargs):
+        assert host == "wg.example.com"
+        return [(2, 1, 6, "", ("198.51.100.42", 0))]
+
+    monkeypatch.setattr(wg.socket, "getaddrinfo", fake_getaddrinfo)
+    from dataclasses import replace
+    cfg = _make_config()
+    cfg = replace(
+        cfg,
+        server=replace(cfg.server, endpoint="wg.example.com"),
+        routing=RoutingConfig(bypass_ips=["wg.example.com"]),
+    )
+    text = build_wg_conf(cfg)
+    assert "AllowedIPs = 0.0.0.0/0" not in text
+    assert "198.51.100.42" not in text      # resolved endpoint IP excluded
+    assert "198.51.100.43/32" in text       # neighbouring /32 stays tunneled
 
 
 def test_build_wg_conf_excludes_bypass_ips_from_allowed():

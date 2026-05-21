@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import shutil
+import socket
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from outwarp.config import ClientConfig
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -70,6 +74,46 @@ def get_tunnel_stats(tunnel_name: str) -> TunnelStats | None:
     )
 
 
+def _resolve_bypass_networks(bypass_ips: list[str]) -> list[ipaddress.IPv4Network]:
+    """Turn bypass entries into concrete IPv4 networks.
+
+    Entries may be literal IPs, CIDRs, or **hostnames**. A hostname (e.g. a
+    domain endpoint, possibly behind dynamic DNS) is resolved via DNS here, at
+    connect time, so its current IP gets excluded from the tunnel. Without this
+    the raw hostname reached `ipaddress.ip_network()` and blew up with
+    "'host/32' does not appear to be an IPv4 or IPv6 network", failing every
+    connect attempt. Unresolvable / IPv6-only entries are skipped with a warning
+    — the tunnel still comes up, just without that exclusion.
+    """
+    nets: list[ipaddress.IPv4Network] = []
+    seen: set[str] = set()
+
+    def _add(net: ipaddress.IPv4Network) -> None:
+        if str(net) not in seen:
+            seen.add(str(net))
+            nets.append(net)
+
+    for raw in bypass_ips:
+        entry = raw.strip()
+        if not entry:
+            continue
+        try:
+            net = ipaddress.ip_network(entry if "/" in entry else f"{entry}/32", strict=False)
+            if isinstance(net, ipaddress.IPv4Network):
+                _add(net)
+            continue
+        except ValueError:
+            pass
+        try:
+            infos = socket.getaddrinfo(entry, None, family=socket.AF_INET)
+        except OSError as exc:
+            log.warning("Could not resolve bypass host %r (skipping exclusion): %s", entry, exc)
+            continue
+        for info in infos:
+            _add(ipaddress.ip_network(f"{info[4][0]}/32"))
+    return nets
+
+
 def _allowed_ips_excluding(bypass_ips: list[str]) -> str:
     """Compute 0.0.0.0/0 minus bypass_ips as a comma-separated AllowedIPs string.
 
@@ -78,8 +122,7 @@ def _allowed_ips_excluding(bypass_ips: list[str]) -> str:
     captures traffic before the OS routing table is consulted.
     """
     remaining: list[ipaddress.IPv4Network] = [ipaddress.ip_network("0.0.0.0/0")]
-    for ip in bypass_ips:
-        excl = ipaddress.ip_network(ip if "/" in ip else f"{ip}/32", strict=False)
+    for excl in _resolve_bypass_networks(bypass_ips):
         new_remaining: list[ipaddress.IPv4Network] = []
         for net in remaining:
             if excl.overlaps(net):
@@ -93,7 +136,14 @@ def _allowed_ips_excluding(bypass_ips: list[str]) -> str:
 def build_wg_conf(config: ClientConfig) -> str:
     wg = config.wireguard
     tunnel = config.tunnel
-    bypass = config.routing.bypass_ips
+    # Always exclude the server endpoint itself from the tunnel. If it stayed
+    # inside AllowedIPs, wstunnel's own connection to the server would be routed
+    # back through the tunnel → loop, the WG handshake never completes. Resolved
+    # at connect time (see _resolve_bypass_networks) so a domain endpoint works
+    # too. Belt-and-suspenders on top of the server-provided bypass_ips.
+    bypass = list(config.routing.bypass_ips)
+    if config.server.endpoint:
+        bypass.append(config.server.endpoint)
     allowed_ips = _allowed_ips_excluding(bypass) if bypass else "0.0.0.0/0"
     dns_line = f"DNS = {', '.join(wg.dns)}\n" if wg.dns else ""
     return (
