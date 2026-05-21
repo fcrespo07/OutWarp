@@ -174,9 +174,17 @@ class Api:
     # ── pywebview wiring ──────────────────────────────────────────────────────
 
     def bind_window(self, window: Any) -> None:
-        self._window = window
+        # Backfill the log buffer *before* publishing the window: while
+        # self._window is None, _emit() is a no-op (see its guard), so
+        # _record_log won't call evaluate_js on a renderer that hasn't booted
+        # yet. webview.start() runs *after* bind_window, so setting the window
+        # first (as before) made every backfilled line block ~20s in
+        # evaluate_js until pywebview gave up with "Main window failed to
+        # start" — a 20s blank-screen hang on every launch. The UI backfills
+        # via get_logs() on first paint; the watcher covers everything after.
         for line in self._memory_handler.snapshot():
             self._record_log("info", line)
+        self._window = window
         self._start_log_watcher()
 
     def notify_ready(self) -> dict[str, Any]:

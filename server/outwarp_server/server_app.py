@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from pathlib import Path
 
 from outwarp_server import __version__
@@ -108,22 +109,31 @@ def _resolve_ui_path() -> str:
 def main() -> int:
     _ensure_elevated()
     memory_handler = setup_logging()
-    log.info("OutWarp Server GUI v%s starting", __version__)
+    t0 = time.monotonic()
+
+    def _stage(label: str) -> None:
+        log.info("startup [%5.2fs] %s", time.monotonic() - t0, label)
+
+    _stage(f"OutWarp Server GUI v{__version__} starting")
 
     lock = _SingleInstanceLock()
     if not lock.acquire():
         log.error("Another instance is already running")
         return 1
+    _stage("single-instance lock acquired")
 
     try:
         import webview
+        _stage("imported pywebview")
 
         from outwarp_server.api import Api
         from outwarp_server.server_manager import ServerManager
         from outwarp_server.server_tray import ServerTrayApp
+        _stage("imported outwarp_server modules")
 
         config = _try_load_config()
         manager: ServerManager | None = ServerManager(config) if config else None
+        _stage("config loaded + manager constructed (config=%s)" % (config is not None))
 
         tray: ServerTrayApp
 
@@ -134,6 +144,7 @@ def main() -> int:
             new_mgr.start()
 
         api = Api(memory_handler, manager, on_manager_replaced=on_manager_replaced)
+        _stage("Api constructed")
 
         window = webview.create_window(
             title=_WINDOW_TITLE,
@@ -145,7 +156,9 @@ def main() -> int:
             background_color="#f6f5f1",
             resizable=True,
         )
+        _stage("webview window created")
         api.bind_window(window)
+        _stage("api bound to window")
 
         def _show_window() -> None:
             try:
@@ -164,13 +177,14 @@ def main() -> int:
                 pass
 
         tray = ServerTrayApp(manager=manager, on_show=_show_window, on_quit=_on_quit)
+        _stage("tray constructed")
 
         if manager is not None:
             manager.start()
             log.info("Server manager started: server=%s:%d", config.endpoint, config.port)
 
         tray.run()
-        log.info("Tray running — opening webview window")
+        _stage("tray running — about to hand off to webview.start()")
         webview.start(gui="edgechromium" if sys.platform == "win32" else None)
 
         log.info("OutWarp Server shut down cleanly")
@@ -178,3 +192,12 @@ def main() -> int:
 
     finally:
         lock.release()
+
+
+# PyInstaller runs this file as the bundle's entry script (see
+# installer/windows/build/outwarp-server.spec → a_gui). Without this guard the
+# frozen exe would import the module, run no code, and exit 0 — no window, no
+# wizard. The pip `outwarp-server-gui` console script calls main() itself, so
+# the guard stays dormant on import.
+if __name__ == "__main__":
+    sys.exit(main())
