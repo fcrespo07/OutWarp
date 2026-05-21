@@ -112,6 +112,8 @@ def main() -> int:
     t0 = time.monotonic()
 
     def _stage(label: str) -> None:
+        # Per-stage timing so we can spot future startup regressions. Format
+        # matches the rest of the log line so it stays grep-friendly.
         log.info("startup [%5.2fs] %s", time.monotonic() - t0, label)
 
     _stage(f"OutWarp Server GUI v{__version__} starting")
@@ -133,7 +135,7 @@ def main() -> int:
 
         config = _try_load_config()
         manager: ServerManager | None = ServerManager(config) if config else None
-        _stage("config loaded + manager constructed (config=%s)" % (config is not None))
+        _stage(f"config loaded + manager constructed (config={config is not None})")
 
         tray: ServerTrayApp
 

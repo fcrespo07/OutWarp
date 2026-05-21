@@ -1,5 +1,5 @@
 ; OutWarp – Windows installer
-; Build with:  ISCC /DAppVersion=0.1.0 installer\windows\outwarp.iss
+; Build with:  ISCC /DAppVersion=0.1.3 installer\windows\outwarp.iss
 ; (or just run installer\windows\build\build.py — it invokes ISCC for you).
 ;
 ; Requires Inno Setup 6+ — https://jrsoftware.org/isinfo.php
@@ -13,7 +13,7 @@
 ;   installer\windows\bundle\wireguard-installer.exe   (optional, prompts if missing)
 
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.1.3"
 #endif
 
 #define AppName        "OutWarp"
