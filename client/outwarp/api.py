@@ -35,7 +35,7 @@ from outwarp.config import (
     ConfigError,
     apply_profile_patch,
     default_config_path,
-    import_owcfg,
+    import_owcfg_text,
     original_config_path,
 )
 from outwarp.logs import MemoryLogHandler
@@ -480,27 +480,23 @@ class Api:
             return []
         return [_profile_from_config(self._manager.config)]
 
+    # An .owcfg is a small JSON document (~1–2 KB). Anything past this is either
+    # a wrong file the user dropped or a malformed paste — reject before parsing.
+    _MAX_OWCFG_BYTES = 256 * 1024
+
     def import_profile(self, file_content: str) -> dict[str, Any]:
         """Accept an .owcfg payload as text. Stores it as the active config."""
-        tmp = tempfile.NamedTemporaryFile(
-            prefix="outwarp-import-", suffix=".owcfg", delete=False, mode="w",
-            encoding="utf-8",
-        )
+        if not isinstance(file_content, str) or not file_content.strip():
+            return {"ok": False, "error": "Empty or invalid .owcfg content"}
+        if len(file_content.encode("utf-8", "ignore")) > self._MAX_OWCFG_BYTES:
+            return {"ok": False, "error": "This file is too large to be a valid .owcfg"}
         try:
-            tmp.write(file_content)
-            tmp.close()
-            try:
-                cfg = import_owcfg(Path(tmp.name))
-            except ConfigError as exc:
-                return {"ok": False, "error": str(exc)}
-            except Exception as exc:
-                log.exception("import_profile failed")
-                return {"ok": False, "error": str(exc)}
-        finally:
-            try:
-                Path(tmp.name).unlink(missing_ok=True)
-            except OSError:
-                pass
+            cfg = import_owcfg_text(file_content)
+        except ConfigError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            log.exception("import_profile failed")
+            return {"ok": False, "error": str(exc)}
 
         # Swap manager: stop old, create new, notify the orchestrator.
         old = self._manager

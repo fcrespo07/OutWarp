@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from outwarp.api import Api
 from outwarp.logs import MemoryLogHandler
 from outwarp.tunnel import TunnelState
@@ -109,6 +111,29 @@ def test_list_profiles_returns_active_only():
 def test_import_profile_invalid_returns_error():
     api, _ = _make_api()
     r = api.import_profile("not a json")
+    assert r["ok"] is False
+    assert "error" in r
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "\n\t ", None, 123, [], {}])
+def test_import_profile_rejects_empty_or_non_string(bad):
+    api, _ = _make_api()
+    r = api.import_profile(bad)
+    assert r["ok"] is False
+    assert "error" in r
+
+
+def test_import_profile_rejects_oversized_payload():
+    api, _ = _make_api()
+    r = api.import_profile("x" * (256 * 1024 + 1))
+    assert r["ok"] is False
+    assert "too large" in r["error"]
+
+
+def test_import_profile_rejects_non_object_json():
+    # A JSON array/string/number must yield a clean error, not an exception.
+    api, _ = _make_api()
+    r = api.import_profile("[1, 2, 3]")
     assert r["ok"] is False
     assert "error" in r
 

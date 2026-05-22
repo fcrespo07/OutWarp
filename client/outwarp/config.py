@@ -74,12 +74,26 @@ class ClientConfig:
     @classmethod
     def load(cls, path: Path) -> ClientConfig:
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
+            text = path.read_text(encoding="utf-8")
         except FileNotFoundError:
             raise ConfigError(f"Config file not found: {path}")
+        try:
+            raw = json.loads(text)
         except json.JSONDecodeError as exc:
             raise ConfigError(f"Config file is not valid JSON: {exc}")
+        return _parse(raw)
 
+    @classmethod
+    def loads(cls, text: str) -> ClientConfig:
+        """Parse an .owcfg from a JSON string, no filesystem round-trip.
+
+        Used by the GUI import path, which receives the file contents over the
+        JS bridge — writing them to a temp file just to read them back was both
+        slower and a cleanup hazard."""
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"Not valid JSON: {exc}") from exc
         return _parse(raw)
 
     def save(self, path: Path) -> None:
@@ -113,6 +127,15 @@ def import_owcfg(warpcfg_path: Path, dest: Path | None = None) -> ClientConfig:
     return config
 
 
+def import_owcfg_text(text: str, dest: Path | None = None) -> ClientConfig:
+    """Like import_owcfg but from an in-memory string (GUI bridge path)."""
+    config = ClientConfig.loads(text)
+    target = dest or default_config_path()
+    config.save(target)
+    config.save(original_config_path(target))
+    return config
+
+
 # --- internal helpers ---
 
 def _require(data: dict[str, Any], key: str, section: str) -> Any:
@@ -122,6 +145,10 @@ def _require(data: dict[str, Any], key: str, section: str) -> Any:
 
 
 def _parse(raw: dict[str, Any]) -> ClientConfig:
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"Config must be a JSON object, got {type(raw).__name__}"
+        )
     version = raw.get("schema_version", 1)
     if version != _SCHEMA_VERSION:
         raise ConfigError(
