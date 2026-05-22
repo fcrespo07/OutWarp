@@ -3,6 +3,12 @@ const SRV_STR = {
   es: {
     appName: "OutWarp Server",
 
+    // ── Window chrome (frameless title bar)
+    win_minimize: "Minimizar",
+    win_maximize: "Maximizar",
+    win_restore: "Restaurar",
+    win_close: "Cerrar",
+
     // ── Nav
     nav_dashboard: "Panel",
     nav_clients: "Clientes",
@@ -201,6 +207,11 @@ const SRV_STR = {
   },
   en: {
     appName: "OutWarp Server",
+
+    win_minimize: "Minimize",
+    win_maximize: "Maximize",
+    win_restore: "Restore",
+    win_close: "Close",
 
     nav_dashboard: "Dashboard",
     nav_clients: "Clients",
