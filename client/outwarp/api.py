@@ -769,13 +769,31 @@ class Api:
 
     # ── updates ─────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _prefer_full_installer() -> bool:
+        """True when a server bundle sits next to this client install.
+
+        The slim client installer omits the server bundle, so applying it over a
+        machine that runs both apps would leave the server stale. In that case
+        prefer the combined installer. Only meaningful in a frozen one-folder
+        build, where sys.executable is {app}\\client\\outwarp.exe and the server
+        (if installed) is {app}\\server\\.
+        """
+        if sys.platform != "win32" or not getattr(sys, "frozen", False):
+            return False
+        try:
+            app_dir = Path(sys.executable).resolve().parent.parent
+            return (app_dir / "server" / "outwarp-server-gui.exe").exists()
+        except Exception:
+            return False
+
     def check_for_updates(self) -> dict[str, Any]:
         """Query GitHub Releases for a newer version. Synchronous (5s timeout,
         never raises). On Linux there is no in-app apply, so the manual install
         command is attached for the UI to display."""
         from outwarp import __version__
 
-        result = updater.check_for_update(__version__)
+        result = updater.check_for_update(__version__, prefer_full=self._prefer_full_installer())
         if sys.platform != "win32":
             result["manual"] = True
             result["command"] = updater.LINUX_UPDATE_COMMAND
@@ -804,7 +822,7 @@ class Api:
         from outwarp import __version__
 
         self._emit("update", {"phase": "checking", "progress": 0})
-        info = updater.check_for_update(__version__)
+        info = updater.check_for_update(__version__, prefer_full=self._prefer_full_installer())
         if info.get("error"):
             self._emit("update", {"phase": "error", "error": info["error"]})
             return

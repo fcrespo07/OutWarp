@@ -25,9 +25,30 @@ _LATEST_API = f"https://api.github.com/repos/{_REPO}/releases/latest"
 _RELEASES_PAGE = f"https://github.com/{_REPO}/releases/latest"
 _USER_AGENT = "OutWarp-Updater"
 
-# The Windows installer asset name produced by build.py, e.g.
-# "OutWarpSetup-0.1.5.exe" (see installer/windows/outwarp.iss OutputBaseFilename).
-_ASSET_RE = re.compile(r"^OutWarpSetup-.*\.exe$", re.IGNORECASE)
+# Windows installer asset names produced by build.py (outwarp.iss
+# OutputBaseFilename per edition). The client prefers the slim "Client" edition
+# (~half the size — it omits the server's PyInstaller bundle) and falls back to
+# the combined installer for releases published before the split. It never picks
+# the server edition.
+_CLIENT_ASSET_RE = re.compile(r"^OutWarpSetup-Client-.*\.exe$", re.IGNORECASE)
+_FULL_ASSET_RE = re.compile(r"^OutWarpSetup-(?!Client-)(?!Server-).*\.exe$", re.IGNORECASE)
+
+
+def _select_installer_asset(
+    assets: list[dict[str, Any]], *, prefer_full: bool = False
+) -> dict[str, Any] | None:
+    # prefer_full is set when the server is co-installed on this machine: the
+    # slim client edition would leave that server bundle stale, so fall back to
+    # the combined installer which updates both.
+    order = (
+        (_FULL_ASSET_RE, _CLIENT_ASSET_RE) if prefer_full
+        else (_CLIENT_ASSET_RE, _FULL_ASSET_RE)
+    )
+    for pattern in order:
+        for asset in assets:
+            if pattern.match(str(asset.get("name") or "")):
+                return asset
+    return None
 
 # Mirrors the documented one-liner in installer/linux/install.sh. Shown to the
 # user on Linux, where there is no .exe to auto-apply and the GUI cannot run a
@@ -63,12 +84,17 @@ def _is_newer(latest: str, current: str) -> bool:
     return lv > cv
 
 
-def check_for_update(current: str, *, timeout: float = 5.0) -> dict[str, Any]:
+def check_for_update(
+    current: str, *, timeout: float = 5.0, prefer_full: bool = False
+) -> dict[str, Any]:
     """Query GitHub Releases for the latest version.
 
     Never raises: any network/parse failure returns
     ``{"available": False, "error": "<msg>"}`` so the bridge can surface a soft
     message instead of crashing the renderer.
+
+    prefer_full picks the combined installer over the slim client edition (set
+    when a server is co-installed — see Api._prefer_full_installer).
     """
     try:
         req = urllib.request.Request(_LATEST_API, headers={"User-Agent": _USER_AGENT})
@@ -82,16 +108,10 @@ def check_for_update(current: str, *, timeout: float = 5.0) -> dict[str, Any]:
     notes = str(data.get("body") or "").strip()
     html_url = str(data.get("html_url") or _RELEASES_PAGE)
 
-    asset_url = ""
-    asset_name = ""
-    asset_size = 0
-    for asset in data.get("assets") or []:
-        name = str(asset.get("name") or "")
-        if _ASSET_RE.match(name):
-            asset_url = str(asset.get("browser_download_url") or "")
-            asset_name = name
-            asset_size = int(asset.get("size") or 0)
-            break
+    asset = _select_installer_asset(data.get("assets") or [], prefer_full=prefer_full)
+    asset_url = str(asset.get("browser_download_url") or "") if asset else ""
+    asset_name = str(asset.get("name") or "") if asset else ""
+    asset_size = int(asset.get("size") or 0) if asset else 0
 
     return {
         "available": bool(latest) and _is_newer(latest, current),

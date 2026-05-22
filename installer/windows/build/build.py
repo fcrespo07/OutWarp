@@ -96,11 +96,7 @@ def step_pyinstaller(python_bin: str, *, clean: bool) -> None:
         _run([python_bin, "-m", "PyInstaller", "--noconfirm", "--clean", str(spec)], cwd=ROOT)
 
 
-def step_installer(version: str) -> None:
-    print("\n=== [4/4] building Inno Setup installer ===")
-    iss = INSTALLER_DIR / "outwarp.iss"
-    if not iss.exists():
-        raise SystemExit(f"missing Inno Setup script: {iss}")
+def _resolve_iscc() -> str:
     iscc = shutil.which("iscc") or shutil.which("ISCC")
     if iscc is None:
         # Common install locations for Inno Setup 6 (system-wide and per-user).
@@ -120,9 +116,23 @@ def step_installer(version: str) -> None:
             "ISCC.exe not found. Install Inno Setup 6 from https://jrsoftware.org/isinfo.php "
             "or rerun with --no-installer."
         )
-    _run([iscc, f"/DAppVersion={version}", str(iss)])
+    return iscc
+
+
+def step_installer(version: str, editions: list[str]) -> None:
+    print("\n=== [4/4] building Inno Setup installer(s) ===")
+    iss = INSTALLER_DIR / "outwarp.iss"
+    if not iss.exists():
+        raise SystemExit(f"missing Inno Setup script: {iss}")
+    iscc = _resolve_iscc()
+    # full = client + server in one .exe (first-install / both on one machine);
+    # client / server = slim editions that omit the other app's PyInstaller
+    # bundle, halving the download. The in-app client updater fetches "client".
+    for edition in editions:
+        print(f"\n  -> edition: {edition}")
+        _run([iscc, f"/DAppVersion={version}", f"/DEdition={edition}", str(iss)])
     out = INSTALLER_DIR / "output"
-    print(f"\n  installer written to: {out}")
+    print(f"\n  installer(s) written to: {out}")
 
 
 def main() -> int:
@@ -133,6 +143,11 @@ def main() -> int:
     ap.add_argument("--skip-pyinstaller", action="store_true")
     ap.add_argument("--no-installer", action="store_true", help="stop after PyInstaller")
     ap.add_argument("--no-clean", action="store_true", help="keep previous dist/ and build/ contents")
+    ap.add_argument(
+        "--editions",
+        default="full,client,server",
+        help="comma-separated installer editions to build (full,client,server)",
+    )
     args = ap.parse_args()
 
     python_bin = _ensure_pyinstaller()
@@ -145,7 +160,11 @@ def main() -> int:
         _ensure_runtime_deps(python_bin)
         step_pyinstaller(python_bin, clean=not args.no_clean)
     if not args.no_installer:
-        step_installer(args.version)
+        editions = [e.strip() for e in args.editions.split(",") if e.strip()]
+        unknown = [e for e in editions if e not in ("full", "client", "server")]
+        if unknown:
+            raise SystemExit(f"unknown edition(s): {', '.join(unknown)} (expected full/client/server)")
+        step_installer(args.version, editions)
 
     print("\nbuild finished successfully.")
     return 0

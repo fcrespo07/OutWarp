@@ -89,6 +89,53 @@ def test_check_detects_newer_and_picks_installer_asset(mock_urlopen):
     assert r["html_url"].endswith("/v0.1.5")
 
 
+def _asset(name, url):
+    return {"name": name, "browser_download_url": url, "size": 1}
+
+
+@patch("outwarp.updater.urllib.request.urlopen")
+def test_check_prefers_client_edition_asset(mock_urlopen):
+    payload = dict(_RELEASE, assets=[
+        _asset("OutWarpSetup-0.1.5.exe", "https://x/full"),
+        _asset("OutWarpSetup-Server-0.1.5.exe", "https://x/srv"),
+        _asset("OutWarpSetup-Client-0.1.5.exe", "https://x/cli"),
+    ])
+    mock_urlopen.return_value = _json_resp(payload)
+    r = check_for_update("0.1.4")
+    assert r["asset_name"] == "OutWarpSetup-Client-0.1.5.exe"
+    assert r["asset_url"] == "https://x/cli"
+
+
+@patch("outwarp.updater.urllib.request.urlopen")
+def test_check_falls_back_to_full_when_no_client_edition(mock_urlopen):
+    # Releases published before the edition split only have the combined exe.
+    payload = dict(_RELEASE, assets=[_asset("OutWarpSetup-0.1.5.exe", "https://x/full")])
+    mock_urlopen.return_value = _json_resp(payload)
+    r = check_for_update("0.1.4")
+    assert r["asset_name"] == "OutWarpSetup-0.1.5.exe"
+
+
+@patch("outwarp.updater.urllib.request.urlopen")
+def test_check_never_picks_server_edition(mock_urlopen):
+    payload = dict(_RELEASE, assets=[_asset("OutWarpSetup-Server-0.1.5.exe", "https://x/srv")])
+    mock_urlopen.return_value = _json_resp(payload)
+    r = check_for_update("0.1.4")
+    assert r["asset_url"] == ""
+    assert r["asset_name"] == ""
+
+
+@patch("outwarp.updater.urllib.request.urlopen")
+def test_check_prefer_full_overrides_client_edition(mock_urlopen):
+    # When a server is co-installed the client must take the combined installer.
+    payload = dict(_RELEASE, assets=[
+        _asset("OutWarpSetup-Client-0.1.5.exe", "https://x/cli"),
+        _asset("OutWarpSetup-0.1.5.exe", "https://x/full"),
+    ])
+    mock_urlopen.return_value = _json_resp(payload)
+    r = check_for_update("0.1.4", prefer_full=True)
+    assert r["asset_name"] == "OutWarpSetup-0.1.5.exe"
+
+
 @patch("outwarp.updater.urllib.request.urlopen")
 def test_check_same_version_not_available(mock_urlopen):
     mock_urlopen.return_value = _json_resp(_RELEASE)

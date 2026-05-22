@@ -16,6 +16,17 @@
   #define AppVersion "0.2.0"
 #endif
 
+; Edition selects which components ship INSIDE this installer (not just what's
+; installed): "full" = client + server (default), "client" = client only,
+; "server" = server only. The slim editions leave the other app's ~75 MB
+; PyInstaller bundle out of the .exe entirely, halving the download — the
+; in-app client updater fetches the "client" edition. Pass /DEdition=client.
+#ifndef Edition
+  #define Edition "full"
+#endif
+#define HasClient (Edition == "full") || (Edition == "client")
+#define HasServer (Edition == "full") || (Edition == "server")
+
 #define AppName        "OutWarp"
 #define AppPublisher   "Ferran Crespo"
 #define AppURL         "https://github.com/fcrespo07/OutWarp"
@@ -39,7 +50,13 @@ DefaultGroupName=OutWarp
 DisableProgramGroupPage=no
 DisableDirPage=no
 OutputDir=output
+#if Edition == "client"
+OutputBaseFilename=OutWarpSetup-Client-{#AppVersion}
+#elif Edition == "server"
+OutputBaseFilename=OutWarpSetup-Server-{#AppVersion}
+#else
 OutputBaseFilename=OutWarpSetup-{#AppVersion}
+#endif
 Compression=lzma2/ultra
 SolidCompression=yes
 WizardStyle=modern
@@ -67,31 +84,51 @@ LicenseFile=
 Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
+#if Edition == "full"
 [Types]
 Name: "client";  Description: "Solo cliente (conecta a un servidor OutWarp existente)"
 Name: "server";  Description: "Solo servidor (acepta conexiones de clientes OutWarp)"
 Name: "full";    Description: "Cliente + servidor"
+#endif
 
 [Components]
+#if Edition == "full"
 Name: "client";        Description: "OutWarp Client (tray app)";                 Types: client full
 Name: "server";        Description: "OutWarp Server (interfaz gráfica)";         Types: server full
 Name: "wstunnel";      Description: "wstunnel.exe (transporte WebSocket)";       Types: client server full; Flags: fixed
 Name: "wireguard";     Description: "WireGuard for Windows (driver + tools)";    Types: client server full
+#elif Edition == "client"
+Name: "client";        Description: "OutWarp Client (tray app)";                 Flags: fixed
+Name: "wstunnel";      Description: "wstunnel.exe (transporte WebSocket)";       Flags: fixed
+Name: "wireguard";     Description: "WireGuard for Windows (driver + tools)";    Flags: fixed
+#elif Edition == "server"
+Name: "server";        Description: "OutWarp Server (interfaz gráfica)";         Flags: fixed
+Name: "wstunnel";      Description: "wstunnel.exe (transporte WebSocket)";       Flags: fixed
+Name: "wireguard";     Description: "WireGuard for Windows (driver + tools)";    Flags: fixed
+#endif
 
 [Tasks]
 Name: "desktopicon";     Description: "Crear acceso directo en el escritorio"; GroupDescription: "Accesos directos:"; Flags: checkablealone
+#if HasClient
 Name: "startupclient";   Description: "Iniciar OutWarp Client al arrancar Windows"; GroupDescription: "Arranque automatico:"; Components: client
+#endif
+#if HasServer
 Name: "startupserver";   Description: "Iniciar OutWarp Server al arrancar Windows"; GroupDescription: "Arranque automatico:"; Components: server
 Name: "runwizard";       Description: "Ejecutar el asistente de configuracion al finalizar"; GroupDescription: "Post-instalacion:"; Components: server
+#endif
 
 [Files]
+#if HasClient
 ; ── Client ───────────────────────────────────────────────────────────────
 Source: "{#DistDir}\outwarp-client\*"; DestDir: "{app}\client"; \
     Flags: ignoreversion recursesubdirs createallsubdirs; Components: client
+#endif
 
+#if HasServer
 ; ── Server (GUI + dormant CLI share one bundle / one _internal) ──────────
 Source: "{#DistDir}\outwarp-server\*"; DestDir: "{app}\server"; \
     Flags: ignoreversion recursesubdirs createallsubdirs; Components: server
+#endif
 
 ; ── wstunnel binary (shared, lives in {app} so both client & server find it) ─
 Source: "{#BundleDir}\wstunnel.exe"; DestDir: "{app}"; \
@@ -102,26 +139,38 @@ Source: "{#BundleDir}\wireguard-installer.exe"; DestDir: "{tmp}"; \
     Flags: deleteafterinstall; Components: wireguard; Check: HasWireGuardBundle
 
 [Icons]
+#if HasClient
 Name: "{group}\OutWarp Client";        Filename: "{app}\client\{#ClientExeName}"; WorkingDir: "{app}\client"; \
     IconFilename: "{app}\client\_internal\resources\app_icon.ico"; Components: client
+#endif
+#if HasServer
 Name: "{group}\OutWarp Server";        Filename: "{app}\server\{#ServerGuiExe}";  WorkingDir: "{app}\server"; \
     IconFilename: "{app}\server\_internal\resources\app_icon.ico"; Components: server
+#endif
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 
+#if HasClient
 Name: "{autodesktop}\OutWarp Client"; Filename: "{app}\client\{#ClientExeName}"; \
     WorkingDir: "{app}\client"; Tasks: desktopicon; Components: client; \
     IconFilename: "{app}\client\_internal\resources\app_icon.ico"
+#endif
+#if HasServer
 Name: "{autodesktop}\OutWarp Server"; Filename: "{app}\server\{#ServerGuiExe}"; \
     WorkingDir: "{app}\server"; Tasks: desktopicon; Components: server; \
     IconFilename: "{app}\server\_internal\resources\app_icon.ico"
+#endif
 
 ; Startup shortcuts — point to Startup folder so the apps launch on login.
+#if HasClient
 Name: "{autostartup}\OutWarp Client"; Filename: "{app}\client\{#ClientExeName}"; \
     WorkingDir: "{app}\client"; Tasks: startupclient; \
     IconFilename: "{app}\client\_internal\resources\app_icon.ico"
+#endif
+#if HasServer
 Name: "{autostartup}\OutWarp Server"; Filename: "{app}\server\{#ServerGuiExe}"; \
     WorkingDir: "{app}\server"; Tasks: startupserver; Components: server; \
     IconFilename: "{app}\server\_internal\resources\app_icon.ico"
+#endif
 
 ; No [Registry] PATH entry by default: the server finds wstunnel.exe next to
 ; its bundle (see server_manager._find_wstunnel) without needing PATH, and the
@@ -135,6 +184,7 @@ Filename: "{tmp}\wireguard-installer.exe"; Parameters: "/S"; \
     StatusMsg: "Instalando WireGuard for Windows..."; \
     Components: wireguard; Check: NeedsWireGuardInstall; Flags: waituntilterminated
 
+#if HasServer
 ; Launch the server GUI at the end of setup (which kicks the setup wizard
 ; on first run if there's no server_config.json yet).
 ; shellexec (not the default CreateProcess): both apps ship a
@@ -146,7 +196,9 @@ Filename: "{app}\server\{#ServerGuiExe}"; \
     Description: "Lanzar OutWarp Server y abrir el asistente"; \
     Flags: postinstall skipifsilent shellexec; \
     Tasks: runwizard
+#endif
 
+#if HasClient
 ; Launch the client at the end of setup if only the client was selected.
 Filename: "{app}\client\{#ClientExeName}"; \
     Description: "Lanzar OutWarp Client"; \
@@ -160,6 +212,7 @@ Filename: "{app}\client\{#ClientExeName}"; \
 Filename: "{app}\client\{#ClientExeName}"; \
     Flags: postinstall shellexec; \
     Check: IsAutoUpdate
+#endif
 
 [UninstallRun]
 ; Best-effort: stop the WireGuard tunnel service the server creates.
