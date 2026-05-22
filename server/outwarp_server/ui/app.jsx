@@ -52,6 +52,10 @@ function App() {
   const [confirm, confirmDialog] = window.useConfirmState();
   const [bridgeAlive, setBridgeAlive] = useState(true);
   const pollFailsRef = useRef(0);
+  // Rolling aggregate-throughput history for the dashboard chart, derived from
+  // poll-over-poll deltas of the clients' cumulative byte counters.
+  const [history, setHistory] = useState([]);
+  const prevTrafficRef = useRef(null);
 
   // bootstrap
   useEffect(() => {
@@ -93,6 +97,22 @@ function App() {
         const [s, cl] = await Promise.all([api.get_status(), api.list_clients()]);
         setStatus((prev) => ({ ...(prev || {}), ...s }));
         setClients(cl);
+        // Aggregate throughput sample from cumulative byte counters.
+        const rx = cl.reduce((a, c) => a + (c.rx_bytes || 0), 0);
+        const tx = cl.reduce((a, c) => a + (c.tx_bytes || 0), 0);
+        const now = Date.now();
+        const prev = prevTrafficRef.current;
+        prevTrafficRef.current = { rx, tx, ts: now };
+        if (prev && now > prev.ts) {
+          const dt = (now - prev.ts) / 1000;
+          const drx = (rx - prev.rx) / dt, dtx = (tx - prev.tx) / dt;
+          // Negative delta = counters reset (service restart) → drop stale history.
+          if (drx < 0 || dtx < 0) setHistory([]);
+          else setHistory((h) => {
+            const next = h.concat({ rx: drx, tx: dtx });
+            return next.length > 30 ? next.slice(-30) : next;
+          });
+        }
         pollFailsRef.current = 0;
         if (!bridgeAlive) setBridgeAlive(true);
       } catch (_) {
@@ -144,7 +164,7 @@ function App() {
       <div style={{ display: "grid", gridTemplateColumns: "232px 1fr", minHeight: 0 }}>
         <Sidebar T={T} screen={screen} onScreen={setScreen} status={status} advanced={!!settings.advanced}/>
         <main style={{ overflow: "auto", padding: "28px 36px 36px", minWidth: 0 }} className="ws-scroll">
-          {screen === "dashboard" && <Dashboard T={T} api={api} status={status} clients={clients} advanced={!!settings.advanced} confirm={confirm}/>}
+          {screen === "dashboard" && <Dashboard T={T} api={api} status={status} clients={clients} advanced={!!settings.advanced} confirm={confirm} onScreen={setScreen} history={history}/>}
           {screen === "clients"   && <ClientsScreen T={T} api={api} clients={clients} confirm={confirm}/>}
           {screen === "service"   && <ServiceScreen T={T} api={api} status={status}/>}
           {screen === "logs"      && <LogsScreen T={T} api={api} logs={logs} onClear={() => setLogs([])}/>}
@@ -499,21 +519,77 @@ const inputStyle = {
 };
 
 // ── Dashboard ──────────────────────────────────────────────────────
-const Dashboard = ({ T, api, status, clients, advanced, confirm }) => {
+const Dashboard = ({ T, api, status, clients, advanced, confirm, onScreen, history }) => {
   const online = clients.filter((c) => c.status === "online").length;
   const totalRx = clients.reduce((acc, c) => acc + (c.rx_bytes || 0), 0);
   const totalTx = clients.reduce((acc, c) => acc + (c.tx_bytes || 0), 0);
+  const activeClients = clients.filter((c) => c.status === "online").slice(0, 4);
+  const heroTone = status.status === "running" ? "good" : status.status === "starting" ? "warn" : status.status === "error" ? "bad" : "neutral";
+  const heroLabel = status.status === "running" ? T.running : status.status === "starting" ? T.starting : status.status === "error" ? T.error : T.stopped;
+  const heroColor = status.status === "running" ? "var(--brand-2)" : status.status === "error" ? "var(--brand-bad)" : "var(--text-3)";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <Header title={T.nav_dashboard} sub={`${status.endpoint}:${status.port} · ${status.subnet}`}/>
+      <Header title={T.nav_dashboard} sub={`${status.endpoint}:${status.port} · ${status.subnet}`}
+        right={<window.Btn kind="primary" size="md" onClick={() => onScreen?.("clients")}>+ {T.addClient}</window.Btn>}/>
+
+      {/* Hero status */}
+      <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 18, padding: 28, position: "relative", overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 24, alignItems: "center" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <window.StatusDot tone={heroTone} pulse={status.status === "running" || status.status === "starting"}/>
+              <span style={{ fontSize: 12, fontWeight: 600, color: heroColor, letterSpacing: ".06em", textTransform: "uppercase" }}>{heroLabel}</span>
+            </div>
+            <div style={{ fontSize: 32, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.05 }}>
+              {online} <span style={{ color: "var(--text-3)" }}>/ {clients.length}</span> {T.dash_clientsOnlineSuffix}
+            </div>
+            <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6, fontFamily: "var(--font-mono)" }}>
+              {status.endpoint}:{status.port} · {status.subnet}
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end", fontFamily: "var(--font-mono)" }}>
+            <div style={{ fontSize: 11, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: ".06em" }}>{T.dash_traffic24h}</div>
+            <div style={{ fontSize: 28, fontWeight: 600 }}>{fmtBytes(totalRx + totalTx)}</div>
+            <div style={{ fontSize: 12, color: "var(--text-2)" }}>↓ {fmtBytes(totalRx)} · ↑ {fmtBytes(totalTx)}</div>
+          </div>
+        </div>
+        <BgGlow/>
+      </section>
+
+      {/* Metric grid */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
         <Metric label={T.metric_clientsOnline} value={`${online}/${clients.length}`}/>
         <Metric label={T.metric_traffic}        value={fmtBytes(totalRx + totalTx)} sub={`↓ ${fmtBytes(totalRx)} · ↑ ${fmtBytes(totalTx)}`}/>
         <Metric label={T.dash_subnet}           value={status.subnet}/>
         <Metric label={T.dash_wgPort}           value={String(status.wg_listen_port)}/>
       </div>
-      <ClientsTable T={T} clients={clients} api={api} compact confirm={confirm}/>
+
+      {/* Aggregate throughput */}
+      <ServerThroughput T={T} history={history || []}/>
+
+      {/* Active clients summary */}
+      <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 18 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{T.dash_activeClients}</div>
+        {activeClients.length === 0 ? (
+          <div style={{ fontSize: 12, color: "var(--text-3)" }}>—</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {activeClients.map((c) => (
+              <div key={c.name} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto", gap: 12, alignItems: "center", padding: "8px 10px", borderRadius: 8, background: "var(--bg)" }}>
+                <window.StatusDot tone="good"/>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{c.name}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.address}{c.endpoint ? ` · ${c.endpoint}` : ""}</div>
+                </div>
+                <div style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--text-2)" }}>↓ {fmtBytes(c.rx_bytes)} ↑ {fmtBytes(c.tx_bytes)}</div>
+                <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-3)" }}>hs {fmtAge(c.last_handshake_seconds_ago)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       {advanced && (
         <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 18, fontFamily: "var(--font-mono)", fontSize: 12 }}>
           <div style={{ fontSize: 11, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 10, fontFamily: "var(--font-sans)", fontWeight: 600 }}>{T.dash_techDetails}</div>
@@ -543,12 +619,60 @@ const KV = ({ k, v, last }) => (
   </div>
 );
 
-const Header = ({ title, sub }) => (
-  <header>
-    <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{title}</div>
-    {sub && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)" }}>{sub}</div>}
+const Header = ({ title, sub, right }) => (
+  <header style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 16 }}>
+    <div>
+      <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{title}</div>
+      {sub && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)" }}>{sub}</div>}
+    </div>
+    {right && <div style={{ display: "flex", alignItems: "center", gap: 8 }}>{right}</div>}
   </header>
 );
+
+// Soft brand glow for hero cards (mirrors the design's BgGlow).
+const BgGlow = () => (
+  <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden", borderRadius: 18 }}>
+    <div style={{ position: "absolute", right: -100, top: -90, width: 320, height: 320, background: "radial-gradient(circle, color-mix(in srgb, var(--brand) 18%, transparent), transparent 60%)" }}/>
+  </div>
+);
+
+// Mirror-stacked area chart of aggregate RX/TX, fed by the rolling poll-delta
+// history. Auto-scales to the window peak (floored so light traffic still
+// renders) and shows a placeholder until there are at least two samples.
+const ServerThroughput = ({ T, history }) => {
+  const W = 920, H = 140, P = 8;
+  const peak = history.reduce((m, s) => Math.max(m, s.rx || 0, s.tx || 0), 0);
+  const scale = Math.max(peak, 64 * 1024);
+  const mid = H / 2, innerH = mid - P, innerW = W - P * 2;
+  const xAt = (i) => history.length <= 1 ? P : P + (i * innerW) / (history.length - 1);
+  const path = (key, sign) => history.length === 0 ? "" : history.map((s, i) => {
+    const v = (s[key] || 0) / scale;
+    return `${i === 0 ? "M" : "L"} ${xAt(i).toFixed(1)} ${(mid + sign * v * innerH).toFixed(1)}`;
+  }).join(" ");
+  const area = (key, sign) => history.length === 0 ? "" : `${path(key, sign)} L ${(W - P).toFixed(1)} ${mid} L ${P} ${mid} Z`;
+  return (
+    <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{T.dash_throughput}</div>
+        <div style={{ display: "flex", gap: 14, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-2)" }}>
+          <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: "var(--brand)", marginRight: 6, verticalAlign: 1 }}/>RX</span>
+          <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: "var(--brand-2)", marginRight: 6, verticalAlign: 1 }}/>TX</span>
+        </div>
+      </div>
+      {history.length < 2 ? (
+        <div style={{ height: H, display: "grid", placeItems: "center", color: "var(--text-3)", fontSize: 12, fontFamily: "var(--font-mono)" }}>{T.dash_throughputEmpty}</div>
+      ) : (
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
+          <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--line)" strokeDasharray="2 4"/>
+          <path d={area("rx", +1)} fill="color-mix(in srgb, var(--brand) 18%, transparent)"/>
+          <path d={path("rx", +1)} stroke="var(--brand)" fill="none" strokeWidth="1.6"/>
+          <path d={area("tx", -1)} fill="color-mix(in srgb, var(--brand-2) 18%, transparent)"/>
+          <path d={path("tx", -1)} stroke="var(--brand-2)" fill="none" strokeWidth="1.6"/>
+        </svg>
+      )}
+    </section>
+  );
+};
 
 // ── Clients ────────────────────────────────────────────────────────
 const ClientsScreen = ({ T, api, clients, confirm }) => {
