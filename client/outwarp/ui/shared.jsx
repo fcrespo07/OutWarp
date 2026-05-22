@@ -494,8 +494,106 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// ── Minimal markdown renderer ──────────────────────────────────────
+// GitHub release notes are markdown; rendering them as plain text looked raw.
+// This is a tiny, dependency-free renderer (we can't pull a CDN lib into an
+// offline VPN app) covering the subset release notes actually use: headings,
+// bold, italic, inline code, code fences, links, ordered/unordered lists and
+// horizontal rules. It returns React elements (never innerHTML), so it is
+// XSS-safe by construction — React escapes all text.
+const _MD_INLINE = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\([^)]+\))|(\*[^*]+\*)|(_[^_]+_)/g;
+
+const _mdInline = (text, kp) => {
+  const out = [];
+  let last = 0;
+  let n = 0;
+  for (const m of String(text).matchAll(_MD_INLINE)) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const tok = m[0];
+    const key = `${kp}-${n++}`;
+    if (m[1]) {
+      out.push(<code key={key} className="ow-md-code">{tok.slice(1, -1)}</code>);
+    } else if (m[2]) {
+      out.push(<strong key={key}>{tok.slice(2, -2)}</strong>);
+    } else if (m[3]) {
+      const link = tok.match(/\[([^\]]+)\]\(([^)]+)\)/);
+      const url = link[2];
+      out.push(
+        <a key={key} href={url} className="ow-md-link"
+          onClick={(e) => { e.preventDefault(); try { window.pywebview?.api?.open_url?.(url); } catch (_) {} }}>
+          {link[1]}
+        </a>,
+      );
+    } else {
+      out.push(<em key={key}>{tok.slice(1, -1)}</em>);
+    }
+    last = m.index + tok.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+};
+
+const _isBlockStart = (l) =>
+  /^\s*$/.test(l) || /^```/.test(l) || /^(#{1,6})\s+/.test(l) ||
+  /^\s*[-*+]\s+/.test(l) || /^\s*\d+\.\s+/.test(l) || /^\s*([-*_])\1{2,}\s*$/.test(l);
+
+const Markdown = ({ text }) => {
+  if (!text) return null;
+  const lines = String(text).replace(/\r\n/g, "\n").split("\n");
+  const blocks = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const bk = `b${blocks.length}`;
+    if (/^```/.test(line)) {
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+      i++; // closing fence
+      blocks.push(<pre key={bk} className="ow-md-pre"><code>{buf.join("\n")}</code></pre>);
+      continue;
+    }
+    if (/^\s*$/.test(line)) { i++; continue; }
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { blocks.push(<hr key={bk} className="ow-md-hr"/>); i++; continue; }
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      blocks.push(<div key={bk} className={`ow-md-h ow-md-h${h[1].length}`}>{_mdInline(h[2], bk)}</div>);
+      i++;
+      continue;
+    }
+    if (/^\s*[-*+]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
+        items.push(<li key={items.length}>{_mdInline(lines[i].replace(/^\s*[-*+]\s+/, ""), `${bk}-li${items.length}`)}</li>);
+        i++;
+      }
+      blocks.push(<ul key={bk} className="ow-md-list">{items}</ul>);
+      continue;
+    }
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        items.push(<li key={items.length}>{_mdInline(lines[i].replace(/^\s*\d+\.\s+/, ""), `${bk}-li${items.length}`)}</li>);
+        i++;
+      }
+      blocks.push(<ol key={bk} className="ow-md-list">{items}</ol>);
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && !_isBlockStart(lines[i])) { para.push(lines[i]); i++; }
+    const nodes = [];
+    para.forEach((p, idx) => {
+      if (idx > 0) nodes.push(<br key={`${bk}-br${idx}`}/>);
+      _mdInline(p, `${bk}-l${idx}`).forEach((nd) => nodes.push(nd));
+    });
+    blocks.push(<p key={bk} className="ow-md-p">{nodes}</p>);
+  }
+  return <div className="ow-md">{blocks}</div>;
+};
+
 window.Btn = Btn;
 window.Pill = Pill;
 window.StatusDot = StatusDot;
 window.Toggle = Toggle;
 window.ErrorBoundary = ErrorBoundary;
+window.Markdown = Markdown;

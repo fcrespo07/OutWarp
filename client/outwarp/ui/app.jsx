@@ -1529,9 +1529,10 @@ const UpdatePanel = ({ T, api, autoCheck }) => {
         {info.notes && (
           <div className="ws-scroll" style={{
             background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 10,
-            padding: "10px 12px", fontSize: 12, color: "var(--text-2)", lineHeight: 1.5,
-            whiteSpace: "pre-wrap", maxHeight: 160, overflow: "auto",
-          }}>{info.notes}</div>
+            padding: "10px 12px", maxHeight: 160, overflow: "auto",
+          }}>
+            <window.Markdown text={info.notes}/>
+          </div>
         )}
         {info.manual ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
