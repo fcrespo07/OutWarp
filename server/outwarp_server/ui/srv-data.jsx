@@ -36,6 +36,11 @@ const SRV_STR = {
     dash_endpoint: "Endpoint",
     dash_wgAddr: "WG addr",
     dash_tlsFingerprint: "Huella TLS",
+    dash_clientsOnlineSuffix: "clientes en línea",
+    dash_activeClients: "Clientes activos",
+    dash_throughput: "Tráfico agregado · en vivo",
+    dash_throughputEmpty: "Recogiendo muestras…",
+    dash_traffic24h: "Tráfico total",
 
     // ── Generic actions
     addClient: "Añadir cliente",
@@ -226,6 +231,11 @@ const SRV_STR = {
     dash_endpoint: "Endpoint",
     dash_wgAddr: "WG addr",
     dash_tlsFingerprint: "TLS fingerprint",
+    dash_clientsOnlineSuffix: "clients online",
+    dash_activeClients: "Active clients",
+    dash_throughput: "Aggregate traffic · live",
+    dash_throughputEmpty: "Gathering samples…",
+    dash_traffic24h: "Total traffic",
 
     addClient: "Add client",
     revoke: "Revoke",

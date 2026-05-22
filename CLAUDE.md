@@ -238,6 +238,7 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 | Pillow | MIT-CMU (HPND) | Sin restricciones. |
 | platformdirs | MIT | Sin restricciones. |
 | Python (CPython) | PSF (BSD-style) | Sin restricciones. |
+| Geist / Geist Mono (fuente UI) | SIL OFL-1.1 | Bundleada como woff2 variable en `*/ui/fonts/`. Texto de licencia en `fonts/OFL.txt` junto a los ficheros. |
 
 ### Marcas registradas
 

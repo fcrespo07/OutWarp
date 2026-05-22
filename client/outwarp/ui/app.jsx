@@ -306,6 +306,7 @@ function App() {
               onDisconnect={onDisconnect}
               onReconnect={onReconnect}
               onImport={() => setScreen("import")}
+              onLogs={() => setScreen("logs")}
             />
           )}
           {screen === "import"  && <Import T={T} api={api} active={active} confirm={confirm} onImported={(p) => { setActiveId(p.id); setProfiles([p]); setScreen("home"); }} onRemove={onRemoveProfile} onProfilesChanged={refreshProfiles}/>}
@@ -464,11 +465,11 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
 };
 
 // ── Home ───────────────────────────────────────────────────────────
-const Home = ({ T, lang, status, active, stats, history, advanced, busyMsg, connError, attemptInfo, phase, onConnect, onDisconnect, onReconnect, onImport }) => {
+const Home = ({ T, lang, status, active, stats, history, advanced, busyMsg, connError, attemptInfo, phase, onConnect, onDisconnect, onReconnect, onImport, onLogs }) => {
   if (status === "empty" || !active) {
     return <EmptyHome T={T} onImport={onImport}/>;
   }
-  if (status === "connected") return <ConnectedHome T={T} lang={lang} active={active} stats={stats} history={history} advanced={advanced} onDisconnect={onDisconnect}/>;
+  if (status === "connected") return <ConnectedHome T={T} lang={lang} active={active} stats={stats} history={history} advanced={advanced} onDisconnect={onDisconnect} onLogs={onLogs}/>;
   if (status === "connecting" || status === "reconnecting") {
     return <ConnectingHome T={T} active={active} busyMsg={busyMsg} reconnecting={status === "reconnecting"} attemptInfo={attemptInfo} phase={phase}/>;
   }
@@ -507,7 +508,14 @@ const DisconnectedHome = ({ T, active, onConnect }) => (
         </div>
         <Dial/>
       </div>
+      <BgGlow/>
     </section>
+
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+      <InfoCard icon={<IconShield/>} title={T.home_secure_title}  body={T.home_secure_body}/>
+      <InfoCard icon={<IconLock/>}   title={T.home_pinned_title}  body={T.home_pinned_body}/>
+      <InfoCard icon={<IconRoute/>}  title={T.home_routing_title} body={T.home_routing_body}/>
+    </div>
   </div>
 );
 
@@ -614,8 +622,14 @@ const StepIcon = ({ state }) => {
   );
 };
 
-const ConnectedHome = ({ T, lang, active, stats, history, advanced, onDisconnect }) => {
+const ConnectedHome = ({ T, lang, active, stats, history, advanced, onDisconnect, onLogs }) => {
   const sessionSec = stats.session_start ? (Date.now() / 1000 - stats.session_start) : 0;
+  // Headline the live exit IP once it's known; fall back to the profile name
+  // while the exit-IP probe is still resolving.
+  const heroTitle = stats.exit_ip || active.name;
+  const heroSub = [stats.exit_location, `${T.profile} ${active.name}`].filter(Boolean).join(" · ");
+  const spark = (history || []).slice(-12).map((s) => s.rx || 0);
+  const lastHs = stats.last_handshake ? fmtAgo(stats.last_handshake, lang) : "—";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <Header title={T.nav_home} sub={T.home_ribbon}/>
@@ -627,34 +641,23 @@ const ConnectedHome = ({ T, lang, active, stats, history, advanced, onDisconnect
               <window.StatusDot tone="good"/>
               <span style={{ fontSize: 12, fontWeight: 600, color: "var(--brand-2)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.connected}</span>
             </div>
-            <div style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.05 }}>{active.name}</div>
-            <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{active.endpoint}</div>
-            {stats.exit_ip ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--brand-2)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 L9 17 L4 12"/></svg>
-                <span style={{ fontSize: 12, color: "var(--brand-2)", fontFamily: "var(--font-mono)" }}>{T.publicIp}: {stats.exit_ip}</span>
-              </div>
-            ) : (
-              <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8, fontFamily: "var(--font-mono)" }}>{T.publicIp}: …</div>
-            )}
-            <div style={{ marginTop: 18 }}>
+            <div style={{ fontSize: 36, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.05 }}>{heroTitle}</div>
+            <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{heroSub}</div>
+            <div style={{ marginTop: 18, display: "flex", gap: 8 }}>
               <window.Btn kind="solid" size="md" onClick={onDisconnect}>{T.disconnect}</window.Btn>
+              <window.Btn kind="ghost" size="md" icon={<IconLogs size={14}/>} onClick={onLogs}>{T.nav_logs}</window.Btn>
             </div>
           </div>
           <Dial active/>
         </div>
+        <BgGlow/>
       </section>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-        <Stat label={T.download} value={fmtBps(stats.rx_bps)} sub={`↓ ${fmtBytes(stats.rx_total)} total`}/>
-        <Stat label={T.upload}    value={fmtBps(stats.tx_bps)} sub={`↑ ${fmtBytes(stats.tx_total)} total`}/>
-        <Stat label={T.sessionTime} value={fmtDuration(sessionSec)}/>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-        <Stat label={T.latency}       value={stats.latency_ms ? `${stats.latency_ms} ms` : "—"}/>
-        <Stat label={T.lastHandshake} value={fmtAgo(stats.last_handshake, lang)}/>
-        <Stat label={T.location}      value={stats.exit_location || "—"}/>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        <Stat label={T.latency}     value={stats.latency_ms ? `${stats.latency_ms} ms` : "—"} trend={spark.length >= 2 ? <Spark data={spark} good/> : null}/>
+        <Stat label={T.download}    value={fmtBps(stats.rx_bps)} sub={`↓ ${fmtBytes(stats.rx_total)} total`}/>
+        <Stat label={T.upload}      value={fmtBps(stats.tx_bps)} sub={`↑ ${fmtBytes(stats.tx_total)} total`}/>
+        <Stat label={T.sessionTime} value={fmtDuration(sessionSec)} sub={`${T.lastHandshake} · ${lastHs}`}/>
       </div>
 
       <ThroughputChart T={T} history={history || []}/>
@@ -776,13 +779,54 @@ const ThroughputChart = ({ T, history }) => {
   );
 };
 
-const Stat = ({ label, value, sub }) => (
+const Stat = ({ label, value, sub, trend }) => (
   <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 12, padding: 14 }}>
     <div style={{ fontSize: 11, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 600 }}>{label}</div>
-    <div style={{ fontSize: 22, fontWeight: 600, marginTop: 6, fontFamily: "var(--font-mono)" }}>{value}</div>
+    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginTop: 6 }}>
+      <div style={{ fontSize: 22, fontWeight: 600, fontFamily: "var(--font-mono)" }}>{value}</div>
+      {trend}
+    </div>
     {sub && <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4, fontFamily: "var(--font-mono)" }}>{sub}</div>}
   </div>
 );
+
+// ── Ported design atoms (mirror var-a.jsx) ─────────────────────────
+const InfoCard = ({ icon, title, body }) => (
+  <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 16 }}>
+    <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--chip)", display: "grid", placeItems: "center", color: "var(--brand)" }}>{icon}</div>
+    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 12 }}>{title}</div>
+    <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 4 }}>{body}</div>
+  </div>
+);
+
+const BgGlow = () => (
+  <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden", borderRadius: 18 }}>
+    <div style={{ position: "absolute", right: -80, top: -80, width: 280, height: 280, background: "radial-gradient(circle, color-mix(in srgb, var(--brand) 22%, transparent), transparent 60%)" }}/>
+  </div>
+);
+
+// Auto-scaling sparkline. Feeds off the live throughput history; flat/short
+// series fall back to a single baseline segment rather than a misleading line.
+const Spark = ({ data = [], good }) => {
+  const w = 48, h = 14;
+  const peak = data.reduce((m, v) => Math.max(m, v || 0), 0) || 1;
+  const pts = data.map((v, i) => {
+    const x = data.length <= 1 ? 0 : (i * w) / (data.length - 1);
+    const y = h - 2 - ((v || 0) / peak) * (h - 4);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ flexShrink: 0 }}>
+      <polyline points={pts} fill="none" stroke={good ? "var(--brand-2)" : "var(--brand-bad)"} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+};
+
+const HomeIcon = (d, s = 16) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{d}</svg>;
+const IconShield = ({ size }) => HomeIcon(<path d="M12 3 L4 6 V12 C4 17 8 20 12 21 C16 20 20 17 20 12 V6 Z"/>, size);
+const IconLock   = ({ size }) => HomeIcon(<><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11 V8 a4 4 0 0 1 8 0 V11"/></>, size);
+const IconRoute  = ({ size }) => HomeIcon(<><circle cx="6" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M6 8 V14 a4 4 0 0 0 4 4 H16"/></>, size);
+const IconLogs   = ({ size }) => HomeIcon(<><path d="M5 4 H19 V20 H5 Z"/><path d="M8 8 H16 M8 12 H16 M8 16 H13"/></>, size);
 
 const KV = ({ k, v, last }) => (
   <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12, padding: "8px 0", borderBottom: last ? "none" : "1px dashed var(--line)" }}>
@@ -792,8 +836,8 @@ const KV = ({ k, v, last }) => (
 );
 
 const Dial = ({ active, pulsing }) => (
-  <div style={{ position: "relative", width: 180, height: 180 }}>
-    <svg width="180" height="180" viewBox="0 0 200 200">
+  <div style={{ position: "relative", width: 200, height: 200 }}>
+    <svg width="200" height="200" viewBox="0 0 200 200">
       <defs>
         <linearGradient id="dial-grad" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="var(--brand)"/>
@@ -807,14 +851,14 @@ const Dial = ({ active, pulsing }) => (
     </svg>
     <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
       <div style={{
-        width: 100, height: 100, borderRadius: 999,
+        width: 110, height: 110, borderRadius: 999,
         background: active ? "linear-gradient(135deg, var(--brand), var(--brand-2))" : "var(--bg-sunk)",
         border: active ? "none" : "1px solid var(--line-strong)",
         display: "grid", placeItems: "center", color: active ? "#fff" : "var(--text-2)",
         boxShadow: active ? "0 12px 28px -10px color-mix(in srgb, var(--brand) 55%, transparent)" : "none",
         animation: pulsing ? "ws-pulse 1.6s ease-out infinite" : "none",
       }}>
-        <window.WSLogoMark size={40} color={active ? "#fff" : "var(--text-2)"} accent={active ? "rgba(255,255,255,.6)" : "var(--text-3)"}/>
+        <window.WSLogoMark size={44} color={active ? "#fff" : "var(--text-2)"} accent={active ? "rgba(255,255,255,.6)" : "var(--text-3)"}/>
       </div>
     </div>
   </div>
