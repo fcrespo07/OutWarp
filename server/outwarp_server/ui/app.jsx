@@ -60,26 +60,34 @@ function App() {
   // drag/edge-resize (Windows); maximized drives the max/restore glyph.
   const [caps, setCaps] = useState({ native_drag_resize: false, maximized: false });
   const [maximized, setMaximized] = useState(false);
+  // Non-empty when bootstrap itself threw — the splash shows a retry instead of
+  // spinning forever on a half-initialised bridge.
+  const [bootError, setBootError] = useState("");
 
   // bootstrap
   useEffect(() => {
     waitForBridge().then(async (a) => {
       setApi(a);
-      const [s, st, lg, wc] = await Promise.all([
-        a.get_status(), a.get_settings(), a.get_logs(0), a.get_window_caps(),
-      ]);
-      setStatus(s);
-      setSettings(st);
-      setLogs(lg);
-      if (wc) { setCaps(wc); setMaximized(!!wc.maximized); }
-      if (s.config_present) {
-        setClients(await a.list_clients());
-      } else {
-        setScreen("setup");
+      try {
+        const [s, st, lg, wc] = await Promise.all([
+          a.get_status(), a.get_settings(), a.get_logs(0), a.get_window_caps(),
+        ]);
+        setStatus(s);
+        setSettings(st);
+        setLogs(lg);
+        if (wc) { setCaps(wc); setMaximized(!!wc.maximized); }
+        if (s.config_present) {
+          setClients(await a.list_clients());
+        } else {
+          setScreen("setup");
+        }
+        // Signal Python that the page is ready; the live poll starts only now so
+        // events are never dispatched before React has registered its listeners.
+        a.notify_ready();
+      } catch (e) {
+        try { a?.report_ui_error?.(`bootstrap failed: ${(e && (e.stack || e.message)) || e}`); } catch (_) {}
+        setBootError(String((e && e.message) || e));
       }
-      // Signal Python that the page is ready; the live poll starts only now so
-      // events are never dispatched before React has registered its listeners.
-      a.notify_ready();
     });
   }, []);
 
@@ -150,12 +158,22 @@ function App() {
         <div className="ow-body" style={{
           display: "flex", flexDirection: "column",
           alignItems: "center", justifyContent: "center", gap: 14,
-          color: "var(--text-3)", fontSize: 13,
+          color: "var(--text-3)", fontSize: 13, padding: 24,
         }}>
-          <window.WSLogoMark size={56} color="var(--brand)" accent="var(--brand-2)"/>
-          <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, opacity: 0.8 }}>
-            {T.loading}
-          </div>
+          {bootError ? (
+            <div style={{ maxWidth: 460, textAlign: "center" }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{T.bootError}</div>
+              <pre style={{ marginTop: 12, maxHeight: 140, overflow: "auto", textAlign: "left", background: "var(--bg-sunk)", border: "1px solid var(--line)", borderRadius: 8, padding: 12, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-2)", whiteSpace: "pre-wrap" }}>{bootError}</pre>
+              <window.Btn kind="primary" size="md" onClick={() => window.location.reload()} style={{ marginTop: 14 }}>{T.retry}</window.Btn>
+            </div>
+          ) : (
+            <>
+              <window.WSLogoMark size={56} color="var(--brand)" accent="var(--brand-2)"/>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, opacity: 0.8 }}>
+                {T.loading}
+              </div>
+            </>
+          )}
         </div>
         {caps.native_drag_resize && !maximized && <ResizeHandles api={api}/>}
       </div>
@@ -1634,4 +1652,20 @@ const About = ({ T, api }) => {
   );
 };
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+// Catch errors that escape React's render cycle (event handlers, async
+// callbacks, bridge promises) and forward them to the Python log so a field
+// crash leaves a trace instead of a silent renderer. The boundary below handles
+// render-time errors and the user-facing recovery screen.
+window.addEventListener("error", (e) => {
+  try { window.pywebview?.api?.report_ui_error?.(`window.error: ${e.message} @ ${e.filename || "?"}:${e.lineno || 0}`); } catch (_) {}
+});
+window.addEventListener("unhandledrejection", (e) => {
+  try {
+    const r = e.reason;
+    window.pywebview?.api?.report_ui_error?.(`unhandledrejection: ${(r && (r.stack || r.message)) || r}`);
+  } catch (_) {}
+});
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <window.ErrorBoundary><App/></window.ErrorBoundary>
+);

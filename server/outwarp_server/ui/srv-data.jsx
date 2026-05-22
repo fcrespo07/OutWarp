@@ -58,6 +58,7 @@ const SRV_STR = {
     close: "Cerrar",
     loading: "Cargando…",
     retry: "Reintentar",
+    bootError: "No se pudo iniciar la interfaz.",
 
     // ── Clients table
     clientName: "Nombre",
@@ -257,6 +258,7 @@ const SRV_STR = {
     close: "Close",
     loading: "Loading…",
     retry: "Retry",
+    bootError: "Couldn't start the interface.",
 
     clientName: "Name",
     lastHandshake: "Last handshake",

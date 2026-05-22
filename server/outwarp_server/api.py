@@ -278,6 +278,17 @@ class Api:
         except Exception:
             log.debug("native window drag/resize unavailable", exc_info=True)
 
+    def report_ui_error(self, message: str) -> dict[str, Any]:
+        """Sink for renderer-side errors (React error boundary, window.onerror,
+        unhandledrejection). Without this a JS crash dies in a console nobody
+        sees; here it lands in the rotating log file and the in-app log view."""
+        try:
+            text = str(message)
+        except Exception:
+            text = "<unstringifiable UI error>"
+        log.error("UI: %s", text[:4000])
+        return {"ok": True}
+
     def notify_ready(self) -> dict[str, Any]:
         """Called by the JS shell once the page is fully mounted and ready to receive events.
 

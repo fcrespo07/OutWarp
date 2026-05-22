@@ -274,7 +274,67 @@ const Toggle = ({ on, onChange, accent }) => (
   </button>
 );
 
+// ── Crash recovery ─────────────────────────────────────────────────
+// A render/lifecycle exception anywhere in the tree would otherwise blank the
+// whole pywebview window with no way back (frameless = no native chrome). This
+// boundary catches it, reports the stack to the Python log via the bridge, and
+// shows a self-contained recovery screen so the user is never stuck. It uses
+// only inline styles + design tokens — it must not depend on the components
+// that may have just crashed.
+const _ErrorScreen = ({ error }) => {
+  const reload = () => { try { window.location.reload(); } catch (_) {} };
+  const close = () => { try { window.pywebview?.api?.window_close?.(); } catch (_) {} };
+  const startMove = (e) => { if (e.button === 0) { try { window.pywebview?.api?.window_start_move?.(); } catch (_) {} } };
+  const detail = (error && (error.stack || error.message)) || String(error || "");
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg)", color: "var(--text)" }}>
+      <div className="pywebview-drag-region" onMouseDown={startMove}
+        style={{ flex: "0 0 38px", display: "flex", alignItems: "center", justifyContent: "flex-end", borderBottom: "1px solid var(--line)", background: "var(--bg-2)" }}>
+        <button className="ow-winbtn close" onClick={close} title="Cerrar / Close" aria-label="Cerrar / Close">
+          <svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" strokeWidth="1.1"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"/></svg>
+        </button>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, display: "grid", placeItems: "center", padding: 28 }}>
+        <div style={{ maxWidth: 520, width: "100%" }}>
+          <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em" }}>Algo ha fallado · Something went wrong</div>
+          <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 8 }}>
+            La interfaz encontró un error inesperado. El servicio no se ve afectado — recarga la ventana para continuar.
+            <br/>The interface hit an unexpected error. The service is unaffected — reload to continue.
+          </div>
+          <pre style={{ marginTop: 16, maxHeight: 180, overflow: "auto", background: "var(--bg-sunk)", border: "1px solid var(--line)", borderRadius: 8, padding: 12, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-2)", whiteSpace: "pre-wrap" }}>{detail}</pre>
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <button onClick={reload} style={{ all: "unset", cursor: "pointer", padding: "9px 16px", borderRadius: 8, background: "var(--brand)", color: "#fff", fontSize: 13, fontWeight: 600 }}>Recargar · Reload</button>
+            <button onClick={close} style={{ all: "unset", cursor: "pointer", padding: "9px 16px", borderRadius: 8, border: "1px solid var(--line-strong)", color: "var(--text)", fontSize: 13, fontWeight: 500 }}>Cerrar · Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    try {
+      const where = (info && info.componentStack) || "";
+      const msg = (error && (error.stack || error.message)) || String(error);
+      window.pywebview?.api?.report_ui_error?.(`render crash: ${msg}\n${where}`.slice(0, 4000));
+    } catch (_) {}
+  }
+  render() {
+    if (this.state.error) return React.createElement(_ErrorScreen, { error: this.state.error });
+    return this.props.children;
+  }
+}
+
 window.Btn = Btn;
 window.Pill = Pill;
 window.StatusDot = StatusDot;
 window.Toggle = Toggle;
+window.ErrorBoundary = ErrorBoundary;
