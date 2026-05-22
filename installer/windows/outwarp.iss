@@ -153,6 +153,14 @@ Filename: "{app}\client\{#ClientExeName}"; \
     Flags: postinstall skipifsilent shellexec; \
     Components: client; Check: NotInstallingServer
 
+; Silent in-app auto-update relaunch: the client passes /AUTOUPDATE=1 (see
+; Api._launch_installer) and runs Setup /VERYSILENT. This entry omits
+; skipifsilent so it still fires, and only when /AUTOUPDATE=1 was passed, so it
+; never double-launches alongside the interactive entry above.
+Filename: "{app}\client\{#ClientExeName}"; \
+    Flags: postinstall shellexec; \
+    Check: IsAutoUpdate
+
 [UninstallRun]
 ; Best-effort: stop the WireGuard tunnel service the server creates.
 Filename: "sc.exe"; Parameters: "stop WireGuardTunnel$OutWarp-Server"; \
@@ -166,6 +174,11 @@ Type: filesandordirs; Name: "{app}\bundle"
 ; intentionally so reinstalling preserves the user's profile / clients.
 
 [Code]
+function IsAutoUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:autoupdate|0}') = '1';
+end;
+
 function HasWireGuardBundle: Boolean;
 begin
   Result := FileExists(ExpandConstant('{src}\bundle\wireguard-installer.exe'))

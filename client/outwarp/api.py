@@ -857,15 +857,22 @@ class Api:
         # relaunch us via its post-install 'Launch OutWarp Client' step.
         self._quit_for_update()
 
+    # /AUTOUPDATE=1 tells the installer to relaunch the client when it finishes
+    # (outwarp.iss [Run] → IsAutoUpdate); the silent flags suppress the wizard.
+    # Because the client is already elevated (app._ensure_elevated runs at
+    # startup), ShellExecute 'runas' inherits that elevation with no extra UAC
+    # prompt — so the whole update applies in the background and the app just
+    # restarts itself.
+    _INSTALLER_SILENT_ARGS = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /AUTOUPDATE=1"
+
     def _launch_installer(self, path: Path) -> bool:
-        """ShellExecute the installer with 'runas'. Interactive (no /VERYSILENT)
-        so the installer's post-install relaunch checkbox applies. Returns True
-        if the shell accepted the launch (HINSTANCE > 32)."""
+        """ShellExecute the installer with 'runas', silently. Returns True if the
+        shell accepted the launch (HINSTANCE > 32)."""
         import ctypes
 
         try:
             ret = ctypes.windll.shell32.ShellExecuteW(
-                None, "runas", str(path), None, None, 1
+                None, "runas", str(path), self._INSTALLER_SILENT_ARGS, None, 0
             )
         except Exception:
             log.exception("ShellExecuteW for installer failed")
