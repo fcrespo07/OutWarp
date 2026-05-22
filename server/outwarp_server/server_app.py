@@ -7,7 +7,7 @@ from pathlib import Path
 
 from outwarp_server import __version__
 from outwarp_server.config import ConfigError, ServerConfig, default_config_path
-from outwarp_server.logs import setup_logging
+from outwarp_server.logs import install_crash_logging, setup_logging
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +109,7 @@ def _resolve_ui_path() -> str:
 def main() -> int:
     _ensure_elevated()
     memory_handler = setup_logging()
+    install_crash_logging()
     t0 = time.monotonic()
 
     def _stage(label: str) -> None:
@@ -157,6 +158,18 @@ def main() -> int:
             min_size=(960, 640),
             background_color="#f6f5f1",
             resizable=True,
+            # Frameless: the native OS title bar clashes with the app's palette,
+            # so we draw our own (see ui/app.jsx TitleBar) — same chrome as the
+            # client. Drag + edge-resize are re-implemented natively on Windows
+            # via api.window_* (and via the pywebview-drag-region class
+            # elsewhere); easy_drag must be off or the whole client area becomes
+            # a drag handle.
+            frameless=True,
+            easy_drag=False,
+            shadow=True,
+            # pywebview disables text selection by default; admins need to copy
+            # fingerprints, log lines, client addresses, etc.
+            text_select=True,
         )
         _stage("webview window created")
         api.bind_window(window)
@@ -192,6 +205,13 @@ def main() -> int:
         log.info("OutWarp Server shut down cleanly")
         return 0
 
+    except Exception:
+        # A fatal startup error in a --windowed build would otherwise vanish
+        # (no console). Log it with the traceback so the log file has a
+        # post-mortem, then exit non-zero. (install_crash_logging covers
+        # background threads; this covers the main setup path.)
+        log.exception("Fatal error in server main()")
+        return 1
     finally:
         lock.release()
 

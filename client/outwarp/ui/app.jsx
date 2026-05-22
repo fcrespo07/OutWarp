@@ -125,6 +125,9 @@ function App() {
   // "resolve"|"tls"|"wg"|"ws"|"done" while connecting. Drives the stepper.
   const [phase, setPhase] = useState("");
   const [ready, setReady] = useState(false);
+  // Non-empty when bootstrap itself threw — the splash shows a retry instead of
+  // spinning forever on a half-initialised bridge.
+  const [bootError, setBootError] = useState("");
   // Frameless window chrome: caps tells us whether the host supports native
   // drag/edge-resize (Windows); maximized drives the max/restore glyph.
   const [caps, setCaps] = useState({ native_drag_resize: false, maximized: false });
@@ -139,21 +142,26 @@ function App() {
   useEffect(() => {
     waitForBridge().then(async (a) => {
       setApi(a);
-      const [s, ps, st, lg, wc] = await Promise.all([
-        a.get_status(), a.list_profiles(), a.get_settings(), a.get_logs(0),
-        a.get_window_caps(),
-      ]);
-      setStatus(s.status);
-      setActiveId(s.active_profile_id);
-      setStats(s.stats);
-      setConnError(s.error || "");
-      setAttemptInfo({ attempt: s.attempt || 0, max_attempts: s.max_attempts || 0 });
-      setPhase(s.phase || "");
-      setProfiles(ps);
-      setSettings(st);
-      setLogs(lg);
-      if (wc) { setCaps(wc); setMaximized(!!wc.maximized); }
-      setReady(true);
+      try {
+        const [s, ps, st, lg, wc] = await Promise.all([
+          a.get_status(), a.list_profiles(), a.get_settings(), a.get_logs(0),
+          a.get_window_caps(),
+        ]);
+        setStatus(s.status);
+        setActiveId(s.active_profile_id);
+        setStats(s.stats);
+        setConnError(s.error || "");
+        setAttemptInfo({ attempt: s.attempt || 0, max_attempts: s.max_attempts || 0 });
+        setPhase(s.phase || "");
+        setProfiles(ps);
+        setSettings(st);
+        setLogs(lg);
+        if (wc) { setCaps(wc); setMaximized(!!wc.maximized); }
+        setReady(true);
+      } catch (e) {
+        try { a?.report_ui_error?.(`bootstrap failed: ${(e && (e.stack || e.message)) || e}`); } catch (_) {}
+        setBootError(String((e && e.message) || e));
+      }
     });
   }, []);
 
@@ -269,9 +277,18 @@ function App() {
     return (
       <div data-theme={theme} className="ow-root">
         <TitleBar T={T} api={api} caps={caps} maximized={maximized}/>
-        <div style={{ flex: 1, display: "grid", placeItems: "center", minHeight: 0 }}>
-          <window.WSLogoMark size={40} color="var(--text-3)" accent="var(--brand)"/>
+        <div style={{ flex: 1, display: "grid", placeItems: "center", minHeight: 0, padding: 24 }}>
+          {bootError ? (
+            <div style={{ maxWidth: 460, textAlign: "center" }}>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>{T.bootError}</div>
+              <pre style={{ marginTop: 12, maxHeight: 140, overflow: "auto", textAlign: "left", background: "var(--bg-sunk)", border: "1px solid var(--line)", borderRadius: 8, padding: 12, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-2)", whiteSpace: "pre-wrap" }}>{bootError}</pre>
+              <window.Btn kind="primary" size="md" onClick={() => window.location.reload()} style={{ marginTop: 14 }}>{T.retry}</window.Btn>
+            </div>
+          ) : (
+            <window.WSLogoMark size={40} color="var(--text-3)" accent="var(--brand)"/>
+          )}
         </div>
+        {caps.native_drag_resize && !maximized && <ResizeHandles api={api}/>}
       </div>
     );
   }
@@ -1628,4 +1645,20 @@ const About = ({ T, api, settings }) => {
   );
 };
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+// Catch errors that escape React's render cycle (event handlers, async
+// callbacks, bridge promises) and forward them to the Python log so a field
+// crash leaves a trace instead of a silent renderer. The boundary below handles
+// render-time errors and the user-facing recovery screen.
+window.addEventListener("error", (e) => {
+  try { window.pywebview?.api?.report_ui_error?.(`window.error: ${e.message} @ ${e.filename || "?"}:${e.lineno || 0}`); } catch (_) {}
+});
+window.addEventListener("unhandledrejection", (e) => {
+  try {
+    const r = e.reason;
+    window.pywebview?.api?.report_ui_error?.(`unhandledrejection: ${(r && (r.stack || r.message)) || r}`);
+  } catch (_) {}
+});
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <window.ErrorBoundary><App/></window.ErrorBoundary>
+);

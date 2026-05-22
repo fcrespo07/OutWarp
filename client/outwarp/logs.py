@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import logging.handlers
 import sys
+import threading
 from collections import deque
 from pathlib import Path
 from threading import Lock
@@ -74,3 +76,39 @@ def setup_logging(
         root.addHandler(stream_handler)
 
     return memory_handler
+
+
+def install_crash_logging() -> None:
+    """Route uncaught exceptions (main thread + worker threads) to the log.
+
+    GUI builds are PyInstaller --windowed: ``sys.stderr`` is None, so the
+    default hooks drop the traceback into the void and a crash looks like a
+    silent exit. Logging it first guarantees a post-mortem in outwarp.log; we
+    then chain to the previous hook so console (CLI) behaviour is unchanged.
+    Idempotent and safe to call once per process after setup_logging().
+    """
+    log = logging.getLogger("outwarp.crash")
+    prev_excepthook = sys.excepthook
+
+    def _excepthook(exc_type, exc, tb):  # type: ignore[no-untyped-def]
+        if not issubclass(exc_type, KeyboardInterrupt):
+            log.critical("Uncaught exception", exc_info=(exc_type, exc, tb))
+        with contextlib.suppress(Exception):
+            prev_excepthook(exc_type, exc, tb)
+
+    sys.excepthook = _excepthook
+
+    prev_threadhook = threading.excepthook
+
+    def _threadhook(args):  # type: ignore[no-untyped-def]
+        if not issubclass(args.exc_type, SystemExit):
+            name = args.thread.name if args.thread else "?"
+            log.critical(
+                "Uncaught exception in thread %s",
+                name,
+                exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+            )
+        with contextlib.suppress(Exception):
+            prev_threadhook(args)
+
+    threading.excepthook = _threadhook

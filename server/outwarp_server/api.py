@@ -54,6 +54,14 @@ _STATE_TO_JS = {
 
 _ONLINE_WINDOW_SECONDS = 180
 
+# Win32 non-client hit-test codes for the frameless title bar's native drag /
+# edge-resize (see Api._native_nc_press). Mirrors the client's api.py.
+_WM_NCLBUTTONDOWN = 0x00A1
+_HTCAPTION = 2
+_RESIZE_HT = {
+    "l": 10, "r": 11, "t": 12, "tl": 13, "tr": 14, "b": 15, "bl": 16, "br": 17,
+}
+
 
 def _settings_path() -> Path:
     return default_config_dir() / "gui_settings.json"
@@ -157,6 +165,7 @@ class Api:
         on_manager_replaced: Callable[[ServerManager], None] | None = None,
     ) -> None:
         self._window: Any = None
+        self._maximized = False
         self._memory_handler = memory_handler
         self._manager: ServerManager | None = manager
         self._on_manager_replaced = on_manager_replaced
@@ -184,7 +193,101 @@ class Api:
         for line in self._memory_handler.snapshot():
             self._record_log("info", line)
         self._window = window
+        # Keep the custom title bar's maximize/restore glyph in sync when the
+        # window state changes outside our buttons (Aero Snap, Win+Up, the
+        # taskbar). pywebview fires these on the GUI thread.
+        try:
+            window.events.maximized += self._on_window_maximized
+            window.events.restored += self._on_window_restored
+        except Exception:
+            log.debug("window state events unavailable on this backend", exc_info=True)
         self._start_log_watcher()
+
+    # ── window chrome (custom frameless title bar) ─────────────────────────────
+
+    def get_window_caps(self) -> dict[str, Any]:
+        """Tells the UI what the host window can do so it renders the right
+        chrome: native edge-resize + system drag are Windows-only; elsewhere
+        the title bar falls back to pywebview's drag-region."""
+        return {"native_drag_resize": sys.platform == "win32", "maximized": self._maximized}
+
+    def _on_window_maximized(self, *_a: Any) -> None:
+        self._maximized = True
+        self._emit("window", {"maximized": True})
+
+    def _on_window_restored(self, *_a: Any) -> None:
+        self._maximized = False
+        self._emit("window", {"maximized": False})
+
+    def window_minimize(self) -> None:
+        if self._window is not None:
+            self._window.minimize()
+
+    def window_toggle_maximize(self) -> None:
+        if self._window is None:
+            return
+        if self._maximized:
+            self._window.restore()
+        else:
+            self._window.maximize()
+
+    def window_close(self) -> None:
+        # Mirror the native close button: tear the window down, which ends
+        # webview.start() and exits the process (the tray "Quit" path does the
+        # same teardown via server_app.py).
+        if self._window is not None:
+            self._window.destroy()
+
+    def window_start_move(self) -> None:
+        """Begin a native window drag (Windows). Gives real Aero Snap and
+        double-click-to-maximize, which a JS move loop cannot. No-op elsewhere;
+        non-Windows uses the pywebview-drag-region class instead."""
+        self._native_nc_press(_HTCAPTION)
+
+    def window_start_resize(self, edge: str) -> None:
+        """Begin a native edge/corner resize (Windows). `edge` is one of
+        t/b/l/r/tl/tr/bl/br."""
+        code = _RESIZE_HT.get(edge)
+        if code is not None:
+            self._native_nc_press(code)
+
+    def _native_nc_press(self, ht: int) -> None:
+        if sys.platform != "win32" or self._window is None:
+            return
+        native = getattr(self._window, "native", None)
+        if native is None:
+            return
+        try:
+            import ctypes
+
+            hwnd = native.Handle.ToInt32()
+            user32 = ctypes.windll.user32
+
+            def _do() -> None:
+                # Standard WebView2 custom-chrome trick: drop any capture the
+                # host holds, then hand the non-client button-down to DefWindowProc
+                # so Windows runs its own modal move/resize loop (snap included).
+                user32.ReleaseCapture()
+                user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, ht, 0)
+
+            # Must run on the GUI thread (js_api calls arrive on a worker
+            # thread); BeginInvoke posts it and returns without blocking us.
+            from System import Action
+
+            native.BeginInvoke(Action(_do))
+        except Exception:
+            log.debug("native window drag/resize unavailable", exc_info=True)
+
+    def report_ui_error(self, message: str) -> dict[str, Any]:
+        """Sink for renderer-side errors (React error boundary, window.onerror,
+        unhandledrejection). Without this a JS crash dies in a console nobody
+        sees; here it lands in the rotating log file and the in-app log view."""
+        try:
+            text = str(message)
+        except Exception:
+            text = "<unstringifiable UI error>"
+        log.error("UI: %s", text[:4000])
+        return {"ok": True}
 
     def notify_ready(self) -> dict[str, Any]:
         """Called by the JS shell once the page is fully mounted and ready to receive events.

@@ -7,6 +7,7 @@ from outwarp.config import (
     apply_profile_patch,
     default_config_path,
     import_owcfg,
+    import_owcfg_text,
     original_config_path,
 )
 
@@ -90,6 +91,32 @@ def test_invalid_json(tmp_path):
     p.write_text("{ not json }", encoding="utf-8")
     with pytest.raises(ConfigError, match="not valid JSON"):
         ClientConfig.load(p)
+
+
+def test_loads_parses_text():
+    cfg = ClientConfig.loads(json.dumps(VALID))
+    assert cfg.server.endpoint == "203.0.113.42"
+
+
+def test_loads_rejects_bad_json():
+    with pytest.raises(ConfigError, match="Not valid JSON"):
+        ClientConfig.loads("{ not json }")
+
+
+@pytest.mark.parametrize("payload", ["[]", '"hi"', "42", "null"])
+def test_non_object_json_rejected_cleanly(payload):
+    # Must raise ConfigError, never a bare AttributeError from raw.get(...).
+    with pytest.raises(ConfigError, match="must be a JSON object"):
+        ClientConfig.loads(payload)
+
+
+def test_import_owcfg_text_writes_config_and_original(tmp_path):
+    dest = tmp_path / "config.json"
+    cfg = import_owcfg_text(json.dumps(VALID), dest)
+    assert cfg.server.endpoint == "203.0.113.42"
+    assert dest.exists()
+    assert original_config_path(dest).exists()
+    assert ClientConfig.load(original_config_path(dest)) == ClientConfig.load(dest)
 
 
 def test_save_roundtrip(tmp_path):

@@ -56,23 +56,38 @@ function App() {
   // poll-over-poll deltas of the clients' cumulative byte counters.
   const [history, setHistory] = useState([]);
   const prevTrafficRef = useRef(null);
+  // Frameless window chrome: caps tells us whether the host supports native
+  // drag/edge-resize (Windows); maximized drives the max/restore glyph.
+  const [caps, setCaps] = useState({ native_drag_resize: false, maximized: false });
+  const [maximized, setMaximized] = useState(false);
+  // Non-empty when bootstrap itself threw — the splash shows a retry instead of
+  // spinning forever on a half-initialised bridge.
+  const [bootError, setBootError] = useState("");
 
   // bootstrap
   useEffect(() => {
     waitForBridge().then(async (a) => {
       setApi(a);
-      const [s, st, lg] = await Promise.all([a.get_status(), a.get_settings(), a.get_logs(0)]);
-      setStatus(s);
-      setSettings(st);
-      setLogs(lg);
-      if (s.config_present) {
-        setClients(await a.list_clients());
-      } else {
-        setScreen("setup");
+      try {
+        const [s, st, lg, wc] = await Promise.all([
+          a.get_status(), a.get_settings(), a.get_logs(0), a.get_window_caps(),
+        ]);
+        setStatus(s);
+        setSettings(st);
+        setLogs(lg);
+        if (wc) { setCaps(wc); setMaximized(!!wc.maximized); }
+        if (s.config_present) {
+          setClients(await a.list_clients());
+        } else {
+          setScreen("setup");
+        }
+        // Signal Python that the page is ready; the live poll starts only now so
+        // events are never dispatched before React has registered its listeners.
+        a.notify_ready();
+      } catch (e) {
+        try { a?.report_ui_error?.(`bootstrap failed: ${(e && (e.stack || e.message)) || e}`); } catch (_) {}
+        setBootError(String((e && e.message) || e));
       }
-      // Signal Python that the page is ready; the live poll starts only now so
-      // events are never dispatched before React has registered its listeners.
-      a.notify_ready();
     });
   }, []);
 
@@ -82,6 +97,7 @@ function App() {
   useBridgeEvent("clients", useCallback((d) => setClients(d), []));
   useBridgeEvent("log",     useCallback((e) => setLogs((l) => [...l.slice(-1999), e]), []));
   useBridgeEvent("settings", useCallback((d) => setSettings(d), []));
+  useBridgeEvent("window",   useCallback((d) => setMaximized(!!d.maximized), []));
 
   // JS-side poll — primary mechanism for live updates. evaluate_js from a
   // Python background thread can be silently dropped on some platform/backend
@@ -133,35 +149,59 @@ function App() {
 
   const onSetting = (k, v) => api?.set_settings({ [k]: v });
 
+  // The title bar renders in every state (splash / setup / main) so the window
+  // stays draggable, minimizable and closable while the bridge warms up.
   if (!status) {
-    const splashT = settings.language === "en" ? window.SRV_STR.en : window.SRV_STR.es;
     return (
-      <div data-theme={theme} style={{
-        height: "100%", display: "flex", flexDirection: "column",
-        alignItems: "center", justifyContent: "center", gap: 14,
-        background: "var(--bg)", color: "var(--text-3)", fontSize: 13,
-      }}>
-        <window.WSLogoMark size={56} color="var(--brand)" accent="var(--brand-2)"/>
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, opacity: 0.8 }}>
-          {splashT.loading}
+      <div data-theme={theme} className="ow-root">
+        <TitleBar T={T} api={api} caps={caps} maximized={maximized}/>
+        <div className="ow-body" style={{
+          display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", gap: 14,
+          color: "var(--text-3)", fontSize: 13, padding: 24,
+        }}>
+          {bootError ? (
+            <div style={{ maxWidth: 460, textAlign: "center" }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{T.bootError}</div>
+              <pre style={{ marginTop: 12, maxHeight: 140, overflow: "auto", textAlign: "left", background: "var(--bg-sunk)", border: "1px solid var(--line)", borderRadius: 8, padding: 12, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-2)", whiteSpace: "pre-wrap" }}>{bootError}</pre>
+              <window.Btn kind="primary" size="md" onClick={() => window.location.reload()} style={{ marginTop: 14 }}>{T.retry}</window.Btn>
+            </div>
+          ) : (
+            <>
+              <window.WSLogoMark size={56} color="var(--brand)" accent="var(--brand-2)"/>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, opacity: 0.8 }}>
+                {T.loading}
+              </div>
+            </>
+          )}
         </div>
+        {caps.native_drag_resize && !maximized && <ResizeHandles api={api}/>}
       </div>
     );
   }
 
   if (!status.config_present || screen === "setup") {
-    return <SetupWizard T={T} api={api} theme={theme} onDone={async () => {
-      const s = await api.get_status();
-      setStatus(s);
-      setClients(await api.list_clients());
-      setScreen("dashboard");
-    }}/>;
+    return (
+      <div data-theme={theme} className="ow-root">
+        <TitleBar T={T} api={api} caps={caps} maximized={maximized}/>
+        <div className="ow-body">
+          <SetupWizard T={T} api={api} theme={theme} onDone={async () => {
+            const s = await api.get_status();
+            setStatus(s);
+            setClients(await api.list_clients());
+            setScreen("dashboard");
+          }}/>
+        </div>
+        {caps.native_drag_resize && !maximized && <ResizeHandles api={api}/>}
+      </div>
+    );
   }
 
   return (
-    <div data-theme={theme} style={{ display: "grid", gridTemplateRows: bridgeAlive ? "1fr" : "auto 1fr", height: "100%", background: "var(--bg)", color: "var(--text)" }}>
+    <div data-theme={theme} className="ow-root">
+      <TitleBar T={T} api={api} caps={caps} maximized={maximized}/>
       {!bridgeAlive && <div className="ow-bridge-banner">{T.bridgeLost}</div>}
-      <div style={{ display: "grid", gridTemplateColumns: "232px 1fr", minHeight: 0 }}>
+      <div className="ow-body" style={{ display: "grid", gridTemplateColumns: "232px 1fr" }}>
         <Sidebar T={T} screen={screen} onScreen={setScreen} status={status} advanced={!!settings.advanced}/>
         <main style={{ overflow: "auto", padding: "28px 36px 36px", minWidth: 0 }} className="ws-scroll">
           {screen === "dashboard" && <Dashboard T={T} api={api} status={status} clients={clients} advanced={!!settings.advanced} confirm={confirm} onScreen={setScreen} history={history}/>}
@@ -172,10 +212,72 @@ function App() {
           {screen === "about"     && <About T={T} api={api}/>}
         </main>
       </div>
+      {caps.native_drag_resize && !maximized && <ResizeHandles api={api}/>}
       {confirmDialog}
     </div>
   );
 }
+
+// ── Custom title bar (frameless window chrome) ─────────────────────
+// The native OS title bar is hidden (frameless=True); this draws one in the
+// app's palette. Identical behaviour to the client: dragging +
+// double-click-maximize + edge-resize are native on Windows
+// (api.window_start_move / window_start_resize → WM_NCLBUTTONDOWN); elsewhere
+// the drag region uses pywebview's built-in "pywebview-drag-region".
+const TitleBar = ({ T, api, caps, maximized }) => {
+  const native = !!caps.native_drag_resize;
+
+  const onDragMouseDown = (e) => {
+    if (e.button !== 0 || !native || !api) return;
+    api.window_start_move();
+  };
+  const onDragDoubleClick = () => { if (!native && api) api.window_toggle_maximize(); };
+
+  return (
+    <div className="ow-titlebar">
+      <div
+        className={native ? "ow-titlebar-drag" : "ow-titlebar-drag pywebview-drag-region"}
+        onMouseDown={onDragMouseDown}
+        onDoubleClick={onDragDoubleClick}
+      >
+        <window.WSWordmark size={13} color="var(--text)" accent="var(--brand)"/>
+      </div>
+      <div className="ow-titlebar-controls">
+        <button className="ow-winbtn" title={T.win_minimize} aria-label={T.win_minimize}
+          onClick={() => api && api.window_minimize()}>
+          <svg width="11" height="11" viewBox="0 0 12 12"><line x1="2" y1="6.5" x2="10" y2="6.5" stroke="currentColor" strokeWidth="1.1"/></svg>
+        </button>
+        <button className="ow-winbtn" title={maximized ? T.win_restore : T.win_maximize} aria-label={maximized ? T.win_restore : T.win_maximize}
+          onClick={() => api && api.window_toggle_maximize()}>
+          {maximized ? (
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.1">
+              <rect x="2" y="3.5" width="6" height="6"/><path d="M4 3.5 V2 H10 V8 H8.5"/>
+            </svg>
+          ) : (
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.1">
+              <rect x="2.2" y="2.2" width="7.6" height="7.6"/>
+            </svg>
+          )}
+        </button>
+        <button className="ow-winbtn close" title={T.win_close} aria-label={T.win_close}
+          onClick={() => api && api.window_close()}>
+          <svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" strokeWidth="1.1"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"/></svg>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// Invisible native edge/corner grips for the frameless window (Windows only).
+const RESIZE_EDGES = ["t", "b", "l", "r", "tl", "tr", "bl", "br"];
+const ResizeHandles = ({ api }) => (
+  <>
+    {RESIZE_EDGES.map((edge) => (
+      <div key={edge} className={`ow-resize-h ${edge}`}
+        onMouseDown={(e) => { if (e.button === 0 && api) { e.preventDefault(); api.window_start_resize(edge); } }}/>
+    ))}
+  </>
+);
 
 // ── Sidebar ────────────────────────────────────────────────────────
 const Sidebar = ({ T, screen, onScreen, status, advanced }) => {
@@ -202,10 +304,7 @@ const Sidebar = ({ T, screen, onScreen, status, advanced }) => {
       borderRight: advanced ? "1px solid var(--line-strong)" : "1px solid var(--line)",
       display: "flex", flexDirection: "column", padding: "22px 14px",
     }}>
-      <div style={{ padding: "0 8px 22px" }}>
-        <window.WSWordmark size={16} color="var(--text)" accent="var(--brand)"/>
-      </div>
-
+      {/* Wordmark moved to the window title bar (frameless chrome). */}
       {advanced && (
         <div style={{ padding: "0 8px 14px", fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-3)", letterSpacing: ".08em", textTransform: "uppercase" }}>
           server · dev
@@ -1553,4 +1652,20 @@ const About = ({ T, api }) => {
   );
 };
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+// Catch errors that escape React's render cycle (event handlers, async
+// callbacks, bridge promises) and forward them to the Python log so a field
+// crash leaves a trace instead of a silent renderer. The boundary below handles
+// render-time errors and the user-facing recovery screen.
+window.addEventListener("error", (e) => {
+  try { window.pywebview?.api?.report_ui_error?.(`window.error: ${e.message} @ ${e.filename || "?"}:${e.lineno || 0}`); } catch (_) {}
+});
+window.addEventListener("unhandledrejection", (e) => {
+  try {
+    const r = e.reason;
+    window.pywebview?.api?.report_ui_error?.(`unhandledrejection: ${(r && (r.stack || r.message)) || r}`);
+  } catch (_) {}
+});
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <window.ErrorBoundary><App/></window.ErrorBoundary>
+);

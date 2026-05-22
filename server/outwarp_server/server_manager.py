@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import sys
 import threading
@@ -22,6 +23,29 @@ from outwarp_server.wireguard import (
 )
 
 log = logging.getLogger(__name__)
+
+# A client name doubles as a config identifier and the <name>.owcfg filename
+# written to the cwd. Without this an unsanitised name like '../x' or 'a/b'
+# would escape the directory or fail mid-write. Allow a conservative charset
+# only; reject path separators, traversal and control characters.
+_CLIENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,63}$")
+
+
+def validate_client_name(name: str) -> str:
+    """Return the stripped name if it is a safe identifier, else raise ValueError."""
+    if not isinstance(name, str):
+        raise ValueError("Client name must be text")
+    cleaned = name.strip()
+    if not cleaned:
+        raise ValueError("Client name is required")
+    if cleaned in (".", ".."):
+        raise ValueError("Invalid client name")
+    if not _CLIENT_NAME_RE.match(cleaned):
+        raise ValueError(
+            "Client name may only contain letters, digits, spaces, '.', '_' and "
+            "'-' (1-64 characters, not starting with a separator)"
+        )
+    return cleaned
 
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 _MONITOR_INTERVAL = 5.0
@@ -126,6 +150,7 @@ class ServerManager:
 
     def add_client(self, name: str) -> Path:
         """Generate a new client, update server config, return path to .owcfg."""
+        name = validate_client_name(name)
         config = self._config
 
         for c in config.clients:
