@@ -57,6 +57,27 @@ def test_reconnect_defaults_when_missing(tmp_path):
     assert cfg.reconnect.delays_seconds == [5, 10, 20, 30, 60]
 
 
+def test_fallback_ports_default_empty(tmp_path):
+    cfg = ClientConfig.load(write_cfg(tmp_path, VALID))
+    assert cfg.server.fallback_ports == []
+
+
+def test_fallback_ports_parsed_dedup_and_drop_primary(tmp_path):
+    data = {**VALID, "server": {**VALID["server"], "fallback_ports": [8443, 2083, 443, 8443]}}
+    cfg = ClientConfig.load(write_cfg(tmp_path, data))
+    # primary (443) and duplicates removed, order preserved
+    assert cfg.server.fallback_ports == [8443, 2083]
+    out = tmp_path / "rt.owcfg"
+    cfg.save(out)
+    assert json.loads(out.read_text())["server"]["fallback_ports"] == [8443, 2083]
+
+
+def test_fallback_ports_reject_out_of_range(tmp_path):
+    data = {**VALID, "server": {**VALID["server"], "fallback_ports": [70000]}}
+    with pytest.raises(ConfigError, match="fallback_ports"):
+        ClientConfig.load(write_cfg(tmp_path, data))
+
+
 def test_preshared_key_defaults_empty(tmp_path):
     cfg = ClientConfig.load(write_cfg(tmp_path, VALID))
     assert cfg.wireguard.preshared_key == ""

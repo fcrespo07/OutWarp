@@ -83,9 +83,12 @@ def find_wstunnel() -> Path:
     )
 
 
-def build_wstunnel_command(config: ClientConfig, wstunnel_bin: Path) -> list[str]:
+def build_wstunnel_command(
+    config: ClientConfig, wstunnel_bin: Path, port: int | None = None
+) -> list[str]:
     t = config.tunnel
     s = config.server
+    wss_port = port if port is not None else s.port
     forward = (
         f"udp://127.0.0.1:{t.local_port}:{t.remote_host}:{t.remote_port}?timeout_sec=0"
     )
@@ -102,7 +105,7 @@ def build_wstunnel_command(config: ClientConfig, wstunnel_bin: Path) -> list[str
         forward,
         "--http-upgrade-path-prefix",
         s.http_upgrade_path_prefix,
-        f"wss://{s.endpoint}:{s.port}",
+        f"wss://{s.endpoint}:{wss_port}",
     ]
 
 
@@ -150,16 +153,28 @@ class Tunnel:
         # bypass IPs from the WG AllowedIPs at config-build time instead of
         # adding host routes after the fact.
         self._phase_cb("resolve")
-        if not tcp_probe(s.endpoint, s.port):
+        # Try the primary WSS port first, then any fallback ports. A network
+        # that blocks 443 may still let an alternate port through; the first
+        # reachable one wins and is used for the rest of the connect.
+        candidates = [s.port, *s.fallback_ports]
+        chosen_port: int | None = next(
+            (p for p in candidates if tcp_probe(s.endpoint, p)), None
+        )
+        if chosen_port is None:
+            ports = ", ".join(str(p) for p in candidates)
             raise TunnelError(
-                f"Cannot reach {s.endpoint}:{s.port}. The server may be down, the port "
-                "may not be open in the server firewall, or your network may block "
-                "outbound connections to that port."
+                f"Cannot reach {s.endpoint} on any configured port ({ports}). The "
+                "server may be down, the port(s) may not be open in the server "
+                "firewall, or your network may block outbound connections to them."
             )
+        if chosen_port != s.port:
+            log.info("primary port %d unreachable — using fallback port %d", s.port, chosen_port)
 
         self._phase_cb("tls")
         try:
-            verify_tls_fingerprint(s.endpoint, s.port, self._config.tls.cert_fingerprint_sha256)
+            verify_tls_fingerprint(
+                s.endpoint, chosen_port, self._config.tls.cert_fingerprint_sha256
+            )
         except FingerprintMismatch as exc:
             if not self.allow_tls_intercept:
                 raise TunnelError(str(exc)) from exc
@@ -180,7 +195,7 @@ class Tunnel:
             self._wg_installed = True
 
             self._phase_cb("ws")
-            cmd = build_wstunnel_command(self._config, self._wstunnel_bin)
+            cmd = build_wstunnel_command(self._config, self._wstunnel_bin, port=chosen_port)
             log.info("Starting wstunnel: %s", " ".join(cmd))
             self._proc = subprocess.Popen(
                 cmd,

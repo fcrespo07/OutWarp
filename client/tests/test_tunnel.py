@@ -145,7 +145,54 @@ def test_build_wstunnel_command_has_expected_structure():
     assert cmd[-1] == "wss://203.0.113.42:443"
 
 
+def test_build_wstunnel_command_honours_port_override():
+    cfg = _make_config()
+    cmd = build_wstunnel_command(cfg, Path("/usr/bin/wstunnel"), port=8443)
+    assert cmd[-1] == "wss://203.0.113.42:8443"
+
+
 # --- Tunnel.connect / disconnect ---
+
+def test_connect_falls_back_to_alternate_port():
+    from dataclasses import replace
+    cfg = _make_config()
+    cfg = replace(cfg, server=replace(cfg.server, fallback_ports=[8443]))
+    plat = FakePlatform()
+    fake_proc = MagicMock()
+    fake_proc.poll.return_value = None
+
+    # Primary 443 is blocked; 8443 is reachable.
+    def probe(host, port):
+        return port == 8443
+
+    captured: dict = {}
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return fake_proc
+
+    with (
+        patch("outwarp.tunnel.tcp_probe", side_effect=probe),
+        patch("outwarp.tunnel.verify_tls_fingerprint") as vtf,
+        patch("outwarp.tunnel.subprocess.Popen", side_effect=fake_popen),
+    ):
+        t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"))
+        t.connect()
+
+    # TLS verify and the wstunnel target both used the fallback port.
+    assert vtf.call_args[0][1] == 8443
+    assert captured["cmd"][-1] == "wss://203.0.113.42:8443"
+
+
+def test_connect_fails_when_all_ports_unreachable():
+    from dataclasses import replace
+    cfg = _make_config()
+    cfg = replace(cfg, server=replace(cfg.server, fallback_ports=[8443, 2083]))
+    with patch("outwarp.tunnel.tcp_probe", return_value=False):
+        t = Tunnel(cfg, platform=FakePlatform(), wstunnel_bin=Path("/fake/wstunnel"))
+        with pytest.raises(TunnelError, match="443, 8443, 2083"):
+            t.connect()
+
 
 def test_connect_happy_path():
     cfg = _make_config()

@@ -23,6 +23,11 @@ class ServerConfig:
     endpoint: str
     port: int
     http_upgrade_path_prefix: str
+    # Alternate WSS ports the server also listens on. Tried in order when the
+    # primary `port` is unreachable (a network blocking 443 may still let 8443
+    # / 2083 through). Empty = no fallback. The server must actually be
+    # listening on these for it to help.
+    fallback_ports: list[int] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -205,7 +210,21 @@ def _parse_server(d: Any) -> ServerConfig:
     prefix = _require(d, "http_upgrade_path_prefix", "server")
     if not isinstance(port, int) or not (1 <= port <= 65535):
         raise ConfigError(f"server.port must be an integer between 1 and 65535, got {port!r}")
-    return ServerConfig(endpoint=str(endpoint), port=port, http_upgrade_path_prefix=str(prefix))
+    fallback_raw = d.get("fallback_ports", [])
+    if not isinstance(fallback_raw, list):
+        raise ConfigError("server.fallback_ports must be a list of ports")
+    fallback_ports: list[int] = []
+    for p in fallback_raw:
+        if not isinstance(p, int) or not (1 <= p <= 65535):
+            raise ConfigError(f"server.fallback_ports entries must be 1-65535, got {p!r}")
+        if p != port and p not in fallback_ports:
+            fallback_ports.append(p)
+    return ServerConfig(
+        endpoint=str(endpoint),
+        port=port,
+        http_upgrade_path_prefix=str(prefix),
+        fallback_ports=fallback_ports,
+    )
 
 
 def _parse_tls(d: Any) -> TlsConfig:
@@ -308,6 +327,8 @@ def _to_dict(cfg: ClientConfig) -> dict[str, Any]:
             "delays_seconds": cfg.reconnect.delays_seconds,
         },
     }
+    if cfg.server.fallback_ports:
+        d["server"]["fallback_ports"] = list(cfg.server.fallback_ports)
     if cfg.wireguard.preshared_key:
         d["wireguard"]["preshared_key"] = cfg.wireguard.preshared_key
     if cfg.expires_at:
