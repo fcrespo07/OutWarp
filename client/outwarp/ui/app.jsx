@@ -1386,6 +1386,9 @@ const Settings = ({ T, settings, onSetting }) => {
       )},
     ]},
     { key: "connection", title: T.set_groupConnection, rows: [
+      { title: T.set_autoconnectLaunch, sub: T.set_autoconnectLaunchSub, control: (
+        <window.Toggle on={!!settings.auto_connect} onChange={(v) => apply("auto_connect", v)}/>
+      )},
       { title: T.set_autoconnect, sub: T.set_autoconnectSub, control: (
         <window.Toggle on={!!settings.auto_reconnect} onChange={(v) => apply("auto_reconnect", v)}/>
       )},

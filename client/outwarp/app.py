@@ -266,9 +266,21 @@ def main() -> int:
         tray = TrayApp(manager=manager, on_show=_show_window, on_quit=_on_quit)
         _stage("tray constructed")
 
+        # Auto-connect at launch unless the user opted out, or the profile has
+        # expired (a dead profile would just thrash through the reconnect
+        # schedule). Importing/editing a profile still connects via
+        # on_manager_replaced regardless of this setting.
         if manager is not None:
-            manager.start()
-            _stage("tunnel manager started")
+            if not bool(settings.get("auto_connect", True)):
+                log.info("auto_connect=off — not connecting at launch (use Connect)")
+            elif manager.config.is_expired():
+                log.warning(
+                    "profile expired (%s) — not auto-connecting; import a fresh .owcfg",
+                    manager.config.expires_at,
+                )
+            else:
+                manager.start()
+                _stage("tunnel manager started")
 
         tray.run()
         _stage("tray running — about to hand off to webview.start()")

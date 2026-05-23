@@ -210,6 +210,18 @@ def test_default_settings_include_auto_reconnect(tmp_path):
     assert s["auto_reconnect"] is True
 
 
+def test_default_settings_include_auto_connect(tmp_path):
+    with patch(
+        "outwarp.api.default_config_path",
+        return_value=tmp_path / "config.json",
+    ):
+        api, _ = _make_api()
+        s = api.get_settings()
+    # auto_connect defaults to True so launch behaviour is unchanged unless the
+    # user opts out.
+    assert s["auto_connect"] is True
+
+
 def test_set_settings_propagates_auto_reconnect_to_manager(tmp_path):
     mgr = MagicMock()
     mgr.state = TunnelState.DISCONNECTED

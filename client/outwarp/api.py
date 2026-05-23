@@ -104,6 +104,10 @@ def _default_settings() -> dict[str, Any]:
         # the user sees a pending release without having to click. Consumed by
         # the About component in app.jsx.
         "check_updates_on_start": False,
+        # When True (default), app.py brings the tunnel up automatically at
+        # launch if a profile is imported and not expired. Turn off to start
+        # disconnected and connect manually. Consumed by app.main().
+        "auto_connect": True,
     }
 
 
