@@ -135,6 +135,60 @@ def step_installer(version: str, editions: list[str]) -> None:
     print(f"\n  installer(s) written to: {out}")
 
 
+def _resolve_signtool() -> str | None:
+    tool = shutil.which("signtool")
+    if tool:
+        return tool
+    # signtool ships with the Windows SDK; probe the usual install roots.
+    import glob
+    for root in (
+        r"C:\Program Files (x86)\Windows Kits\10\bin",
+        r"C:\Program Files\Windows Kits\10\bin",
+    ):
+        hits = sorted(glob.glob(rf"{root}\*\x64\signtool.exe"))
+        if hits:
+            return hits[-1]
+    return None
+
+
+def step_sign(version: str) -> None:
+    """Authenticode-sign the per-edition installers if a cert is configured.
+
+    Opt-in and safe to leave off: with no cert env vars set this is a logged
+    no-op (OutWarp ships unsigned today — see CLAUDE.md). Configure either:
+      OUTWARP_SIGN_PFX + OUTWARP_SIGN_PASS   (a .pfx file + its password), or
+      OUTWARP_SIGN_SHA1                       (thumbprint of a cert in the store)
+    Runs before step_checksums so SHA256SUMS.txt covers the signed bytes.
+    """
+    pfx = os.environ.get("OUTWARP_SIGN_PFX")
+    sha1 = os.environ.get("OUTWARP_SIGN_SHA1")
+    if not pfx and not sha1:
+        print("  no signing cert configured (OUTWARP_SIGN_PFX / OUTWARP_SIGN_SHA1) — "
+              "leaving installers unsigned")
+        return
+    signtool = _resolve_signtool()
+    if signtool is None:
+        raise SystemExit("signing requested but signtool.exe not found (install the Windows SDK)")
+
+    out = INSTALLER_DIR / "output"
+    installers = sorted(out.glob(f"OutWarpSetup-*{version}*.exe"))
+    if not installers:
+        raise SystemExit(f"no installers found in {out} to sign")
+
+    base = [signtool, "sign", "/fd", "sha256", "/tr",
+            "http://timestamp.digicert.com", "/td", "sha256"]
+    if pfx:
+        base += ["/f", pfx]
+        if os.environ.get("OUTWARP_SIGN_PASS"):
+            base += ["/p", os.environ["OUTWARP_SIGN_PASS"]]
+    else:
+        base += ["/sha1", sha1]
+
+    for exe in installers:
+        print(f"  signing {exe.name}")
+        _run([*base, str(exe)])
+
+
 def step_checksums(version: str) -> Path:
     """Write output/SHA256SUMS.txt covering every OutWarpSetup-*<version>*.exe.
 
@@ -192,6 +246,8 @@ def main() -> int:
         if unknown:
             raise SystemExit(f"unknown edition(s): {', '.join(unknown)} (expected full/client/server)")
         step_installer(args.version, editions)
+        print("\n=== signing installers (if a cert is configured) ===")
+        step_sign(args.version)
         print("\n=== generating SHA256SUMS.txt ===")
         step_checksums(args.version)
 
