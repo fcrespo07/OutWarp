@@ -619,6 +619,32 @@ case "$cmd" in
         ip="${1:-}"; need_ipv4 "$ip"
         ip route del "$ip/32" >/dev/null 2>&1 || true
         ;;
+    killswitch-on)
+        # Block all outbound traffic except: loopback, already-established
+        # connections, and the allowlist IPs (the server endpoint(s), so the
+        # wstunnel reconnect can still reach the server). Implemented as a
+        # dedicated nftables table so release is a clean single delete and we
+        # never touch the user's other firewall rules.
+        command -v nft >/dev/null 2>&1 || die "nftables (nft) not installed — cannot engage kill switch"
+        [[ $# -ge 1 ]] || die "killswitch-on needs at least one allowlist IP"
+        for ip in "$@"; do need_ipv4 "$ip"; done
+        nft delete table inet outwarp_ks >/dev/null 2>&1 || true
+        nft add table inet outwarp_ks
+        nft add chain inet outwarp_ks out '{ type filter hook output priority 0 ; policy drop ; }'
+        nft add rule inet outwarp_ks out oif lo accept
+        nft add rule inet outwarp_ks out ct state established,related accept
+        for ip in "$@"; do
+            nft add rule inet outwarp_ks out ip daddr "$ip" accept
+        done
+        ;;
+    killswitch-off)
+        command -v nft >/dev/null 2>&1 || exit 0
+        nft delete table inet outwarp_ks >/dev/null 2>&1 || true
+        ;;
+    killswitch-status)
+        command -v nft >/dev/null 2>&1 || exit 1
+        nft list table inet outwarp_ks >/dev/null 2>&1
+        ;;
     *) die "unknown command: ${cmd:-<empty>}" ;;
 esac
 HELPER_EOF

@@ -329,6 +329,53 @@ def test_linux_is_wg_tunnel_active_false_when_helper_missing(tmp_path, monkeypat
     assert p.is_wg_tunnel_active("OutWarp") is False
 
 
+# --- LinuxPlatform: kill switch (helper-backed nftables) ---
+
+def test_linux_engage_kill_switch_invokes_helper_with_allowlist(linux_helper):
+    p = _linux_platform(linux_helper)
+    with patch("subprocess.run", return_value=_mock_run(0)) as mock_run:
+        p.engage_kill_switch(["203.0.113.42", "198.51.100.7"])
+    assert mock_run.call_args[0][0] == [
+        str(linux_helper), "killswitch-on", "203.0.113.42", "198.51.100.7",
+    ]
+
+
+def test_linux_engage_kill_switch_rejects_empty_allowlist(linux_helper):
+    p = _linux_platform(linux_helper)
+    with pytest.raises(PlatformError, match="empty allowlist"):
+        p.engage_kill_switch([])
+
+
+def test_linux_engage_kill_switch_raises_on_helper_failure(linux_helper):
+    p = _linux_platform(linux_helper)
+    with (
+        patch("subprocess.run", return_value=_mock_run(2, stderr="nft not installed")),
+        pytest.raises(PlatformError, match="Failed to engage kill switch"),
+    ):
+        p.engage_kill_switch(["203.0.113.42"])
+
+
+def test_linux_release_kill_switch_calls_helper_off(linux_helper):
+    p = _linux_platform(linux_helper)
+    with patch("subprocess.run", return_value=_mock_run(0)) as mock_run:
+        p.release_kill_switch()
+    assert mock_run.call_args[0][0] == [str(linux_helper), "killswitch-off"]
+
+
+def test_linux_release_kill_switch_no_op_when_helper_missing(tmp_path, monkeypatch):
+    monkeypatch.delenv("OUTWARP_HELPER", raising=False)
+    p = LinuxPlatform(helper=tmp_path / "missing-helper", sudo=False)
+    p.release_kill_switch()  # must not raise
+
+
+def test_linux_is_kill_switch_engaged_reflects_helper_status(linux_helper):
+    p = _linux_platform(linux_helper)
+    with patch("subprocess.run", return_value=_mock_run(0)):
+        assert p.is_kill_switch_engaged() is True
+    with patch("subprocess.run", return_value=_mock_run(1)):
+        assert p.is_kill_switch_engaged() is False
+
+
 # --- LinuxPlatform: gateway (unprivileged, calls `ip` directly) ---
 
 def test_linux_get_default_gateway_parses_first_route(linux_helper):
@@ -711,17 +758,3 @@ def test_windows_is_kill_switch_engaged_reflects_block_rule_presence():
     # rc=1 means absent
     with patch("subprocess.run", return_value=_mock_run(1, stderr="No rules match")):
         assert p.is_kill_switch_engaged() is False
-
-
-# --- LinuxPlatform: kill switch (stub for v0.1) ---
-
-def test_linux_engage_kill_switch_raises_not_implemented(linux_helper):
-    p = _linux_platform(linux_helper)
-    with pytest.raises(PlatformError, match="not yet implemented on Linux"):
-        p.engage_kill_switch(["1.1.1.1"])
-
-
-def test_linux_release_kill_switch_is_silent_no_op(linux_helper):
-    p = _linux_platform(linux_helper)
-    p.release_kill_switch()  # must not raise — startup cleanup hits this
-    assert p.is_kill_switch_engaged() is False

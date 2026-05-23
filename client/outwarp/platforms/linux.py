@@ -170,23 +170,38 @@ class LinuxPlatform(Platform):
     # ------------------------------------------------------------------
     # Kill switch
     # ------------------------------------------------------------------
-    # An nftables/iptables-based implementation would be straightforward but
-    # needs the privileged helper extended with two new subcommands and a
-    # rollback path. Out of scope for the first kill-switch landing — we keep
-    # the toggle honest by failing loudly when the user enables it on Linux.
+    # Backed by an nftables table the privileged helper owns
+    # (killswitch-on/off/status). The output chain defaults to drop and only
+    # allows loopback, established connections and the allowlist IPs (the
+    # server endpoint(s)) so the wstunnel reconnect can still get out.
     def engage_kill_switch(self, allowlist_ips: list[str]) -> None:
-        raise PlatformError(
-            "Kill switch is not yet implemented on Linux. Disable the toggle "
-            "to keep using OutWarp on this machine."
-        )
+        ips = [ip for ip in allowlist_ips if ip]
+        if not ips:
+            raise PlatformError(
+                "engage_kill_switch refusing to run with an empty allowlist — "
+                "that would block the very traffic wstunnel needs to reconnect."
+            )
+        self._require_helper()
+        result = self._run_helper("killswitch-on", *ips)
+        if result.returncode != 0:
+            raise PlatformError(
+                "Failed to engage kill switch: "
+                f"{(result.stderr or result.stdout).strip() or 'unknown error'}. "
+                "If you upgraded OutWarp, re-run the installer so the privileged "
+                "helper gains the kill-switch commands; nftables must be installed."
+            )
 
     def release_kill_switch(self) -> None:
-        # Nothing to release: engage_kill_switch never succeeds on Linux.
-        # Stay quiet so the recovery-on-startup call in app.py is harmless.
-        return
+        # Best-effort + safe to call when nothing is engaged (app.py calls it
+        # unconditionally on startup). Skip silently if the helper is absent.
+        if not self._helper.exists() and not os.environ.get("OUTWARP_HELPER"):
+            return
+        self._run_helper("killswitch-off")
 
     def is_kill_switch_engaged(self) -> bool:
-        return False
+        if not self._helper.exists() and not os.environ.get("OUTWARP_HELPER"):
+            return False
+        return self._run_helper("killswitch-status").returncode == 0
 
 
 def _render_desktop_entry(command: list[str]) -> str:
