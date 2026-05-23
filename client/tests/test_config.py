@@ -57,6 +57,42 @@ def test_reconnect_defaults_when_missing(tmp_path):
     assert cfg.reconnect.delays_seconds == [5, 10, 20, 30, 60]
 
 
+def test_preshared_key_defaults_empty(tmp_path):
+    cfg = ClientConfig.load(write_cfg(tmp_path, VALID))
+    assert cfg.wireguard.preshared_key == ""
+
+
+def test_preshared_key_parsed_and_roundtrips(tmp_path):
+    data = {**VALID, "wireguard": {**VALID["wireguard"], "preshared_key": "cHNrMDAw"}}
+    cfg = ClientConfig.load(write_cfg(tmp_path, data))
+    assert cfg.wireguard.preshared_key == "cHNrMDAw"
+    out = tmp_path / "rt.owcfg"
+    cfg.save(out)
+    assert json.loads(out.read_text())["wireguard"]["preshared_key"] == "cHNrMDAw"
+
+
+def test_expiry_parsed_from_meta(tmp_path):
+    data = {**VALID, "meta": {"expires_at": "2030-01-01"}}
+    cfg = ClientConfig.load(write_cfg(tmp_path, data))
+    assert cfg.expires_at == "2030-01-01"
+    assert cfg.is_expired(today="2025-01-01") is False
+    assert cfg.is_expired(today="2031-01-01") is True
+
+
+def test_no_expiry_is_never_expired(tmp_path):
+    cfg = ClientConfig.load(write_cfg(tmp_path, VALID))
+    assert cfg.expires_at == ""
+    assert cfg.is_expired(today="2099-01-01") is False
+
+
+def test_expiry_roundtrips_through_save(tmp_path):
+    data = {**VALID, "meta": {"expires_at": "2030-01-01"}}
+    cfg = ClientConfig.load(write_cfg(tmp_path, data))
+    out = tmp_path / "rt.owcfg"
+    cfg.save(out)
+    assert json.loads(out.read_text())["meta"]["expires_at"] == "2030-01-01"
+
+
 def test_missing_required_field(tmp_path):
     data = {**VALID, "server": {"port": 443, "http_upgrade_path_prefix": "x"}}
     with pytest.raises(ConfigError, match="endpoint"):

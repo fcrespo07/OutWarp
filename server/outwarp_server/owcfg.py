@@ -12,9 +12,27 @@ def build_owcfg(
     client_name: str,
     client_private_key: str,
     client_address: str,
+    preshared_key: str = "",
+    expires_at: str = "",
 ) -> dict[str, Any]:
-    """Build the .owcfg dict that the client expects."""
-    return {
+    """Build the .owcfg dict that the client expects.
+
+    `preshared_key` and `expires_at` are optional and only written when set, so
+    a .owcfg built without them stays byte-for-byte compatible with older
+    clients (which ignore unknown keys anyway).
+    """
+    wireguard: dict[str, Any] = {
+        "tunnel_name": "OutWarp",
+        "client_address": client_address,
+        "client_private_key": client_private_key,
+        "server_public_key": server_config.wg_public_key,
+        "dns": ["1.1.1.1"],
+        "mtu": 1380,
+    }
+    if preshared_key:
+        wireguard["preshared_key"] = preshared_key
+
+    owcfg: dict[str, Any] = {
         "schema_version": 1,
         "name": client_name,
         "server": {
@@ -30,14 +48,7 @@ def build_owcfg(
             "remote_host": "127.0.0.1",
             "remote_port": server_config.wg_listen_port,
         },
-        "wireguard": {
-            "tunnel_name": "OutWarp",
-            "client_address": client_address,
-            "client_private_key": client_private_key,
-            "server_public_key": server_config.wg_public_key,
-            "dns": ["1.1.1.1"],
-            "mtu": 1380,
-        },
+        "wireguard": wireguard,
         "routing": {
             "bypass_ips": [server_config.endpoint],
         },
@@ -46,6 +57,9 @@ def build_owcfg(
             "delays_seconds": [5, 10, 20, 30, 60],
         },
     }
+    if expires_at:
+        owcfg["meta"] = {"expires_at": expires_at}
+    return owcfg
 
 
 def write_owcfg(warpcfg: dict[str, Any], path: Path) -> None:

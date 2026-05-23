@@ -146,6 +146,7 @@ def build_wg_conf(config: ClientConfig) -> str:
         bypass.append(config.server.endpoint)
     allowed_ips = _allowed_ips_excluding(bypass) if bypass else "0.0.0.0/0"
     dns_line = f"DNS = {', '.join(wg.dns)}\n" if wg.dns else ""
+    psk_line = f"PresharedKey = {wg.preshared_key}\n" if wg.preshared_key else ""
     return (
         "[Interface]\n"
         f"PrivateKey = {wg.client_private_key}\n"
@@ -159,6 +160,7 @@ def build_wg_conf(config: ClientConfig) -> str:
         "\n"
         "[Peer]\n"
         f"PublicKey = {wg.server_public_key}\n"
+        f"{psk_line}"
         f"AllowedIPs = {allowed_ips}\n"
         f"Endpoint = 127.0.0.1:{tunnel.local_port}\n"
         "PersistentKeepalive = 25\n"

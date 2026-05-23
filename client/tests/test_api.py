@@ -66,10 +66,22 @@ def test_connect_without_manager_returns_error():
 
 def test_connect_starts_manager():
     mgr = MagicMock()
+    mgr.config.is_expired.return_value = False
     api, _ = _make_api(mgr)
     r = api.connect()
     assert r["ok"] is True
     mgr.start.assert_called_once()
+
+
+def test_connect_refuses_expired_profile():
+    mgr = MagicMock()
+    mgr.config.is_expired.return_value = True
+    mgr.config.expires_at = "2020-01-01"
+    api, _ = _make_api(mgr)
+    r = api.connect()
+    assert r["ok"] is False
+    assert "2020-01-01" in r["error"]
+    mgr.start.assert_not_called()
 
 
 def test_disconnect_runs_stop_in_thread():

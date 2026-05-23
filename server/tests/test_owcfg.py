@@ -84,6 +84,46 @@ def test_write_owcfg(tmp_path: Path) -> None:
     assert loaded["server"]["endpoint"] == "203.0.113.42"
 
 
+def test_build_owcfg_omits_psk_and_meta_by_default() -> None:
+    cfg = build_owcfg(_make_server_config(), "laptop", "client_priv", "10.0.0.2/32")
+    assert "preshared_key" not in cfg["wireguard"]
+    assert "meta" not in cfg
+
+
+def test_build_owcfg_includes_psk_when_given() -> None:
+    cfg = build_owcfg(
+        _make_server_config(), "laptop", "client_priv", "10.0.0.2/32",
+        preshared_key="cHNrMDAw",
+    )
+    assert cfg["wireguard"]["preshared_key"] == "cHNrMDAw"
+
+
+def test_build_owcfg_includes_expiry_when_given() -> None:
+    cfg = build_owcfg(
+        _make_server_config(), "laptop", "client_priv", "10.0.0.2/32",
+        expires_at="2030-01-01",
+    )
+    assert cfg["meta"]["expires_at"] == "2030-01-01"
+
+
+def test_psk_and_expiry_roundtrip_to_client(tmp_path: Path) -> None:
+    try:
+        from outwarp.config import ClientConfig
+    except ImportError:
+        import pytest
+        pytest.skip("Client package not installed in this environment")
+
+    cfg = build_owcfg(
+        _make_server_config(), "laptop", "client_priv", "10.0.0.2/32",
+        preshared_key="cHNrMDAw", expires_at="2030-01-01",
+    )
+    out = tmp_path / "laptop.owcfg"
+    write_owcfg(cfg, out)
+    client_cfg = ClientConfig.load(out)
+    assert client_cfg.wireguard.preshared_key == "cHNrMDAw"
+    assert client_cfg.expires_at == "2030-01-01"
+
+
 def test_warpcfg_compatible_with_client_schema(tmp_path: Path) -> None:
     """Verify the .owcfg can be loaded by the client's ClientConfig parser."""
     # This import works because the client package is installed in the same venv

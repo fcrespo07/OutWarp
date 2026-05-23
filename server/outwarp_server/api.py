@@ -508,17 +508,30 @@ class Api:
                 "endpoint": endpoint,
                 "rx_bytes": rx,
                 "tx_bytes": tx,
+                "expires_at": c.expires_at,
             })
         return out
 
-    def add_client(self, name: str) -> dict[str, Any]:
+    def add_client(self, name: str, days: int | None = None) -> dict[str, Any]:
         if self._manager is None:
             return {"ok": False, "error": "server not configured"}
         name = (name or "").strip()
         if not name:
             return {"ok": False, "error": "name is required"}
+        expires_at = ""
+        if days:
+            try:
+                d = int(days)
+                if d < 1:
+                    raise ValueError
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "days must be a positive integer"}
+            import datetime
+            expires_at = (
+                datetime.datetime.now(datetime.UTC).date() + datetime.timedelta(days=d)
+            ).isoformat()
         try:
-            owcfg_path = self._manager.add_client(name)
+            owcfg_path = self._manager.add_client(name, expires_at=expires_at)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:
@@ -635,6 +648,19 @@ class Api:
             return {"ok": False, "error": str(exc)}
         self._emit("clients", self.list_clients())
         return {"ok": True}
+
+    def prune_expired_clients(self) -> dict[str, Any]:
+        """Revoke every client whose expiry date has passed. Returns the names."""
+        if self._manager is None:
+            return {"ok": False, "error": "server not configured"}
+        try:
+            revoked = self._manager.prune_expired()
+        except Exception as exc:
+            log.exception("prune_expired_clients failed")
+            return {"ok": False, "error": str(exc)}
+        if revoked:
+            self._emit("clients", self.list_clients())
+        return {"ok": True, "revoked": revoked}
 
     # ── setup wizard ─────────────────────────────────────────────────────────
 

@@ -161,6 +161,10 @@ def _profile_from_config(cfg: ClientConfig) -> dict[str, Any]:
         "bypass_ips": list(cfg.routing.bypass_ips),
         "reconnect_max_attempts": cfg.reconnect.max_attempts,
         "reconnect_delays": list(cfg.reconnect.delays_seconds),
+        # "" when the profile never expires; ISO date otherwise. Surfaced so the
+        # UI can show a badge / warning. Read-only (not user-editable).
+        "expires_at": cfg.expires_at,
+        "expired": cfg.is_expired(),
     }
 
 
@@ -396,6 +400,13 @@ class Api:
     def connect(self, profile_id: str | None = None) -> dict[str, Any]:
         if self._manager is None:
             return {"ok": False, "error": "no profile imported"}
+        if self._manager.config.is_expired():
+            msg = (
+                f"Este perfil caducó el {self._manager.config.expires_at}. "
+                "Pide uno nuevo al administrador del servidor."
+            )
+            self._record_log("error", msg)
+            return {"ok": False, "error": msg}
         self._manager.start()
         return {"ok": True}
 
@@ -490,6 +501,18 @@ class Api:
             return {"ok": False, "error": "Empty or invalid .owcfg content"}
         if len(file_content.encode("utf-8", "ignore")) > self._MAX_OWCFG_BYTES:
             return {"ok": False, "error": "This file is too large to be a valid .owcfg"}
+        try:
+            # Parse first so an already-expired profile is rejected before it
+            # ever touches disk.
+            parsed = ClientConfig.loads(file_content)
+        except ConfigError as exc:
+            return {"ok": False, "error": str(exc)}
+        if parsed.is_expired():
+            return {
+                "ok": False,
+                "error": f"Este perfil caducó el {parsed.expires_at}. "
+                         "Pide uno nuevo al administrador del servidor.",
+            }
         try:
             cfg = import_owcfg_text(file_content)
         except ConfigError as exc:

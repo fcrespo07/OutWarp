@@ -113,3 +113,31 @@ def test_client_entry_frozen() -> None:
     c = ClientEntry(name="test", public_key="key", address="10.0.0.2/32")
     with pytest.raises(AttributeError):
         c.name = "other"  # type: ignore[misc]
+
+
+def test_client_psk_and_expiry_roundtrip(tmp_path: Path) -> None:
+    data = {
+        **VALID,
+        "clients": [
+            {
+                "name": "laptop", "public_key": "k", "address": "10.0.0.2/32",
+                "psk": "cHNrMDAw", "expires_at": "2030-01-01",
+            },
+            {"name": "old", "public_key": "k2", "address": "10.0.0.3/32"},
+        ],
+    }
+    cfg = ServerConfig.load(_write(tmp_path, data))
+    assert cfg.clients[0].psk == "cHNrMDAw"
+    assert cfg.clients[0].expires_at == "2030-01-01"
+    # A client without psk/expiry parses with empty defaults.
+    assert cfg.clients[1].psk == ""
+    assert cfg.clients[1].expires_at == ""
+
+    dest = tmp_path / "out.json"
+    cfg.save(dest)
+    reloaded = ServerConfig.load(dest)
+    assert reloaded == cfg
+    # Empty psk/expiry are omitted from the serialized form to stay compatible.
+    raw = json.loads(dest.read_text(encoding="utf-8"))
+    assert "psk" not in raw["clients"][1]
+    assert "expires_at" not in raw["clients"][1]

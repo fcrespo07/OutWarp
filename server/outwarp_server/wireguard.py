@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -133,6 +134,8 @@ def build_server_wg_conf_windows(config: ServerConfig) -> str:
         lines.append("[Peer]")
         lines.append(f"# {client.name}")
         lines.append(f"PublicKey = {client.public_key}")
+        if client.psk:
+            lines.append(f"PresharedKey = {client.psk}")
         lines.append(f"AllowedIPs = {client.address}")
 
     lines.append("")
@@ -171,6 +174,8 @@ def build_server_wg_conf(config: ServerConfig) -> str:
         lines.append("[Peer]")
         lines.append(f"# {client.name}")
         lines.append(f"PublicKey = {client.public_key}")
+        if client.psk:
+            lines.append(f"PresharedKey = {client.psk}")
         lines.append(f"AllowedIPs = {client.address}")
 
     lines.append("")
@@ -182,18 +187,32 @@ def add_peer_live(
     allowed_ips: str,
     interface: str = "wg0",
     wg_bin: Path | None = None,
+    psk: str = "",
 ) -> None:
-    """Hot-add a peer to a running WireGuard interface."""
+    """Hot-add a peer to a running WireGuard interface.
+
+    `wg set ... preshared-key` only reads the key from a file (never an argv,
+    so it can't leak via the process table), so when a PSK is given we hand it
+    over through a private temp file that is deleted immediately after.
+    """
     wg = str(wg_bin or "wg")
+    cmd = [wg, "set", interface, "peer", public_key, "allowed-ips", allowed_ips]
+    psk_file: Path | None = None
     try:
-        subprocess.run(
-            [wg, "set", interface, "peer", public_key, "allowed-ips", allowed_ips],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        if psk:
+            import tempfile
+
+            fd, name = tempfile.mkstemp(prefix="outwarp-psk-")
+            psk_file = Path(name)
+            with os.fdopen(fd, "w") as fh:
+                fh.write(psk)
+            cmd += ["preshared-key", str(psk_file)]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
         raise WireGuardError(f"Failed to add peer: {exc.stderr.strip()}") from exc
+    finally:
+        if psk_file is not None:
+            psk_file.unlink(missing_ok=True)
     log.info("Added peer %s with allowed-ips %s", public_key[:16] + "...", allowed_ips)
 
 

@@ -111,6 +111,75 @@ class TestAddClient:
         ret = main(["--config-dir", str(config_dir), "add-client", "laptop"])
         assert ret == 1
 
+    @patch("outwarp_server.cli.generate_psk", return_value="cHNrdmFsdWU=")
+    @patch("outwarp_server.cli.add_peer_live")
+    @patch("outwarp_server.cli.generate_wg_keypair", return_value=("priv", "pub"))
+    def test_add_client_writes_psk_into_owcfg(
+        self, _kg: MagicMock, mock_add: MagicMock, _psk: MagicMock, tmp_path: Path
+    ) -> None:
+        config_dir = _write_server_config(tmp_path)
+        main(["--config-dir", str(config_dir), "add-client", "laptop"])
+        warpcfg = json.loads((Path.cwd() / "laptop.owcfg").read_text(encoding="utf-8"))
+        assert warpcfg["wireguard"]["preshared_key"] == "cHNrdmFsdWU="
+        # The PSK is handed to wg via add_peer_live too.
+        assert mock_add.call_args.kwargs.get("psk") == "cHNrdmFsdWU="
+        (Path.cwd() / "laptop.owcfg").unlink(missing_ok=True)
+
+    @patch("outwarp_server.cli.generate_psk", return_value="")
+    @patch("outwarp_server.cli.add_peer_live")
+    @patch("outwarp_server.cli.generate_wg_keypair", return_value=("priv", "pub"))
+    def test_add_client_with_days_sets_expiry(
+        self, _kg: MagicMock, _add: MagicMock, _psk: MagicMock, tmp_path: Path
+    ) -> None:
+        config_dir = _write_server_config(tmp_path)
+        main(["--config-dir", str(config_dir), "add-client", "temp", "--days", "30"])
+        warpcfg = json.loads((Path.cwd() / "temp.owcfg").read_text(encoding="utf-8"))
+        assert "expires_at" in warpcfg["meta"]
+        cfg = ServerConfig.load(config_dir / "server_config.json")
+        assert cfg.clients[0].expires_at == warpcfg["meta"]["expires_at"]
+        (Path.cwd() / "temp.owcfg").unlink(missing_ok=True)
+
+
+class TestPruneExpired:
+    @patch("outwarp_server.platforms.get_server_platform")
+    @patch("outwarp_server.cli.remove_peer_live")
+    def test_prune_revokes_only_expired(
+        self, mock_remove: MagicMock, _plat: MagicMock, tmp_path: Path
+    ) -> None:
+        clients = [
+            {"name": "old", "public_key": "k1", "address": "10.0.0.2/32",
+             "expires_at": "2000-01-01"},
+            {"name": "live", "public_key": "k2", "address": "10.0.0.3/32",
+             "expires_at": "2999-01-01"},
+            {"name": "forever", "public_key": "k3", "address": "10.0.0.4/32"},
+        ]
+        config_dir = _write_server_config(tmp_path, clients=clients)
+        ret = main(["--config-dir", str(config_dir), "prune-expired", "--yes"])
+        assert ret == 0
+        cfg = ServerConfig.load(config_dir / "server_config.json")
+        assert {c.name for c in cfg.clients} == {"live", "forever"}
+        mock_remove.assert_called_once_with("k1")
+
+    def test_prune_nothing_to_do(self, tmp_path: Path) -> None:
+        config_dir = _write_server_config(tmp_path)
+        ret = main(["--config-dir", str(config_dir), "prune-expired", "--yes"])
+        assert ret == 0
+
+
+def test_expiry_from_days_helper() -> None:
+    import datetime
+
+    from outwarp_server.cli import _expiry_from_days
+
+    assert _expiry_from_days(None) == ""
+    assert _expiry_from_days(0) == ""
+    expected = (
+        datetime.datetime.now(datetime.UTC).date() + datetime.timedelta(days=10)
+    ).isoformat()
+    assert _expiry_from_days(10) == expected
+    with pytest.raises(ValueError):
+        _expiry_from_days(-5)
+
 
 class TestListClients:
     def test_list_empty(self, tmp_path: Path) -> None:

@@ -81,6 +81,16 @@ class TestBuildServerWgConf:
         assert "# phone" in conf
         assert "PublicKey = key2" in conf
 
+    def test_psk_emitted_only_when_set(self) -> None:
+        clients = [
+            ClientEntry(name="withpsk", public_key="k1", address="10.0.0.2/32", psk="cHNr"),
+            ClientEntry(name="nopsk", public_key="k2", address="10.0.0.3/32"),
+        ]
+        conf = build_server_wg_conf(_make_config(clients=clients))
+        assert "PresharedKey = cHNr" in conf
+        # Exactly one peer carries a PresharedKey line.
+        assert conf.count("PresharedKey") == 1
+
 
 class TestAddPeerLive:
     def test_calls_wg_set(self) -> None:
@@ -95,6 +105,18 @@ class TestAddPeerLive:
             mock_run.side_effect = subprocess.CalledProcessError(1, "wg", stderr="fail")
             with pytest.raises(WireGuardError, match="Failed to add peer"):
                 add_peer_live("pubkey", "10.0.0.5/32")
+
+    def test_psk_passed_via_tempfile(self) -> None:
+        with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            add_peer_live("pubkey123", "10.0.0.5/32", psk="cHNrdmFsdWU=")
+        args = mock_run.call_args[0][0]
+        assert "preshared-key" in args
+        # The key itself never appears on the command line — only a file path.
+        assert "cHNrdmFsdWU=" not in args
+        psk_path = Path(args[args.index("preshared-key") + 1])
+        # And the temp file is cleaned up afterwards.
+        assert not psk_path.exists()
 
 
 class TestGetLivePeers:

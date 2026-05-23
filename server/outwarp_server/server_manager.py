@@ -12,7 +12,7 @@ from pathlib import Path
 
 from outwarp_server.binaries import find_wg
 from outwarp_server.config import ClientEntry, ServerConfig, default_config_path
-from outwarp_server.crypto import generate_wg_keypair
+from outwarp_server.crypto import generate_psk, generate_wg_keypair
 from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
 from outwarp_server.owcfg import build_owcfg, write_owcfg
 from outwarp_server.platforms import PlatformError, get_server_platform
@@ -148,8 +148,12 @@ class ServerManager:
         self._stop_event.clear()
         self.start()
 
-    def add_client(self, name: str) -> Path:
-        """Generate a new client, update server config, return path to .owcfg."""
+    def add_client(self, name: str, *, expires_at: str = "") -> Path:
+        """Generate a new client, update server config, return path to .owcfg.
+
+        `expires_at` is an optional ISO date (YYYY-MM-DD); the client refuses an
+        expired profile and `prune_expired` can revoke it server-side.
+        """
         name = validate_client_name(name)
         config = self._config
 
@@ -159,6 +163,11 @@ class ServerManager:
 
         wg_bin = find_wg()
         private_key, public_key = generate_wg_keypair(Path(wg_bin) if wg_bin else None)
+        try:
+            psk = generate_psk(Path(wg_bin) if wg_bin else None)
+        except Exception as exc:
+            log.warning("Could not generate preshared key (continuing without one): %s", exc)
+            psk = ""
 
         allocated = [c.address for c in config.clients]
         try:
@@ -167,11 +176,14 @@ class ServerManager:
             raise ValueError(str(exc)) from exc
 
         try:
-            add_peer_live(public_key, client_address)
+            add_peer_live(public_key, client_address, psk=psk)
         except Exception as exc:
             log.warning("Could not hot-add peer (WireGuard may not be running): %s", exc)
 
-        new_client = ClientEntry(name=name, public_key=public_key, address=client_address)
+        new_client = ClientEntry(
+            name=name, public_key=public_key, address=client_address,
+            psk=psk, expires_at=expires_at,
+        )
         updated = replace(config, clients=[*config.clients, new_client])
         updated.save(default_config_path())
         self._config = updated
@@ -182,11 +194,29 @@ class ServerManager:
         except PlatformError as exc:
             log.warning("Could not persist WG config: %s", exc)
 
-        warpcfg = build_owcfg(config, name, private_key, client_address)
+        warpcfg = build_owcfg(
+            config, name, private_key, client_address,
+            preshared_key=psk, expires_at=expires_at,
+        )
         warpcfg_path = Path.cwd() / f"{name}.owcfg"
         write_owcfg(warpcfg, warpcfg_path)
         log.info("Client '%s' added — .owcfg at %s", name, warpcfg_path)
         return warpcfg_path
+
+    def prune_expired(self, *, today: str = "") -> list[str]:
+        """Revoke every client whose expires_at is strictly before `today`
+        (ISO date, defaults to the current UTC date). Returns the names revoked.
+        """
+        import datetime
+
+        ref = today or datetime.datetime.now(datetime.UTC).date().isoformat()
+        expired = [
+            c.name for c in self._config.clients
+            if c.expires_at and c.expires_at < ref
+        ]
+        for name in expired:
+            self.revoke_client(name)
+        return expired
 
     def rotate_client_keys(self, name: str) -> tuple[Path, str]:
         """Generate a new WG keypair for an existing client and rewrite its .owcfg.
@@ -202,18 +232,26 @@ class ServerManager:
 
         wg_bin = find_wg()
         new_private, new_public = generate_wg_keypair(Path(wg_bin) if wg_bin else None)
+        try:
+            new_psk = generate_psk(Path(wg_bin) if wg_bin else None)
+        except Exception as exc:
+            log.warning("Could not generate preshared key on rotate: %s", exc)
+            new_psk = ""
 
         try:
             remove_peer_live(target.public_key)
         except Exception as exc:
             log.warning("Could not hot-remove old peer: %s", exc)
         try:
-            add_peer_live(new_public, target.address)
+            add_peer_live(new_public, target.address, psk=new_psk)
         except Exception as exc:
             log.warning("Could not hot-add rotated peer: %s", exc)
 
         updated_clients = [
-            ClientEntry(name=c.name, public_key=new_public, address=c.address)
+            ClientEntry(
+                name=c.name, public_key=new_public, address=c.address,
+                psk=new_psk, expires_at=c.expires_at,
+            )
             if c.name == name else c
             for c in config.clients
         ]
@@ -226,7 +264,10 @@ class ServerManager:
         except PlatformError as exc:
             log.warning("Could not persist WG config: %s", exc)
 
-        warpcfg = build_owcfg(updated, name, new_private, target.address)
+        warpcfg = build_owcfg(
+            updated, name, new_private, target.address,
+            preshared_key=new_psk, expires_at=target.expires_at,
+        )
         warpcfg_path = Path.cwd() / f"{name}.owcfg"
         write_owcfg(warpcfg, warpcfg_path)
         log.info("Client '%s' keys rotated — new .owcfg at %s", name, warpcfg_path)

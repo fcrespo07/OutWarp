@@ -196,7 +196,7 @@ def test_add_client_returns_owcfg(tmp_path):
     assert r["path"] == str(owcfg_file)
     assert r["owcfg"] == '{"hi": 1}'
     assert base64.b64decode(r["owcfg_base64"]) == b'{"hi": 1}'
-    mgr.add_client.assert_called_once_with("alice")
+    mgr.add_client.assert_called_once_with("alice", expires_at="")
 
 
 def test_add_client_blank_name():

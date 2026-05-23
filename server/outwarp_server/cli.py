@@ -18,7 +18,7 @@ from outwarp_server.config import (
     default_config_dir,
     default_config_path,
 )
-from outwarp_server.crypto import generate_wg_keypair
+from outwarp_server.crypto import generate_psk, generate_wg_keypair
 from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
 from outwarp_server.owcfg import build_owcfg, write_owcfg
 from outwarp_server.wireguard import (
@@ -35,7 +35,7 @@ console = Console()
 # Commands that read/modify privileged state (systemd, /etc/wireguard, wg interface).
 # Anything not in this set runs without a root check (--version, --help).
 _PRIVILEGED_COMMANDS = frozenset({
-    "setup", "add-client", "list-clients", "revoke-client",
+    "setup", "add-client", "list-clients", "revoke-client", "prune-expired",
     "status", "restart", "uninstall", "doctor", "init", "serve",
 })
 
@@ -129,9 +129,29 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _expiry_from_days(days: int | None) -> str:
+    """Turn a --days count into an ISO expiry date, or '' for no expiry."""
+    if not days:
+        return ""
+    import datetime
+
+    if days < 1:
+        raise ValueError("--days must be a positive number of days")
+    return (
+        datetime.datetime.now(datetime.UTC).date()
+        + datetime.timedelta(days=days)
+    ).isoformat()
+
+
 def _cmd_add_client(args: argparse.Namespace) -> int:
     config = _load_config(args)
     name = args.name
+
+    try:
+        expires_at = _expiry_from_days(getattr(args, "days", None))
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        return 1
 
     # Check for duplicate name
     for c in config.clients:
@@ -139,12 +159,17 @@ def _cmd_add_client(args: argparse.Namespace) -> int:
             console.print(f"[red]Error:[/red] Client '{name}' already exists.")
             return 1
 
-    # Generate WG keypair for the client
+    # Generate WG keypair + preshared key for the client
     try:
         client_private_key, client_public_key = generate_wg_keypair()
     except Exception as exc:
         console.print(f"[red]Error generating WireGuard keys:[/red] {exc}")
         return 1
+    try:
+        psk = generate_psk()
+    except Exception as exc:
+        log.warning("Could not generate preshared key (continuing without one): %s", exc)
+        psk = ""
 
     # Allocate next IP
     allocated = [c.address for c in config.clients]
@@ -156,12 +181,15 @@ def _cmd_add_client(args: argparse.Namespace) -> int:
 
     # Add peer to running WireGuard
     try:
-        add_peer_live(client_public_key, client_address)
+        add_peer_live(client_public_key, client_address, psk=psk)
     except Exception as exc:
         log.warning("Could not hot-add peer (WireGuard may not be running): %s", exc)
 
     # Update server config
-    new_client = ClientEntry(name=name, public_key=client_public_key, address=client_address)
+    new_client = ClientEntry(
+        name=name, public_key=client_public_key, address=client_address,
+        psk=psk, expires_at=expires_at,
+    )
     updated = replace(config, clients=[*config.clients, new_client])
     config_path = _resolve_config_path(args)
     updated.save(config_path)
@@ -176,17 +204,65 @@ def _cmd_add_client(args: argparse.Namespace) -> int:
         log.warning("Could not persist WG config to OS location: %s", exc)
 
     # Build and write .owcfg
-    warpcfg = build_owcfg(config, name, client_private_key, client_address)
+    warpcfg = build_owcfg(
+        config, name, client_private_key, client_address,
+        preshared_key=psk, expires_at=expires_at,
+    )
     warpcfg_path = Path.cwd() / f"{name}.owcfg"
     write_owcfg(warpcfg, warpcfg_path)
 
     console.print(f"\n[green]Client '{name}' added successfully.[/green]")
     console.print(f"  IP: {client_address}")
+    if psk:
+        console.print("  Preshared key: [green]yes[/green]")
+    if expires_at:
+        console.print(f"  Expires: [yellow]{expires_at}[/yellow]")
     console.print(f"  Config: [bold]{warpcfg_path}[/bold]")
     console.print(
         "\nSend this .owcfg file to the client securely — "
         "it contains the client's private key."
     )
+    return 0
+
+
+def _cmd_prune_expired(args: argparse.Namespace) -> int:
+    import datetime
+
+    config = _load_config(args)
+    today = datetime.datetime.now(datetime.UTC).date().isoformat()
+    expired = [c for c in config.clients if c.expires_at and c.expires_at < today]
+
+    if not expired:
+        console.print("[green]No expired clients.[/green]")
+        return 0
+
+    console.print("[bold]Expired clients:[/bold]")
+    for c in expired:
+        console.print(f"  • {c.name} (expired {c.expires_at})")
+
+    if not args.yes:
+        answer = console.input("\nRevoke all of them? Type [bold]yes[/bold] to confirm: ")
+        if answer.strip().lower() != "yes":
+            console.print("Aborted.")
+            return 1
+
+    from outwarp_server.platforms import PlatformError, get_server_platform
+
+    remaining = [c for c in config.clients if not (c.expires_at and c.expires_at < today)]
+    for c in expired:
+        try:
+            remove_peer_live(c.public_key)
+        except Exception as exc:
+            log.warning("Could not hot-remove peer %s: %s", c.name, exc)
+
+    updated = replace(config, clients=remaining)
+    updated.save(_resolve_config_path(args))
+    try:
+        get_server_platform().install_wg_config(build_server_wg_conf(updated))
+    except PlatformError as exc:
+        log.warning("Could not persist WG config to OS location: %s", exc)
+
+    console.print(f"\n[green]Revoked {len(expired)} expired client(s).[/green]")
     return 0
 
 
@@ -218,6 +294,7 @@ _ONLINE_WINDOW_SECONDS = 180
 
 
 def _cmd_list_clients(args: argparse.Namespace) -> int:
+    import datetime
     import time
 
     config = _load_config(args)
@@ -229,6 +306,8 @@ def _cmd_list_clients(args: argparse.Namespace) -> int:
     live_peers = get_live_peers()
     now = int(time.time())
 
+    today = datetime.datetime.now(datetime.UTC).date().isoformat()
+
     table = Table(title="Registered Clients")
     table.add_column("Name", style="bold")
     table.add_column("Address")
@@ -236,6 +315,7 @@ def _cmd_list_clients(args: argparse.Namespace) -> int:
     table.add_column("Last handshake")
     table.add_column("Endpoint")
     table.add_column("RX / TX")
+    table.add_column("Expires")
 
     for c in config.clients:
         live = live_peers.get(c.public_key)
@@ -260,7 +340,14 @@ def _cmd_list_clients(args: argparse.Namespace) -> int:
             endpoint = live.endpoint or "[dim]—[/dim]"
             transfer = f"{_format_bytes(live.transfer_rx)} / {_format_bytes(live.transfer_tx)}"
 
-        table.add_row(c.name, c.address, status, handshake, endpoint, transfer)
+        if not c.expires_at:
+            expires = "[dim]never[/dim]"
+        elif c.expires_at < today:
+            expires = f"[red]{c.expires_at} (expired)[/red]"
+        else:
+            expires = c.expires_at
+
+        table.add_row(c.name, c.address, status, handshake, endpoint, transfer, expires)
 
     console.print(table)
     return 0
@@ -591,11 +678,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_add = sub.add_parser("add-client", help="Register a new client")
     p_add.add_argument("name", help="Client name (used as filename for .owcfg)")
+    p_add.add_argument(
+        "--days", type=int, default=None,
+        help="Expire this client's config after N days (default: never)",
+    )
 
     sub.add_parser("list-clients", help="List registered clients")
 
     p_revoke = sub.add_parser("revoke-client", help="Revoke a client")
     p_revoke.add_argument("name", help="Client name to revoke")
+
+    p_prune = sub.add_parser(
+        "prune-expired", help="Revoke every client whose --days expiry has passed"
+    )
+    p_prune.add_argument(
+        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+    )
 
     sub.add_parser("status", help="Show server status")
 
@@ -626,6 +724,7 @@ _COMMANDS: dict[str, callable] = {
     "add-client": _cmd_add_client,
     "list-clients": _cmd_list_clients,
     "revoke-client": _cmd_revoke_client,
+    "prune-expired": _cmd_prune_expired,
     "status": _cmd_status,
     "restart": _cmd_restart,
     "uninstall": _cmd_uninstall,

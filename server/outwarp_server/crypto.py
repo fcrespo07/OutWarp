@@ -127,3 +127,27 @@ def generate_wg_keypair(wg_bin: Path | None = None) -> tuple[str, str]:
         raise CryptoError(f"WireGuard key generation failed: {exc.stderr.strip()}") from exc
 
     return private_key, public_key
+
+
+def generate_psk(wg_bin: Path | None = None) -> str:
+    """Generate a WireGuard preshared key via `wg genpsk`.
+
+    A PSK is a per-peer symmetric secret mixed into the handshake on top of the
+    public-key crypto. It is the standard WireGuard hardening against a future
+    quantum attacker who records traffic now and breaks Curve25519 later — the
+    PSK is never transmitted, so such an attacker still can't derive the session
+    keys. Returns a base64 string.
+    """
+    wg = str(wg_bin or find_wg_binary())
+    try:
+        result = subprocess.run(
+            [wg, "genpsk"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError as exc:
+        raise CryptoError(f"wg binary not found at {wg}") from exc
+    except subprocess.CalledProcessError as exc:
+        raise CryptoError(f"WireGuard PSK generation failed: {exc.stderr.strip()}") from exc
+    return result.stdout.strip()

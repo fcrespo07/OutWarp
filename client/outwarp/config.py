@@ -45,6 +45,10 @@ class WireguardConfig:
     server_public_key: str
     dns: list[str] = field(default_factory=lambda: ["1.1.1.1"])
     mtu: int = 1380
+    # Optional per-peer preshared key (base64). Empty for profiles issued before
+    # PSK support — the tunnel still works, just without the extra symmetric
+    # layer. Must match the PresharedKey the server set for this peer.
+    preshared_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -70,6 +74,20 @@ class ClientConfig:
     # Human-readable label assigned by the server (outwarp-server add-client <name>).
     # Distinct from wireguard.tunnel_name, which is the OS network interface name.
     name: str = ""
+    # ISO date (YYYY-MM-DD) after which the server-issued profile should no
+    # longer be used. Empty = never expires. Carried in the .owcfg's "meta"
+    # block; surfaced via is_expired() so the UI/CLI can refuse to connect.
+    expires_at: str = ""
+
+    def is_expired(self, *, today: str = "") -> bool:
+        """True if expires_at is set and strictly before `today` (defaults to the
+        current UTC date)."""
+        if not self.expires_at:
+            return False
+        import datetime
+
+        ref = today or datetime.datetime.now(datetime.UTC).date().isoformat()
+        return self.expires_at < ref
 
     @classmethod
     def load(cls, path: Path) -> ClientConfig:
@@ -163,6 +181,9 @@ def _parse(raw: dict[str, Any]) -> ClientConfig:
     routing = _parse_routing(_require(raw, "routing", "root"))
     reconnect = _parse_reconnect(raw.get("reconnect", {}))
 
+    meta = raw.get("meta", {})
+    expires_at = str(meta.get("expires_at", "")) if isinstance(meta, dict) else ""
+
     return ClientConfig(
         schema_version=version,
         server=server,
@@ -172,6 +193,7 @@ def _parse(raw: dict[str, Any]) -> ClientConfig:
         routing=routing,
         reconnect=reconnect,
         name=str(raw.get("name", "")),
+        expires_at=expires_at,
     )
 
 
@@ -231,6 +253,7 @@ def _parse_wireguard(d: Any) -> WireguardConfig:
         server_public_key=str(_require(d, "server_public_key", "wireguard")),
         dns=list(d.get("dns", ["1.1.1.1"])),
         mtu=mtu,
+        preshared_key=str(d.get("preshared_key", "")),
     )
 
 
@@ -253,7 +276,7 @@ def _parse_reconnect(d: Any) -> ReconnectConfig:
 
 
 def _to_dict(cfg: ClientConfig) -> dict[str, Any]:
-    return {
+    d: dict[str, Any] = {
         "schema_version": cfg.schema_version,
         "name": cfg.name,
         "server": {
@@ -285,6 +308,11 @@ def _to_dict(cfg: ClientConfig) -> dict[str, Any]:
             "delays_seconds": cfg.reconnect.delays_seconds,
         },
     }
+    if cfg.wireguard.preshared_key:
+        d["wireguard"]["preshared_key"] = cfg.wireguard.preshared_key
+    if cfg.expires_at:
+        d["meta"] = {"expires_at": cfg.expires_at}
+    return d
 
 
 # --- profile editing ---

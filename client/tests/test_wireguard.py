@@ -104,3 +104,18 @@ def test_build_wg_conf_excludes_bypass_ips_from_allowed():
 def test_build_wg_conf_includes_keepalive():
     text = build_wg_conf(_make_config())
     assert "PersistentKeepalive = 25" in text
+
+
+def test_build_wg_conf_omits_psk_by_default():
+    text = build_wg_conf(_make_config())
+    assert "PresharedKey" not in text
+
+
+def test_build_wg_conf_includes_psk_when_set():
+    from dataclasses import replace
+    cfg = _make_config()
+    cfg = replace(cfg, wireguard=replace(cfg.wireguard, preshared_key="cHNrMDAw"))
+    text = build_wg_conf(cfg)
+    assert "PresharedKey = cHNrMDAw" in text
+    # PSK belongs to the [Peer] section, after the peer's PublicKey.
+    assert text.index("PublicKey = serv3rPub") < text.index("PresharedKey")

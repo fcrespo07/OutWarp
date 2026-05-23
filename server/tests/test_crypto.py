@@ -9,6 +9,7 @@ import pytest
 from outwarp_server.crypto import (
     CryptoError,
     compute_cert_fingerprint,
+    generate_psk,
     generate_tls_cert,
     generate_wg_keypair,
 )
@@ -86,3 +87,22 @@ class TestWgKeypair:
             )
             with pytest.raises(CryptoError, match="key generation failed"):
                 generate_wg_keypair(wg_bin=Path("/usr/bin/wg"))
+
+
+class TestPsk:
+    def test_generates_psk_with_mocked_wg(self) -> None:
+        mock = MagicMock()
+        mock.stdout = "cHJlc2hhcmVka2V5MDAwMDAwMDAwMDAwMDAwMDAwMDA=\n"
+        with patch("outwarp_server.crypto.subprocess.run", return_value=mock) as run:
+            psk = generate_psk(wg_bin=Path("/usr/bin/wg"))
+        assert psk == "cHJlc2hhcmVka2V5MDAwMDAwMDAwMDAwMDAwMDAwMDA="
+        cmd = run.call_args[0][0]
+        assert cmd[-1] == "genpsk" and len(cmd) == 2
+
+    def test_raises_on_subprocess_failure(self) -> None:
+        import subprocess
+
+        with patch("outwarp_server.crypto.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(1, "wg", stderr="boom")
+            with pytest.raises(CryptoError, match="PSK generation failed"):
+                generate_psk(wg_bin=Path("/usr/bin/wg"))

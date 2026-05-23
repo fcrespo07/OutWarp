@@ -19,6 +19,14 @@ class ClientEntry:
     name: str
     public_key: str
     address: str
+    # Per-peer WireGuard preshared key (base64). Empty for clients registered
+    # before PSK support — those keep working without one.
+    psk: str = ""
+    # ISO-8601 date (YYYY-MM-DD) after which this client should be considered
+    # expired. Empty = never expires. The server doesn't auto-revoke; the
+    # `prune-expired` command and the client (which refuses an expired .owcfg)
+    # enforce it.
+    expires_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -101,6 +109,8 @@ def _parse(raw: dict[str, Any]) -> ServerConfig:
             name=str(_require(c, "name", "clients[]")),
             public_key=str(_require(c, "public_key", "clients[]")),
             address=str(_require(c, "address", "clients[]")),
+            psk=str(c.get("psk", "")),
+            expires_at=str(c.get("expires_at", "")),
         )
         for c in clients_raw
     ]
@@ -137,7 +147,13 @@ def _to_dict(cfg: ServerConfig) -> dict[str, Any]:
         "server_address": cfg.server_address,
         "wg_listen_port": cfg.wg_listen_port,
         "clients": [
-            {"name": c.name, "public_key": c.public_key, "address": c.address}
+            {
+                "name": c.name,
+                "public_key": c.public_key,
+                "address": c.address,
+                **({"psk": c.psk} if c.psk else {}),
+                **({"expires_at": c.expires_at} if c.expires_at else {}),
+            }
             for c in cfg.clients
         ],
     }
