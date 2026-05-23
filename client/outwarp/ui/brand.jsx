@@ -3,19 +3,18 @@
 // Two arcs that gap on the right where a chevron arrow pierces through,
 // and a small spark/tail indicating the "warp" / momentum.
 
-// Chevron Stack — three rounded chevron strokes with growing opacity,
-// accent on the rightmost. Stroked (round caps + joins) to match the
-// chunky, well-spaced chevrons of the rendered app_icon.png used as the
-// OS / installer icon. The earlier filled-path version claimed to be
-// "visually equivalent" but rendered as a thin, ragged, overlapping mark.
+// Chevron Stack — three sharp chevron strokes with growing opacity, accent on
+// the rightmost. Stroked with miter joins + butt caps (NOT round) so the tips
+// are crisp points and the arms have clean flat ends, matching the brand logo
+// (see the reference PNG). strokeWidth 8 gives the bold, uniform arm weight.
 const OWLogoMark = ({ size = 28, color = "currentColor", accent }) => {
   const a = accent || color;
   return (
     <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true"
-      fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="7">
-      <polyline points="7,13 15,24 7,35"   stroke={color} opacity="0.25"/>
-      <polyline points="20,13 28,24 20,35" stroke={color} opacity="0.55"/>
-      <polyline points="33,13 41,24 33,35" stroke={a}/>
+      fill="none" strokeLinecap="butt" strokeLinejoin="miter" strokeMiterlimit="10" strokeWidth="8">
+      <polyline points="8,12 16,24 8,36"   stroke={color} opacity="0.25"/>
+      <polyline points="20,12 28,24 20,36" stroke={color} opacity="0.55"/>
+      <polyline points="32,12 40,24 32,36" stroke={a}/>
     </svg>
   );
 };

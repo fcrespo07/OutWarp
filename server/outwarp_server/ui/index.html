@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <!-- favicon: matches resources/app_icon.png. Inlined as base64 SVG so it
        renders identically in pywebview even with no filesystem access. -->
-  <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2Utd2lkdGg9IjciPjxwb2x5bGluZSBwb2ludHM9IjcsMTMgMTUsMjQgNywzNSIgc3Ryb2tlPSIjMGEwZDEyIiBvcGFjaXR5PSIwLjI1Ii8+PHBvbHlsaW5lIHBvaW50cz0iMjAsMTMgMjgsMjQgMjAsMzUiIHN0cm9rZT0iIzBhMGQxMiIgb3BhY2l0eT0iMC41NSIvPjxwb2x5bGluZSBwb2ludHM9IjMzLDEzIDQxLDI0IDMzLDM1IiBzdHJva2U9IiMyNTYzZmYiLz48L3N2Zz4=" type="image/svg+xml"/>
+  <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9ImJ1dHQiIHN0cm9rZS1saW5lam9pbj0ibWl0ZXIiIHN0cm9rZS1taXRlcmxpbWl0PSIxMCIgc3Ryb2tlLXdpZHRoPSI4Ij48cG9seWxpbmUgcG9pbnRzPSI4LDEyIDE2LDI0IDgsMzYiIHN0cm9rZT0iIzBhMGQxMiIgb3BhY2l0eT0iMC4yNSIvPjxwb2x5bGluZSBwb2ludHM9IjIwLDEyIDI4LDI0IDIwLDM2IiBzdHJva2U9IiMwYTBkMTIiIG9wYWNpdHk9IjAuNTUiLz48cG9seWxpbmUgcG9pbnRzPSIzMiwxMiA0MCwyNCAzMiwzNiIgc3Ryb2tlPSIjMjU2M2ZmIi8+PC9zdmc+" type="image/svg+xml"/>
   <!-- No CDN: the server GUI may run on a fresh VPS before the firewall
        allows outbound HTTP, so React is vendored and JSX is pre-compiled
        to ui/bundle.js by scripts/build_ui.py. Fonts fall back to the
