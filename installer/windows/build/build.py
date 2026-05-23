@@ -218,7 +218,7 @@ def step_checksums(version: str) -> Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--version", default=os.environ.get("OUTWARP_VERSION", "0.2.6"))
+    ap.add_argument("--version", default=os.environ.get("OUTWARP_VERSION", "0.3.0"))
     ap.add_argument("--skip-ui", action="store_true")
     ap.add_argument("--skip-fetch", action="store_true")
     ap.add_argument("--skip-pyinstaller", action="store_true")
