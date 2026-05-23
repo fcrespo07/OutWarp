@@ -876,6 +876,28 @@ class Api:
             self._emit("update", {"phase": "error", "error": str(exc)})
             return
 
+        # Verify the download against the release's published SHA256SUMS before
+        # we run it. A mismatch means a corrupted or tampered file — refuse to
+        # launch it. Releases published before the manifest existed have no
+        # checksum for the asset; those pass through (verify_download returns ok).
+        self._emit("update", {"phase": "verifying", "latest": latest})
+        try:
+            ok, detail = updater.verify_download(
+                dest, info.get("asset_name") or "", info.get("checksums_url") or ""
+            )
+        except Exception as exc:
+            log.exception("update checksum verification crashed")
+            ok, detail = False, str(exc)
+        if not ok:
+            log.error("update integrity check failed: %s", detail)
+            self._emit("update", {
+                "phase": "error",
+                "error": f"La verificación de integridad falló ({detail}). "
+                         "No se aplicará la actualización.",
+            })
+            return
+        log.info("update integrity: %s", detail)
+
         self._emit("update", {"phase": "applying", "latest": latest})
 
         # Bring the tunnel down cleanly first so wstunnel.exe and the WireGuard

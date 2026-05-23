@@ -11,6 +11,9 @@ from outwarp.updater import (
     _parse_version,
     check_for_update,
     download_installer,
+    parse_checksums,
+    sha256_file,
+    verify_download,
 )
 
 
@@ -213,3 +216,77 @@ def test_linux_update_command_points_at_install_sh():
     assert "install.sh" in LINUX_UPDATE_COMMAND
     assert LINUX_UPDATE_COMMAND.startswith("curl ")
     assert "fcrespo07/OutWarp" in updater._RELEASES_PAGE
+
+
+# ── integrity verification (SHA-256) ────────────────────────────────────────
+
+@patch("outwarp.updater.urllib.request.urlopen")
+def test_check_exposes_checksums_url(mock_urlopen):
+    payload = dict(_RELEASE, assets=[
+        _asset("OutWarpSetup-Client-0.1.5.exe", "https://x/cli"),
+        _asset("SHA256SUMS.txt", "https://x/SHA256SUMS.txt"),
+    ])
+    mock_urlopen.return_value = _json_resp(payload)
+    r = check_for_update("0.1.4")
+    assert r["checksums_url"] == "https://x/SHA256SUMS.txt"
+
+
+@patch("outwarp.updater.urllib.request.urlopen")
+def test_check_checksums_url_empty_when_absent(mock_urlopen):
+    mock_urlopen.return_value = _json_resp(_RELEASE)
+    assert check_for_update("0.1.4")["checksums_url"] == ""
+
+
+def test_sha256_file(tmp_path):
+    import hashlib
+    p = tmp_path / "f.bin"
+    p.write_bytes(b"outwarp")
+    assert sha256_file(p) == hashlib.sha256(b"outwarp").hexdigest()
+
+
+def test_parse_checksums_both_formats():
+    a = "AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899"
+    b = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"
+    text = (
+        "# a comment\n"
+        f"{a}  OutWarpSetup-0.3.0.exe\n"
+        f"{b} *./dir/Client-0.3.0.exe\n"   # binary marker + path
+        "garbage line\n"
+    )
+    sums = parse_checksums(text)
+    assert sums["OutWarpSetup-0.3.0.exe"].startswith("aabbccdd")
+    # path stripped down to the basename
+    assert "Client-0.3.0.exe" in sums
+
+
+def test_verify_download_match(tmp_path):
+    p = tmp_path / "OutWarpSetup-0.3.0.exe"
+    p.write_bytes(b"installer-bytes")
+    digest = sha256_file(p)
+    with patch(
+        "outwarp.updater.fetch_checksums",
+        return_value={"OutWarpSetup-0.3.0.exe": digest},
+    ):
+        ok, _ = verify_download(p, "OutWarpSetup-0.3.0.exe", "https://x/SHA256SUMS.txt")
+    assert ok is True
+
+
+def test_verify_download_mismatch_is_rejected(tmp_path):
+    p = tmp_path / "OutWarpSetup-0.3.0.exe"
+    p.write_bytes(b"tampered")
+    with patch(
+        "outwarp.updater.fetch_checksums",
+        return_value={"OutWarpSetup-0.3.0.exe": "0" * 64},
+    ):
+        ok, detail = verify_download(p, "OutWarpSetup-0.3.0.exe", "https://x/s")
+    assert ok is False
+    assert "mismatch" in detail
+
+
+def test_verify_download_no_checksum_passes(tmp_path):
+    # Releases predating the manifest: no entry for the asset -> don't block.
+    p = tmp_path / "OutWarpSetup-0.3.0.exe"
+    p.write_bytes(b"whatever")
+    with patch("outwarp.updater.fetch_checksums", return_value={}):
+        ok, _ = verify_download(p, "OutWarpSetup-0.3.0.exe", "")
+    assert ok is True

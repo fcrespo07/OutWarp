@@ -135,6 +135,33 @@ def step_installer(version: str, editions: list[str]) -> None:
     print(f"\n  installer(s) written to: {out}")
 
 
+def step_checksums(version: str) -> Path:
+    """Write output/SHA256SUMS.txt covering every OutWarpSetup-*<version>*.exe.
+
+    The in-app client updater downloads this manifest and verifies the
+    installer's SHA-256 against it before launching — so the release MUST
+    attach this file alongside the installers.
+    """
+    import hashlib
+
+    out = INSTALLER_DIR / "output"
+    installers = sorted(out.glob(f"OutWarpSetup-*{version}*.exe"))
+    if not installers:
+        raise SystemExit(f"no installers found in {out} to checksum")
+    lines = []
+    for exe in installers:
+        h = hashlib.sha256()
+        with open(exe, "rb") as fh:
+            for chunk in iter(lambda fh=fh: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        lines.append(f"{h.hexdigest()}  {exe.name}")
+        print(f"  {exe.name}: {h.hexdigest()}")
+    manifest = out / "SHA256SUMS.txt"
+    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"\n  checksums written to: {manifest}")
+    return manifest
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--version", default=os.environ.get("OUTWARP_VERSION", "0.2.6"))
@@ -165,6 +192,8 @@ def main() -> int:
         if unknown:
             raise SystemExit(f"unknown edition(s): {', '.join(unknown)} (expected full/client/server)")
         step_installer(args.version, editions)
+        print("\n=== generating SHA256SUMS.txt ===")
+        step_checksums(args.version)
 
     print("\nbuild finished successfully.")
     return 0
