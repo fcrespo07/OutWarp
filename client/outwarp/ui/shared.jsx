@@ -175,6 +175,7 @@ const STR = {
     // Misc
     profile: "Perfil",
     home_ribbon: "Tu tráfico viaja cifrado por wstunnel → WireGuard.",
+    home_clickToConnect: "Pulsa el botón para conectar.",
     home_secure_title: "Tráfico cifrado",
     home_secure_body: "WireGuard sobre WebSocket (wstunnel).",
     home_pinned_title: "Certificado anclado",
@@ -345,6 +346,7 @@ const STR = {
 
     profile: "Profile",
     home_ribbon: "Your traffic is encrypted via wstunnel → WireGuard.",
+    home_clickToConnect: "Click the dial to connect.",
     home_secure_title: "Encrypted traffic",
     home_secure_body: "WireGuard over WebSocket (wstunnel).",
     home_pinned_title: "Pinned certificate",

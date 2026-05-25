@@ -38,9 +38,14 @@
   --line-strong: #00000022;
   --text: #0a0d12;
   --text-2: #4a4f57;
-  --text-3: #7a7f87;
+  --text-3: #686d76; /* nudged darker: hint text now clears WCAG AA on --bg-2 */
   --chip: #00000008;
   --shadow: 0 1px 0 rgba(0,0,0,.04), 0 8px 24px -12px rgba(0,0,0,.12);
+
+  /* Corner radii — one scale instead of ad-hoc 10/12/14/18 inline. */
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
 }
 
 [data-theme="dark"] {
@@ -51,7 +56,7 @@
   --line-strong: #ffffff22;
   --text: #f4f5f7;
   --text-2: #a8aeb8;
-  --text-3: #6e747e;
+  --text-3: #868c96; /* nudged lighter for the same AA reason on dark --bg-2 */
   --chip: #ffffff0a;
   --shadow: 0 1px 0 rgba(255,255,255,.03), 0 8px 24px -12px rgba(0,0,0,.6);
 }
@@ -244,7 +249,73 @@
 }
 .ow-modal {
   background: var(--bg-2); border: 1px solid var(--line-strong);
-  border-radius: 14px; box-shadow: var(--shadow);
+  border-radius: var(--radius-md); box-shadow: var(--shadow);
   width: min(420px, calc(100vw - 48px)); padding: 20px;
   animation: ow-pop-in .14s ease-out;
+}
+
+/* ── Surfaces ──────────────────────────────────────────────────────────
+   The card/section/hero pattern was copied inline ~15× with drifting radii.
+   These three classes are the single source of truth; tweak a radius once. */
+.ow-card {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.ow-card--md { border-radius: var(--radius-md); }
+/* Interactive cards (the Home info tiles) lift slightly on hover. */
+.ow-card--hover { transition: border-color .14s, box-shadow .14s, transform .14s; }
+.ow-card--hover:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
+}
+.ow-hero {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Soft fade when switching screens / connection states, instead of a hard
+   cut. Keyed by React remounting the screen subtree. */
+.ow-screen { animation: ow-fade-in .18s ease-out; }
+
+/* ── Hero dial (primary connect/disconnect control) ───────────────────── */
+.ow-dial {
+  all: unset;
+  position: relative; width: 200px; height: 200px;
+  display: grid; place-items: center;
+  border-radius: 999px;
+  transition: transform .15s ease;
+}
+.ow-dial[role="button"] { cursor: pointer; }
+.ow-dial[role="button"]:hover { transform: scale(1.03); }
+.ow-dial[role="button"]:active { transform: scale(.98); }
+.ow-dial:focus-visible { outline: 2px solid var(--brand); outline-offset: 6px; }
+/* Spinning progress arc shown on the dial while connecting. */
+.ow-dial-spin { transform-box: fill-box; transform-origin: center; animation: ws-spin 1.4s linear infinite; }
+
+/* ── Responsive grids ─────────────────────────────────────────────────── */
+.ow-stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.ow-info-grid  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.ow-hero-grid  { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; }
+
+/* Narrow window: stack the hero, halve the stat strip, single-column tiles. */
+@media (max-width: 760px) {
+  .ow-stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .ow-info-grid  { grid-template-columns: 1fr; }
+  .ow-hero-grid  { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+  .ow-hero-grid .ow-hero-actions { justify-content: center; }
+}
+
+/* Very narrow: collapse the sidebar to an icon rail. */
+@media (max-width: 560px) {
+  .ow-body { grid-template-columns: 64px 1fr; }
+  .ow-sidebar { padding: 22px 8px; }
+  .ow-nav { justify-content: center; }
+  .ow-nav-label, .ow-nav-num, .ow-sidebar-foot-text { display: none; }
+  .ow-sidebar-foot { display: grid; place-items: center; padding: 10px 0; }
 }
