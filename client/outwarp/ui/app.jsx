@@ -449,7 +449,6 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
               gridTemplateColumns: advanced ? "auto 1fr auto" : undefined,
               alignItems: "center", gap: 10,
               padding: "9px 10px",
-              borderLeft: advanced ? (active ? "2px solid var(--brand)" : "2px solid transparent") : undefined,
               borderRadius: advanced ? 0 : 8,
               fontSize: 13, fontWeight: active ? 600 : 500,
             }}>
@@ -1485,15 +1484,6 @@ const Settings = ({ T, api, settings, onSetting }) => {
         </div>
       )}
 
-      {groups.map((g) => (
-        <SettingsCard key={g.key} title={g.title}>
-          {g.rows.map((r, i) => (
-            <SettingsRow key={r.title} title={r.title} sub={r.sub}
-              control={r.control} isLast={i === g.rows.length - 1}/>
-          ))}
-        </SettingsCard>
-      ))}
-
       <div>
         <div style={{
           fontSize: 11, fontWeight: 600, color: "var(--text-3)",
@@ -1506,6 +1496,15 @@ const Settings = ({ T, api, settings, onSetting }) => {
           <UpdatePanel T={T} api={api} autoCheck={!!settings.check_updates_on_start}/>
         </div>
       </div>
+
+      {groups.map((g) => (
+        <SettingsCard key={g.key} title={g.title}>
+          {g.rows.map((r, i) => (
+            <SettingsRow key={r.title} title={r.title} sub={r.sub}
+              control={r.control} isLast={i === g.rows.length - 1}/>
+          ))}
+        </SettingsCard>
+      ))}
     </section>
   );
 };

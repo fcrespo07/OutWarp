@@ -198,12 +198,21 @@
 
 /* ── Sidebar nav items ────────────────────────────────────────────── */
 .ow-nav {
+  position: relative;
   background: transparent; color: var(--text-2);
   cursor: pointer; transition: background .12s, color .12s;
 }
 .ow-nav:hover { background: var(--chip); color: var(--text); }
 .ow-nav:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
-.ow-nav.is-active { background: var(--chip); color: var(--text); }
+.ow-nav.is-active { color: var(--text); }
+/* Active-tab indicator: a short brand accent bar on the left edge (absolute,
+   so toggling it never nudges the row's content). */
+.ow-nav.is-active::before {
+  content: "";
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 18px; border-radius: 0 3px 3px 0;
+  background: var(--brand);
+}
 
 .ow-toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
