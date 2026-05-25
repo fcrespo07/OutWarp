@@ -183,6 +183,8 @@ function App() {
   useBridgeEvent("log",     useCallback((e) => setLogs((l) => [...l.slice(-1999), e]), []));
   useBridgeEvent("settings", useCallback((d) => setSettings(d), []));
   useBridgeEvent("window",   useCallback((d) => setMaximized(!!d.maximized), []));
+  // Tray "View logs" → jump to a screen from the Python side.
+  useBridgeEvent("navigate", useCallback((d) => { if (d && d.screen) setScreen(d.screen); }, []));
 
   // Reset the throughput history whenever the tunnel isn't actively
   // transferring — leaving stale samples on screen after a disconnect would
@@ -725,12 +727,12 @@ const ErrorHome = ({ T, active, connError, onReconnect, onImport }) => (
 );
 
 const Header = ({ title, sub, right }) => (
-  <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
+  <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
     <div>
       <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{title}</div>
       {sub && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>{sub}</div>}
     </div>
-    {right && <div style={{ display: "flex", alignItems: "center", gap: 8 }}>{right}</div>}
+    {right && <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>{right}</div>}
   </header>
 );
 
@@ -843,7 +845,7 @@ const InfoCard = ({ icon, title, body }) => (
 );
 
 const BgGlow = () => (
-  <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden", borderRadius: 18 }}>
+  <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden", borderRadius: "var(--radius-lg)" }}>
     <div style={{ position: "absolute", right: -80, top: -80, width: 280, height: 280, background: "radial-gradient(circle, color-mix(in srgb, var(--brand) 22%, transparent), transparent 60%)" }}/>
   </div>
 );
@@ -1265,7 +1267,7 @@ const ProfileEditor = ({ T, api, active, confirm, onUpdated, onClose }) => {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div className="ow-form-grid">
         {field(T.edit_name, "name", { mono: false })}
         {field(T.edit_mtu, "mtu", { hint: T.edit_mtuHint })}
         {field(T.edit_clientIp, "client_address", { hint: T.edit_clientIpHint })}
@@ -1366,7 +1368,7 @@ const Logs = ({ T, logs, api, onClear }) => {
           {filtered.map((l) => (
             <div key={l.seq} style={{ display: "grid", gridTemplateColumns: "84px 60px 1fr", gap: 10 }}>
               <span style={{ color: "var(--text-3)" }}>{fmtClock(l.ts)}</span>
-              <span style={{ color: LOG_LEVEL_COLOR[l.level] || "var(--brand-2)", textTransform: "uppercase" }}>{l.level}</span>
+              <span style={{ color: LOG_LEVEL_COLOR[l.level] || "var(--text-2)", textTransform: "uppercase" }}>{l.level}</span>
               <span style={{ color: "var(--text)", wordBreak: "break-all" }}>{l.msg}</span>
             </div>
           ))}
@@ -1423,6 +1425,14 @@ const Settings = ({ T, api, settings, onSetting }) => {
   // the error inline; the persisted value is rolled back by the backend and
   // arrives via outwarp:settings, so the toggle's visual state self-corrects.
   const [error, setError] = useState("");
+  // Real version for the subtitle (don't hardcode — About reads it too).
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    if (!api) return;
+    let alive = true;
+    api.get_app_info().then((d) => { if (alive && d) setVersion(d.version || ""); });
+    return () => { alive = false; };
+  }, [api]);
 
   const apply = async (k, v) => {
     setError("");
@@ -1470,14 +1480,14 @@ const Settings = ({ T, api, settings, onSetting }) => {
 
   return (
     <section className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 22, maxWidth: 720 }}>
-      <Header title={T.nav_settings} sub="outwarp-client · v0.0.1"/>
+      <Header title={T.nav_settings} sub={`outwarp-client${version ? " · v" + version : ""}`}/>
 
       {error && (
         <div style={{
           background: "color-mix(in srgb, var(--brand-bad) 12%, transparent)",
           border: "1px solid color-mix(in srgb, var(--brand-bad) 35%, transparent)",
           color: "var(--brand-bad)",
-          borderRadius: 12, padding: "12px 14px", fontSize: 13,
+          borderRadius: "var(--radius-sm)", padding: "12px 14px", fontSize: 13,
         }}>
           <div style={{ fontWeight: 600, marginBottom: 2 }}>{T.set_errorTitle}</div>
           <div style={{ color: "var(--text-2)", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.5 }}>{error}</div>

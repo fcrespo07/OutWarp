@@ -223,7 +223,10 @@ def main() -> int:
             js_api=api,
             width=1080,
             height=720,
-            min_size=(880, 600),
+            # Lowered so the responsive reflow (stats 2-col, stacked hero) is
+            # reachable on small / high-DPI-scaled displays; the UI stays usable
+            # down to this size (see ui/styles.css @media 860px).
+            min_size=(760, 560),
             background_color="#f6f5f1",
             resizable=True,
             hidden=start_hidden,
@@ -263,7 +266,13 @@ def main() -> int:
         # can replace our files and relaunch us.
         api.set_quit_handler(_on_quit)
 
-        tray = TrayApp(manager=manager, on_show=_show_window, on_quit=_on_quit)
+        tray = TrayApp(
+            manager=manager,
+            on_show=_show_window,
+            on_quit=_on_quit,
+            api=api,
+            lang_getter=lambda: api.get_settings().get("language", "es"),
+        )
         _stage("tray constructed")
 
         # Auto-connect at launch unless the user opted out, or the profile has

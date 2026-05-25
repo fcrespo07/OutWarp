@@ -311,13 +311,17 @@
 .ow-stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .ow-info-grid  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .ow-hero-grid  { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; }
+/* Profile-editor field grid — two columns, one when cramped. */
+.ow-form-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
-/* Narrow window: stack the hero, halve the stat strip, single-column tiles. */
-@media (max-width: 760px) {
+/* Narrow window: stack the hero, halve the stat strip, single-column tiles.
+   Threshold sits above the 760px window min_size so the reflow is reachable. */
+@media (max-width: 860px) {
   .ow-stats-grid { grid-template-columns: repeat(2, 1fr); }
   .ow-info-grid  { grid-template-columns: 1fr; }
   .ow-hero-grid  { grid-template-columns: 1fr; justify-items: center; text-align: center; }
   .ow-hero-grid .ow-hero-actions { justify-content: center; }
+  .ow-form-grid  { grid-template-columns: 1fr; }
 }
 
 /* Very narrow: collapse the sidebar to an icon rail. */

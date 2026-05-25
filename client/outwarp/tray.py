@@ -43,6 +43,30 @@ _STATE_TOOLTIPS: dict[TunnelState, str] = {
 _NO_CONFIG_TOOLTIP = "OutWarp — sin configuración"
 _NO_CONFIG_DOT = (100, 100, 100)
 
+# English tooltips mirror _STATE_TOOLTIPS. The Spanish dict stays the canonical
+# default (the tray defaults to es and the test suite pins it).
+_STATE_TOOLTIPS_EN: dict[TunnelState, str] = {
+    TunnelState.DISCONNECTED: "OutWarp — disconnected",
+    TunnelState.CONNECTING:   "OutWarp — connecting...",
+    TunnelState.CONNECTED:    "OutWarp — connected",
+    TunnelState.RECONNECTING: "OutWarp — reconnecting...",
+    TunnelState.FAILED:       "OutWarp — connection failed",
+}
+_NO_CONFIG_TOOLTIP_EN = "OutWarp — no configuration"
+
+# Menu labels. Followed live via a lang_getter so the tray tracks the UI's
+# language setting (re-read each time the menu opens).
+_MENU_STR: dict[str, dict[str, str]] = {
+    "es": {
+        "open": "Abrir OutWarp", "connect": "Conectar", "disconnect": "Desconectar",
+        "reconnect": "Reconectar", "viewlogs": "Ver registro", "quit": "Parar y salir",
+    },
+    "en": {
+        "open": "Open OutWarp", "connect": "Connect", "disconnect": "Disconnect",
+        "reconnect": "Reconnect", "viewlogs": "View logs", "quit": "Stop and quit",
+    },
+}
+
 
 def load_base_icon() -> Image.Image:
     return Image.open(_BASE_ICON).convert("RGBA")
@@ -72,15 +96,78 @@ class TrayApp:
         manager: TunnelManager | None,
         on_show: Callable[[], None],
         on_quit: Callable[[], None],
+        api: object | None = None,
+        lang_getter: Callable[[], str] | None = None,
     ) -> None:
         self._manager = manager
         self._on_show = on_show
         self._on_quit = on_quit
+        # api drives the connect/disconnect/reconnect/navigate quick actions so
+        # they go through the same path (and emit the same events) as the UI.
+        self._api = api
+        self._lang_getter = lang_getter
         self._icon = None
         self._base = load_base_icon()
 
         if manager:
             manager.add_listener(self._on_state_change)
+
+    def _lang(self) -> str:
+        if self._lang_getter is None:
+            return "es"
+        try:
+            lang = self._lang_getter()
+        except Exception:
+            return "es"
+        return lang if lang in _MENU_STR else "es"
+
+    def _t(self, key: str) -> str:
+        return _MENU_STR[self._lang()].get(key, key)
+
+    def _tooltip(self, state: TunnelState | None) -> str:
+        if self._lang() == "en":
+            if state is None:
+                return _NO_CONFIG_TOOLTIP_EN
+            return _STATE_TOOLTIPS_EN.get(state, _NO_CONFIG_TOOLTIP_EN)
+        if state is None:
+            return _NO_CONFIG_TOOLTIP
+        return _STATE_TOOLTIPS.get(state, _NO_CONFIG_TOOLTIP)
+
+    def _is_active(self) -> bool:
+        st = self._manager.state if self._manager else None
+        return st in (
+            TunnelState.CONNECTED, TunnelState.CONNECTING, TunnelState.RECONNECTING,
+        )
+
+    def _has_profile(self, *_a: object) -> bool:
+        return self._manager is not None
+
+    def _toggle_text(self, _item: object) -> str:
+        return self._t("disconnect") if self._is_active() else self._t("connect")
+
+    def _toggle_connection(self, icon: object, item: object) -> None:
+        if self._api is None:
+            return
+        try:
+            self._api.disconnect() if self._is_active() else self._api.connect()
+        except Exception:
+            log.exception("tray toggle connection failed")
+
+    def _reconnect(self, icon: object, item: object) -> None:
+        if self._api is None:
+            return
+        try:
+            self._api.reconnect()
+        except Exception:
+            log.exception("tray reconnect failed")
+
+    def _view_logs(self, icon: object, item: object) -> None:
+        try:
+            self._on_show()
+            if self._api is not None:
+                self._api.navigate("logs")
+        except Exception:
+            log.exception("tray view logs failed")
 
     def update_manager(self, manager: TunnelManager) -> None:
         self._manager = manager
@@ -91,7 +178,7 @@ class TrayApp:
             return
         try:
             self._icon.icon = icon_for_state(state, self._base)
-            self._icon.title = _STATE_TOOLTIPS.get(state, "OutWarp")
+            self._icon.title = self._tooltip(state)
         except Exception:
             log.exception("Failed to update tray icon for state %s", state)
 
@@ -123,22 +210,30 @@ class TrayApp:
 
         initial_state = self._manager.state if self._manager else None
 
+        # Text is supplied as callables so the menu reflects the live state
+        # (Connect vs Disconnect) and language each time it's opened.
         menu = pystray.Menu(
             pystray.MenuItem(
-                "Abrir OutWarp",
+                lambda item: self._t("open"),
                 self._open_window,
                 default=True,  # triggered by left-click on Windows
             ),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Parar y salir", self._quit),
+            pystray.MenuItem(
+                self._toggle_text, self._toggle_connection, enabled=self._has_profile,
+            ),
+            pystray.MenuItem(
+                lambda item: self._t("reconnect"), self._reconnect, enabled=self._has_profile,
+            ),
+            pystray.MenuItem(lambda item: self._t("viewlogs"), self._view_logs),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(lambda item: self._t("quit"), self._quit),
         )
 
         self._icon = pystray.Icon(
             name="outwarp",
             icon=icon_for_state(initial_state, self._base),
-            title=_STATE_TOOLTIPS.get(initial_state, _NO_CONFIG_TOOLTIP)
-            if initial_state is not None
-            else _NO_CONFIG_TOOLTIP,
+            title=self._tooltip(initial_state),
             menu=menu,
         )
         self._icon.run_detached()

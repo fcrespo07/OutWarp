@@ -750,6 +750,12 @@ class Api:
         with self._lock:
             return dict(self._settings)
 
+    def navigate(self, screen: str) -> dict[str, Any]:
+        """Ask the UI to switch screens. Used by the tray's 'View logs' item;
+        the JS App listens for the outwarp:navigate event."""
+        self._emit("navigate", {"screen": str(screen)})
+        return {"ok": True}
+
     # ── about ─────────────────────────────────────────────────────────────────
 
     def get_app_info(self) -> dict[str, Any]:
