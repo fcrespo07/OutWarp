@@ -71,7 +71,7 @@ const STR = {
 
     // Settings
     set_checkUpdates: "Buscar actualizaciones al iniciar",
-    set_checkUpdatesSub: "Comprobar si hay una versión nueva al abrir la pantalla Acerca de.",
+    set_checkUpdatesSub: "Comprobar si hay una versión nueva al abrir Ajustes.",
     set_killSwitch: "Kill switch",
     set_killSwitchSub: "Bloquea todo el tráfico de internet si el túnel se cae.",
     set_autoconnect: "Reintento automático",
@@ -94,6 +94,7 @@ const STR = {
     set_groupAppearance: "Apariencia",
     set_groupConnection: "Conexión",
     set_groupSystem: "Sistema",
+    set_groupUpdates: "Actualizaciones",
     set_errorTitle: "No se pudo aplicar el ajuste",
 
     // Logs
@@ -251,7 +252,7 @@ const STR = {
     upd_copied: "Copied",
 
     set_checkUpdates: "Check for updates on startup",
-    set_checkUpdatesSub: "Check for a newer version when opening the About screen.",
+    set_checkUpdatesSub: "Check for a newer version when opening Settings.",
     set_killSwitch: "Kill switch",
     set_killSwitchSub: "Block all internet traffic if the tunnel drops.",
     set_autoconnect: "Automatic retry",
@@ -274,6 +275,7 @@ const STR = {
     set_groupAppearance: "Appearance",
     set_groupConnection: "Connection",
     set_groupSystem: "System",
+    set_groupUpdates: "Updates",
     set_errorTitle: "Couldn't apply the setting",
 
     logs_title: "Activity log",

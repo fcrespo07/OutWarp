@@ -328,7 +328,7 @@ function App() {
           )}
           {screen === "import"  && <Import T={T} api={api} active={active} confirm={confirm} onImported={(p) => { setActiveId(p.id); setProfiles([p]); setScreen("home"); }} onRemove={onRemoveProfile} onProfilesChanged={refreshProfiles}/>}
           {screen === "logs"     && <Logs T={T} logs={logs} api={api} onClear={() => setLogs([])}/>}
-          {screen === "settings" && <Settings T={T} settings={settings} onSetting={onSetting}/>}
+          {screen === "settings" && <Settings T={T} api={api} settings={settings} onSetting={onSetting}/>}
           {screen === "about"    && <About T={T} api={api} settings={settings}/>}
         </main>
       </div>
@@ -750,17 +750,32 @@ const ThroughputChart = ({ T, history }) => {
   const innerH = mid - P;
   const innerW = W - P * 2;
   const xAt = (i) => history.length <= 1 ? P : P + (i * innerW) / (history.length - 1);
-  const path = (key, sign) => {
-    if (history.length === 0) return "";
-    return history.map((s, i) => {
-      const v = (s[key] || 0) / scale;
-      const y = mid + sign * v * innerH;
-      return `${i === 0 ? "M" : "L"} ${xAt(i).toFixed(1)} ${y.toFixed(1)}`;
-    }).join(" ");
+  const ptsFor = (key, sign) => history.map((s, i) => {
+    const v = (s[key] || 0) / scale;
+    return [xAt(i), mid + sign * v * innerH];
+  });
+  // Catmull-Rom → cubic bézier so the trace reads as a smooth curve instead of
+  // a spiky polyline. 1/6 is the standard uniform Catmull-Rom tangent weight;
+  // endpoints clamp to themselves so the ends don't fly off.
+  const smooth = (pts) => {
+    if (pts.length === 0) return "";
+    let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] || pts[i];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[i + 2] || p2;
+      const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = p1[1] + (p2[1] - p0[1]) / 6;
+      const c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = p2[1] - (p3[1] - p1[1]) / 6;
+      d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+    }
+    return d;
   };
+  const line = (key, sign) => smooth(ptsFor(key, sign));
   const area = (key, sign) => {
-    if (history.length === 0) return "";
-    return `${path(key, sign)} L ${(W - P).toFixed(1)} ${mid} L ${P} ${mid} Z`;
+    const pts = ptsFor(key, sign);
+    if (pts.length === 0) return "";
+    return `${smooth(pts)} L ${(W - P).toFixed(1)} ${mid} L ${P} ${mid} Z`;
   };
 
   return (
@@ -783,11 +798,25 @@ const ThroughputChart = ({ T, history }) => {
         </div>
       ) : (
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
+          <defs>
+            {/* objectBoundingBox: each band fades across its own height — fully
+               saturated next to the trace, transparent at the mid axis — so even
+               a small upload band still colours right up to its line. rx grows
+               downward (colour at bottom), tx upward (colour at top). */}
+            <linearGradient id="ow-tp-rx" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="var(--brand)" stopOpacity="0"/>
+              <stop offset="1" stopColor="var(--brand)" stopOpacity="0.55"/>
+            </linearGradient>
+            <linearGradient id="ow-tp-tx" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="var(--brand-2)" stopOpacity="0.55"/>
+              <stop offset="1" stopColor="var(--brand-2)" stopOpacity="0"/>
+            </linearGradient>
+          </defs>
           <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--line)" strokeDasharray="2 4"/>
-          <path d={area("rx", +1)} fill="color-mix(in srgb, var(--brand) 18%, transparent)"/>
-          <path d={path("rx", +1)} stroke="var(--brand)" fill="none" strokeWidth="1.6"/>
-          <path d={area("tx", -1)} fill="color-mix(in srgb, var(--brand-2) 18%, transparent)"/>
-          <path d={path("tx", -1)} stroke="var(--brand-2)" fill="none" strokeWidth="1.6"/>
+          <path d={area("rx", +1)} fill="url(#ow-tp-rx)"/>
+          <path d={line("rx", +1)} stroke="var(--brand)" fill="none" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round"/>
+          <path d={area("tx", -1)} fill="url(#ow-tp-tx)"/>
+          <path d={line("tx", -1)} stroke="var(--brand-2)" fill="none" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round"/>
         </svg>
       )}
     </section>
@@ -1389,7 +1418,7 @@ const SettingsSelect = ({ value, onChange, options }) => (
   </select>
 );
 
-const Settings = ({ T, settings, onSetting }) => {
+const Settings = ({ T, api, settings, onSetting }) => {
   // Side-effecting toggles (kill_switch on Linux/macOS, start_at_boot on a
   // platform where the registry write fails, etc.) return {ok:false}. Surface
   // the error inline; the persisted value is rolled back by the backend and
@@ -1437,9 +1466,6 @@ const Settings = ({ T, settings, onSetting }) => {
       { title: T.set_minimizeTray, sub: T.set_minimizeTraySub, control: (
         <window.Toggle on={!!settings.minimize_to_tray} onChange={(v) => apply("minimize_to_tray", v)}/>
       )},
-      { title: T.set_checkUpdates, sub: T.set_checkUpdatesSub, control: (
-        <window.Toggle on={!!settings.check_updates_on_start} onChange={(v) => apply("check_updates_on_start", v)}/>
-      )},
     ]},
   ];
 
@@ -1467,6 +1493,19 @@ const Settings = ({ T, settings, onSetting }) => {
           ))}
         </SettingsCard>
       ))}
+
+      <div>
+        <div style={{
+          fontSize: 11, fontWeight: 600, color: "var(--text-3)",
+          letterSpacing: ".06em", textTransform: "uppercase", margin: "0 4px 8px",
+        }}>{T.set_groupUpdates}</div>
+        <div className="ow-card ow-card--md" style={{ padding: "4px 18px 18px" }}>
+          <SettingsRow title={T.set_checkUpdates} sub={T.set_checkUpdatesSub} isLast control={
+            <window.Toggle on={!!settings.check_updates_on_start} onChange={(v) => apply("check_updates_on_start", v)}/>
+          }/>
+          <UpdatePanel T={T} api={api} autoCheck={!!settings.check_updates_on_start}/>
+        </div>
+      </div>
     </section>
   );
 };
@@ -1638,8 +1677,6 @@ const About = ({ T, api, settings }) => {
             {T.about_openRepo}
           </window.Btn>
         </div>
-
-        <UpdatePanel T={T} api={api} autoCheck={!!settings?.check_updates_on_start}/>
       </div>
 
       <div>
