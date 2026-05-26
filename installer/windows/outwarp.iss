@@ -84,11 +84,20 @@ LicenseFile=
 Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
+; A [Types] section is required for components to be selected by default.
+; Without one (or without Types: on each component), fixed components are
+; never marked selected at install time and every [Files]/[Tasks] entry
+; gated by Components: gets filtered out — producing an installer that
+; only registers its own uninstaller. The slim editions used to omit
+; [Types] entirely, which is the v0.4.1 client-installer bug.
 #if Edition == "full"
 [Types]
 Name: "client";  Description: "Solo cliente (conecta a un servidor OutWarp existente)"
 Name: "server";  Description: "Solo servidor (acepta conexiones de clientes OutWarp)"
 Name: "full";    Description: "Cliente + servidor"
+#else
+[Types]
+Name: "full";    Description: "Instalación completa"
 #endif
 
 [Components]
@@ -98,13 +107,13 @@ Name: "server";        Description: "OutWarp Server (interfaz gráfica)";       
 Name: "wstunnel";      Description: "wstunnel.exe (transporte WebSocket)";       Types: client server full; Flags: fixed
 Name: "wireguard";     Description: "WireGuard for Windows (driver + tools)";    Types: client server full
 #elif Edition == "client"
-Name: "client";        Description: "OutWarp Client (tray app)";                 Flags: fixed
-Name: "wstunnel";      Description: "wstunnel.exe (transporte WebSocket)";       Flags: fixed
-Name: "wireguard";     Description: "WireGuard for Windows (driver + tools)";    Flags: fixed
+Name: "client";        Description: "OutWarp Client (tray app)";                 Types: full; Flags: fixed
+Name: "wstunnel";      Description: "wstunnel.exe (transporte WebSocket)";       Types: full; Flags: fixed
+Name: "wireguard";     Description: "WireGuard for Windows (driver + tools)";    Types: full; Flags: fixed
 #elif Edition == "server"
-Name: "server";        Description: "OutWarp Server (interfaz gráfica)";         Flags: fixed
-Name: "wstunnel";      Description: "wstunnel.exe (transporte WebSocket)";       Flags: fixed
-Name: "wireguard";     Description: "WireGuard for Windows (driver + tools)";    Flags: fixed
+Name: "server";        Description: "OutWarp Server (interfaz gráfica)";         Types: full; Flags: fixed
+Name: "wstunnel";      Description: "wstunnel.exe (transporte WebSocket)";       Types: full; Flags: fixed
+Name: "wireguard";     Description: "WireGuard for Windows (driver + tools)";    Types: full; Flags: fixed
 #endif
 
 [Tasks]
