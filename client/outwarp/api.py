@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -953,24 +955,64 @@ class Api:
     # /AUTOUPDATE=1 tells the installer to relaunch the client when it finishes
     # (outwarp.iss [Run] → IsAutoUpdate); the silent flags suppress the wizard.
     # Because the client is already elevated (app._ensure_elevated runs at
-    # startup), ShellExecute 'runas' inherits that elevation with no extra UAC
-    # prompt — so the whole update applies in the background and the app just
-    # restarts itself.
+    # startup), the powershell helper below inherits that elevation with no
+    # extra UAC prompt — so the whole update applies in the background and the
+    # app just restarts itself.
     _INSTALLER_SILENT_ARGS = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /AUTOUPDATE=1"
 
     def _launch_installer(self, path: Path) -> bool:
-        """ShellExecute the installer with 'runas', silently. Returns True if the
-        shell accepted the launch (HINSTANCE > 32)."""
-        import ctypes
+        """Spawn a detached helper that waits for THIS process to exit, then
+        runs the installer. Returns True on successful spawn.
 
+        We can't just ShellExecute the installer and immediately quit: Inno
+        Setup probes our AppMutex (Global\\OutWarpClient, see outwarp.iss) at
+        startup, and /VERYSILENT mode has no retry dialog. If the mutex is
+        still held when Inno checks it — and api.shutdown() can take a second
+        or two — Inno silently skips locked files (outwarp.exe and the mapped
+        _internal/*.pyd next to it) and the "updated" install keeps running
+        the old binary. The user sees the app close and reopen at the OLD
+        version. This bit users updating v0.3.0 → v0.4.0.
+
+        The fix: have a tiny powershell child watch our PID, wait for it to
+        die, then launch the installer. By that point our mutex is released
+        and the .exe is unmapped, so Inno can replace every file.
+        """
+        pid = os.getpid()
+        # Single-quote-escape the path for the PS string literal so paths
+        # containing apostrophes (rare but possible under %TEMP%) survive.
+        path_esc = str(path).replace("'", "''")
+        ps_cmd = (
+            "$ErrorActionPreference='SilentlyContinue';"
+            f"Wait-Process -Id {pid} -ErrorAction SilentlyContinue;"
+            # Brief settle so Windows finishes unmapping the .exe before Inno
+            # opens it for write. Belt-and-braces — Wait-Process already
+            # returns post-exit.
+            "Start-Sleep -Milliseconds 750;"
+            f"Start-Process -FilePath '{path_esc}' "
+            f"-ArgumentList '{self._INSTALLER_SILENT_ARGS}' -Verb RunAs"
+        )
+        # DETACHED_PROCESS so the helper survives our exit; CREATE_NO_WINDOW
+        # so no console flashes.
+        creationflags = (
+            subprocess.DETACHED_PROCESS
+            | subprocess.CREATE_NEW_PROCESS_GROUP
+            | 0x08000000  # CREATE_NO_WINDOW
+        )
         try:
-            ret = ctypes.windll.shell32.ShellExecuteW(
-                None, "runas", str(path), self._INSTALLER_SILENT_ARGS, None, 0
+            subprocess.Popen(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-WindowStyle", "Hidden",
+                    "-Command", ps_cmd,
+                ],
+                creationflags=creationflags,
+                close_fds=True,
             )
         except Exception:
-            log.exception("ShellExecuteW for installer failed")
+            log.exception("could not spawn deferred installer launcher")
             return False
-        return ret > 32
+        return True
 
     def _quit_for_update(self) -> None:
         if self._on_quit is not None:
@@ -984,7 +1026,6 @@ class Api:
         try:
             self.shutdown()
         finally:
-            import os
             os._exit(0)
 
     def set_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
