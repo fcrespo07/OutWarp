@@ -175,9 +175,18 @@ def main() -> int:
         _stage("imported pywebview")
 
         from outwarp.api import Api
+        from outwarp.integrity import check_critical_files, format_report
         from outwarp.tray import TrayApp
         from outwarp.tunnel import TunnelManager
         _stage("imported outwarp modules")
+
+        # Run early so a missing wstunnel.exe (typical Defender quarantine)
+        # surfaces as a clear banner in the UI instead of as a generic
+        # "could not start tunnel" error later. Cheap — a few stat() calls.
+        integrity_issues = check_critical_files()
+        for line in format_report(integrity_issues).splitlines():
+            (log.warning if integrity_issues else log.info)("integrity: %s", line)
+        _stage(f"integrity check ({len(integrity_issues)} issue(s))")
 
         config = _try_load_config()
         manager: TunnelManager | None = TunnelManager(config) if config else None
@@ -192,7 +201,12 @@ def main() -> int:
             tray.update_manager(new_mgr)
             new_mgr.start()
 
-        api = Api(memory_handler, manager, on_manager_replaced=on_manager_replaced)
+        api = Api(
+            memory_handler,
+            manager,
+            on_manager_replaced=on_manager_replaced,
+            integrity_issues=integrity_issues,
+        )
         _stage("Api constructed")
 
         if config:

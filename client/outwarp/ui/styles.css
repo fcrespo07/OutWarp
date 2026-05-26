@@ -84,6 +84,54 @@
   padding: 0 14px;
 }
 .ow-titlebar-controls { display: flex; height: 100%; }
+
+/* Startup integrity banner. Sits between the title bar and the body, full
+   width. Warm colour so it reads as a warning without screaming "fatal" —
+   the app keeps working, the user just needs to act on it. */
+.ow-integrity {
+  flex: 0 0 auto;
+  background: color-mix(in srgb, var(--brand-warn) 14%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-warn) 40%, var(--line));
+  color: var(--text);
+  padding: 10px 18px;
+  font-size: 12.5px;
+}
+.ow-integrity-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.ow-integrity-icon { color: var(--brand-warn); display: inline-flex; flex: 0 0 16px; }
+.ow-integrity-text { flex: 1; min-width: 0; }
+.ow-integrity-headline { font-weight: 600; color: var(--text); }
+.ow-integrity-cta { color: var(--text-2); margin-top: 2px; }
+.ow-integrity-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.ow-integrity-btn {
+  all: unset; cursor: pointer;
+  padding: 4px 10px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--line-strong);
+  color: var(--text); font-size: 11.5px;
+  transition: background .12s, border-color .12s;
+}
+.ow-integrity-btn:hover { background: var(--chip); border-color: var(--brand-warn); }
+.ow-integrity-btn--ghost {
+  background: transparent; border-color: transparent;
+  width: 26px; padding: 4px 0; text-align: center;
+  font-size: 16px; line-height: 1; color: var(--text-2);
+}
+.ow-integrity-btn--ghost:hover { background: var(--chip); color: var(--text); border-color: transparent; }
+.ow-integrity-list {
+  list-style: none; padding: 8px 0 0 28px; margin: 0;
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-2);
+  display: grid; gap: 4px;
+}
+.ow-integrity-list code { color: var(--text); }
+.ow-integrity-tag {
+  display: inline-block; min-width: 56px;
+  margin-right: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--brand-warn) 18%, transparent);
+  color: var(--text);
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.ow-integrity-path { color: var(--text-3); }
 .ow-winbtn {
   all: unset;
   width: 46px; height: 100%;

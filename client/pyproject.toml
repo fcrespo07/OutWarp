@@ -4,10 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "outwarp-client"
-version = "0.3.0"
+version = "0.4.0"
 description = "Cliente de bandeja multiplataforma para tuneles WireGuard sobre WebSocket (wstunnel)"
 requires-python = ">=3.11"
-authors = [{ name = "Ferran Crespo", email = "ferrancrespofresneda@gmail.com" }]
+authors = [
+  { name = "Ferran Crespo", email = "fcrespo@fcrespo.tech" },
+  { name = "Ferran Crespo", email = "fcrespo@fcrespo.dev" },
+]
 keywords = ["wireguard", "wstunnel", "vpn", "tray", "tunnel"]
 classifiers = [
     "Development Status :: 1 - Planning",

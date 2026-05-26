@@ -137,15 +137,24 @@ function App() {
   // Fed from the outwarp:stats heartbeat (1 Hz) so the chart and the stat
   // cards never disagree. Capped at 60 samples ≈ 60 s of history.
   const [history, setHistory] = useState([]);
+  // Startup integrity report (missing/empty critical files — typically a
+  // Defender quarantine of wstunnel.exe). Computed once by Python and
+  // fetched at bootstrap; user can dismiss for the session.
+  const [integrity, setIntegrity] = useState({ ok: true, likely_av: false, issues: [] });
+  const [integrityDismissed, setIntegrityDismissed] = useState(false);
 
   // bootstrap
   useEffect(() => {
     waitForBridge().then(async (a) => {
       setApi(a);
       try {
-        const [s, ps, st, lg, wc] = await Promise.all([
+        const [s, ps, st, lg, wc, ig] = await Promise.all([
           a.get_status(), a.list_profiles(), a.get_settings(), a.get_logs(0),
           a.get_window_caps(),
+          // get_integrity is new in 0.4.0; tolerate older Python that hasn't
+          // shipped yet (dev/test contexts) so a missing method doesn't break
+          // bootstrap entirely.
+          a.get_integrity ? a.get_integrity() : Promise.resolve(null),
         ]);
         setStatus(s.status);
         setActiveId(s.active_profile_id);
@@ -157,6 +166,7 @@ function App() {
         setSettings(st);
         setLogs(lg);
         if (wc) { setCaps(wc); setMaximized(!!wc.maximized); }
+        if (ig) setIntegrity(ig);
         setReady(true);
       } catch (e) {
         try { a?.report_ui_error?.(`bootstrap failed: ${(e && (e.stack || e.message)) || e}`); } catch (_) {}
@@ -298,6 +308,9 @@ function App() {
   return (
     <div data-theme={theme} className="ow-root">
       <TitleBar T={T} api={api} caps={caps} maximized={maximized}/>
+      {!integrity.ok && !integrityDismissed && (
+        <IntegrityBanner T={T} api={api} report={integrity} onDismiss={() => setIntegrityDismissed(true)}/>
+      )}
       <div className="ow-body">
         <Sidebar
           T={T}
@@ -339,6 +352,62 @@ function App() {
     </div>
   );
 }
+
+// ── Integrity banner ──────────────────────────────────────────────
+// Shown at the top of the window when api.get_integrity() reports any
+// missing/empty critical file. The most common trigger is Windows
+// Defender quarantining wstunnel.exe (a long-standing false positive);
+// the banner shows the AV-specific guidance when `likely_av` is set.
+const IntegrityBanner = ({ T, api, report, onDismiss }) => {
+  const [open, setOpen] = useState(false);
+  const issues = Array.isArray(report?.issues) ? report.issues : [];
+  const headline = report?.likely_av ? T.integrity_av : T.integrity_generic;
+  const cta = report?.likely_av ? T.integrity_av_cta : null;
+  return (
+    <div className="ow-integrity" role="alert" aria-live="polite">
+      <div className="ow-integrity-row">
+        <span className="ow-integrity-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </span>
+        <div className="ow-integrity-text">
+          <div className="ow-integrity-headline">{headline}</div>
+          {cta && <div className="ow-integrity-cta">{cta}</div>}
+        </div>
+        <div className="ow-integrity-actions">
+          <button className="ow-integrity-btn" onClick={() => setOpen((v) => !v)}>
+            {open ? T.integrity_hide : T.integrity_details}
+          </button>
+          {report?.likely_av && (
+            <button
+              className="ow-integrity-btn"
+              onClick={() => api?.open_url("https://github.com/fcrespo07/OutWarp#windows-defender")}
+            >
+              {T.integrity_help}
+            </button>
+          )}
+          <button className="ow-integrity-btn ow-integrity-btn--ghost" onClick={onDismiss} aria-label={T.integrity_dismiss}>
+            ×
+          </button>
+        </div>
+      </div>
+      {open && issues.length > 0 && (
+        <ul className="ow-integrity-list">
+          {issues.map((it, i) => (
+            <li key={i}>
+              <span className="ow-integrity-tag">{it.kind}</span>
+              <code>{it.name}</code>
+              {it.path && <span className="ow-integrity-path"> — {it.path}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
 
 // ── Custom title bar (frameless window chrome) ─────────────────────
 // The native OS title bar is hidden (frameless=True); this draws one in the
