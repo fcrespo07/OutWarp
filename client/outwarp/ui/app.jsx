@@ -137,15 +137,24 @@ function App() {
   // Fed from the outwarp:stats heartbeat (1 Hz) so the chart and the stat
   // cards never disagree. Capped at 60 samples ≈ 60 s of history.
   const [history, setHistory] = useState([]);
+  // Startup integrity report (missing/empty critical files — typically a
+  // Defender quarantine of wstunnel.exe). Computed once by Python and
+  // fetched at bootstrap; user can dismiss for the session.
+  const [integrity, setIntegrity] = useState({ ok: true, likely_av: false, issues: [] });
+  const [integrityDismissed, setIntegrityDismissed] = useState(false);
 
   // bootstrap
   useEffect(() => {
     waitForBridge().then(async (a) => {
       setApi(a);
       try {
-        const [s, ps, st, lg, wc] = await Promise.all([
+        const [s, ps, st, lg, wc, ig] = await Promise.all([
           a.get_status(), a.list_profiles(), a.get_settings(), a.get_logs(0),
           a.get_window_caps(),
+          // get_integrity is new in 0.4.0; tolerate older Python that hasn't
+          // shipped yet (dev/test contexts) so a missing method doesn't break
+          // bootstrap entirely.
+          a.get_integrity ? a.get_integrity() : Promise.resolve(null),
         ]);
         setStatus(s.status);
         setActiveId(s.active_profile_id);
@@ -157,6 +166,7 @@ function App() {
         setSettings(st);
         setLogs(lg);
         if (wc) { setCaps(wc); setMaximized(!!wc.maximized); }
+        if (ig) setIntegrity(ig);
         setReady(true);
       } catch (e) {
         try { a?.report_ui_error?.(`bootstrap failed: ${(e && (e.stack || e.message)) || e}`); } catch (_) {}
@@ -176,13 +186,15 @@ function App() {
   useBridgeEvent("stats", useCallback((d) => {
     setStats(d);
     setHistory((h) => {
-      const next = h.concat({ rx: d.rx_bps || 0, tx: d.tx_bps || 0 });
+      const next = h.concat({ rx: d.rx_bps || 0, tx: d.tx_bps || 0, lat: d.latency_ms || 0 });
       return next.length > 60 ? next.slice(-60) : next;
     });
   }, []));
   useBridgeEvent("log",     useCallback((e) => setLogs((l) => [...l.slice(-1999), e]), []));
   useBridgeEvent("settings", useCallback((d) => setSettings(d), []));
   useBridgeEvent("window",   useCallback((d) => setMaximized(!!d.maximized), []));
+  // Tray "View logs" → jump to a screen from the Python side.
+  useBridgeEvent("navigate", useCallback((d) => { if (d && d.screen) setScreen(d.screen); }, []));
 
   // Reset the throughput history whenever the tunnel isn't actively
   // transferring — leaving stale samples on screen after a disconnect would
@@ -296,6 +308,9 @@ function App() {
   return (
     <div data-theme={theme} className="ow-root">
       <TitleBar T={T} api={api} caps={caps} maximized={maximized}/>
+      {!integrity.ok && !integrityDismissed && (
+        <IntegrityBanner T={T} api={api} report={integrity} onDismiss={() => setIntegrityDismissed(true)}/>
+      )}
       <div className="ow-body">
         <Sidebar
           T={T}
@@ -328,7 +343,7 @@ function App() {
           )}
           {screen === "import"  && <Import T={T} api={api} active={active} confirm={confirm} onImported={(p) => { setActiveId(p.id); setProfiles([p]); setScreen("home"); }} onRemove={onRemoveProfile} onProfilesChanged={refreshProfiles}/>}
           {screen === "logs"     && <Logs T={T} logs={logs} api={api} onClear={() => setLogs([])}/>}
-          {screen === "settings" && <Settings T={T} settings={settings} onSetting={onSetting}/>}
+          {screen === "settings" && <Settings T={T} api={api} settings={settings} onSetting={onSetting}/>}
           {screen === "about"    && <About T={T} api={api} settings={settings}/>}
         </main>
       </div>
@@ -337,6 +352,62 @@ function App() {
     </div>
   );
 }
+
+// ── Integrity banner ──────────────────────────────────────────────
+// Shown at the top of the window when api.get_integrity() reports any
+// missing/empty critical file. The most common trigger is Windows
+// Defender quarantining wstunnel.exe (a long-standing false positive);
+// the banner shows the AV-specific guidance when `likely_av` is set.
+const IntegrityBanner = ({ T, api, report, onDismiss }) => {
+  const [open, setOpen] = useState(false);
+  const issues = Array.isArray(report?.issues) ? report.issues : [];
+  const headline = report?.likely_av ? T.integrity_av : T.integrity_generic;
+  const cta = report?.likely_av ? T.integrity_av_cta : null;
+  return (
+    <div className="ow-integrity" role="alert" aria-live="polite">
+      <div className="ow-integrity-row">
+        <span className="ow-integrity-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </span>
+        <div className="ow-integrity-text">
+          <div className="ow-integrity-headline">{headline}</div>
+          {cta && <div className="ow-integrity-cta">{cta}</div>}
+        </div>
+        <div className="ow-integrity-actions">
+          <button className="ow-integrity-btn" onClick={() => setOpen((v) => !v)}>
+            {open ? T.integrity_hide : T.integrity_details}
+          </button>
+          {report?.likely_av && (
+            <button
+              className="ow-integrity-btn"
+              onClick={() => api?.open_url("https://github.com/fcrespo07/OutWarp#windows-defender")}
+            >
+              {T.integrity_help}
+            </button>
+          )}
+          <button className="ow-integrity-btn ow-integrity-btn--ghost" onClick={onDismiss} aria-label={T.integrity_dismiss}>
+            ×
+          </button>
+        </div>
+      </div>
+      {open && issues.length > 0 && (
+        <ul className="ow-integrity-list">
+          {issues.map((it, i) => (
+            <li key={i}>
+              <span className="ow-integrity-tag">{it.kind}</span>
+              <code>{it.name}</code>
+              {it.path && <span className="ow-integrity-path"> — {it.path}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
 
 // ── Custom title bar (frameless window chrome) ─────────────────────
 // The native OS title bar is hidden (frameless=True); this draws one in the
@@ -425,7 +496,7 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
   const pulse = status === "connecting" || status === "reconnecting" || status === "connected";
 
   return (
-    <aside style={{
+    <aside className="ow-sidebar" style={{
       background: "var(--bg-2)",
       borderRight: advanced ? "1px solid var(--line-strong)" : "1px solid var(--line)",
       display: "flex", flexDirection: "column", padding: "22px 14px",
@@ -449,33 +520,32 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
               gridTemplateColumns: advanced ? "auto 1fr auto" : undefined,
               alignItems: "center", gap: 10,
               padding: "9px 10px",
-              borderLeft: advanced ? (active ? "2px solid var(--brand)" : "2px solid transparent") : undefined,
               borderRadius: advanced ? 0 : 8,
               fontSize: 13, fontWeight: active ? 600 : 500,
             }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={active ? "var(--brand)" : "var(--text-3)"} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                 <path d={d}/>
               </svg>
-              <span>{lbl}</span>
-              {advanced && <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-3)" }}>0{i+1}</span>}
+              <span className="ow-nav-label">{lbl}</span>
+              {advanced && <span className="ow-nav-num" style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-3)" }}>0{i+1}</span>}
             </button>
           );
         })}
       </div>
 
-      <div style={{
+      <div className="ow-sidebar-foot" style={{
         marginTop: "auto",
         padding: 12,
         borderRadius: advanced ? 0 : 12,
         background: "var(--bg-sunk)",
         border: "1px solid " + (advanced ? "var(--line-strong)" : "var(--line)"),
       }}>
-        <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.profile}</div>
+        <div className="ow-sidebar-foot-text" style={{ fontSize: 11, fontWeight: 500, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.profile}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
           <window.StatusDot tone={tone} pulse={pulse}/>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>{profileName || "—"}</div>
+          <div className="ow-sidebar-foot-text" style={{ fontSize: 13, fontWeight: 600 }}>{profileName || "—"}</div>
         </div>
-        <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)" }}>{label}</div>
+        <div className="ow-sidebar-foot-text" style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)" }}>{label}</div>
       </div>
     </aside>
   );
@@ -495,9 +565,9 @@ const Home = ({ T, lang, status, active, stats, history, advanced, busyMsg, conn
 };
 
 const EmptyHome = ({ T, onImport }) => (
-  <div style={{ display: "flex", flexDirection: "column", gap: 24, maxWidth: 720 }}>
+  <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 24, maxWidth: 720 }}>
     <Header title={T.welcomeTitle} sub={T.welcomeSub}/>
-    <section style={{ background: "var(--bg-2)", border: "1.5px dashed var(--line-strong)", borderRadius: 16, padding: 36, textAlign: "center" }}>
+    <section style={{ background: "var(--bg-2)", border: "1.5px dashed var(--line-strong)", borderRadius: "var(--radius-lg)", padding: 36, textAlign: "center" }}>
       <div style={{ width: 56, height: 56, borderRadius: 14, background: "color-mix(in srgb, var(--brand) 12%, transparent)", color: "var(--brand)", display: "grid", placeItems: "center", margin: "0 auto" }}>
         <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16 V4 M6 10 L12 4 L18 10"/><path d="M4 20 H20"/></svg>
       </div>
@@ -511,24 +581,22 @@ const EmptyHome = ({ T, onImport }) => (
 );
 
 const DisconnectedHome = ({ T, active, onConnect }) => (
-  <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+  <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
     <Header title={T.nav_home} sub={T.home_ribbon}/>
-    <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 18, padding: 28, position: "relative", overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 24, alignItems: "center" }}>
+    <section className="ow-hero">
+      <div className="ow-hero-grid">
         <div>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 }}>{T.disconnected}</div>
           <div style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1 }}>{active.name}</div>
           <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{active.endpoint}</div>
-          <div style={{ marginTop: 18 }}>
-            <window.Btn kind="primary" size="lg" onClick={onConnect}>{T.connect}</window.Btn>
-          </div>
+          <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 14 }}>{T.home_clickToConnect}</div>
         </div>
-        <Dial/>
+        <Dial status="disconnected" onClick={onConnect} label={T.connect}/>
       </div>
       <BgGlow/>
     </section>
 
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+    <div className="ow-info-grid">
       <InfoCard icon={<IconShield/>} title={T.home_secure_title}  body={T.home_secure_body}/>
       <InfoCard icon={<IconLock/>}   title={T.home_pinned_title}  body={T.home_pinned_body}/>
       <InfoCard icon={<IconRoute/>}  title={T.home_routing_title} body={T.home_routing_body}/>
@@ -555,10 +623,10 @@ const ConnectingHome = ({ T, active, busyMsg, reconnecting, attemptInfo, phase }
     ? Math.max(0, CONNECT_STEPS.findIndex(([k]) => k === phase))
     : -1;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+    <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <Header title={T.nav_home} sub={T.home_ribbon}/>
-      <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 18, padding: 28 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 24, alignItems: "center" }}>
+      <section className="ow-hero">
+        <div className="ow-hero-grid">
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
               <window.StatusDot tone="warn"/>
@@ -574,7 +642,7 @@ const ConnectingHome = ({ T, active, busyMsg, reconnecting, attemptInfo, phase }
               </div>
             )}
           </div>
-          <Dial pulsing/>
+          <Dial status={reconnecting ? "reconnecting" : "connecting"} label={reconnecting ? T.reconnecting : T.connecting}/>
         </div>
         <Stepper T={T} currentIdx={currentIdx}/>
         {busyMsg && (
@@ -645,14 +713,15 @@ const ConnectedHome = ({ T, lang, active, stats, history, advanced, onDisconnect
   // while the exit-IP probe is still resolving.
   const heroTitle = stats.exit_ip || active.name;
   const heroSub = [stats.exit_location, `${T.profile} ${active.name}`].filter(Boolean).join(" · ");
-  const spark = (history || []).slice(-12).map((s) => s.rx || 0);
+  // Latency trend (was mistakenly fed download bytes, on the latency card).
+  const spark = (history || []).slice(-12).map((s) => s.lat || 0);
   const lastHs = stats.last_handshake ? fmtAgo(stats.last_handshake, lang) : "—";
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+    <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <Header title={T.nav_home} sub={T.home_ribbon}/>
 
-      <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 18, padding: 28, position: "relative", overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 24, alignItems: "center" }}>
+      <section className="ow-hero">
+        <div className="ow-hero-grid">
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
               <window.StatusDot tone="good"/>
@@ -660,17 +729,16 @@ const ConnectedHome = ({ T, lang, active, stats, history, advanced, onDisconnect
             </div>
             <div style={{ fontSize: 36, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.05 }}>{heroTitle}</div>
             <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{heroSub}</div>
-            <div style={{ marginTop: 18, display: "flex", gap: 8 }}>
-              <window.Btn kind="solid" size="md" onClick={onDisconnect}>{T.disconnect}</window.Btn>
+            <div className="ow-hero-actions" style={{ marginTop: 18, display: "flex", gap: 8 }}>
               <window.Btn kind="ghost" size="md" icon={<IconLogs size={14}/>} onClick={onLogs}>{T.nav_logs}</window.Btn>
             </div>
           </div>
-          <Dial active/>
+          <Dial status="connected" onClick={onDisconnect} label={T.disconnect}/>
         </div>
         <BgGlow/>
       </section>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+      <div className="ow-stats-grid">
         <Stat label={T.latency}     value={stats.latency_ms ? `${stats.latency_ms} ms` : "—"} trend={spark.length >= 2 ? <Spark data={spark} good/> : null}/>
         <Stat label={T.download}    value={fmtBps(stats.rx_bps)} sub={`↓ ${fmtBytes(stats.rx_total)} total`}/>
         <Stat label={T.upload}      value={fmtBps(stats.tx_bps)} sub={`↑ ${fmtBytes(stats.tx_total)} total`}/>
@@ -680,7 +748,7 @@ const ConnectedHome = ({ T, lang, active, stats, history, advanced, onDisconnect
       <ThroughputChart T={T} history={history || []}/>
 
       {advanced && (
-        <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 18, fontFamily: "var(--font-mono)", fontSize: 12 }}>
+        <section className="ow-card ow-card--md" style={{ padding: 18, fontFamily: "var(--font-mono)", fontSize: 12 }}>
           <div style={{ fontSize: 11, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 10, fontFamily: "var(--font-sans)", fontWeight: 600 }}>{T.techDetails}</div>
           <KV k={T.endpoint} v={active.endpoint}/>
           <KV k={T.fingerprint} v={active.fingerprint || "—"}/>
@@ -693,9 +761,9 @@ const ConnectedHome = ({ T, lang, active, stats, history, advanced, onDisconnect
 };
 
 const ErrorHome = ({ T, active, connError, onReconnect, onImport }) => (
-  <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+  <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
     <Header title={T.nav_home} sub={T.home_ribbon}/>
-    <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 18, padding: 28 }}>
+    <section className="ow-hero" style={{ padding: 28 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
         <window.StatusDot tone="bad"/>
         <span style={{ fontSize: 12, fontWeight: 600, color: "var(--brand-bad)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.error}</span>
@@ -728,12 +796,12 @@ const ErrorHome = ({ T, active, connError, onReconnect, onImport }) => (
 );
 
 const Header = ({ title, sub, right }) => (
-  <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
+  <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
     <div>
       <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}>{title}</div>
       {sub && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>{sub}</div>}
     </div>
-    {right && <div style={{ display: "flex", alignItems: "center", gap: 8 }}>{right}</div>}
+    {right && <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>{right}</div>}
   </header>
 );
 
@@ -752,21 +820,36 @@ const ThroughputChart = ({ T, history }) => {
   const innerH = mid - P;
   const innerW = W - P * 2;
   const xAt = (i) => history.length <= 1 ? P : P + (i * innerW) / (history.length - 1);
-  const path = (key, sign) => {
-    if (history.length === 0) return "";
-    return history.map((s, i) => {
-      const v = (s[key] || 0) / scale;
-      const y = mid + sign * v * innerH;
-      return `${i === 0 ? "M" : "L"} ${xAt(i).toFixed(1)} ${y.toFixed(1)}`;
-    }).join(" ");
+  const ptsFor = (key, sign) => history.map((s, i) => {
+    const v = (s[key] || 0) / scale;
+    return [xAt(i), mid + sign * v * innerH];
+  });
+  // Catmull-Rom → cubic bézier so the trace reads as a smooth curve instead of
+  // a spiky polyline. 1/6 is the standard uniform Catmull-Rom tangent weight;
+  // endpoints clamp to themselves so the ends don't fly off.
+  const smooth = (pts) => {
+    if (pts.length === 0) return "";
+    let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] || pts[i];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[i + 2] || p2;
+      const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = p1[1] + (p2[1] - p0[1]) / 6;
+      const c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = p2[1] - (p3[1] - p1[1]) / 6;
+      d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+    }
+    return d;
   };
+  const line = (key, sign) => smooth(ptsFor(key, sign));
   const area = (key, sign) => {
-    if (history.length === 0) return "";
-    return `${path(key, sign)} L ${(W - P).toFixed(1)} ${mid} L ${P} ${mid} Z`;
+    const pts = ptsFor(key, sign);
+    if (pts.length === 0) return "";
+    return `${smooth(pts)} L ${(W - P).toFixed(1)} ${mid} L ${P} ${mid} Z`;
   };
 
   return (
-    <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 18 }}>
+    <section className="ow-card ow-card--md" style={{ padding: 18 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>
           {T.throughput_title}
@@ -785,11 +868,25 @@ const ThroughputChart = ({ T, history }) => {
         </div>
       ) : (
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
+          <defs>
+            {/* objectBoundingBox: each band fades across its own height — fully
+               saturated next to the trace, transparent at the mid axis — so even
+               a small upload band still colours right up to its line. rx grows
+               downward (colour at bottom), tx upward (colour at top). */}
+            <linearGradient id="ow-tp-rx" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="var(--brand)" stopOpacity="0"/>
+              <stop offset="1" stopColor="var(--brand)" stopOpacity="0.55"/>
+            </linearGradient>
+            <linearGradient id="ow-tp-tx" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="var(--brand-2)" stopOpacity="0.55"/>
+              <stop offset="1" stopColor="var(--brand-2)" stopOpacity="0"/>
+            </linearGradient>
+          </defs>
           <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--line)" strokeDasharray="2 4"/>
-          <path d={area("rx", +1)} fill="color-mix(in srgb, var(--brand) 18%, transparent)"/>
-          <path d={path("rx", +1)} stroke="var(--brand)" fill="none" strokeWidth="1.6"/>
-          <path d={area("tx", -1)} fill="color-mix(in srgb, var(--brand-2) 18%, transparent)"/>
-          <path d={path("tx", -1)} stroke="var(--brand-2)" fill="none" strokeWidth="1.6"/>
+          <path d={area("rx", +1)} fill="url(#ow-tp-rx)"/>
+          <path d={line("rx", +1)} stroke="var(--brand)" fill="none" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round"/>
+          <path d={area("tx", -1)} fill="url(#ow-tp-tx)"/>
+          <path d={line("tx", -1)} stroke="var(--brand-2)" fill="none" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round"/>
         </svg>
       )}
     </section>
@@ -797,7 +894,7 @@ const ThroughputChart = ({ T, history }) => {
 };
 
 const Stat = ({ label, value, sub, trend }) => (
-  <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 12, padding: 14 }}>
+  <div className="ow-card" style={{ padding: 14 }}>
     <div style={{ fontSize: 11, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 600 }}>{label}</div>
     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginTop: 6 }}>
       <div style={{ fontSize: 22, fontWeight: 600, fontFamily: "var(--font-mono)" }}>{value}</div>
@@ -809,7 +906,7 @@ const Stat = ({ label, value, sub, trend }) => (
 
 // ── Ported design atoms (mirror var-a.jsx) ─────────────────────────
 const InfoCard = ({ icon, title, body }) => (
-  <div style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 16 }}>
+  <div className="ow-card ow-card--md ow-card--hover" style={{ padding: 16 }}>
     <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--chip)", display: "grid", placeItems: "center", color: "var(--brand)" }}>{icon}</div>
     <div style={{ fontSize: 13, fontWeight: 600, marginTop: 12 }}>{title}</div>
     <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 4 }}>{body}</div>
@@ -817,7 +914,7 @@ const InfoCard = ({ icon, title, body }) => (
 );
 
 const BgGlow = () => (
-  <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden", borderRadius: 18 }}>
+  <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden", borderRadius: "var(--radius-lg)" }}>
     <div style={{ position: "absolute", right: -80, top: -80, width: 280, height: 280, background: "radial-gradient(circle, color-mix(in srgb, var(--brand) 22%, transparent), transparent 60%)" }}/>
   </div>
 );
@@ -852,34 +949,74 @@ const KV = ({ k, v, last }) => (
   </div>
 );
 
-const Dial = ({ active, pulsing }) => (
-  <div style={{ position: "relative", width: 200, height: 200 }}>
-    <svg width="200" height="200" viewBox="0 0 200 200">
-      <defs>
-        <linearGradient id="dial-grad" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="var(--brand)"/>
-          <stop offset="1" stopColor="var(--brand-2)"/>
-        </linearGradient>
-      </defs>
-      <circle cx="100" cy="100" r="86" stroke="var(--line-strong)" strokeWidth="1" fill="none"/>
-      <circle cx="100" cy="100" r="72" stroke="var(--line)" strokeWidth="1" fill="none" strokeDasharray="2 4"/>
-      {active && <circle cx="100" cy="100" r="86" stroke="url(#dial-grad)" strokeWidth="3" fill="none"
-        strokeDasharray={`${2*Math.PI*86*0.78} ${2*Math.PI*86}`} transform="rotate(-90 100 100)" strokeLinecap="round"/>}
-    </svg>
-    <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
-      <div style={{
-        width: 110, height: 110, borderRadius: 999,
-        background: active ? "linear-gradient(135deg, var(--brand), var(--brand-2))" : "var(--bg-sunk)",
-        border: active ? "none" : "1px solid var(--line-strong)",
-        display: "grid", placeItems: "center", color: active ? "#fff" : "var(--text-2)",
-        boxShadow: active ? "0 12px 28px -10px color-mix(in srgb, var(--brand) 55%, transparent)" : "none",
-        animation: pulsing ? "ws-pulse 1.6s ease-out infinite" : "none",
-      }}>
-        <window.WSLogoMark size={44} color={active ? "#fff" : "var(--text-2)"} accent={active ? "rgba(255,255,255,.6)" : "var(--text-3)"}/>
-      </div>
-    </div>
-  </div>
+const PowerGlyph = ({ size = 30, color = "currentColor" }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+       strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 3 V11"/><path d="M6.6 6.6 a7.5 7.5 0 1 0 10.8 0"/>
+  </svg>
 );
+
+// The dial is the primary connect/disconnect control, not decoration.
+// - disconnected/empty: a real button; clicking calls onClick (connect).
+// - connected: a button labelled with the disconnect action.
+// - connecting/reconnecting: non-interactive, ring spins as a progress hint.
+// State (Connected/…) is shown by the hero's StatusDot + pill; the dial label
+// is always the *action* the click performs, mirroring Mullvad/Proton.
+const Dial = ({ status = "disconnected", onClick, label }) => {
+  const connected = status === "connected";
+  const busy = status === "connecting" || status === "reconnecting";
+  const interactive = !!onClick && !busy;
+  const puckColor = connected ? "#fff" : "var(--text)";
+
+  const body = (
+    <>
+      <svg width="200" height="200" viewBox="0 0 200 200">
+        <defs>
+          <linearGradient id="dial-grad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="var(--brand)"/>
+            <stop offset="1" stopColor="var(--brand-2)"/>
+          </linearGradient>
+        </defs>
+        <circle cx="100" cy="100" r="86" stroke="var(--line-strong)" strokeWidth="1" fill="none"/>
+        <circle cx="100" cy="100" r="72" stroke="var(--line)" strokeWidth="1" fill="none" strokeDasharray="2 4"/>
+        {connected && (
+          <circle cx="100" cy="100" r="86" stroke="url(#dial-grad)" strokeWidth="3" fill="none"
+            strokeDasharray={`${2*Math.PI*86*0.78} ${2*Math.PI*86}`}
+            transform="rotate(-90 100 100)" strokeLinecap="round"/>
+        )}
+        {busy && (
+          <circle className="ow-dial-spin" cx="100" cy="100" r="86" stroke="var(--brand-warn)"
+            strokeWidth="3" fill="none"
+            strokeDasharray={`${2*Math.PI*86*0.25} ${2*Math.PI*86}`} strokeLinecap="round"/>
+        )}
+      </svg>
+      <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
+        <div style={{
+          width: 118, height: 118, borderRadius: 999,
+          background: connected ? "linear-gradient(135deg, var(--brand), var(--brand-2))" : "var(--bg-sunk)",
+          border: connected ? "none" : "1px solid var(--line-strong)",
+          display: "flex", flexDirection: "column", gap: 6, alignItems: "center", justifyContent: "center",
+          color: puckColor,
+          boxShadow: connected ? "0 14px 30px -10px color-mix(in srgb, var(--brand) 55%, transparent)" : "none",
+        }}>
+          {connected
+            ? <window.WSLogoMark size={34} color="#fff" accent="rgba(255,255,255,.6)"/>
+            : <PowerGlyph size={30} color={busy ? "var(--brand-warn)" : "var(--brand)"}/>}
+          {label && <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "-0.01em" }}>{label}</span>}
+        </div>
+      </div>
+    </>
+  );
+
+  if (interactive) {
+    return (
+      <button type="button" className="ow-dial" role="button" aria-label={label} onClick={onClick}>
+        {body}
+      </button>
+    );
+  }
+  return <div className="ow-dial" aria-live="polite">{body}</div>;
+};
 
 // ── Import / Profiles ──────────────────────────────────────────────
 const Import = ({ T, api, active, confirm, onImported, onRemove, onProfilesChanged }) => {
@@ -946,7 +1083,7 @@ const Import = ({ T, api, active, confirm, onImported, onRemove, onProfilesChang
   };
 
   return (
-    <div onDragOver={onContainerDragOver} onDrop={onContainerDrop}
+    <div onDragOver={onContainerDragOver} onDrop={onContainerDrop} className="ow-screen"
          style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 720 }}>
       <Header
         title={active ? T.profiles_title : T.welcomeTitle}
@@ -1034,7 +1171,7 @@ const DropZone = ({ T, onPick, onFile }) => (
       if (f) onFile(f);
     }}
     style={{
-      border: "1.5px dashed var(--line-strong)", borderRadius: 14, padding: 32,
+      border: "1.5px dashed var(--line-strong)", borderRadius: "var(--radius-md)", padding: 32,
       background: "var(--bg-2)", textAlign: "center",
     }}>
     <div style={{
@@ -1057,10 +1194,7 @@ const DropZone = ({ T, onPick, onFile }) => (
 );
 
 const PasteArea = ({ T, value, onChange, onSubmit, disabled }) => (
-  <div style={{
-    background: "var(--bg-2)", border: "1px solid var(--line)",
-    borderRadius: 14, padding: 18,
-  }}>
+  <div className="ow-card ow-card--md" style={{ padding: 18 }}>
     <div style={{ fontSize: 13, fontWeight: 600 }}>{T.importPaste}</div>
     <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>{T.importHint}</div>
     <textarea
@@ -1085,9 +1219,8 @@ const PasteArea = ({ T, value, onChange, onSubmit, disabled }) => (
 );
 
 const ProfileCard = ({ active, onEdit, onRemove, editLabel, removeLabel }) => (
-  <div style={{
-    background: "var(--bg-2)", border: "1px solid var(--line)",
-    borderRadius: 12, padding: 16,
+  <div className="ow-card" style={{
+    padding: 16,
     display: "flex", justifyContent: "space-between", alignItems: "center",
     gap: 12,
   }}>
@@ -1179,7 +1312,7 @@ const ProfileEditor = ({ T, api, active, confirm, onUpdated, onClose }) => {
   );
 
   return (
-    <section style={{ background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 14, padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
+    <section className="ow-card ow-card--md" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
       <div>
         <div style={{ fontSize: 15, fontWeight: 600 }}>{T.edit_title}</div>
         <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>{T.edit_sub}</div>
@@ -1203,7 +1336,7 @@ const ProfileEditor = ({ T, api, active, confirm, onUpdated, onClose }) => {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div className="ow-form-grid">
         {field(T.edit_name, "name", { mono: false })}
         {field(T.edit_mtu, "mtu", { hint: T.edit_mtuHint })}
         {field(T.edit_clientIp, "client_address", { hint: T.edit_clientIpHint })}
@@ -1280,7 +1413,7 @@ const Logs = ({ T, logs, api, onClear }) => {
   ];
 
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%" }}>
+    <section className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%" }}>
       <Header title={T.logs_title} sub="outwarp-client" right={
         <>
           <select className="ow-input" value={level} onChange={(e) => setLevel(e.target.value)}
@@ -1296,7 +1429,7 @@ const Logs = ({ T, logs, api, onClear }) => {
       {exportMsg && <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-2)" }}>{exportMsg}</div>}
       <div style={{ position: "relative", flex: 1, minHeight: 360 }}>
         <div ref={ref} onScroll={onScroll} style={{
-          background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: 12,
+          background: "var(--bg-2)", border: "1px solid var(--line)", borderRadius: "var(--radius-sm)",
           fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.65,
           padding: 14, color: "var(--text-2)", overflow: "auto",
           height: "100%", cursor: "text",
@@ -1304,7 +1437,7 @@ const Logs = ({ T, logs, api, onClear }) => {
           {filtered.map((l) => (
             <div key={l.seq} style={{ display: "grid", gridTemplateColumns: "84px 60px 1fr", gap: 10 }}>
               <span style={{ color: "var(--text-3)" }}>{fmtClock(l.ts)}</span>
-              <span style={{ color: LOG_LEVEL_COLOR[l.level] || "var(--brand-2)", textTransform: "uppercase" }}>{l.level}</span>
+              <span style={{ color: LOG_LEVEL_COLOR[l.level] || "var(--text-2)", textTransform: "uppercase" }}>{l.level}</span>
               <span style={{ color: "var(--text)", wordBreak: "break-all" }}>{l.msg}</span>
             </div>
           ))}
@@ -1330,10 +1463,7 @@ const SettingsCard = ({ title, children }) => (
         margin: "0 4px 8px",
       }}>{title}</div>
     )}
-    <div style={{
-      background: "var(--bg-2)", border: "1px solid var(--line)",
-      borderRadius: 14, padding: "0 18px",
-    }}>{children}</div>
+    <div className="ow-card ow-card--md" style={{ padding: "0 18px" }}>{children}</div>
   </div>
 );
 
@@ -1358,12 +1488,20 @@ const SettingsSelect = ({ value, onChange, options }) => (
   </select>
 );
 
-const Settings = ({ T, settings, onSetting }) => {
+const Settings = ({ T, api, settings, onSetting }) => {
   // Side-effecting toggles (kill_switch on Linux/macOS, start_at_boot on a
   // platform where the registry write fails, etc.) return {ok:false}. Surface
   // the error inline; the persisted value is rolled back by the backend and
   // arrives via outwarp:settings, so the toggle's visual state self-corrects.
   const [error, setError] = useState("");
+  // Real version for the subtitle (don't hardcode — About reads it too).
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    if (!api) return;
+    let alive = true;
+    api.get_app_info().then((d) => { if (alive && d) setVersion(d.version || ""); });
+    return () => { alive = false; };
+  }, [api]);
 
   const apply = async (k, v) => {
     setError("");
@@ -1406,27 +1544,37 @@ const Settings = ({ T, settings, onSetting }) => {
       { title: T.set_minimizeTray, sub: T.set_minimizeTraySub, control: (
         <window.Toggle on={!!settings.minimize_to_tray} onChange={(v) => apply("minimize_to_tray", v)}/>
       )},
-      { title: T.set_checkUpdates, sub: T.set_checkUpdatesSub, control: (
-        <window.Toggle on={!!settings.check_updates_on_start} onChange={(v) => apply("check_updates_on_start", v)}/>
-      )},
     ]},
   ];
 
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 22, maxWidth: 720 }}>
-      <Header title={T.nav_settings} sub="outwarp-client · v0.0.1"/>
+    <section className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 22, maxWidth: 720 }}>
+      <Header title={T.nav_settings} sub={`outwarp-client${version ? " · v" + version : ""}`}/>
 
       {error && (
         <div style={{
           background: "color-mix(in srgb, var(--brand-bad) 12%, transparent)",
           border: "1px solid color-mix(in srgb, var(--brand-bad) 35%, transparent)",
           color: "var(--brand-bad)",
-          borderRadius: 12, padding: "12px 14px", fontSize: 13,
+          borderRadius: "var(--radius-sm)", padding: "12px 14px", fontSize: 13,
         }}>
           <div style={{ fontWeight: 600, marginBottom: 2 }}>{T.set_errorTitle}</div>
           <div style={{ color: "var(--text-2)", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.5 }}>{error}</div>
         </div>
       )}
+
+      <div>
+        <div style={{
+          fontSize: 11, fontWeight: 600, color: "var(--text-3)",
+          letterSpacing: ".06em", textTransform: "uppercase", margin: "0 4px 8px",
+        }}>{T.set_groupUpdates}</div>
+        <div className="ow-card ow-card--md" style={{ padding: "4px 18px 18px" }}>
+          <SettingsRow title={T.set_checkUpdates} sub={T.set_checkUpdatesSub} isLast control={
+            <window.Toggle on={!!settings.check_updates_on_start} onChange={(v) => apply("check_updates_on_start", v)}/>
+          }/>
+          <UpdatePanel T={T} api={api} autoCheck={!!settings.check_updates_on_start}/>
+        </div>
+      </div>
 
       {groups.map((g) => (
         <SettingsCard key={g.key} title={g.title}>
@@ -1586,13 +1734,10 @@ const About = ({ T, api, settings }) => {
   }
 
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 22, maxWidth: 720 }}>
+    <section className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 22, maxWidth: 720 }}>
       <Header title={T.nav_about} sub={T.about_sub}/>
 
-      <div style={{
-        background: "var(--bg-2)", border: "1px solid var(--line)",
-        borderRadius: 14, padding: 24,
-      }}>
+      <div className="ow-card ow-card--md" style={{ padding: 24 }}>
         <window.WSWordmark size={22} color="var(--text)" accent="var(--brand)"/>
         <div style={{
           marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12,
@@ -1610,8 +1755,6 @@ const About = ({ T, api, settings }) => {
             {T.about_openRepo}
           </window.Btn>
         </div>
-
-        <UpdatePanel T={T} api={api} autoCheck={!!settings?.check_updates_on_start}/>
       </div>
 
       <div>
@@ -1620,10 +1763,7 @@ const About = ({ T, api, settings }) => {
           letterSpacing: ".06em", textTransform: "uppercase",
           margin: "0 4px 8px",
         }}>{T.about_thirdParty}</div>
-        <div style={{
-          background: "var(--bg-2)", border: "1px solid var(--line)",
-          borderRadius: 14, overflow: "hidden",
-        }}>
+        <div className="ow-card ow-card--md" style={{ overflow: "hidden" }}>
           {info.third_party.map((p, i) => (
             <div key={p.name} style={{
               display: "grid", gridTemplateColumns: "1fr auto auto",

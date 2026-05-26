@@ -38,6 +38,7 @@ from outwarp.config import (
     import_owcfg_text,
     original_config_path,
 )
+from outwarp.integrity import IntegrityIssue, likely_av_quarantine
 from outwarp.logs import MemoryLogHandler
 from outwarp.platforms import PlatformError, get_platform
 from outwarp.tunnel import TunnelManager, TunnelState
@@ -180,12 +181,16 @@ class Api:
         memory_handler: MemoryLogHandler,
         manager: TunnelManager | None,
         on_manager_replaced: Callable[[TunnelManager], None] | None = None,
+        integrity_issues: list[IntegrityIssue] | None = None,
     ) -> None:
         self._window: Any = None
         self._maximized = False
         self._memory_handler = memory_handler
         self._manager: TunnelManager | None = manager
         self._on_manager_replaced = on_manager_replaced
+        # Computed once by app.py at startup; surfaced to the UI as a banner.
+        # Empty list (default) means "no issues" — the UI hides the banner.
+        self._integrity_issues: list[IntegrityIssue] = list(integrity_issues or [])
         # Clean-shutdown callback wired by app.py via set_quit_handler. Used by
         # apply_update() to quit the process after launching the installer so it
         # can replace our files. None in headless/test contexts.
@@ -749,6 +754,27 @@ class Api:
     def get_settings(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._settings)
+
+    def navigate(self, screen: str) -> dict[str, Any]:
+        """Ask the UI to switch screens. Used by the tray's 'View logs' item;
+        the JS App listens for the outwarp:navigate event."""
+        self._emit("navigate", {"screen": str(screen)})
+        return {"ok": True}
+
+    # ── integrity ─────────────────────────────────────────────────────────────
+
+    def get_integrity(self) -> dict[str, Any]:
+        """Report whether any critical bundled file is missing/empty.
+
+        Computed once at startup by app.py and cached here — the UI shows a
+        banner with AV-specific guidance when ``likely_av`` is True.
+        """
+        issues = self._integrity_issues
+        return {
+            "ok": not issues,
+            "likely_av": likely_av_quarantine(issues),
+            "issues": [i.to_dict() for i in issues],
+        }
 
     # ── about ─────────────────────────────────────────────────────────────────
 

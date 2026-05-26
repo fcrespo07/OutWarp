@@ -99,7 +99,7 @@ class TestMainEntryPoint:
         fake_webview.start.side_effect = lambda **kwargs: captured.setdefault("start_called", True)
 
         class _FakeTrayApp:
-            def __init__(self, manager, on_show, on_quit):
+            def __init__(self, manager, on_show, on_quit, api=None, lang_getter=None):
                 captured["tray_manager"] = manager
                 captured["on_show"] = on_show
                 captured["on_quit"] = on_quit
@@ -155,7 +155,7 @@ class TestMainEntryPoint:
         fake_webview.start.side_effect = lambda **kwargs: captured.setdefault("start_called", True)
 
         class _FakeTrayApp:
-            def __init__(self, manager, on_show, on_quit):
+            def __init__(self, manager, on_show, on_quit, api=None, lang_getter=None):
                 pass
             def run(self): pass
             def stop(self): pass
@@ -195,7 +195,7 @@ class TestMainEntryPoint:
         fake_webview.start.side_effect = lambda **kwargs: captured.setdefault("start_called", True)
 
         class _FakeTrayApp:
-            def __init__(self, manager, on_show, on_quit):
+            def __init__(self, manager, on_show, on_quit, api=None, lang_getter=None):
                 pass
             def run(self): pass
             def stop(self): pass

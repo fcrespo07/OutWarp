@@ -71,7 +71,7 @@ const STR = {
 
     // Settings
     set_checkUpdates: "Buscar actualizaciones al iniciar",
-    set_checkUpdatesSub: "Comprobar si hay una versión nueva al abrir la pantalla Acerca de.",
+    set_checkUpdatesSub: "Comprobar si hay una versión nueva al abrir Ajustes.",
     set_killSwitch: "Kill switch",
     set_killSwitchSub: "Bloquea todo el tráfico de internet si el túnel se cae.",
     set_autoconnect: "Reintento automático",
@@ -94,6 +94,7 @@ const STR = {
     set_groupAppearance: "Apariencia",
     set_groupConnection: "Conexión",
     set_groupSystem: "Sistema",
+    set_groupUpdates: "Actualizaciones",
     set_errorTitle: "No se pudo aplicar el ajuste",
 
     // Logs
@@ -151,6 +152,13 @@ const STR = {
     error_importNew: "Importar nuevo .owcfg",
     retry: "Reintentar",
     bootError: "No se pudo iniciar la interfaz.",
+    integrity_av: "Tu antivirus parece haber eliminado parte de OutWarp.",
+    integrity_av_cta: "Es un falso positivo conocido (HackTool:Win32/Wstunnel). Reinstala y añade una exclusión para la carpeta de OutWarp.",
+    integrity_generic: "Faltan ficheros del programa. Reinstala OutWarp para repararlos.",
+    integrity_details: "Ver detalles",
+    integrity_hide: "Ocultar detalles",
+    integrity_help: "Cómo solucionarlo",
+    integrity_dismiss: "Cerrar aviso",
     reconnectAttempt: "Intento",
     importReading: "Leyendo archivo…",
     errorUnknown: "Error desconocido",
@@ -175,6 +183,7 @@ const STR = {
     // Misc
     profile: "Perfil",
     home_ribbon: "Tu tráfico viaja cifrado por wstunnel → WireGuard.",
+    home_clickToConnect: "Pulsa el botón para conectar.",
     home_secure_title: "Tráfico cifrado",
     home_secure_body: "WireGuard sobre WebSocket (wstunnel).",
     home_pinned_title: "Certificado anclado",
@@ -250,7 +259,7 @@ const STR = {
     upd_copied: "Copied",
 
     set_checkUpdates: "Check for updates on startup",
-    set_checkUpdatesSub: "Check for a newer version when opening the About screen.",
+    set_checkUpdatesSub: "Check for a newer version when opening Settings.",
     set_killSwitch: "Kill switch",
     set_killSwitchSub: "Block all internet traffic if the tunnel drops.",
     set_autoconnect: "Automatic retry",
@@ -273,6 +282,7 @@ const STR = {
     set_groupAppearance: "Appearance",
     set_groupConnection: "Connection",
     set_groupSystem: "System",
+    set_groupUpdates: "Updates",
     set_errorTitle: "Couldn't apply the setting",
 
     logs_title: "Activity log",
@@ -325,6 +335,13 @@ const STR = {
     error_importNew: "Import a new .owcfg",
     retry: "Retry",
     bootError: "Couldn't start the interface.",
+    integrity_av: "Your antivirus appears to have removed part of OutWarp.",
+    integrity_av_cta: "It's a known false positive (HackTool:Win32/Wstunnel). Reinstall and add an exclusion for the OutWarp folder.",
+    integrity_generic: "Some program files are missing. Reinstall OutWarp to repair them.",
+    integrity_details: "Show details",
+    integrity_hide: "Hide details",
+    integrity_help: "How to fix",
+    integrity_dismiss: "Dismiss",
     reconnectAttempt: "Attempt",
     importReading: "Reading file…",
     errorUnknown: "Unknown error",
@@ -345,6 +362,7 @@ const STR = {
 
     profile: "Profile",
     home_ribbon: "Your traffic is encrypted via wstunnel → WireGuard.",
+    home_clickToConnect: "Click the dial to connect.",
     home_secure_title: "Encrypted traffic",
     home_secure_body: "WireGuard over WebSocket (wstunnel).",
     home_pinned_title: "Pinned certificate",
