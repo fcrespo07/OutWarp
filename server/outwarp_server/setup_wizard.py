@@ -18,6 +18,7 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from outwarp_server.config import ServerConfig
 from outwarp_server.crypto import generate_tls_cert, generate_wg_keypair
 from outwarp_server.platforms import PlatformError, get_server_platform
+from outwarp_server.platforms.base import PrerequisiteStatus
 from outwarp_server.wireguard import build_server_wg_conf
 
 log = logging.getLogger(__name__)
@@ -100,6 +101,21 @@ def run_setup(config_dir: Path) -> int:
         )
         return 1
     console.print(f"  [green]✓[/green] wg: {wg_bin}")
+
+    # OS-level prereqs: NetNat WMI provider on Windows (no-op on Linux).
+    # If we proceed without this, the server starts, wstunnel listens, but
+    # client traffic gets no return path (NAT silently absent). Bail loudly.
+    console.print("\n[bold]Checking OS prerequisites...[/bold]")
+    prereq = get_server_platform().check_prerequisites()
+    if prereq.status is PrerequisiteStatus.REBOOT_REQUIRED:
+        console.print(f"  [yellow]⚠[/yellow]  {prereq.detail}")
+        console.print(f"\n  [bold]{prereq.remediation}[/bold]")
+        return 2
+    if prereq.status is PrerequisiteStatus.FAILED:
+        console.print(f"  [red]✗[/red] {prereq.detail}")
+        console.print(f"\n{prereq.remediation}")
+        return 1
+    console.print("  [green]✓[/green] NAT prerequisites available")
 
     # Detect public IP
     console.print("\n[bold]Detecting public IP...[/bold]")

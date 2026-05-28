@@ -313,11 +313,29 @@ class ServerManager:
         try:
             platform = get_server_platform()
 
-            # OS-level setup (IP forwarding, NAT, firewall) — idempotent no-op on Linux.
+            # Verify NAT prerequisites (Windows: MSFT_NetNat WMI provider).
+            # If we skip this and prepare_system() silently no-ops the NAT
+            # creation, the server appears healthy but clients get no return
+            # traffic — the failure mode that originally hid behind a
+            # log.warning. Fail loudly instead.
+            from outwarp_server.platforms.base import PrerequisiteStatus
+            prereq = platform.check_prerequisites()
+            if prereq.status is not PrerequisiteStatus.OK:
+                log.error(
+                    "Server cannot start — OS prerequisites not met: %s | %s",
+                    prereq.detail, prereq.remediation,
+                )
+                self._set_state(ServerState.ERROR)
+                return
+
+            # OS-level setup (IP forwarding, NAT, firewall). prepare_system()
+            # now raises PlatformError if NAT can't be created — propagate it.
             try:
                 platform.prepare_system(self._config.subnet, self._config.port)
             except PlatformError as exc:
-                log.warning("prepare_system: %s", exc)
+                log.error("prepare_system failed: %s", exc)
+                self._set_state(ServerState.ERROR)
+                return
 
             log.info("Installing WireGuard server interface")
             try:

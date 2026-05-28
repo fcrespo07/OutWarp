@@ -702,6 +702,25 @@ class Api:
             return {"ok": False, "error": err}
         self._emit_setup("deps", "ok", f"wstunnel={wstunnel_bin}, wg={wg_bin}")
 
+        # Phase: prereqs — verify (and on Windows, install) the NAT WMI
+        # provider before we let the wizard write any config. Without this,
+        # setup happily completes and the user only finds out at first connect
+        # that no return traffic flows.
+        from outwarp_server.platforms.base import PrerequisiteStatus
+        self._emit_setup("prereqs", "running")
+        prereq = get_server_platform().check_prerequisites()
+        if prereq.status is PrerequisiteStatus.REBOOT_REQUIRED:
+            msg = f"{prereq.detail} {prereq.remediation}"
+            self._emit_setup("prereqs", "reboot", msg)
+            self._emit("setup_done", {"ok": False, "error": msg, "reboot": True})
+            return {"ok": False, "error": msg, "reboot": True}
+        if prereq.status is PrerequisiteStatus.FAILED:
+            msg = f"{prereq.detail} {prereq.remediation}"
+            self._emit_setup("prereqs", "fail", msg)
+            self._emit("setup_done", {"ok": False, "error": msg})
+            return {"ok": False, "error": msg}
+        self._emit_setup("prereqs", "ok")
+
         # Phase: cert
         self._emit_setup("cert", "running")
         cfg_dir = default_config_dir()

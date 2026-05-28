@@ -173,3 +173,133 @@ class TestStubPlatforms:
             return_value=type("R", (), {"stdout": "", "returncode": 0})(),
         ):
             assert p.is_wstunnel_running() is False
+
+
+def _ps_result(stdout: str = "", stderr: str = "", returncode: int = 0):
+    return type("R", (), {"stdout": stdout, "stderr": stderr, "returncode": returncode})()
+
+
+class TestWindowsPrerequisites:
+    """Bootstrap of the MSFT_NetNat WMI provider on Windows.
+
+    The platform layer probes the provider and (if missing) tries to enable
+    the Windows optional features that ship it. These tests cover the three
+    outcomes: already present, enabled after auto-bootstrap (REBOOT_REQUIRED),
+    and a damaged image where no feature enable can recover (FAILED).
+    """
+
+    def _platform(self):
+        from outwarp_server.platforms.windows import WindowsServerPlatform
+        return WindowsServerPlatform()
+
+    def test_ok_when_class_already_registered(self) -> None:
+        from outwarp_server.platforms.base import PrerequisiteStatus
+
+        with patch(
+            "outwarp_server.platforms.windows._ps",
+            return_value=_ps_result(stdout="OK\n"),
+        ) as mock_ps:
+            result = self._platform().check_prerequisites()
+        assert result.status is PrerequisiteStatus.OK
+        # Probe ran exactly once — no feature enable attempted.
+        assert mock_ps.call_count == 1
+
+    def test_reboot_required_when_enable_returns_restart_needed(self) -> None:
+        from outwarp_server.platforms.base import PrerequisiteStatus
+
+        responses = iter([
+            _ps_result(stdout="MISSING\n"),  # initial probe
+            _ps_result(stdout="reboot\n"),   # Enable-WindowsOptionalFeature Containers
+        ])
+        with patch(
+            "outwarp_server.platforms.windows._ps",
+            side_effect=lambda *a, **kw: next(responses),
+        ):
+            result = self._platform().check_prerequisites()
+        assert result.status is PrerequisiteStatus.REBOOT_REQUIRED
+        assert "reboot" in result.remediation.lower()
+
+    def test_ok_after_feature_enabled_in_place(self) -> None:
+        from outwarp_server.platforms.base import PrerequisiteStatus
+
+        responses = iter([
+            _ps_result(stdout="MISSING\n"),  # initial probe
+            _ps_result(stdout="enabled\n"),  # Containers enable
+            _ps_result(stdout="OK\n"),       # re-probe after enable
+        ])
+        with patch(
+            "outwarp_server.platforms.windows._ps",
+            side_effect=lambda *a, **kw: next(responses),
+        ):
+            result = self._platform().check_prerequisites()
+        assert result.status is PrerequisiteStatus.OK
+
+    def test_failed_when_no_feature_brings_class_online(self) -> None:
+        """PCFerran's case: features enable cleanly but the NAT WMI provider
+        binaries are missing from the image, so the class never registers."""
+        from outwarp_server.platforms.base import PrerequisiteStatus
+
+        # Probe: MISSING. Then for each candidate feature: enable returns
+        # 'enabled' but re-probe still says MISSING.
+        responses = iter([
+            _ps_result(stdout="MISSING\n"),  # initial probe
+            _ps_result(stdout="enabled\n"),  # Containers enable
+            _ps_result(stdout="MISSING\n"),  # re-probe after Containers
+            _ps_result(stdout="enabled\n"),  # HypervisorPlatform enable
+            _ps_result(stdout="MISSING\n"),  # re-probe after HypervisorPlatform
+        ])
+        with patch(
+            "outwarp_server.platforms.windows._ps",
+            side_effect=lambda *a, **kw: next(responses),
+        ):
+            result = self._platform().check_prerequisites()
+        assert result.status is PrerequisiteStatus.FAILED
+        # Remediation should mention concrete recovery paths the user can act on
+        assert "DISM" in result.remediation
+        assert "Linux" in result.remediation
+
+
+class TestWindowsCreateNatRaises:
+    """`_create_nat` used to swallow the failure as a log.warning, leaving
+    the server in a zombie state (listening but unable to NAT). It now must
+    raise PlatformError so callers can fail fast and surface the issue."""
+
+    def _platform(self):
+        from outwarp_server.platforms.windows import WindowsServerPlatform
+        return WindowsServerPlatform()
+
+    def test_translates_invalid_class_into_actionable_error(self) -> None:
+        # Localised Spanish ("Clase no válida") and English ("Invalid class")
+        # both come from Windows' WMI layer — translate either into the same
+        # actionable PlatformError so the GUI shows a useful message.
+        responses = iter([
+            _ps_result(stdout=""),  # Get-NetNat probe: no existing rule
+            _ps_result(stderr="New-NetNat : Clase no válida", returncode=1),
+        ])
+        with patch(
+            "outwarp_server.platforms.windows._ps",
+            side_effect=lambda *a, **kw: next(responses),
+        ):
+            with pytest.raises(PlatformError, match="MSFT_NetNat WMI provider"):
+                self._platform()._create_nat("10.0.0.0/24")
+
+    def test_raises_with_underlying_error_on_other_failures(self) -> None:
+        responses = iter([
+            _ps_result(stdout=""),
+            _ps_result(stderr="some other error", returncode=1),
+        ])
+        with patch(
+            "outwarp_server.platforms.windows._ps",
+            side_effect=lambda *a, **kw: next(responses),
+        ):
+            with pytest.raises(PlatformError, match="some other error"):
+                self._platform()._create_nat("10.0.0.0/24")
+
+    def test_noop_when_nat_already_exists(self) -> None:
+        with patch(
+            "outwarp_server.platforms.windows._ps",
+            return_value=_ps_result(stdout="OutWarp\n"),
+        ) as mock_ps:
+            # Should not raise, should not attempt New-NetNat (only one _ps call)
+            self._platform()._create_nat("10.0.0.0/24")
+        assert mock_ps.call_count == 1

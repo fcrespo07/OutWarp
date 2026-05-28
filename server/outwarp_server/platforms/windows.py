@@ -5,7 +5,12 @@ import subprocess
 import time
 from pathlib import Path
 
-from outwarp_server.platforms.base import PlatformError, ServerPlatform
+from outwarp_server.platforms.base import (
+    PlatformError,
+    PrerequisiteResult,
+    PrerequisiteStatus,
+    ServerPlatform,
+)
 
 log = logging.getLogger(__name__)
 
@@ -127,6 +132,105 @@ class WindowsServerPlatform(ServerPlatform):
         self._create_nat(subnet)
         self._add_firewall_rule(wss_port)
 
+    # Features that ship the MSFT_NetNat WMI provider. Tried in order: the
+    # 'Containers' feature is the documented one; 'HypervisorPlatform' is the
+    # cross-edition fallback (available on Win11 Home, unlike Containers).
+    _NETNAT_FEATURES = ("Containers", "HypervisorPlatform")
+
+    def check_prerequisites(self) -> PrerequisiteResult:
+        if self._netnat_class_available():
+            return PrerequisiteResult(status=PrerequisiteStatus.OK)
+
+        log.info(
+            "MSFT_NetNat WMI class not registered — attempting to enable "
+            "Windows optional features that ship it"
+        )
+        needs_reboot = False
+        for feature in self._NETNAT_FEATURES:
+            outcome = self._enable_feature(feature)
+            if outcome == "reboot":
+                log.info("Feature '%s' enabled but reboot is required", feature)
+                needs_reboot = True
+                break
+            # Enabled in-place — re-probe; if the class is live, we're done.
+            # Otherwise try the next feature before giving up.
+            if outcome == "enabled" and self._netnat_class_available():
+                log.info("MSFT_NetNat registered after enabling '%s'", feature)
+                return PrerequisiteResult(status=PrerequisiteStatus.OK)
+
+        if needs_reboot:
+            return PrerequisiteResult(
+                status=PrerequisiteStatus.REBOOT_REQUIRED,
+                detail=(
+                    "The 'Containers' Windows feature was enabled but Windows "
+                    "needs a reboot before the NAT driver becomes available."
+                ),
+                remediation=(
+                    "Reboot Windows and re-run OutWarp Server setup. "
+                    "The reboot is mandatory even if a previous DISM run "
+                    "reported 'RestartNeeded: False'."
+                ),
+            )
+
+        return PrerequisiteResult(
+            status=PrerequisiteStatus.FAILED,
+            detail=(
+                "The MSFT_NetNat WMI provider is not available and could not be "
+                "auto-installed. Without it the server cannot NAT client traffic "
+                "to the internet — clients would connect but get no data back."
+            ),
+            remediation=(
+                "Possible causes and fixes:\n"
+                "  1. Reboot and re-run setup (some Windows builds report "
+                "'RestartNeeded: False' but still need one).\n"
+                "  2. Repair the Windows image: as admin, run "
+                "'DISM /Online /Cleanup-Image /RestoreHealth' then 'sfc /scannow' "
+                "and reboot.\n"
+                "  3. Check Microsoft Defender history for quarantined NetNat.dll "
+                "or NetNat.mof (under C:\\Windows\\System32\\wbem\\) and restore them.\n"
+                "  4. As a fallback, deploy OutWarp Server on Linux — iptables "
+                "MASQUERADE works out of the box with no driver dance."
+            ),
+        )
+
+    def _netnat_class_available(self) -> bool:
+        """Whether MSFT_NetNat is registered in the WMI repository.
+
+        We probe with a literal-string echo instead of relying on exit codes so
+        a non-zero return (PSv5 quirk on some hosts) does not produce a false
+        negative.
+        """
+        r = _ps(
+            "if (Get-CimClass -ClassName MSFT_NetNat "
+            "-Namespace ROOT/StandardCimv2 -ErrorAction SilentlyContinue) "
+            "{ 'OK' } else { 'MISSING' }"
+        )
+        return "OK" in (r.stdout or "")
+
+    def _enable_feature(self, feature: str) -> str:
+        """Attempt to enable a Windows optional feature.
+
+        Returns one of: 'enabled' (online now), 'reboot' (needs restart), or
+        'failed'. We swallow all errors and turn them into 'failed' — callers
+        try the next candidate feature so a single missing one (e.g. Containers
+        on Home) doesn't block the whole prerequisite check.
+        """
+        result = _ps(
+            f"$r = Enable-WindowsOptionalFeature -Online -FeatureName {feature} "
+            "-All -NoRestart -ErrorAction SilentlyContinue; "
+            "if ($null -eq $r) { 'failed' } "
+            "elseif ($r.RestartNeeded) { 'reboot' } "
+            "else { 'enabled' }"
+        )
+        out = (result.stdout or "").strip().lower()
+        if "reboot" in out:
+            return "reboot"
+        if "enabled" in out:
+            return "enabled"
+        detail = (result.stderr or "").strip() or out
+        log.warning("Enable-WindowsOptionalFeature %s: %s", feature, detail)
+        return "failed"
+
     def _enable_ip_forwarding(self) -> None:
         try:
             import winreg
@@ -153,10 +257,25 @@ class WindowsServerPlatform(ServerPlatform):
         result = _ps(
             f"New-NetNat -Name '{_NAT_NAME}' -InternalIPInterfaceAddressPrefix '{subnet}'"
         )
-        if result.returncode != 0:
-            log.warning("Could not create NetNat for %s: %s", subnet, result.stderr.strip())
-        else:
+        if result.returncode == 0:
             log.info("Created NetNat '%s' for subnet %s", _NAT_NAME, subnet)
+            return
+
+        # Used to be a silent log.warning here. The result was a server that
+        # appeared healthy (wstunnel listening, WG handshakes completing) but
+        # produced no return traffic — clients connected and lost internet.
+        # Raise instead so callers (server_manager._do_start, the setup wizard)
+        # surface the failure in the GUI.
+        err = (result.stderr or result.stdout or "").strip()
+        if any(s in err for s in ("Invalid class", "Clase no válida", "0x80041010")):
+            raise PlatformError(
+                "Could not create NetNat: the MSFT_NetNat WMI provider is not "
+                "registered. Enable the 'Containers' Windows feature, reboot, "
+                "and re-run setup. (Underlying error: " + err + ")"
+            )
+        raise PlatformError(
+            f"Could not create NetNat for {subnet}: {err}"
+        )
 
     def _remove_nat(self) -> None:
         _ps(f"Remove-NetNat -Name '{_NAT_NAME}' -Confirm:$false -ErrorAction SilentlyContinue")
