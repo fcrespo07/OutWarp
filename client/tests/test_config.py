@@ -257,13 +257,25 @@ def test_apply_profile_patch_empty_patch_is_noop(tmp_path):
     assert apply_profile_patch(cfg, {}) == cfg
 
 
+def test_apply_profile_patch_accepts_hostnames_in_bypass(tmp_path):
+    # The runtime resolves hostnames at connect time
+    # (wireguard._resolve_bypass_networks), so the editor accepts them too.
+    cfg = _cfg(tmp_path)
+    out = apply_profile_patch(cfg, {
+        "bypass_ips": "vpn.example.com, 203.0.113.42, 198.51.100.0/24",
+    })
+    assert out.routing.bypass_ips == [
+        "vpn.example.com", "203.0.113.42", "198.51.100.0/24",
+    ]
+
+
 @pytest.mark.parametrize("patch,match", [
     ({"name": "   "}, "vacío"),
     ({"mtu": 99999}, "MTU"),
     ({"mtu": "abc"}, "MTU"),
     ({"dns": "not-an-ip"}, "DNS"),
     ({"client_address": "999.0.0.1/32"}, "IP del cliente"),
-    ({"bypass_ips": "nope"}, "bypass"),
+    ({"bypass_ips": "bad!host"}, "bypass"),
     ({"reconnect_max_attempts": 0}, "reconexión"),
     ({"reconnect_delays": ""}, "reconexión"),
     ({"reconnect_delays": "5, -1"}, "positivos"),

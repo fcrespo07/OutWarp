@@ -377,6 +377,46 @@ def _parse_ip_list(value: Any, label: str, *, allow_cidr: bool) -> list[str]:
     return out
 
 
+# RFC 1123 hostname: 1-63-char labels (alnum + hyphen, no leading/trailing
+# hyphen) joined by dots, 253 chars total. Used by the bypass list, which the
+# runtime resolves at connect time (wireguard._resolve_bypass_networks).
+_HOSTNAME_LABEL_RE = re.compile(
+    r"^(?=.{1,63}$)[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$"
+)
+
+
+def _is_hostname(value: str) -> bool:
+    if not value or len(value) > 253 or value.endswith("."):
+        return False
+    return all(_HOSTNAME_LABEL_RE.match(lbl) for lbl in value.split("."))
+
+
+def _parse_endpoint_list(value: Any, label: str) -> list[str]:
+    """Like _parse_ip_list(allow_cidr=True) but also accepts hostnames.
+
+    The runtime already resolves hostnames at connect time, so accepting them
+    on the editor side lines the validator up with what the tunnel actually
+    supports (e.g. a domain endpoint behind dynamic DNS).
+    """
+    items = _split_list(value)
+    out: list[str] = []
+    for item in items:
+        try:
+            if "/" in item:
+                ipaddress.ip_network(item, strict=False)
+            else:
+                ipaddress.ip_address(item)
+            out.append(item)
+            continue
+        except ValueError:
+            pass
+        if _is_hostname(item):
+            out.append(item)
+            continue
+        raise ConfigError(f"{label}: valor inválido '{item}' (usa una IP, CIDR o dominio)")
+    return out
+
+
 def apply_profile_patch(cfg: ClientConfig, patch: dict[str, Any]) -> ClientConfig:
     """Return a new ClientConfig with the user-editable fields in `patch` applied.
 
@@ -419,7 +459,7 @@ def apply_profile_patch(cfg: ClientConfig, patch: dict[str, Any]) -> ClientConfi
     if "bypass_ips" in patch:
         routing = replace(
             routing,
-            bypass_ips=_parse_ip_list(patch["bypass_ips"], "IPs de bypass", allow_cidr=True),
+            bypass_ips=_parse_endpoint_list(patch["bypass_ips"], "Rutas de bypass"),
         )
 
     if "reconnect_max_attempts" in patch:
