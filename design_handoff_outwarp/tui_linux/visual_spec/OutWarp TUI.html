@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <title>OutWarp · TUI Linux — versión final</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="tui-final.css"/>
+</head>
+<body>
+<div class="page">
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <header class="hd">
+    <span class="eyebrow">▸▸▸ OUTWARP · LINUX TUI · FINAL</span>
+    <h1>TUI Textual para outwarp-cli y outwarp-server</h1>
+    <p>Versión final basada en las variantes seleccionadas: cliente con layout <strong>split status / live tail</strong>, servidor con <strong>overview en tres bloques + tráfico</strong>. Reemplaza la GUI React/pywebview en Linux. Punto de entrada único por binario: <code>outwarp-cli tui</code> y <code>outwarp-server tui</code>. Persistente, refresca el estado en vivo (tick 1 s), navegación 100 % por teclado.</p>
+    <p><strong>Keybinds globales</strong>: <kbd>q</kbd>quit · <kbd>?</kbd>help · <kbd>Esc</kbd>back · <kbd>↑↓</kbd>/<kbd>j k</kbd>move · <kbd>↵</kbd>activate · <kbd>/</kbd>search · <kbd>:</kbd>command. Acciones primarias usan la inicial del verbo: <kbd>k</kbd>kill/disconnect · <kbd>r</kbd>reconnect/revoke · <kbd>a</kbd>add · <kbd>d</kbd>doctor · <kbd>l</kbd>logs · <kbd>R</kbd>restart.</p>
+  </header>
+
+  <!-- Compatibility note ────────────────────────────────────────────── -->
+  <div class="compat">
+    <div>
+      <div class="sub">Compatibilidad</div>
+      <h3>Terminales Linux soportadas</h3>
+      <p style="margin:6px 0 0;font-size:12px;color:#4a4f57;line-height:1.5">Textual detecta capacidades en runtime y degrada gracefully a 256-color + ASCII en terminales viejas. La TUI también funciona sobre SSH y dentro de tmux/screen sin perder funcionalidad.</p>
+    </div>
+    <dl>
+      <dt>GNOME Terminal · Konsole · xfce4-terminal</dt><dd><span class="ok">✓ full</span> <span class="dim">— true-color + box-drawing + sparklines</span></dd>
+      <dt>Alacritty · kitty · WezTerm · foot</dt>       <dd><span class="ok">✓ full</span> <span class="dim">— GPU-acelerados, recomendados</span></dd>
+      <dt>xterm (rxvt-unicode, st)</dt>                  <dd><span class="ok">✓ full</span> <span class="dim">— con TERM=xterm-256color</span></dd>
+      <dt>tmux / GNU Screen</dt>                         <dd><span class="ok">✓ full</span> <span class="dim">— vía passthrough true-color</span></dd>
+      <dt>SSH (cualquier cliente moderno)</dt>           <dd><span class="ok">✓ full</span> <span class="dim">— TERM se hereda del terminal local</span></dd>
+      <dt>Linux framebuffer console (tty1–tty6)</dt>     <dd><span class="dim">degradado — 16 colores, glyphs ASCII fallback</span></dd>
+      <dt>Glyphs usados</dt>                             <dd><span class="dim">solo BMP — caja (─│┌┐└┘├┤), bloques (▁▂▃▄▅▆▇█), formas (●○◐), flechas (↑↓→←↵▸). Sin emoji.</span></dd>
+      <dt>Mínimo de tamaño</dt>                          <dd><span class="dim">80 × 24 (split colapsa a una columna). Óptimo 100 × 30.</span></dd>
+    </dl>
+  </div>
+
+  <!-- ════════════════════════════ CLIENT ════════════════════════════ -->
+  <div class="section-bar">
+    <div>
+      <div class="lbl">01 — Cliente</div>
+      <div class="title">outwarp-cli tui</div>
+    </div>
+    <div class="help">4 pantallas · estado del túnel en vivo + logs</div>
+  </div>
+
+  <!-- C1 — Empty state ──────────────────────────────────────────────── -->
+  <section class="card" id="c-empty">
+    <div class="meta">
+      <div class="meta-row">
+        <span class="num">01 · cliente</span>
+        <span class="title">Empty state</span>
+        <span class="tag pri">first-run</span>
+        <span class="tag">modal: import .owcfg</span>
+      </div>
+      <p class="desc">Lo que ve el usuario en el primer arranque, sin ningún <code>.owcfg</code> importado todavía. Explica de dónde sale el archivo (el server admin), ofrece la importación con <kbd>i</kbd> (modal con file picker) y muestra exactamente dónde quedará guardado el perfil.</p>
+    </div>
+    <div class="term">
+      <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">felix@laptop ~ outwarp-cli tui — 100×30</span></div>
+      <div class="tui-bar">
+        <span>OutWarp · client</span>
+        <span class="right"><span class="pill dim">no profile</span><span class="clock">v1.0.0-alpha</span></span>
+      </div>
+      <div class="tui-body"><div class="pad">
+
+
+
+                          <span class="bright b" style="font-size:16px">no profile imported</span>
+
+
+   <span class="dim">to use OutWarp you need a</span> <span class="bright">.owcfg</span> <span class="dim">file generated by the server admin with:</span>
+
+       <span class="accent">$ outwarp-server add-client</span> <span class="dim">&lt;your-name&gt;</span>
+
+   <span class="dim">once you have the file, press</span> <span class="accent2 b">i</span> <span class="dim">to import it from this screen,</span>
+   <span class="dim">or run from any shell:</span>
+
+       <span class="accent">$ outwarp-cli import</span> <span class="dim">~/Downloads/your-name.owcfg</span>
+
+   <span class="dim">the profile will be saved at</span> <span class="bright">~/.config/outwarp/client_config.json</span>
+
+
+
+</div></div>
+      <div class="tui-footer">
+        <span><kbd>i</kbd>import .owcfg</span>
+        <span><kbd>:</kbd>command</span>
+        <span><kbd>?</kbd>help</span>
+        <span><kbd>q</kbd>quit</span>
+      </div>
+    </div>
+    <div class="impl"><b>Implementación · </b><code>class EmptyScreen(Screen)</code>. Un <code>Static</code> centrado en <code>Vertical(align="center middle")</code>. <code>action_import()</code> abre <code>ImportModal(ModalScreen)</code> con <code>Input</code> + <code>DirectoryTree</code> filtrado a <code>*.owcfg</code>. Al confirmar invoca <code>outwarp.config.import_owcfg()</code> y hace <code>self.app.push_screen("dashboard")</code>.</div>
+  </section>
+
+  <!-- C2 — Connecting ───────────────────────────────────────────────── -->
+  <section class="card" id="c-connecting">
+    <div class="meta">
+      <div class="meta-row">
+        <span class="num">02 · cliente</span>
+        <span class="title">Connecting — fases en vivo</span>
+        <span class="tag pri">live state</span>
+        <span class="tag">cancellable</span>
+      </div>
+      <p class="desc">Lo que ve el usuario mientras <code>TunnelManager</code> está en <code>CONNECTING</code> o <code>RECONNECTING</code>. Cada fase es una línea con ✓ / ● / ○ (done / in-flight / pending). El último error queda inline para resolver el caso común sin tener que abrir los logs (DNS, TLS pin, 503 del wstunnel).</p>
+    </div>
+    <div class="term">
+      <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">felix@laptop ~ outwarp-cli tui — 100×30</span></div>
+      <div class="tui-bar">
+        <span>OutWarp · client · <span style="opacity:.75">Universidad</span></span>
+        <span class="right"><span class="pill warn">◐ connecting</span><span class="clock">attempt 2 / 8 · retry in 1.4 s</span></span>
+      </div>
+      <div class="tui-body"><div class="pad">
+
+   <span class="dim">target</span>               <span class="bright">vps.fcrespo.dev:443</span>  <span class="dim">(wss / tls 1.3)</span>
+   <span class="dim">wg interface</span>         <span class="bright">wg-outwarp</span>
+   <span class="dim">wg address</span>           <span class="bright">10.13.13.42/24</span>
+   <span class="dim">tls pin</span>              <span class="bright">sha256 4f:9c:…:0e</span>
+
+   <span class="dim">─────────────────────────────────────────────────────────────────────────────────</span>
+
+     <span class="ok">✓</span>  <span class="bright">dns resolved</span>                                     <span class="dim">vps.fcrespo.dev → 89.32.144.19</span>
+     <span class="ok">✓</span>  <span class="bright">tcp connect :443</span>                                 <span class="dim">38 ms</span>
+     <span class="ok">✓</span>  <span class="bright">tls handshake</span>                                    <span class="dim">tls 1.3 · pin matches</span>
+     <span class="accent2 b">●</span>  <span class="bright">wstunnel ws upgrade</span>      <span class="dim">··· waiting for 101 switching protocols ···</span>
+     <span class="dim">○  wireguard interface up</span>
+     <span class="dim">○  exit ip probe</span>
+
+   <span class="warn">last error:</span>  <span class="dim2">attempt 1 — server replied 503 (wstunnel), retried automatically</span>
+
+</div></div>
+      <div class="tui-footer">
+        <span><kbd>k</kbd>cancel</span>
+        <span><kbd>l</kbd>logs</span>
+        <span><kbd>p</kbd>profile</span>
+        <span><kbd>?</kbd>help</span>
+        <span><kbd>q</kbd>quit</span>
+      </div>
+    </div>
+    <div class="impl"><b>Implementación · </b>el <code>TunnelManager</code> ya emite <code>TunnelState</code>. Para los sub-pasos: añadir un enum <code>Phase</code> (<code>DNS, TCP, TLS, WS_UPGRADE, WG_UP, EXIT_IP</code>) y un <code>Reactive[Phase]</code> en la screen. Cada fila es un <code>Static</code> que cambia clase (<code>.done</code> verde · <code>.active</code> azul con animación pulse vía <code>tcss</code> · <code>.pending</code> dim). El "last error" se publica desde <code>manager.last_error</code> y solo se renderiza si la cuenta de intentos > 1.</div>
+  </section>
+
+  <!-- C3 — Connected (Variant B polished — the MAIN screen) ─────────── -->
+  <section class="card" id="c-connected">
+    <div class="meta">
+      <div class="meta-row">
+        <span class="num">03 · cliente</span>
+        <span class="title">Connected — pantalla principal</span>
+        <span class="tag pri">★ home</span>
+        <span class="tag var">variant B · polished</span>
+        <span class="tag">live · 1 s tick</span>
+      </div>
+      <p class="desc">La pantalla por defecto mientras el túnel está arriba. Columna izquierda: identidad / tráfico / túnel. Columna derecha: tail de logs en vivo a altura completa. Pensada para vivir en un pane de tmux todo el día — el dato más importante (la IP de salida) ocupa el sitio más visible; los counters de tráfico se actualizan cada segundo; el log refleja al instante lo que escribe el manager.</p>
+    </div>
+    <div class="term">
+      <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">felix@laptop ~ outwarp-cli tui — 100×30</span></div>
+      <div class="tui-bar">
+        <span>OutWarp · client · <span style="opacity:.75">Universidad</span></span>
+        <span class="right"><span class="pill ok">● connected</span><span class="clock">session 00:14:32</span></span>
+      </div>
+      <div class="tui-body">
+        <div class="tui-split">
+          <div class="col">
+<span class="dim" style="font-size:10.5px;letter-spacing:.18em">EXIT IP</span>
+
+  <span class="bignum">89.32.144.19</span>
+  <span class="dim">Frankfurt, DE</span>
+  <span class="dim">via</span> <span class="accent">wss://vps.fcrespo.dev:443</span>
+
+
+<span class="dim" style="font-size:10.5px;letter-spacing:.18em">TRAFFIC · last 60 s</span>
+
+  <span class="dim">down</span>       <span class="midnum">8.4</span> <span class="unit">MB/s</span>      <span class="dim">19.7 MB total</span>
+  <span class="dim">up</span>         <span class="midnum">1.1</span> <span class="unit">MB/s</span>       <span class="dim">2.1 MB total</span>
+  <span class="dim">ping</span>       <span class="midnum">42</span> <span class="unit">ms</span>          <span class="spark">▁▂▃▂▁▂▃▄▃▂▁▂</span>
+  <span class="dim">handshake</span>  <span class="midnum">12</span> <span class="unit">s ago</span>       <span class="dim">every 25 s</span>
+
+
+<span class="dim" style="font-size:10.5px;letter-spacing:.18em">TUNNEL</span>
+
+  <span class="dim">iface</span>      <span class="bright">wg-outwarp · 10.13.13.42/24</span>
+  <span class="dim">peer</span>       <span class="bright">XaB…3kJ=</span>
+  <span class="dim">remote</span>     <span class="bright">vps.fcrespo.dev:51820</span>
+  <span class="dim">mtu</span>        <span class="bright">1280</span>
+  <span class="dim">dns</span>        <span class="bright">10.13.13.1, 1.1.1.1</span>
+          </div>
+          <div class="div"></div>
+          <div class="col">
+<span class="dim" style="font-size:10.5px;letter-spacing:.18em">LOG · live tail</span>                                       <span class="dim" style="float:right;font-size:10.5px">~/.local/share/outwarp/outwarp.log</span>
+
+<span class="dim">12:04:18 </span> <span class="ok">INFO </span> tunnel starting (attempt 1/8)
+<span class="dim">12:04:18 </span> <span class="ok">INFO </span> wstunnel handshake ok
+<span class="dim">12:04:18 </span> <span class="ok">INFO </span> wireguard peer added
+<span class="dim">12:04:19 </span> <span class="ok">INFO </span> handshake completed in 412 ms
+<span class="dim">12:04:20 </span> <span class="ok">INFO </span> exit ip 89.32.144.19 (Frankfurt, DE)
+<span class="dim">12:04:34 </span> <span class="ok">INFO </span> keepalive handshake 388 ms
+<span class="dim">12:04:56 </span> <span class="ok">INFO </span> keepalive handshake 401 ms
+<span class="dim">12:05:18 </span> <span class="dim2">────── keepalive ok ──────</span>
+<span class="dim">12:05:42 </span> <span class="ok">INFO </span> keepalive handshake 395 ms
+<span class="dim">12:06:04 </span> <span class="ok">INFO </span> keepalive handshake 408 ms
+<span class="dim">12:06:26 </span> <span class="ok">INFO </span> keepalive handshake 391 ms
+<span class="dim">12:06:48 </span> <span class="ok">INFO </span> keepalive handshake 412 ms
+<span class="dim">12:07:10 </span> <span class="ok">INFO </span> keepalive handshake 384 ms
+<span class="dim">12:07:32 </span> <span class="ok">INFO </span> keepalive handshake 396 ms
+<span class="dim">12:07:54 </span> <span class="ok">INFO </span> keepalive handshake 411 ms
+<span class="dim">12:08:16 </span> <span class="ok">INFO </span> keepalive handshake 387 ms
+
+<span class="accent2 b">▸ following</span><span class="cursor"> </span>
+          </div>
+        </div>
+      </div>
+      <div class="tui-footer">
+        <span><kbd>k</kbd>disconnect</span>
+        <span><kbd>r</kbd>reconnect</span>
+        <span><kbd>L</kbd>logs fullscreen</span>
+        <span><kbd>p</kbd>profile</span>
+        <span><kbd>tab</kbd>swap focus</span>
+        <span><kbd>:</kbd>cmd</span>
+        <span><kbd>?</kbd>help</span>
+        <span><kbd>q</kbd>quit</span>
+      </div>
+    </div>
+    <div class="impl"><b>Implementación · </b><code>class DashboardScreen(Screen)</code>. <code>compose()</code> devuelve <code>Horizontal(StatusCol, RichLog(highlight=True, markup=True, max_lines=500))</code>. La columna izquierda se actualiza con <code>set_interval(1.0, self.refresh_stats)</code> leyendo de <code>TunnelManager.stats()</code> (rx/tx desde <code>/proc/net/wireguard</code>, latencia con un ping interno cada 5 s, sesión = ahora − connected_at). El <code>RichLog</code> sigue el fichero vía <code>asyncio</code> tail con reapertura por inode (igual lógica que <code>_cmd_logs --follow</code> ya en <code>cli.py</code>). Bajo <b>80 cols</b> Textual colapsa el <code>Horizontal</code> en <code>Vertical</code> automáticamente con un <code>@media</code> tcss.</div>
+  </section>
+
+  <!-- C4 — Logs fullscreen ──────────────────────────────────────────── -->
+  <section class="card" id="c-logs">
+    <div class="meta">
+      <div class="meta-row">
+        <span class="num">04 · cliente</span>
+        <span class="title">Logs — fullscreen</span>
+        <span class="tag">push from [L]</span>
+        <span class="tag">filter · search</span>
+      </div>
+      <p class="desc">El tail del dashboard a pantalla completa para hacer un análisis serio. Filtro por nivel (chips), búsqueda con <kbd>/</kbd>, saltar al principio/final con <kbd>g</kbd>/<kbd>G</kbd>, copiar la selección con <kbd>c</kbd>. Reemplaza <code>tail -f ~/.local/share/outwarp/outwarp.log</code> con búsqueda y colores.</p>
+    </div>
+    <div class="term">
+      <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">felix@laptop ~ outwarp-cli tui — 100×30</span></div>
+      <div class="tui-bar">
+        <span>OutWarp · client · logs</span>
+        <span class="right"><span class="pill dim">142 lines · 12.4 KB</span><span class="clock">following</span></span>
+      </div>
+      <div class="tui-body">
+        <div class="sect">
+          <span><span class="dim">filter</span>  <span class="hl bright">&nbsp;all&nbsp;</span>  <span class="dim">info</span>  <span class="dim">warn</span>  <span class="dim">error</span>     <span class="dim">search</span> <span class="cursor"> </span></span>
+          <span class="r"><span class="dim">~/.local/share/outwarp/outwarp.log</span></span>
+        </div>
+        <div class="pad">
+<span class="dim">12:04:18  </span><span class="ok">INFO  </span><span class="dim2">tunnel.py:142  </span>starting tunnel (attempt 1/8)
+<span class="dim">12:04:18  </span><span class="ok">INFO  </span><span class="dim2">tunnel.py:201  </span>wstunnel handshake ok
+<span class="dim">12:04:18  </span><span class="ok">INFO  </span><span class="dim2">tunnel.py:215  </span>wireguard interface wg-outwarp up
+<span class="dim">12:04:19  </span><span class="ok">INFO  </span><span class="dim2">tunnel.py:240  </span>handshake completed in 412 ms
+<span class="dim">12:04:20  </span><span class="ok">INFO  </span><span class="dim2">tunnel.py:268  </span>exit ip 89.32.144.19  (Frankfurt, DE)
+<span class="dim">12:04:34  </span><span class="ok">INFO  </span><span class="dim2">tunnel.py:182  </span>keepalive handshake 388 ms
+<span class="dim">12:05:18  </span><span class="warn">WARN  </span><span class="dim2">tunnel.py:319  </span>reconnect: server replied 503, retrying in 2 s
+<span class="dim">12:05:20  </span><span class="ok">INFO  </span><span class="dim2">tunnel.py:201  </span>wstunnel handshake ok
+<span class="dim">12:05:20  </span><span class="ok">INFO  </span><span class="dim2">tunnel.py:240  </span>handshake completed in 412 ms
+<span class="dim">12:07:04  </span><span class="warn">WARN  </span><span class="dim2">network.py:88  </span>captive portal suspected — dns 10.13.13.1 unreachable
+<span class="dim">12:07:08  </span><span class="ok">INFO  </span><span class="dim2">network.py:94  </span>captive portal cleared
+<span class="dim">12:08:16  </span><span class="ok">INFO  </span><span class="dim2">tunnel.py:182  </span>keepalive handshake 387 ms
+<span class="dim">12:09:04  </span><span class="bad">ERROR </span><span class="dim2">tunnel.py:412  </span>tls fingerprint mismatch — got sha256 11:22:…:ff
+<span class="dim">12:09:04  </span><span class="ok">INFO  </span><span class="dim2">tunnel.py:418  </span>retrying with current pin
+<span class="dim">12:09:06  </span><span class="ok">INFO  </span><span class="dim2">tunnel.py:240  </span>handshake completed in 405 ms
+
+<span class="accent2 b">▸ following</span> <span class="dim">· tail at line 142</span><span class="cursor"> </span>
+        </div>
+      </div>
+      <div class="tui-footer">
+        <span><kbd>f</kbd>filter</span>
+        <span><kbd>/</kbd>search</span>
+        <span><kbd>g</kbd>/<kbd>G</kbd>top/bottom</span>
+        <span><kbd>c</kbd>copy</span>
+        <span><kbd>F</kbd>follow on/off</span>
+        <span><kbd>Esc</kbd>back</span>
+        <span><kbd>?</kbd>help</span>
+      </div>
+    </div>
+    <div class="impl"><b>Implementación · </b><code>class LogsScreen(Screen)</code> con un <code>RichLog</code> al máximo. Los chips de filtro son <code>RadioButton</code>s estilizados como pills (clases tcss). La búsqueda usa <code>str.lower() in line.lower()</code> sobre el buffer en memoria; al limpiar el <code>Input</code> se rehidrata el buffer desde el fichero. Reusa la misma lógica de tail-with-rotation que ya está en <code>cli.py::_cmd_logs</code> — extraer a <code>logs.py::tail_follow(path) → AsyncIterator[str]</code>.</div>
+  </section>
+
+  <!-- ════════════════════════════ SERVER ════════════════════════════ -->
+  <div class="section-bar">
+    <div>
+      <div class="lbl">02 — Servidor</div>
+      <div class="title">outwarp-server tui</div>
+    </div>
+    <div class="help">4 pantallas · dashboard + clients + add + doctor</div>
+  </div>
+
+  <!-- S1 — Dashboard (Variant B polished — the MAIN screen) ─────────── -->
+  <section class="card" id="s-dashboard">
+    <div class="meta">
+      <div class="meta-row">
+        <span class="num">05 · servidor</span>
+        <span class="title">Dashboard — pantalla principal</span>
+        <span class="tag pri">★ home</span>
+        <span class="tag var">variant B · polished</span>
+        <span class="tag">overview-first</span>
+      </div>
+      <p class="desc">Lo primero que ve el admin al abrir <code>outwarp-server tui</code>. Tres bloques a la izquierda (services / network / tls) le contestan en 5 segundos a "¿está funcionando todo?". Tres bloques a la derecha (clients / traffic / top talkers) contestan a "¿quién está usando esto y cuánto?". La tabla completa de clientes va a una pantalla aparte (<kbd>c</kbd>) — en el dashboard solo aparece el resumen.</p>
+    </div>
+    <div class="term">
+      <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">root@vps ~ outwarp-server tui — 110×30</span></div>
+      <div class="tui-bar">
+        <span>OutWarp · server · <span style="opacity:.75">vps.fcrespo.dev</span></span>
+        <span class="right"><span class="pill ok">● running</span><span class="clock">uptime 12 d 04 h 33 m</span></span>
+      </div>
+      <div class="tui-body">
+        <div class="tui-split">
+          <div class="col">
+<span class="dim" style="font-size:10.5px;letter-spacing:.18em">SERVICES</span>
+
+  <span class="ok">●</span>  <span class="bright">wstunnel</span>          <span class="dim">active (running) · pid 1042 · up 12 d</span>
+  <span class="ok">●</span>  <span class="bright">wg-quick@wg0</span>      <span class="dim">active · iface wg0 up · 7 peers</span>
+  <span class="ok">●</span>  <span class="bright">outwarp-server</span>    <span class="dim">active · self · pid 8231</span>
+
+
+<span class="dim" style="font-size:10.5px;letter-spacing:.18em">NETWORK</span>
+
+  <span class="dim">endpoint</span>      <span class="bright">vps.fcrespo.dev:443</span>
+  <span class="dim">public ip</span>     <span class="bright">89.32.144.19</span>  <span class="dim">Frankfurt, DE</span>
+  <span class="dim">subnet</span>        <span class="bright">10.13.13.0/24</span>
+  <span class="dim">wg listen</span>     <span class="bright">51820/udp</span>  <span class="dim">(127.0.0.1 only)</span>
+  <span class="dim">ip_forward</span>    <span class="ok">on</span>  <span class="dim">(runtime + sysctl drop-in)</span>
+  <span class="dim">nat</span>           <span class="ok">MASQUERADE</span>  <span class="dim">on 10.13.13.0/24</span>
+
+
+<span class="dim" style="font-size:10.5px;letter-spacing:.18em">TLS</span>
+
+  <span class="dim">fingerprint</span>   <span class="bright">sha256 4f:9c:…:0e</span>
+  <span class="dim">valid until</span>   <span class="bright">2026-08-12</span>  <span class="ok">113 days remaining</span>
+  <span class="dim">transport</span>     <span class="bright">tls 1.3 + websocket</span>
+          </div>
+          <div class="div"></div>
+          <div class="col">
+<span class="dim" style="font-size:10.5px;letter-spacing:.18em">CLIENTS</span>
+
+  <span class="ok">online</span>      <span class="bignum">4</span>     <span class="ok">●●●●</span>
+  <span class="warn">idle</span>        <span class="midnum">1</span>     <span class="warn">◐</span>
+  <span class="dim">offline</span>     <span class="midnum">2</span>     <span class="dim">○○</span>
+  <span class="dim">total</span>       <span class="bright">7</span>
+
+
+<span class="dim" style="font-size:10.5px;letter-spacing:.18em">TRAFFIC · last 24 h</span>
+
+  <span class="dim">down</span>        <span class="midnum">1.78</span> <span class="unit">GB</span>     <span class="dim">avg 21 KB/s</span>
+  <span class="dim">up</span>          <span class="midnum">358</span> <span class="unit">MB</span>      <span class="dim">avg 4 KB/s</span>
+  <span class="dim">total</span>       <span class="bright">2.13 GB</span>
+
+  <span class="spark">▁▂▃▂▁▂▄▅▆▅▄▃▂▁▂▃▄▅▆▅▄▃▂▁</span>
+  <span class="dim">00 h</span>                  <span class="dim">← now →</span>            <span class="dim">24 h</span>
+
+
+<span class="dim" style="font-size:10.5px;letter-spacing:.18em">TOP TALKERS · last 1 h</span>
+
+  <span class="bright">felix-phone</span>      <span class="dim">412 MB</span>   <span class="ok">▆▆▆▆▆▆▆▆</span>
+  <span class="bright">homelab</span>          <span class="dim"> 88 MB</span>   <span class="ok">▆▆</span>
+  <span class="bright">felix-laptop</span>     <span class="dim"> 21 MB</span>   <span class="ok">▌</span>
+          </div>
+        </div>
+      </div>
+      <div class="tui-footer">
+        <span><kbd>c</kbd>clients</span>
+        <span><kbd>a</kbd>add client</span>
+        <span><kbd>d</kbd>doctor</span>
+        <span><kbd>l</kbd>logs</span>
+        <span><kbd>R</kbd>restart</span>
+        <span><kbd>s</kbd>settings</span>
+        <span><kbd>:</kbd>cmd</span>
+        <span><kbd>?</kbd>help</span>
+        <span><kbd>q</kbd>quit</span>
+      </div>
+    </div>
+    <div class="impl"><b>Implementación · </b><code>class DashboardScreen(Screen)</code>. <code>compose()</code>: <code>Horizontal(LeftPanel, RightPanel)</code> donde cada panel es un <code>Vertical</code> con <code>Static</code> cards bordeadas en tcss. <b>Datos</b>: services vía <code>platform.is_wstunnel_running()</code> y <code>is_wg_active()</code>; network/tls vía <code>ServerConfig</code> + <code>cryptography</code> para leer fingerprint y expiración; clients vía <code>get_live_peers()</code> + <code>ServerConfig.clients</code>; tráfico 24 h y top talkers requieren <b>backend nuevo</b>: snapshot del transfer rx/tx por peer cada 60 s en <code>~/.local/state/outwarp/traffic.sqlite</code> — añadir <code>server/outwarp_server/traffic_history.py</code> que se arranca con el server.</div>
+  </section>
+
+  <!-- S2 — Clients full table ───────────────────────────────────────── -->
+  <section class="card" id="s-clients">
+    <div class="meta">
+      <div class="meta-row">
+        <span class="num">06 · servidor</span>
+        <span class="title">Clients — tabla completa</span>
+        <span class="tag">push from [c]</span>
+        <span class="tag">DataTable · sortable · filterable</span>
+      </div>
+      <p class="desc">La lista completa de peers, equivalente visual de <code>outwarp-server list-clients</code> pero en vivo. Una fila por cliente, ordenable por cualquier columna (<kbd>n/i/s/h/r/t</kbd> en mayúscula para invertir). Búsqueda con <kbd>/</kbd>. <kbd>a</kbd> añade, <kbd>r</kbd> revoca el seleccionado (con confirmación), <kbd>↵</kbd> abre detalle.</p>
+    </div>
+    <div class="term">
+      <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">root@vps ~ outwarp-server tui — 110×30</span></div>
+      <div class="tui-bar">
+        <span>OutWarp · server · clients</span>
+        <span class="right"><span class="pill ok">4 online</span><span class="pill warn">1 idle</span><span class="pill dim">2 offline</span><span class="clock">7 total</span></span>
+      </div>
+      <div class="tui-body">
+        <div class="sect">
+          <span><span class="dim">sort</span>  <span class="hl bright">&nbsp;name ▲&nbsp;</span>  <span class="dim">addr</span>  <span class="dim">status</span>  <span class="dim">hs</span>  <span class="dim">rx</span>  <span class="dim">tx</span>     <span class="dim">search</span> <span class="bright">felix</span><span class="cursor"> </span></span>
+          <span class="r"><span class="dim">3 of 7 matching</span></span>
+        </div>
+        <div class="pad" style="padding-top:8px">
+<div class="row hd2"><span></span><span>name</span><span>address</span><span>status</span><span>last hs</span><span>rx</span><span>tx</span><span>endpoint</span></div>
+<div class="row selected"><span class="ok b">●</span><span class="bright b">felix-laptop</span><span class="bright">10.13.13.2</span><span class="ok">online</span><span>12 s ago</span><span>412 MB</span><span>38 MB</span><span class="dim">85.x.x.4:52114</span></div>
+<div class="row"><span class="ok">●</span><span class="bright">felix-phone</span><span>10.13.13.3</span><span class="ok">online</span><span>34 s ago</span><span>1.2 GB</span><span>89 MB</span><span class="dim">85.x.x.4:51022</span></div>
+<div class="row"><span class="ok">●</span><span class="bright">felix-tablet</span><span>10.13.13.9</span><span class="ok">online</span><span>2 m ago</span><span>12 MB</span><span>1.4 MB</span><span class="dim">85.x.x.4:60014</span></div>
+<div class="row hd2" style="margin-top:14px;border-bottom:0;border-top:1px solid #ffffff14;padding-top:8px;color:#4a4f57">filtered out</div>
+<div class="row" style="opacity:.35"><span class="ok">●</span><span>homelab</span><span>10.13.13.4</span><span class="ok">online</span><span>1 m ago</span><span>8.4 MB</span><span>210 MB</span><span class="dim">178.x.x.9:443</span></div>
+<div class="row" style="opacity:.35"><span class="ok">●</span><span>laura-laptop</span><span>10.13.13.5</span><span class="ok">online</span><span>2 m ago</span><span>12 MB</span><span>1.4 MB</span><span class="dim">37.x.x.2:60014</span></div>
+<div class="row" style="opacity:.35"><span class="dim">○</span><span class="dim">guest-2024-01</span><span class="dim">10.13.13.6</span><span class="dim">offline</span><span class="dim">12 h ago</span><span class="dim">0 B</span><span class="dim">0 B</span><span class="dim">—</span></div>
+<div class="row" style="opacity:.35"><span class="dim">○</span><span class="dim">ci-runner</span><span class="dim">10.13.13.7</span><span class="dim">offline</span><span class="dim">3 d ago</span><span class="dim">0 B</span><span class="dim">0 B</span><span class="dim">—</span></div>
+        </div>
+      </div>
+      <div class="tui-footer">
+        <span><kbd>a</kbd>add</span>
+        <span><kbd>r</kbd>revoke</span>
+        <span><kbd>↵</kbd>details</span>
+        <span><kbd>/</kbd>search</span>
+        <span><kbd>e</kbd>export .owcfg</span>
+        <span><kbd>Esc</kbd>back</span>
+        <span><kbd>?</kbd>help</span>
+        <span><kbd>q</kbd>quit</span>
+      </div>
+    </div>
+    <div class="impl"><b>Implementación · </b><code>class ClientsScreen(Screen)</code> con <code>textual.widgets.DataTable</code> (sort nativo). La fuente es la misma <code>get_live_peers()</code> que usa <code>_cmd_list_clients</code>. Refresco con <code>set_interval(2.0, ...)</code>. <code>action_revoke()</code> pide confirmación con un <code>ModalScreen</code> "Revoke felix-laptop? [y/N]" y luego llama a <code>remove_peer_live() + ServerConfig.save() + install_wg_config()</code> — extraer toda esa secuencia a <code>server/outwarp_server/operations.py::revoke_client(config, name) → RevokeResult</code> para que CLI y TUI compartan código.</div>
+  </section>
+
+  <!-- S3 — Add Client modal ─────────────────────────────────────────── -->
+  <section class="card" id="s-add">
+    <div class="meta">
+      <div class="meta-row">
+        <span class="num">07 · servidor</span>
+        <span class="title">Add client — modal</span>
+        <span class="tag pri">modal</span>
+        <span class="tag">over dashboard</span>
+      </div>
+      <p class="desc">El momento clave del server: la TUI tiene que generar un archivo útil. Por eso muestra IP auto-asignada, recordatorio de que las keys se generan localmente, y al confirmar con <kbd>↵</kbd> aparece el output (path, sha256, hot-add a wireguard) con un warning explícito sobre la private key. <kbd>Q</kbd> renderiza el .owcfg como QR para escaneo móvil sin transferir el fichero.</p>
+    </div>
+    <div class="term">
+      <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">root@vps ~ outwarp-server tui — 110×30</span></div>
+      <div class="tui-bar">
+        <span>OutWarp · server · <span style="opacity:.75">vps.fcrespo.dev</span></span>
+        <span class="right"><span class="pill ok">● running</span><span class="clock">add client</span></span>
+      </div>
+      <div class="tui-body modal-stack">
+        <div class="pad behind">
+   <span class="dim">endpoint</span>      <span class="bright">vps.fcrespo.dev:443</span>      <span class="dim">subnet</span>   <span class="bright">10.13.13.0/24</span>      <span class="dim">wg port</span>   <span class="bright">51820/udp</span>
+   <span class="dim">tls</span>           <span class="bright">sha256 4f:9c:…:0e</span>       <span class="dim">expires</span>  <span class="bright">2026-08-12</span>          <span class="dim">7 clients · 4 online</span>
+        </div>
+        <div class="modal">
+          <div class="mhd">
+            <span>add client</span>
+            <span style="font-weight:400;letter-spacing:.06em;text-transform:none">in /etc/outwarp/clients/</span>
+          </div>
+          <div class="mbody">
+            <div class="field"><span class="lbl"><span class="dim">name</span></span> <span class="bright">felix-tablet</span><span class="cursor">_</span></div>
+            <div class="field"><span class="lbl"><span class="dim">address</span></span> <span class="bright">10.13.13.9</span>  <span class="dim">auto-assigned (next free in subnet)</span></div>
+            <div class="field"><span class="lbl"><span class="dim">keys</span></span> <span class="dim">generated locally on this server (curve25519)</span></div>
+
+            <div class="alert ok">
+              <div><span class="ok">✓</span> <span class="bright">felix-tablet.owcfg</span> <span class="dim">· 812 B · sha256 7a:bf:3e:…:09</span></div>
+              <div><span class="dim">    written to</span> <span class="bright">/etc/outwarp/clients/felix-tablet.owcfg</span></div>
+              <div><span class="ok">✓</span> <span class="dim">hot-added to wireguard ·</span> <span class="bright">wg syncconf wg0</span> <span class="ok">ok</span></div>
+            </div>
+
+            <div class="alert warn">
+              <span style="color:#ff8a3d">⚠</span> envía el .owcfg de forma segura (signal, age, scp). lleva la <span class="b">private key</span> del cliente — no lo mandes por email ni lo subas a un repo.
+            </div>
+          </div>
+          <div class="actions">
+            <span><kbd>↵</kbd> create &amp; close</span>
+            <span><kbd>c</kbd> copy path</span>
+            <span><kbd>Q</kbd> show QR</span>
+            <span><kbd>Esc</kbd> cancel</span>
+          </div>
+        </div>
+      </div>
+      <div class="tui-footer">
+        <span><kbd>Esc</kbd>cancel</span>
+        <span><kbd>↵</kbd>create</span>
+        <span><kbd>?</kbd>help</span>
+      </div>
+    </div>
+    <div class="impl"><b>Implementación · </b><code>class AddClientModal(ModalScreen[ClientEntry | None])</code>. <code>compose()</code>: <code>Input(name)</code> + <code>Static</code> con preview de IP + bloque de result. En el submit: misma lógica que <code>_cmd_add_client</code> en <code>cli.py</code> — extraer a <code>operations.py::add_client(config, name) → AddResult</code> reutilizable. <code>show QR</code> (<kbd>Q</kbd>): renderiza el .owcfg con <code>qrcode</code> + <code>rich</code> en un <code>RichLog</code> — el cliente móvil lo escanea sin tener que pasar el fichero.</div>
+  </section>
+
+  <!-- S4 — Doctor ───────────────────────────────────────────────────── -->
+  <section class="card" id="s-doctor">
+    <div class="meta">
+      <div class="meta-row">
+        <span class="num">08 · servidor</span>
+        <span class="title">Doctor — diagnósticos con remediación</span>
+        <span class="tag pri">embeds diagnostics.run_all</span>
+        <span class="tag">interactive fixes</span>
+      </div>
+      <p class="desc">La batería completa de <code>outwarp-server doctor</code> dentro de la TUI. Cada check es expandible (<kbd>↵</kbd>) con detalle. <kbd>F</kbd> sobre un check con remediación segura ejecuta el fix con confirmación. <kbd>r</kbd> re-corre toda la batería. <kbd>c</kbd> copia el reporte completo al portapapeles para pegarlo en un issue.</p>
+    </div>
+    <div class="term">
+      <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">root@vps ~ outwarp-server tui — 110×30</span></div>
+      <div class="tui-bar">
+        <span>OutWarp · server · doctor</span>
+        <span class="right"><span class="pill ok">10 ok</span><span class="pill warn">2 warn</span><span class="pill bad">1 fail</span><span class="clock">9.4 s · 12 checks</span></span>
+      </div>
+      <div class="tui-body"><div class="pad" style="padding-top:10px">
+<div class="check ok"><span class="ico">✓</span><span class="bright">binaries</span>           <span class="dim">wstunnel 9.7.4 · wireguard-tools 1.0.20231223</span></div>
+<div class="check ok"><span class="ico">✓</span><span class="bright">kernel module</span>      <span class="dim">wireguard loaded (kmod 1.0.0)</span></div>
+<div class="check ok"><span class="ico">✓</span><span class="bright">systemd services</span>   <span class="dim">wstunnel.service active · wg-quick@wg0.service active</span></div>
+<div class="check ok"><span class="ico">✓</span><span class="bright">tls cert</span>           <span class="dim">valid until 2026-08-12 · 113 days remaining</span></div>
+<div class="check ok"><span class="ico">✓</span><span class="bright">tcp/443 listen</span>     <span class="dim">0.0.0.0:443 (wstunnel) · LISTEN</span></div>
+<div class="check ok"><span class="ico">✓</span><span class="bright">udp/51820 listen</span>   <span class="dim">127.0.0.1:51820 (wg server)</span></div>
+
+<div class="check warn"><span class="ico">⚠</span><span class="bright">ip forwarding</span>      <span class="dim">net.ipv4.ip_forward = 1 (runtime ok, no persistent drop-in found)</span></div>
+<div class="check warn"><span class="fix">→ fix:  echo "net.ipv4.ip_forward=1" | sudo tee /etc/sysctl.d/99-outwarp.conf  ·  press</span> <span class="hl bright">&nbsp;F&nbsp;</span> <span class="warn">to apply</span></div>
+
+<div class="check ok"><span class="ico">✓</span><span class="bright">nat masquerade</span>     <span class="dim">POSTROUTING rule for 10.13.13.0/24 present</span></div>
+
+<div class="check warn"><span class="ico">⚠</span><span class="bright">fail2ban</span>           <span class="dim">not installed (recommended for tcp/443 brute-force protection)</span></div>
+<div class="check warn"><span class="fix">→ fix:  sudo apt install fail2ban  ·  requires interactive apt — open a shell to apply</span></div>
+
+<div class="check ok"><span class="ico">✓</span><span class="bright">config sanity</span>      <span class="dim">server_config.json valid · 7 clients · all keys parseable</span></div>
+
+<div class="check bad"><span class="ico">✗</span><span class="bright">reverse dns</span>        <span class="dim">vps.fcrespo.dev does not resolve from this host</span></div>
+<div class="check bad"><span class="fix">→ fix:  check /etc/resolv.conf · ensure systemd-resolved is running · press</span> <span class="hl bright">&nbsp;F&nbsp;</span> <span class="bad">to retry probe</span></div>
+
+<div class="check ok"><span class="ico">✓</span><span class="bright">outbound</span>           <span class="dim">1.1.1.1:443 reachable · 38 ms  |  1.1.1.1:53 reachable · 12 ms</span></div>
+
+<div style="margin-top:14px;padding-top:10px;border-top:1px solid #ffffff14;display:flex;justify-content:space-between">
+  <span><span class="ok b">10 OK</span>    <span class="warn b">2 WARN</span>    <span class="bad b">1 FAIL</span></span>
+  <span class="dim">last run 9.4 s ago · next auto-run in 5 m</span>
+</div>
+</div></div>
+      <div class="tui-footer">
+        <span><kbd>r</kbd>re-run</span>
+        <span><kbd>↵</kbd>expand</span>
+        <span><kbd>F</kbd>apply fix</span>
+        <span><kbd>c</kbd>copy report</span>
+        <span><kbd>Esc</kbd>back</span>
+        <span><kbd>?</kbd>help</span>
+      </div>
+    </div>
+    <div class="impl"><b>Implementación · </b>embed directo de <code>diagnostics.run_all(config)</code>. Reusa el mismo <code>Status</code> enum y <code>r.remediation</code> que ya existen. Para <kbd>F</kbd>: añadir a cada <code>CheckResult</code> un <code>fix: Callable | None</code> y un <code>fix_kind: Literal["auto", "interactive", None]</code> — solo los <code>auto</code> son ejecutables desde la TUI sin abrir sub-shell. Trabajo nuevo en <code>server/outwarp_server/diagnostics.py</code>: marcar como auto-fix los que ya saben arreglarse solos (ip_forward sysctl drop-in, NAT rule, restart de servicios).</div>
+  </section>
+
+  <div class="footer-page">
+    <span>OutWarp · TUI v1 final · 8 pantallas · cliente + servidor</span>
+    <span>Textual · BMP-only glyphs · 80×24 mínimo · 100×30 óptimo</span>
+  </div>
+
+</div>
+</body>
+</html>

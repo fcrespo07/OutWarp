@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import logging.handlers
 import sys
 import threading
 from collections import deque
+from collections.abc import AsyncIterator
 from pathlib import Path
 from threading import Lock
 
@@ -112,3 +114,58 @@ def install_crash_logging() -> None:
             prev_threadhook(args)
 
     threading.excepthook = _threadhook
+
+
+async def tail_follow(
+    path: Path, *, poll_interval: float = 0.25, from_start: bool = False,
+) -> AsyncIterator[str]:
+    """Yield log lines as they are appended. Re-opens on inode change.
+
+    Designed for the TUI: cancel the consuming task to stop tailing — the
+    file handle is closed in the finally block. If `from_start` is False
+    (default) the iterator seeks to the end before yielding, matching
+    `tail -f` behaviour. Lines are returned with the trailing newline stripped.
+    """
+    handle = None
+    last_inode: int | None = None
+    partial = ""
+    first_open = True
+    try:
+        while True:
+            if handle is None:
+                try:
+                    handle = path.open("r", encoding="utf-8", errors="replace")
+                    # Only the very first open seeks to EOF. Reopens after
+                    # rotation must read from byte 0 to surface the new file.
+                    if first_open and not from_start:
+                        handle.seek(0, 2)
+                    first_open = False
+                    last_inode = path.stat().st_ino
+                except FileNotFoundError:
+                    await asyncio.sleep(poll_interval)
+                    continue
+
+            chunk = handle.read()
+            if chunk:
+                partial += chunk
+                while "\n" in partial:
+                    line, partial = partial.split("\n", 1)
+                    yield line
+                continue
+
+            await asyncio.sleep(poll_interval)
+
+            try:
+                current_inode = path.stat().st_ino
+            except FileNotFoundError:
+                current_inode = None
+            if current_inode != last_inode:
+                handle.close()
+                handle = None
+                last_inode = None
+                if partial:
+                    yield partial
+                    partial = ""
+    finally:
+        if handle is not None:
+            handle.close()

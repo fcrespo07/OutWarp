@@ -477,10 +477,12 @@ install_server() {
 
     info "Installing Python dependencies (this may take ~30-60s)"
     $SUDO "$INSTALL_PREFIX/.venv/bin/pip" install --upgrade --disable-pip-version-check pip
+    # Always include the [tui] extra on Linux — `outwarp-server tui` is the
+    # primary interactive frontend there. [gui] adds pywebview/pystray on top.
     if [[ "$install_gui" == "true" ]]; then
-        $SUDO "$INSTALL_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/server[gui]"
+        $SUDO "$INSTALL_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/server[gui,tui]"
     else
-        $SUDO "$INSTALL_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/server"
+        $SUDO "$INSTALL_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/server[tui]"
     fi
 
     # CLI symlink (always)
@@ -717,8 +719,9 @@ install_client() {
 
     info "Installing Python dependencies (this may take ~30-60s)"
     $SUDO "$CLIENT_PREFIX/.venv/bin/pip" install --upgrade --disable-pip-version-check pip
-    # pywebview + pystray + Pillow + platformdirs are in `dependencies`, no extra needed.
-    $SUDO "$CLIENT_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/client"
+    # [tui] pulls in textual; the base deps still cover pywebview/pystray for
+    # the GUI flavour. `outwarp-cli tui` is the recommended Linux entry point.
+    $SUDO "$CLIENT_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/client[tui]"
 
     # `outwarp` is declared as a gui-script in pyproject.toml; on Linux the
     # installed name is identical to a regular script, so the symlink works.

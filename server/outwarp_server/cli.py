@@ -12,17 +12,12 @@ from rich.table import Table
 
 from outwarp_server import __version__
 from outwarp_server.config import (
-    ClientEntry,
     ConfigError,
     ServerConfig,
     default_config_dir,
     default_config_path,
 )
-from outwarp_server.crypto import generate_psk, generate_wg_keypair
-from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
-from outwarp_server.owcfg import build_owcfg, write_owcfg
 from outwarp_server.wireguard import (
-    add_peer_live,
     build_server_wg_conf,
     get_live_peers,
     remove_peer_live,
@@ -36,7 +31,7 @@ console = Console()
 # Anything not in this set runs without a root check (--version, --help).
 _PRIVILEGED_COMMANDS = frozenset({
     "setup", "add-client", "list-clients", "revoke-client", "prune-expired",
-    "status", "restart", "uninstall", "doctor", "init", "serve",
+    "status", "restart", "uninstall", "doctor", "init", "serve", "tui",
 })
 
 
@@ -144,6 +139,8 @@ def _expiry_from_days(days: int | None) -> str:
 
 
 def _cmd_add_client(args: argparse.Namespace) -> int:
+    from outwarp_server import operations
+
     config = _load_config(args)
     name = args.name
 
@@ -153,71 +150,27 @@ def _cmd_add_client(args: argparse.Namespace) -> int:
         console.print(f"[red]Error:[/red] {exc}")
         return 1
 
-    # Check for duplicate name
-    for c in config.clients:
-        if c.name == name:
-            console.print(f"[red]Error:[/red] Client '{name}' already exists.")
-            return 1
-
-    # Generate WG keypair + preshared key for the client
     try:
-        client_private_key, client_public_key = generate_wg_keypair()
+        result = operations.add_client(
+            config,
+            name,
+            config_path=_resolve_config_path(args),
+            expires_at=expires_at,
+        )
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        return 1
     except Exception as exc:
         console.print(f"[red]Error generating WireGuard keys:[/red] {exc}")
         return 1
-    try:
-        psk = generate_psk()
-    except Exception as exc:
-        log.warning("Could not generate preshared key (continuing without one): %s", exc)
-        psk = ""
-
-    # Allocate next IP
-    allocated = [c.address for c in config.clients]
-    try:
-        client_address = next_available_ip(config.subnet, config.server_address, allocated)
-    except PoolExhaustedError as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        return 1
-
-    # Add peer to running WireGuard
-    try:
-        add_peer_live(client_public_key, client_address, psk=psk)
-    except Exception as exc:
-        log.warning("Could not hot-add peer (WireGuard may not be running): %s", exc)
-
-    # Update server config
-    new_client = ClientEntry(
-        name=name, public_key=client_public_key, address=client_address,
-        psk=psk, expires_at=expires_at,
-    )
-    updated = replace(config, clients=[*config.clients, new_client])
-    config_path = _resolve_config_path(args)
-    updated.save(config_path)
-
-    # Persist WG server conf to the OS location wg-quick uses (e.g. /etc/wireguard/wg0.conf).
-    # Hot reload via wg syncconf — keeps existing peers connected. PostUp/PostDown won't
-    # re-run, but they don't change between calls (only the peer list does).
-    from outwarp_server.platforms import PlatformError, get_server_platform
-    try:
-        get_server_platform().install_wg_config(build_server_wg_conf(updated))
-    except PlatformError as exc:
-        log.warning("Could not persist WG config to OS location: %s", exc)
-
-    # Build and write .owcfg
-    warpcfg = build_owcfg(
-        config, name, client_private_key, client_address,
-        preshared_key=psk, expires_at=expires_at,
-    )
-    warpcfg_path = Path.cwd() / f"{name}.owcfg"
-    write_owcfg(warpcfg, warpcfg_path)
 
     console.print(f"\n[green]Client '{name}' added successfully.[/green]")
-    console.print(f"  IP: {client_address}")
-    if psk:
+    console.print(f"  IP: {result.client.address}")
+    if result.client.psk:
         console.print("  Preshared key: [green]yes[/green]")
     if expires_at:
         console.print(f"  Expires: [yellow]{expires_at}[/yellow]")
-    console.print(f"  Config: [bold]{warpcfg_path}[/bold]")
+    console.print(f"  Config: [bold]{result.owcfg_path}[/bold]")
     console.print(
         "\nSend this .owcfg file to the client securely — "
         "it contains the client's private key."
@@ -354,36 +307,18 @@ def _cmd_list_clients(args: argparse.Namespace) -> int:
 
 
 def _cmd_revoke_client(args: argparse.Namespace) -> int:
+    from outwarp_server import operations
+
     config = _load_config(args)
     name = args.name
 
-    target = None
-    for c in config.clients:
-        if c.name == name:
-            target = c
-            break
-
-    if target is None:
-        console.print(f"[red]Error:[/red] Client '{name}' not found.")
+    try:
+        operations.revoke_client(
+            config, name, config_path=_resolve_config_path(args)
+        )
+    except KeyError as exc:
+        console.print(f"[red]Error:[/red] {exc.args[0] if exc.args else exc}")
         return 1
-
-    # Remove peer from running WireGuard
-    try:
-        remove_peer_live(target.public_key)
-    except Exception as exc:
-        log.warning("Could not hot-remove peer (WireGuard may not be running): %s", exc)
-
-    # Update config
-    updated = replace(config, clients=[c for c in config.clients if c.name != name])
-    config_path = _resolve_config_path(args)
-    updated.save(config_path)
-
-    # Persist updated peer list to the OS WG config (hot reload, keeps others connected).
-    from outwarp_server.platforms import PlatformError, get_server_platform
-    try:
-        get_server_platform().install_wg_config(build_server_wg_conf(updated))
-    except PlatformError as exc:
-        log.warning("Could not persist WG config to OS location: %s", exc)
 
     console.print(f"[green]Client '{name}' revoked.[/green]")
     return 0
@@ -395,33 +330,35 @@ def _cmd_restart(args: argparse.Namespace) -> int:
     Use this after upgrading OutWarp or whenever PostUp/PostDown rules change —
     a hot reload (wg syncconf) does NOT re-run those scripts.
     """
-    from outwarp_server.platforms import PlatformError, get_server_platform
+    from outwarp_server import operations
 
     config = _load_config(args)
-    platform = get_server_platform()
 
     console.print("[bold]Regenerating WireGuard config...[/bold]")
-    try:
-        platform.install_wg_config(build_server_wg_conf(config))
+    result = operations.restart_services(config)
+
+    if result.wg_conf_written:
         console.print("  [green]✓[/green] wg0.conf written")
-    except PlatformError as exc:
-        console.print(f"  [red]✗[/red] WireGuard config: {exc}")
+    else:
+        # The first error in restart_services always belongs to "WireGuard config".
+        msg = result.errors[0] if result.errors else "WireGuard config write failed"
+        console.print(f"  [red]✗[/red] {msg}")
         return 1
 
     console.print("[bold]Restarting WireGuard interface (PostUp/PostDown will re-run)...[/bold]")
-    try:
-        platform.restart_wg()
+    if result.wg_restarted:
         console.print("  [green]✓[/green] wg-quick restarted")
-    except PlatformError as exc:
-        console.print(f"  [red]✗[/red] WireGuard restart: {exc}")
+    else:
+        msg = result.errors[0] if result.errors else "WireGuard restart failed"
+        console.print(f"  [red]✗[/red] {msg}")
         return 1
 
     console.print("[bold]Restarting wstunnel service...[/bold]")
-    try:
-        platform.restart_wstunnel_service()
+    if result.wstunnel_restarted:
         console.print("  [green]✓[/green] wstunnel restarted")
-    except PlatformError as exc:
-        console.print(f"  [red]✗[/red] wstunnel restart: {exc}")
+    else:
+        msg = result.errors[-1] if result.errors else "wstunnel restart failed"
+        console.print(f"  [red]✗[/red] {msg}")
         return 1
 
     console.print("\n[green]Server restarted successfully.[/green]")
@@ -714,7 +651,26 @@ def build_parser() -> argparse.ArgumentParser:
              "checks NAT, forwarding, services, firewall, etc.",
     )
 
+    sub.add_parser(
+        "tui",
+        help="Launch the interactive admin TUI (Linux / headless)",
+    )
+
     return parser
+
+
+def _cmd_tui(args: argparse.Namespace) -> int:
+    try:
+        from outwarp_server.tui.app import OutWarpServerTUI
+    except ImportError as exc:
+        console.print(
+            "[red]TUI not installed.[/red] Reinstall with: "
+            "[bold]pip install 'outwarp-server[tui]'[/bold]\n"
+            f"  Underlying error: {exc}"
+        )
+        return 1
+    config_dir = Path(args.config_dir) if args.config_dir else default_config_dir()
+    return OutWarpServerTUI(config_dir).run() or 0
 
 
 _COMMANDS: dict[str, callable] = {
@@ -729,6 +685,7 @@ _COMMANDS: dict[str, callable] = {
     "restart": _cmd_restart,
     "uninstall": _cmd_uninstall,
     "doctor": _cmd_doctor,
+    "tui": _cmd_tui,
 }
 
 

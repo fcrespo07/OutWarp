@@ -94,6 +94,9 @@ class ServerManager:
         self._monitor_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
+        # Traffic-history scheduler lives for the duration of the run; the TUI
+        # dashboard reads its DB to render the 24h sparkline + top talkers.
+        self._traffic_scheduler = None
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -120,6 +123,13 @@ class ServerManager:
         if self._monitor_thread is not None:
             self._monitor_thread.join(timeout=2)
             self._monitor_thread = None
+
+        if self._traffic_scheduler is not None:
+            try:
+                self._traffic_scheduler.stop()
+            except Exception:
+                log.exception("Error stopping traffic scheduler")
+            self._traffic_scheduler = None
 
         proc = self._wstunnel
         if proc is not None:
@@ -392,6 +402,13 @@ class ServerManager:
                 target=self._monitor_loop, daemon=True, name="server-monitor"
             )
             self._monitor_thread.start()
+
+            try:
+                from outwarp_server.traffic_history import build_scheduler
+                self._traffic_scheduler = build_scheduler(self._config)
+                self._traffic_scheduler.start()
+            except Exception:
+                log.exception("Could not start traffic-history scheduler")
 
         except Exception:
             log.exception("Unexpected error starting server")

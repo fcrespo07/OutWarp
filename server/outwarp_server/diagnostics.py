@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import socket
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable
+from pathlib import Path
+from typing import Callable, Literal
 
 from outwarp_server.config import ServerConfig, default_config_dir
 
@@ -21,6 +23,13 @@ class Status(str, Enum):
     SKIP = "skip"
 
 
+# "auto"        → the UI can run fix_callable() after a confirmation prompt.
+# "interactive" → requires a privileged shell session (apt install …); the UI
+#                 surfaces the command for copy/paste instead of running it.
+# "manual"      → informational. Showing the command for reference only.
+FixKind = Literal["auto", "interactive", "manual"]
+
+
 @dataclass
 class CheckResult:
     name: str
@@ -30,6 +39,10 @@ class CheckResult:
     # Bare command intended for the UI's "Copy" button — without surrounding
     # prose like "As admin: ...". Falls back to `remediation` when unset.
     remediation_command: str | None = None
+    fix_kind: FixKind | None = None
+    # Callable invoked by the TUI when fix_kind == "auto" and the user confirms.
+    # Receives the ServerConfig the check ran against. Should raise on failure.
+    fix_callable: Callable[[ServerConfig], None] | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -521,6 +534,376 @@ def check_win_firewall(config: ServerConfig) -> CheckResult:
     )
 
 
+# ───────── Linux ─────────
+
+_LINUX_WG_INTERFACE = "wg0"
+_LINUX_SYSCTL_DROP_IN = "/etc/sysctl.d/99-outwarp.conf"
+
+
+def _run_linux(cmd: list[str], timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd, capture_output=True, text=True, check=False, timeout=timeout,
+    )
+
+
+def check_linux_binaries(config: ServerConfig) -> CheckResult:
+    """Ensure wstunnel and wg are reachable somewhere — PATH or known dirs."""
+    wstunnel = shutil.which("wstunnel")
+    wg = shutil.which("wg")
+    if not wstunnel and not wg:
+        return CheckResult(
+            name="wstunnel + wg binaries",
+            status=Status.FAIL,
+            detail="Neither 'wstunnel' nor 'wg' is on PATH.",
+            remediation=(
+                "Install the WireGuard tools and reinstall the OutWarp server "
+                "bundle that ships wstunnel."
+            ),
+            remediation_command="apt install wireguard-tools",
+            fix_kind="interactive",
+        )
+    if not wstunnel:
+        return CheckResult(
+            name="wstunnel + wg binaries",
+            status=Status.FAIL,
+            detail="'wstunnel' not on PATH (wg is).",
+            remediation="Reinstall the OutWarp server bundle.",
+            remediation_command="bash <(curl -fsSL https://outwarp.dev/install.sh) server",
+            fix_kind="manual",
+        )
+    if not wg:
+        return CheckResult(
+            name="wstunnel + wg binaries",
+            status=Status.FAIL,
+            detail="'wg' not on PATH (wstunnel is).",
+            remediation="Install wireguard-tools.",
+            remediation_command="apt install wireguard-tools",
+            fix_kind="interactive",
+        )
+    version = _run_linux([wg, "--version"]).stdout.strip()
+    return CheckResult(
+        name="wstunnel + wg binaries",
+        status=Status.PASS,
+        detail=f"{wstunnel}, {version or wg}",
+    )
+
+
+def check_linux_kmod(config: ServerConfig) -> CheckResult:
+    """Verify the wireguard kernel module is available (loaded or loadable)."""
+    proc = _run_linux(["modinfo", "wireguard"])
+    if proc.returncode == 0:
+        first = next(
+            (ln for ln in proc.stdout.splitlines() if ln.startswith("filename:")),
+            "loaded",
+        )
+        return CheckResult(
+            name="WireGuard kernel module",
+            status=Status.PASS,
+            detail=first,
+        )
+    return CheckResult(
+        name="WireGuard kernel module",
+        status=Status.FAIL,
+        detail="modinfo wireguard failed — kernel module not present.",
+        remediation=(
+            "Install kernel headers and the wireguard kernel module: "
+            "apt install wireguard."
+        ),
+        remediation_command="apt install wireguard",
+        fix_kind="interactive",
+    )
+
+
+def check_linux_systemd(config: ServerConfig) -> CheckResult:
+    """Both wstunnel-outwarp.service and wg-quick@wg0.service must be active."""
+    services = ["wstunnel-outwarp.service", f"wg-quick@{_LINUX_WG_INTERFACE}.service"]
+    states: dict[str, str] = {}
+    inactive: list[str] = []
+    for svc in services:
+        proc = _run_linux(["systemctl", "is-active", svc])
+        state = (proc.stdout.strip() or "unknown")
+        states[svc] = state
+        if state != "active":
+            inactive.append(svc)
+
+    if not inactive:
+        return CheckResult(
+            name="systemd services active",
+            status=Status.PASS,
+            detail=", ".join(f"{k}={v}" for k, v in states.items()),
+        )
+
+    def _fix_restart(_config: ServerConfig) -> None:
+        for svc in inactive:
+            subprocess.run(["systemctl", "restart", svc], check=True, capture_output=True, text=True)
+
+    cmd = " && ".join(f"systemctl restart {svc}" for svc in inactive)
+    return CheckResult(
+        name="systemd services active",
+        status=Status.FAIL,
+        detail=", ".join(f"{k}={v}" for k, v in states.items()),
+        remediation=f"Restart the inactive service(s): {cmd}.",
+        remediation_command=cmd,
+        fix_kind="auto",
+        fix_callable=_fix_restart,
+    )
+
+
+def check_linux_listen_443(config: ServerConfig) -> CheckResult:
+    """Something must be listening on the public WSS port (default 443)."""
+    proc = _run_linux(["ss", "-tlnp", f"sport = :{config.port}"])
+    out = proc.stdout
+    listening = any(f":{config.port}" in line for line in out.splitlines()[1:])
+    if listening:
+        return CheckResult(
+            name=f"Listening on TCP/{config.port}",
+            status=Status.PASS,
+            detail=out.splitlines()[1] if len(out.splitlines()) > 1 else "listening",
+        )
+    return CheckResult(
+        name=f"Listening on TCP/{config.port}",
+        status=Status.FAIL,
+        detail=f"Nothing bound to TCP/{config.port}.",
+        remediation=(
+            f"Start the OutWarp wstunnel service: systemctl start wstunnel-outwarp.service. "
+            f"Also confirm no other service already claims port {config.port}."
+        ),
+        remediation_command="systemctl start wstunnel-outwarp.service",
+        fix_kind="auto",
+        fix_callable=lambda _c: subprocess.run(
+            ["systemctl", "start", "wstunnel-outwarp.service"],
+            check=True, capture_output=True, text=True,
+        ),
+    )
+
+
+def check_linux_listen_wg(config: ServerConfig) -> CheckResult:
+    """The wstunnel→WG forwarder must bind 127.0.0.1 only (never 0.0.0.0).
+
+    A UDP listener on 0.0.0.0:51820 means wstunnel exposed WireGuard plaintext
+    to the public interface — the very thing the WSS wrapper was supposed to
+    avoid. Treat that as FAIL.
+    """
+    proc = _run_linux(["ss", "-ulnp", f"sport = :{config.wg_listen_port}"])
+    lines = [ln for ln in proc.stdout.splitlines()[1:] if ln.strip()]
+    if not lines:
+        return CheckResult(
+            name=f"WG forwarder UDP/{config.wg_listen_port}",
+            status=Status.WARN,
+            detail="No UDP listener on the local WG forwarder port.",
+            remediation=(
+                "The wstunnel server hasn't yet opened its local WG socket — "
+                "this is normal until the first client connects."
+            ),
+        )
+    def _local_addr(line: str) -> str:
+        parts = line.split()
+        # ss -ulnp columns: State Recv-Q Send-Q LocalAddress:Port PeerAddress:Port [process]
+        return parts[3] if len(parts) >= 4 else ""
+
+    public = [
+        ln for ln in lines
+        if _local_addr(ln).startswith(("0.0.0.0:", "*:", "[::]:"))
+    ]
+    if public:
+        return CheckResult(
+            name=f"WG forwarder UDP/{config.wg_listen_port}",
+            status=Status.FAIL,
+            detail=f"Listener bound to a public address: {public[0]}",
+            remediation=(
+                "wstunnel should forward to 127.0.0.1 only. Run `outwarp-server "
+                "restart` to regenerate the unit."
+            ),
+            remediation_command="outwarp-server restart",
+            fix_kind="manual",
+        )
+    return CheckResult(
+        name=f"WG forwarder UDP/{config.wg_listen_port}",
+        status=Status.PASS,
+        detail=lines[0],
+    )
+
+
+def _ip_forward_fix(_config: ServerConfig) -> None:
+    Path(_LINUX_SYSCTL_DROP_IN).write_text("net.ipv4.ip_forward=1\n", encoding="utf-8")
+    subprocess.run(["sysctl", "-p", _LINUX_SYSCTL_DROP_IN], check=True, capture_output=True, text=True)
+
+
+def check_linux_ip_forward(config: ServerConfig) -> CheckResult:
+    """Runtime ip_forward must be on AND persisted under /etc/sysctl.d."""
+    runtime = _run_linux(["sysctl", "-n", "net.ipv4.ip_forward"])
+    enabled = runtime.stdout.strip() == "1"
+
+    persistent = False
+    for p in Path("/etc/sysctl.d").glob("*.conf") if Path("/etc/sysctl.d").exists() else []:
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, _, value = stripped.partition("=")
+            if key.strip() == "net.ipv4.ip_forward" and value.strip() == "1":
+                persistent = True
+                break
+        if persistent:
+            break
+
+    if enabled and persistent:
+        return CheckResult(
+            name="IP forwarding (net.ipv4.ip_forward)",
+            status=Status.PASS,
+            detail="runtime=1, persisted in /etc/sysctl.d",
+        )
+    if enabled and not persistent:
+        return CheckResult(
+            name="IP forwarding (net.ipv4.ip_forward)",
+            status=Status.WARN,
+            detail="runtime=1 but no /etc/sysctl.d/*.conf sets it — reverts on reboot.",
+            remediation=(
+                f"Persist with: echo 'net.ipv4.ip_forward=1' > {_LINUX_SYSCTL_DROP_IN} "
+                f"&& sysctl -p {_LINUX_SYSCTL_DROP_IN}."
+            ),
+            remediation_command=(
+                f"echo 'net.ipv4.ip_forward=1' > {_LINUX_SYSCTL_DROP_IN} && "
+                f"sysctl -p {_LINUX_SYSCTL_DROP_IN}"
+            ),
+            fix_kind="auto",
+            fix_callable=_ip_forward_fix,
+        )
+    return CheckResult(
+        name="IP forwarding (net.ipv4.ip_forward)",
+        status=Status.FAIL,
+        detail=f"runtime={runtime.stdout.strip() or '?'}, persistent={persistent}",
+        remediation=(
+            f"Enable and persist with: echo 'net.ipv4.ip_forward=1' > {_LINUX_SYSCTL_DROP_IN} "
+            f"&& sysctl -p {_LINUX_SYSCTL_DROP_IN}."
+        ),
+        remediation_command=(
+            f"echo 'net.ipv4.ip_forward=1' > {_LINUX_SYSCTL_DROP_IN} && "
+            f"sysctl -p {_LINUX_SYSCTL_DROP_IN}"
+        ),
+        fix_kind="auto",
+        fix_callable=_ip_forward_fix,
+    )
+
+
+def _masquerade_fix(config: ServerConfig) -> None:
+    from outwarp_server.platforms import get_server_platform
+    from outwarp_server.wireguard import build_server_wg_conf
+    get_server_platform().install_wg_config(build_server_wg_conf(config))
+
+
+def check_linux_nat_masquerade(config: ServerConfig) -> CheckResult:
+    """iptables nat POSTROUTING must MASQUERADE the WG subnet."""
+    proc = _run_linux(["iptables", "-t", "nat", "-S", "POSTROUTING"])
+    if proc.returncode != 0:
+        return CheckResult(
+            name="NAT MASQUERADE for WG subnet",
+            status=Status.FAIL,
+            detail=f"iptables query failed: {(proc.stderr or '').strip() or proc.returncode}",
+            remediation="Install iptables (apt install iptables) and re-run.",
+            remediation_command="apt install iptables",
+            fix_kind="interactive",
+        )
+    needle_src = f"-s {config.subnet}"
+    rule = next(
+        (
+            line for line in proc.stdout.splitlines()
+            if needle_src in line and "MASQUERADE" in line
+        ),
+        None,
+    )
+    if rule:
+        return CheckResult(
+            name="NAT MASQUERADE for WG subnet",
+            status=Status.PASS,
+            detail=rule.strip(),
+        )
+    return CheckResult(
+        name="NAT MASQUERADE for WG subnet",
+        status=Status.FAIL,
+        detail=f"No MASQUERADE rule covers {config.subnet}.",
+        remediation=(
+            "Re-apply the WG config (its PostUp adds the rule): outwarp-server restart."
+        ),
+        remediation_command="outwarp-server restart",
+        fix_kind="auto",
+        fix_callable=_masquerade_fix,
+    )
+
+
+def check_linux_fail2ban(config: ServerConfig) -> CheckResult:
+    """Optional hardening — fail2ban shields the public WSS port from brute force."""
+    if shutil.which("fail2ban-client"):
+        return CheckResult(
+            name="fail2ban present",
+            status=Status.PASS,
+            detail="fail2ban-client on PATH",
+        )
+    return CheckResult(
+        name="fail2ban present",
+        status=Status.WARN,
+        detail="fail2ban not installed.",
+        remediation=(
+            "Optional but recommended for public servers: apt install fail2ban."
+        ),
+        remediation_command="apt install fail2ban",
+        fix_kind="interactive",
+    )
+
+
+def check_linux_reverse_dns(config: ServerConfig) -> CheckResult:
+    """Reverse DNS should round-trip to the configured endpoint hostname.
+
+    Skipped if the endpoint is an IP literal — there's no expectation that an
+    IP should rDNS to itself.
+    """
+    endpoint = config.endpoint.strip()
+    try:
+        socket.inet_aton(endpoint)
+        is_ip = True
+    except OSError:
+        is_ip = False
+    if is_ip:
+        return CheckResult(
+            name="Reverse DNS",
+            status=Status.SKIP,
+            detail=f"endpoint is an IP literal ({endpoint}) — rDNS check N/A.",
+        )
+    try:
+        public_ip = socket.gethostbyname(endpoint)
+    except socket.gaierror as exc:
+        return CheckResult(
+            name="Reverse DNS",
+            status=Status.FAIL,
+            detail=f"Forward lookup of {endpoint} failed: {exc}",
+        )
+    try:
+        rdns_name, _, _ = socket.gethostbyaddr(public_ip)
+    except socket.herror as exc:
+        return CheckResult(
+            name="Reverse DNS",
+            status=Status.WARN,
+            detail=f"rDNS for {public_ip} not configured: {exc}",
+            remediation="Ask your hosting provider to set a PTR record. Not fatal.",
+        )
+    if endpoint.lower() == rdns_name.lower():
+        return CheckResult(
+            name="Reverse DNS",
+            status=Status.PASS,
+            detail=f"{public_ip} → {rdns_name}",
+        )
+    return CheckResult(
+        name="Reverse DNS",
+        status=Status.WARN,
+        detail=f"{public_ip} → {rdns_name} ≠ {endpoint}",
+        remediation="Endpoint hostname does not match PTR record. Cosmetic only.",
+    )
+
+
 # ───────── orchestration ─────────
 
 def gather_checks() -> list[Check]:
@@ -542,6 +925,18 @@ def gather_checks() -> list[Check]:
             Check("wstunnel_proc", "wstunnel", check_win_wstunnel_running),
             Check("listen", "wstunnel", check_win_listening_port),
             Check("firewall", "Firewall", check_win_firewall),
+        ]
+    if sys.platform.startswith("linux"):
+        return common + [
+            Check("linux_binaries", "Binaries", check_linux_binaries),
+            Check("linux_kmod", "WireGuard", check_linux_kmod),
+            Check("linux_systemd", "Services", check_linux_systemd),
+            Check("linux_listen_443", "wstunnel", check_linux_listen_443),
+            Check("linux_listen_wg", "wstunnel", check_linux_listen_wg),
+            Check("linux_ip_forward", "Network", check_linux_ip_forward),
+            Check("linux_nat_masquerade", "NAT", check_linux_nat_masquerade),
+            Check("linux_fail2ban", "Hardening", check_linux_fail2ban),
+            Check("linux_reverse_dns", "DNS", check_linux_reverse_dns),
         ]
     return common
 

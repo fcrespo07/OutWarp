@@ -357,7 +357,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_un = sub.add_parser("uninstall", help="Remove the imported profile")
     p_un.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
 
+    sub.add_parser(
+        "tui",
+        help="Launch the interactive Textual UI (Linux / headless)",
+    )
+
     return parser
+
+
+def _cmd_tui(args: argparse.Namespace) -> int:
+    try:
+        from outwarp.tui.app import OutWarpClientTUI
+    except ImportError as exc:
+        _err(
+            "TUI not installed. Reinstall with: pip install 'outwarp-client[tui]'\n"
+            f"  Underlying error: {exc}"
+        )
+        return 1
+    return OutWarpClientTUI().run() or 0
 
 
 _COMMANDS = {
@@ -367,6 +384,7 @@ _COMMANDS = {
     "profile":   _cmd_profile,
     "logs":      _cmd_logs,
     "uninstall": _cmd_uninstall,
+    "tui":       _cmd_tui,
 }
 
 

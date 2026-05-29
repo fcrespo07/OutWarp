@@ -73,8 +73,8 @@ def test_parser_has_config_dir_option() -> None:
 
 
 class TestAddClient:
-    @patch("outwarp_server.cli.add_peer_live")
-    @patch("outwarp_server.cli.generate_wg_keypair", return_value=("client_priv", "client_pub"))
+    @patch("outwarp_server.operations.add_peer_live")
+    @patch("outwarp_server.operations.generate_wg_keypair", return_value=("client_priv", "client_pub"))
     def test_add_client_creates_warpcfg(
         self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path
     ) -> None:
@@ -89,8 +89,8 @@ class TestAddClient:
         assert warpcfg["wireguard"]["client_address"] == "10.0.0.2/32"
         warpcfg_path.unlink()  # cleanup
 
-    @patch("outwarp_server.cli.add_peer_live")
-    @patch("outwarp_server.cli.generate_wg_keypair", return_value=("priv", "pub"))
+    @patch("outwarp_server.operations.add_peer_live")
+    @patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
     def test_add_client_updates_server_config(
         self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path
     ) -> None:
@@ -101,8 +101,8 @@ class TestAddClient:
         assert cfg.clients[0].name == "phone"
         (Path.cwd() / "phone.owcfg").unlink(missing_ok=True)
 
-    @patch("outwarp_server.cli.add_peer_live")
-    @patch("outwarp_server.cli.generate_wg_keypair", return_value=("priv", "pub"))
+    @patch("outwarp_server.operations.add_peer_live")
+    @patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
     def test_add_duplicate_client_fails(
         self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path
     ) -> None:
@@ -111,9 +111,9 @@ class TestAddClient:
         ret = main(["--config-dir", str(config_dir), "add-client", "laptop"])
         assert ret == 1
 
-    @patch("outwarp_server.cli.generate_psk", return_value="cHNrdmFsdWU=")
-    @patch("outwarp_server.cli.add_peer_live")
-    @patch("outwarp_server.cli.generate_wg_keypair", return_value=("priv", "pub"))
+    @patch("outwarp_server.operations.generate_psk", return_value="cHNrdmFsdWU=")
+    @patch("outwarp_server.operations.add_peer_live")
+    @patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
     def test_add_client_writes_psk_into_owcfg(
         self, _kg: MagicMock, mock_add: MagicMock, _psk: MagicMock, tmp_path: Path
     ) -> None:
@@ -125,9 +125,9 @@ class TestAddClient:
         assert mock_add.call_args.kwargs.get("psk") == "cHNrdmFsdWU="
         (Path.cwd() / "laptop.owcfg").unlink(missing_ok=True)
 
-    @patch("outwarp_server.cli.generate_psk", return_value="")
-    @patch("outwarp_server.cli.add_peer_live")
-    @patch("outwarp_server.cli.generate_wg_keypair", return_value=("priv", "pub"))
+    @patch("outwarp_server.operations.generate_psk", return_value="")
+    @patch("outwarp_server.operations.add_peer_live")
+    @patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
     def test_add_client_with_days_sets_expiry(
         self, _kg: MagicMock, _add: MagicMock, _psk: MagicMock, tmp_path: Path
     ) -> None:
@@ -414,7 +414,7 @@ class TestUninstall:
 
 
 class TestRevokeClient:
-    @patch("outwarp_server.cli.remove_peer_live")
+    @patch("outwarp_server.operations.remove_peer_live")
     def test_revoke_removes_client(self, mock_remove: MagicMock, tmp_path: Path) -> None:
         clients = [{"name": "laptop", "public_key": "key1", "address": "10.0.0.2/32"}]
         config_dir = _write_server_config(tmp_path, clients=clients)

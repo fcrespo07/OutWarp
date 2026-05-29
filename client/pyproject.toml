@@ -37,9 +37,14 @@ dev = [
     "ruff>=0.5",
     "black>=24.0",
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
 ]
 build = [
     "pyinstaller>=6.0",
+]
+tui = [
+    "textual>=0.85",
+    "rich>=13.0",
 ]
 
 [project.gui-scripts]

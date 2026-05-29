@@ -1,0 +1,134 @@
+/* OutWarp client TUI tokens — mirrors the Claude Design palette.
+ * BMP glyphs only; no emoji, no nerd fonts. */
+
+$brand: #2563ff;
+$ok: #2ee0b3;
+$warn: #ff9b4a;
+$bad: #ff5c7a;
+$dim: #6e747e;
+$dim2: #4a4f57;
+$bright: #f4f5f7;
+$bg: #0a0c10;
+$bg2: #11141a;
+
+Screen {
+    background: $bg;
+    color: $bright;
+}
+
+Header {
+    background: $brand;
+    color: white;
+}
+
+Footer {
+    background: $bg2;
+    color: $dim;
+}
+
+#root {
+    height: 1fr;
+}
+
+.status-col {
+    width: 50%;
+    padding: 1 2;
+}
+
+.status-col > Container {
+    margin-bottom: 1;
+    border: tall $dim2;
+    padding: 1 2;
+    height: auto;
+}
+
+.card-title {
+    color: $dim;
+    text-style: bold;
+}
+
+.label {
+    color: $dim;
+}
+
+.value {
+    color: $bright;
+    text-style: bold;
+}
+
+.value.ok {
+    color: $ok;
+}
+
+.value.warn {
+    color: $warn;
+}
+
+.value.bad {
+    color: $bad;
+}
+
+RichLog#log {
+    background: $bg;
+    border: tall $dim2;
+    padding: 1;
+    width: 50%;
+}
+
+PhaseRow {
+    padding: 0 2;
+    height: 1;
+}
+
+PhaseRow.done {
+    color: $ok;
+}
+
+PhaseRow.active {
+    color: $brand;
+    text-style: bold;
+}
+
+PhaseRow.pending {
+    color: $dim;
+}
+
+Sparkline {
+    height: 1;
+    color: $ok;
+}
+
+#empty-shell {
+    align: center middle;
+    padding: 2 4;
+}
+
+#empty-shell Static {
+    content-align: center middle;
+    margin-bottom: 1;
+}
+
+ModalScreen {
+    align: center middle;
+}
+
+#import-modal,
+#help-modal {
+    width: 70;
+    height: auto;
+    background: $bg2;
+    border: thick $brand;
+    padding: 1 2;
+}
+
+#import-modal Input {
+    margin-bottom: 1;
+}
+
+#fail-banner {
+    background: $bad 30%;
+    color: $bad;
+    padding: 1 2;
+    margin: 1 2;
+    border: tall $bad;
+}

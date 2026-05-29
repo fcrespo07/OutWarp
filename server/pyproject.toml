@@ -39,6 +39,11 @@ dev = [
     "ruff>=0.5",
     "black>=24.0",
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+tui = [
+    "textual>=0.85",
+    "qrcode>=7.4",
 ]
 
 [project.scripts]
