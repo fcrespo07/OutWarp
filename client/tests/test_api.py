@@ -200,6 +200,41 @@ def test_set_settings_ignores_unknown_keys(tmp_path):
     assert "unknown_key" not in r["settings"]
 
 
+def test_reconnect_captures_manager_before_swap():
+    """Regression: reconnect()'s background thread must operate on the manager
+    that was active when the user clicked Reconnect, not on whichever manager
+    happens to be assigned when the thread actually runs. Without the local
+    capture, a concurrent import_profile() could swap self._manager between
+    the user's click and the thread's execution, leading us to start a fresh
+    second tunnel on top of the one the new profile already brought up."""
+    mgr_old = MagicMock()
+    mgr_old.state = TunnelState.CONNECTED
+    mgr_new = MagicMock()
+    mgr_new.state = TunnelState.CONNECTED
+
+    api, _ = _make_api(mgr_old)
+    captured_target: dict = {}
+
+    class _DirectThread:
+        def __init__(self, target, daemon=None, name=None):
+            captured_target["fn"] = target
+        def start(self):
+            pass
+
+    with patch("outwarp.api.threading.Thread", _DirectThread):
+        r = api.reconnect()
+        assert r["ok"] is True
+        # Simulate the swap that the race would otherwise interleave.
+        api._manager = mgr_new
+        # Now run the thread body — must hit mgr_old, NOT mgr_new.
+        captured_target["fn"]()
+
+    mgr_old.stop.assert_called_once()
+    mgr_old.start.assert_called_once()
+    mgr_new.stop.assert_not_called()
+    mgr_new.start.assert_not_called()
+
+
 def test_default_settings_include_auto_reconnect(tmp_path):
     with patch(
         "outwarp.api.default_config_path",

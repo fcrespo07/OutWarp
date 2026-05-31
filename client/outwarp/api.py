@@ -432,9 +432,13 @@ class Api:
     def reconnect(self) -> dict[str, Any]:
         if self._manager is None:
             return {"ok": False, "error": "no profile imported"}
+        # Capture the manager NOW so a concurrent import_profile() swap can't
+        # leave us stopping the old one and starting a fresh, already-running
+        # replacement (which TunnelManager.start() may or may not survive).
+        mgr = self._manager
         def _restart() -> None:
-            self._manager.stop()
-            self._manager.start()
+            mgr.stop()
+            mgr.start()
         threading.Thread(target=_restart, daemon=True, name="api-reconnect").start()
         return {"ok": True}
 
@@ -1125,7 +1129,11 @@ class Api:
         self._stats_stop.clear()
 
         def _loop() -> None:
-            tunnel_name = self._manager.config.wireguard.tunnel_name if self._manager else ""
+            # Bind once: ``self._manager`` can be flipped to None by
+            # ``forget_profile`` between the truthy check and the ``.config``
+            # deref, which would AttributeError this thread silently.
+            mgr = self._manager
+            tunnel_name = mgr.config.wireguard.tunnel_name if mgr else ""
             prev_rx, prev_tx, prev_ts = 0, 0, 0.0
             while not self._stats_stop.is_set():
                 now = time.time()
