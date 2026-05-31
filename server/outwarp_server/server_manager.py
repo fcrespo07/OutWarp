@@ -67,6 +67,15 @@ class ServerState(Enum):
 
 
 def _build_wstunnel_command(config: ServerConfig, wstunnel_bin: Path) -> list[str]:
+    # NOTE: ``http_upgrade_path_prefix`` ends up in /proc/<pid>/cmdline (world-
+    # readable on most Linux setups). That's intentional: this prefix is a
+    # *path obfuscation* gate, not an authentication secret. The real auth is
+    # the TLS-fingerprint pin (client refuses any mismatched cert) plus
+    # WireGuard's own keypair-based handshake (server only accepts peers that
+    # ``add-client`` registered). A local attacker who scrapes the prefix from
+    # cmdline still needs a registered WG keypair before they can do anything
+    # past the wstunnel front-door — by design, leaking it does not break the
+    # security model.
     return [
         str(wstunnel_bin),
         "server",

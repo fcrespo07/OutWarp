@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from outwarp_server.config import ServerConfig
+from outwarp_server.config import ServerConfig, _atomic_write_secret
 
 
 def build_owcfg(
@@ -63,9 +63,13 @@ def build_owcfg(
 
 
 def write_owcfg(warpcfg: dict[str, Any], path: Path) -> None:
-    """Write a .owcfg file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(warpcfg, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    """Write a .owcfg file with 0o600 permissions.
+
+    The owcfg embeds the client's freshly-generated WireGuard private key, so
+    a default-umask 0o644 (the prior behaviour of ``Path.write_text``) leaves
+    the key world-readable on multi-user boxes — a local user can rip it and
+    impersonate that client. Atomic rename ensures the file never exists in
+    a half-written state with relaxed perms either.
+    """
+    payload = json.dumps(warpcfg, indent=2, ensure_ascii=False)
+    _atomic_write_secret(path, payload)

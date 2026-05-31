@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -56,10 +59,15 @@ class ServerConfig:
         return _parse(raw)
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(_to_dict(self), indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        """Persist the server config with 0o600 perms.
+
+        The file embeds the server's WireGuard private key and the wstunnel
+        path-prefix used as a soft scanner gate; both have to stay
+        unreadable by other local users. The atomic mkstemp+replace pattern
+        guarantees the file never exists half-written at 0o644.
+        """
+        _atomic_write_secret(
+            path, json.dumps(_to_dict(self), indent=2, ensure_ascii=False)
         )
 
 
@@ -157,3 +165,27 @@ def _to_dict(cfg: ServerConfig) -> dict[str, Any]:
             for c in cfg.clients
         ],
     }
+
+
+def _atomic_write_secret(path: Path, payload: str) -> None:
+    """Atomically write ``payload`` to ``path`` with 0o600 permissions.
+
+    ``tempfile.mkstemp`` opens the file with mode 0o600 on POSIX, and
+    ``os.replace`` is atomic on the same filesystem (rename(2) on POSIX,
+    ReplaceFile on Windows). The result: a reader either sees the old
+    contents or the new contents, never a partial write at 0o644.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise

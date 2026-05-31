@@ -25,6 +25,21 @@ class TestTlsCert:
         assert cert_path.read_text().startswith("-----BEGIN CERTIFICATE-----")
         assert key_path.read_text().startswith("-----BEGIN")
 
+    def test_key_file_is_0600(self, tmp_path: Path) -> None:
+        """The TLS private key is unencrypted at rest (so wstunnel can boot
+        unattended via systemd). 0o600 is the only thing standing between a
+        local attacker and the key — must hold under a default 0o022 umask."""
+        import os
+        old_umask = os.umask(0o022)
+        try:
+            cert_path, key_path, _ = generate_tls_cert("203.0.113.42", tmp_path)
+        finally:
+            os.umask(old_umask)
+        assert key_path.stat().st_mode & 0o777 == 0o600
+        # The cert is the public half — keep it world-readable so the existing
+        # `cat cert.pem` / curl flows keep working without sudo.
+        assert cert_path.stat().st_mode & 0o004 == 0o004
+
     def test_fingerprint_format(self, tmp_path: Path) -> None:
         _, _, fp = generate_tls_cert("example.com", tmp_path)
         assert _FINGERPRINT_RE.match(fp), f"Fingerprint format invalid: {fp}"

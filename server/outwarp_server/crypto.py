@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import contextlib
 import datetime
 import ipaddress
 import logging
+import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from cryptography import x509
@@ -64,13 +67,19 @@ def generate_tls_cert(
 
     cert = builder.sign(private_key, hashes.SHA256())
 
-    key_path.write_bytes(
+    # Key is at-rest unencrypted (NoEncryption) so wstunnel can boot
+    # unattended via systemd; defense-in-depth lives in the 0o600 perms.
+    # mkstemp opens with 0o600 on POSIX, os.replace renames atomically — the
+    # key never exists at 0o644 even for a microsecond.
+    _atomic_write_secret_bytes(
+        key_path,
         private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
-        )
+        ),
     )
+    # The cert is public; default 0o644 is fine.
     cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
 
     fingerprint = compute_cert_fingerprint(cert_path)
@@ -151,3 +160,26 @@ def generate_psk(wg_bin: Path | None = None) -> str:
     except subprocess.CalledProcessError as exc:
         raise CryptoError(f"WireGuard PSK generation failed: {exc.stderr.strip()}") from exc
     return result.stdout.strip()
+
+
+def _atomic_write_secret_bytes(path: Path, payload: bytes) -> None:
+    """Bytes-payload variant of the atomic secret-writer used by config.py.
+
+    Duplicated here (rather than imported) so crypto.py stays free of a
+    runtime dep on outwarp_server.config — keeps the dependency graph
+    flowing one direction (config → crypto, never the reverse).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise

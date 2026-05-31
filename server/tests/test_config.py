@@ -57,6 +57,22 @@ def test_save_roundtrip(tmp_path: Path) -> None:
     assert cfg == cfg2
 
 
+def test_save_is_0600(tmp_path: Path) -> None:
+    """server_config.json embeds the WG private key (and the wstunnel
+    path-prefix). 0o644 is a local-user information leak — must be 0o600
+    regardless of the system umask."""
+    import os
+    src = _write(tmp_path, VALID)
+    cfg = ServerConfig.load(src)
+    dest = tmp_path / "out.json"
+    old_umask = os.umask(0o022)
+    try:
+        cfg.save(dest)
+    finally:
+        os.umask(old_umask)
+    assert dest.stat().st_mode & 0o777 == 0o600
+
+
 def test_empty_clients_list(tmp_path: Path) -> None:
     data = {**VALID, "clients": []}
     cfg = ServerConfig.load(_write(tmp_path, data))

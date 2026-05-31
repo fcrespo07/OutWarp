@@ -84,6 +84,37 @@ def test_write_owcfg(tmp_path: Path) -> None:
     assert loaded["server"]["endpoint"] == "203.0.113.42"
 
 
+def test_write_owcfg_is_0600(tmp_path: Path) -> None:
+    """The .owcfg embeds a fresh WireGuard client private key — leaving it
+    world-readable lets any local user impersonate that client. The atomic
+    mkstemp+replace pattern guarantees 0o600 even on a default 0o022 umask."""
+    import os
+    cfg = build_owcfg(_make_server_config(), "laptop", "client_priv", "10.0.0.2/32")
+    out = tmp_path / "laptop.owcfg"
+    # Set an explicitly permissive umask so we'd see a 0o644 file under the
+    # old write_text() path. The fix has to win regardless.
+    old_umask = os.umask(0o022)
+    try:
+        write_owcfg(cfg, out)
+    finally:
+        os.umask(old_umask)
+    assert out.stat().st_mode & 0o777 == 0o600
+
+
+def test_write_owcfg_atomic_on_failure(tmp_path: Path) -> None:
+    """If os.replace fails (e.g. cross-device), the temp file must be removed
+    so we don't leak a half-written .owcfg with the WG key in /etc/outwarp/."""
+    import contextlib
+    from unittest.mock import patch
+    cfg = build_owcfg(_make_server_config(), "laptop", "client_priv", "10.0.0.2/32")
+    out = tmp_path / "laptop.owcfg"
+    with patch("outwarp_server.config.os.replace", side_effect=OSError("EXDEV")), \
+         contextlib.suppress(OSError):
+        write_owcfg(cfg, out)
+    leftovers = list(tmp_path.glob(".*.tmp"))
+    assert leftovers == [], f"leaked temp files: {leftovers}"
+
+
 def test_build_owcfg_omits_psk_and_meta_by_default() -> None:
     cfg = build_owcfg(_make_server_config(), "laptop", "client_priv", "10.0.0.2/32")
     assert "preshared_key" not in cfg["wireguard"]
