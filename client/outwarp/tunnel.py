@@ -137,14 +137,20 @@ class Tunnel:
         self._phase_cb: Callable[[str], None] = phase_callback or (lambda _p: None)
 
     def _drain_stdout(self) -> None:
-        assert self._proc is not None
+        # An ``assert`` here would silently disappear under ``python -O``
+        # (the pipx-managed venv inherits the system python's flags), so the
+        # next line would AttributeError on a None stdout and lose the
+        # entire wstunnel log. Explicit guard instead.
+        proc = self._proc
+        if proc is None or proc.stdout is None:
+            return
         try:
-            for line in self._proc.stdout:  # type: ignore[union-attr]
+            for line in proc.stdout:
                 stripped = _ANSI_ESCAPE_RE.sub("", line).rstrip()
                 if stripped:
                     log.info("wstunnel: %s", stripped)
         except Exception:
-            pass
+            log.debug("_drain_stdout: read loop exited unexpectedly", exc_info=True)
 
     def connect(self) -> None:
         s = self._config.server
