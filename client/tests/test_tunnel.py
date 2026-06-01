@@ -20,6 +20,7 @@ from outwarp.tunnel import (
     Tunnel,
     TunnelError,
     _ANSI_ESCAPE_RE,
+    _WSTUNNEL_NOISE_RE,
     build_wstunnel_command,
     find_wstunnel,
 )
@@ -412,3 +413,40 @@ def test_ansi_escape_re_preserves_unicode_content():
     # escape sequence itself.
     raw = "\x1b[31mError\x1b[0m: Solo se permite un uso de cada dirección de socket"
     assert _ANSI_ESCAPE_RE.sub("", raw) == "Error: Solo se permite un uso de cada dirección de socket"
+
+
+def test_wstunnel_noise_re_matches_pool_rotation_lines():
+    # These two are emitted ~6 times per minute by the --connection-min-idle 3
+    # pool maintenance — without the filter they drown out everything else in
+    # the user-facing log at INFO. _drain_stdout demotes them to DEBUG.
+    tcp = (
+        "2026-06-01T14:30:47.641544Z  INFO wstunnel::protocols::tcp::server: "
+        "Opening TCP connection to 79.112.138.17:443"
+    )
+    tls = (
+        "2026-06-01T14:30:47.683182Z  INFO wstunnel::protocols::tls::server: "
+        "Doing TLS handshake using SNI IpAddress(V4(Ipv4Addr([79, 112, 138, 17]))) "
+        "with the server 79.112.138.17:443"
+    )
+    assert _WSTUNNEL_NOISE_RE.search(tcp)
+    assert _WSTUNNEL_NOISE_RE.search(tls)
+
+
+def test_wstunnel_noise_re_keeps_interesting_lines_at_info():
+    # Anything that isn't pure pool churn must NOT match — we still want
+    # "Starting wstunnel client", UDP server bind announcements, errors, and
+    # fingerprint mismatches surfaced at INFO.
+    keep = [
+        "2026-06-01T14:30:47.740924Z  INFO wstunnel: Starting wstunnel client v10.5.5",
+        (
+            "2026-06-01T14:30:47.740938Z  INFO wstunnel::protocols::udp::server: "
+            "Starting UDP server listening cnx on 127.0.0.1:51820 with cnx timeout of 0s"
+        ),
+        (
+            "2026-06-01T14:30:52.818649Z  INFO wstunnel::protocols::udp::server: "
+            "New UDP connection from 127.0.0.1:43890"
+        ),
+        "ERROR wstunnel::protocols::tls::server: TLS handshake failed",
+    ]
+    for line in keep:
+        assert not _WSTUNNEL_NOISE_RE.search(line), line

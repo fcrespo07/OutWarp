@@ -32,6 +32,17 @@ _ENV_OVERRIDE = "OUTWARP_WSTUNNEL"
 # the UI's log panel otherwise.
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
+# wstunnel pool-maintenance chatter from --connection-min-idle 3: every
+# ~60 s the WS idle pool rotates and the client logs 3 "Opening TCP
+# connection" + 3 "Doing TLS handshake" lines. Useful at DEBUG when
+# diagnosing handshake errors but pure noise at INFO (≈8.6k lines/day for
+# a long-lived tunnel, drowning out the events worth seeing). Match the
+# substring after the ANSI strip so escape codes don't break the filter.
+_WSTUNNEL_NOISE_RE = re.compile(
+    r"INFO wstunnel::protocols::(?:tcp|tls)::server: "
+    r"(?:Opening TCP connection|Doing TLS handshake)"
+)
+
 log = logging.getLogger(__name__)
 
 
@@ -147,8 +158,10 @@ class Tunnel:
         try:
             for line in proc.stdout:
                 stripped = _ANSI_ESCAPE_RE.sub("", line).rstrip()
-                if stripped:
-                    log.info("wstunnel: %s", stripped)
+                if not stripped:
+                    continue
+                level = logging.DEBUG if _WSTUNNEL_NOISE_RE.search(stripped) else logging.INFO
+                log.log(level, "wstunnel: %s", stripped)
         except Exception:
             log.debug("_drain_stdout: read loop exited unexpectedly", exc_info=True)
 
