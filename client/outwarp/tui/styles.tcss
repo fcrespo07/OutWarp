@@ -113,7 +113,8 @@ ModalScreen {
 }
 
 #import-modal,
-#help-modal {
+#help-modal,
+#settings-modal {
     width: 70;
     height: auto;
     background: $bg2;
@@ -123,6 +124,29 @@ ModalScreen {
 
 #import-modal Input {
     margin-bottom: 1;
+}
+
+#settings-modal {
+    width: 80;
+}
+
+#settings-modal .settings-row {
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+#settings-modal .settings-row Switch {
+    margin-right: 2;
+    width: 12;
+}
+
+#settings-modal .settings-text {
+    height: auto;
+    width: 1fr;
+}
+
+#settings-modal #settings-status {
+    margin-top: 1;
 }
 
 #fail-banner {

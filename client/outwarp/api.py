@@ -43,6 +43,8 @@ from outwarp.config import (
 from outwarp.integrity import IntegrityIssue, likely_av_quarantine
 from outwarp.logs import MemoryLogHandler
 from outwarp.platforms import PlatformError, get_platform
+from outwarp.settings import load_settings as _load_settings_at
+from outwarp.settings import save_settings as _save_settings_at
 from outwarp.tunnel import TunnelManager, TunnelState
 from outwarp.wireguard import get_tunnel_stats
 
@@ -66,52 +68,22 @@ _RESIZE_HT = {
 }
 
 
+# Path resolver kept local so test patches on `outwarp.api.default_config_path`
+# continue to redirect settings I/O. The shared `outwarp.settings` module
+# accepts an explicit `path` argument that we forward here. KEEP THIS LINE
+# in sync with `outwarp.settings.settings_path` — both must derive the file
+# from `default_config_path().parent / "settings.json"`; diverging silently
+# would let one UI write to a file the other UI never reads.
 def _settings_path() -> Path:
     return default_config_path().parent / "settings.json"
 
 
-def _default_settings() -> dict[str, Any]:
-    # Only settings the client actually acts on. Each toggle below has a real
-    # consumer downstream — if you add a key, wire its consumer first, or you
-    # lie to the user with a no-op switch.
-    return {
-        "language": "es",
-        "theme": "auto",
-        "advanced": False,
-        # Tolerate a pinned-fingerprint mismatch instead of aborting. For
-        # networks that do active TLS interception (corporate/school proxies)
-        # where the outer cert is the proxy's, not the server's. WireGuard's
-        # own crypto still protects the traffic. Off by default.
-        "allow_tls_intercept": False,
-        # When False, an unexpectedly-closed tunnel goes straight to FAILED
-        # instead of looping through the reconnect schedule. Consumed by
-        # TunnelManager._run. Initial-connect failures still honour max_attempts.
-        "auto_reconnect": True,
-        # When True, app.py creates the main window hidden on startup so only
-        # the tray icon is visible. The user opens the window from the tray's
-        # "Open" entry. A fresh install (no profile yet) ignores this setting
-        # — the user needs the import screen visible to do anything at all.
-        "minimize_to_tray": True,
-        # Register OutWarp to start on user login. Wired to platform.
-        # install_autostart / uninstall_autostart in set_settings, so toggling
-        # the value writes the registry key (Windows) or .desktop file (Linux)
-        # immediately.
-        "start_at_boot": False,
-        # Block all outbound traffic any time the tunnel is unexpectedly down
-        # (RECONNECTING / FAILED). Released on CONNECTED or on a clean stop.
-        # Real implementation lives in WindowsPlatform; Linux raises a
-        # PlatformError when toggled on so the UI surfaces an honest error
-        # rather than pretending the switch works.
-        "kill_switch": False,
-        # When True, the About screen runs check_for_updates() once on mount so
-        # the user sees a pending release without having to click. Consumed by
-        # the About component in app.jsx.
-        "check_updates_on_start": False,
-        # When True (default), app.py brings the tunnel up automatically at
-        # launch if a profile is imported and not expired. Turn off to start
-        # disconnected and connect manually. Consumed by app.main().
-        "auto_connect": True,
-    }
+def _load_settings() -> dict[str, Any]:
+    return _load_settings_at(_settings_path())
+
+
+def _save_settings(settings: dict[str, Any]) -> None:
+    _save_settings_at(settings, _settings_path())
 
 
 def _autostart_command() -> list[str]:
@@ -126,26 +98,6 @@ def _autostart_command() -> list[str]:
     if getattr(sys, "frozen", False):
         return [sys.executable]
     return [sys.executable, "-m", "outwarp"]
-
-
-def _load_settings() -> dict[str, Any]:
-    path = _settings_path()
-    if not path.exists():
-        return _default_settings()
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return _default_settings()
-    merged = _default_settings()
-    if isinstance(raw, dict):
-        merged.update({k: v for k, v in raw.items() if k in merged})
-    return merged
-
-
-def _save_settings(settings: dict[str, Any]) -> None:
-    path = _settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
 
 
 def _profile_from_config(cfg: ClientConfig) -> dict[str, Any]:
@@ -186,6 +138,12 @@ class Api:
         integrity_issues: list[IntegrityIssue] | None = None,
     ) -> None:
         self._window: Any = None
+        # Sticky kill-switch for the Python→JS bridge: flipped True the first
+        # time ``evaluate_js`` raises so subsequent ``_emit`` calls no-op
+        # cheaply. Kept separate from ``_window`` so window chrome methods
+        # (window_minimize/close, pick_owcfg_file) keep working even when the
+        # renderer can't accept JS events.
+        self._emit_disabled = False
         self._maximized = False
         self._memory_handler = memory_handler
         self._manager: TunnelManager | None = manager
@@ -342,7 +300,7 @@ class Api:
         self._on_quit = fn
 
     def _emit(self, name: str, payload: dict[str, Any]) -> None:
-        if self._window is None:
+        if self._window is None or self._emit_disabled:
             return
         js = (
             "window.dispatchEvent(new CustomEvent('outwarp:"
@@ -351,8 +309,25 @@ class Api:
         )
         try:
             self._window.evaluate_js(js)
-        except Exception:
-            log.exception("evaluate_js failed for outwarp:%s", name)
+        except Exception as exc:
+            # Flip the sticky kill-switch so subsequent emits no-op. Once
+            # evaluate_js raises (typically "Main window failed to start" when
+            # the pywebview backend can't boot — missing display, missing
+            # WebKit, etc.) it will keep raising forever, and each call costs a
+            # pywebview round-trip. We deliberately do NOT clear ``_window``:
+            # the window object may still service synchronous methods like
+            # minimize/destroy/create_file_dialog, and nulling it would silently
+            # break the custom title bar's buttons.
+            self._emit_disabled = True
+            # Crucially, do NOT use log.exception/log.error here. That would
+            # write a new ERROR line to the MemoryLogHandler, which the log
+            # watcher (_start_log_watcher) picks up on its next 250ms tick
+            # and emits via _emit("log", ...), landing right back in this
+            # except branch — infinite recursion that floods outwarp.log with
+            # the same traceback every cycle (observed in production).
+            sys.stderr.write(
+                f"outwarp.api: evaluate_js disabled (outwarp:{name}): {exc}\n"
+            )
 
     # ── status / connect ──────────────────────────────────────────────────────
 
@@ -913,9 +888,10 @@ class Api:
             return
 
         # Verify the download against the release's published SHA256SUMS before
-        # we run it. A mismatch means a corrupted or tampered file — refuse to
-        # launch it. Releases published before the manifest existed have no
-        # checksum for the asset; those pass through (verify_download returns ok).
+        # we run it. A mismatch — or a manifest that couldn't be fetched, or
+        # one that doesn't list this asset — means a corrupted or tampered file
+        # / a downgrade attempt: refuse. Only releases with no manifest at all
+        # (legacy, pre-SHA256SUMS) pass through with ok=True.
         self._emit("update", {"phase": "verifying", "latest": latest})
         try:
             ok, detail = updater.verify_download(

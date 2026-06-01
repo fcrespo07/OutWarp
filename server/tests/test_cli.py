@@ -473,3 +473,63 @@ class TestDoctorCommand:
         with patch("outwarp_server.diagnostics.run_all", return_value=results):
             ret = main(["--config-dir", str(config_dir), "doctor"])
         assert ret == 0
+
+
+class TestUpdateCommand:
+    def test_update_check_only_does_not_require_root(self) -> None:
+        """Read-only update probes (--check-only) must NOT trip _require_root
+        in the dispatcher. The handler enforces root only after the check-only
+        branch returns — mirrors the client's outwarp-cli update flow."""
+        with patch("outwarp_server.cli._require_root") as mock_req, \
+             patch("outwarp_server.updater.check_for_update") as mock_check:
+            mock_check.return_value = {
+                "available": True, "current": "0.4.1", "latest": "0.4.2",
+                "html_url": "https://example.invalid",
+            }
+            ret = main(["update", "--check-only"])
+        mock_req.assert_not_called()
+        assert ret == 0
+
+    def test_update_install_requires_root_via_handler_not_dispatcher(self) -> None:
+        """Without --check-only, the handler does its own geteuid() check
+        (skipped on Windows, where the dispatcher's _require_root takes over).
+        The dispatcher must NOT call _require_root for 'update' either way —
+        we removed 'update' from _PRIVILEGED_COMMANDS."""
+        with patch("outwarp_server.cli._require_root") as mock_req, \
+             patch("outwarp_server.updater.check_for_update") as mock_check, \
+             patch("outwarp_server.cli.os.geteuid", return_value=1000, create=True), \
+             patch("outwarp_server.cli.sys.platform", "linux"):
+            mock_check.return_value = {
+                "available": True, "current": "0.4.1", "latest": "0.4.2",
+                "html_url": "https://example.invalid",
+            }
+            ret = main(["update"])
+        mock_req.assert_not_called()
+        assert ret == 1  # handler refused: not root
+
+    def test_update_refuses_on_unsupported_platform(self) -> None:
+        """Defensive gate: in-app update only knows how to pip-install into the
+        pipx venv (Linux) or the SCM-managed venv (Windows). On any other
+        sys.platform — BSD, macOS quirks, a CI runner with sys.platform spoofed
+        — the right answer is a clean refusal, not falling through to a pip
+        command that has zero chance of working."""
+        with patch("outwarp_server.cli._require_root") as mock_req, \
+             patch("outwarp_server.updater.check_for_update") as mock_check, \
+             patch("outwarp_server.cli.sys.platform", "freebsd14"):
+            mock_check.return_value = {
+                "available": True, "current": "0.4.1", "latest": "0.4.2",
+                "html_url": "https://example.invalid",
+            }
+            ret = main(["update"])
+        mock_req.assert_not_called()
+        assert ret == 1
+
+
+def test_gui_subcommand_delegates_to_server_app_main() -> None:
+    """``outwarp-server gui`` replaces the standalone ``outwarp-server-gui``
+    binary from 0.4.x. The dispatch forwards to ``outwarp_server.server_app``
+    so the pywebview boot logic only lives in one place."""
+    with patch("outwarp_server.server_app.main", return_value=0) as mock_main:
+        ret = main(["gui"])
+    assert ret == 0
+    mock_main.assert_called_once_with()

@@ -916,3 +916,72 @@ def test_run_update_does_not_quit_if_installer_launch_fails(_mock_check, _mock_d
     api._quit_for_update.assert_not_called()
     phases = [c.args[1]["phase"] for c in api._emit.call_args_list]
     assert phases[-1] == "error"
+
+
+def test_emit_disables_window_on_failure_and_skips_logging():
+    """Regression for the production log-spam loop. Reproduces:
+
+    - pywebview window failed to start (e.g. no display / missing WebKit)
+    - log watcher calls _emit("log", ...) for each line
+    - _emit's except branch previously did log.exception(...) → wrote a new
+      ERROR line → watcher picked it up → emit fails again → forever.
+
+    The fix: on any evaluate_js failure, a sticky ``_emit_disabled`` flag is
+    set so further calls no-op, and the failure is written to stderr instead
+    of through logging (so it never re-enters the MemoryLogHandler). The
+    ``_window`` reference is deliberately preserved — window chrome methods
+    (minimize/close/file dialog) still need it.
+    """
+    api, _ = _make_api()
+    bad_window = MagicMock()
+    bad_window.evaluate_js.side_effect = Exception("Main window failed to start")
+    api._window = bad_window
+
+    # First emit fails — kill switch flips so the next call is a no-op, but
+    # the window reference is preserved for non-JS uses.
+    api._emit("log", {"msg": "first"})
+    assert api._emit_disabled is True
+    assert api._window is bad_window
+    assert bad_window.evaluate_js.call_count == 1
+
+    # Subsequent emits short-circuit immediately, no further evaluate_js calls.
+    api._emit("status", {"x": 1})
+    api._emit("log", {"msg": "second"})
+    assert bad_window.evaluate_js.call_count == 1
+
+
+def test_emit_failure_preserves_window_for_chrome_methods():
+    """A broken evaluate_js must NOT disable window_minimize / window_close /
+    window_toggle_maximize / pick_owcfg_file. Those go through self._window
+    directly (no JS round-trip) and the user needs them to recover from a
+    half-booted renderer."""
+    api, _ = _make_api()
+    bad_window = MagicMock()
+    bad_window.evaluate_js.side_effect = Exception("Main window failed to start")
+    api._window = bad_window
+
+    api._emit("log", {"msg": "trigger"})
+    assert api._emit_disabled is True
+
+    # These should all reach the still-present window object even though
+    # evaluate_js is permanently disabled.
+    api.window_minimize()
+    bad_window.minimize.assert_called_once()
+    api.window_close()
+    bad_window.destroy.assert_called_once()
+
+
+def test_emit_failure_does_not_recurse_through_logger(caplog):
+    """The except branch must not go through Python's logging at all — if it
+    did, MemoryLogHandler would capture a fresh ERROR line and the watcher
+    would emit() it, looping. caplog is the canonical way to check no
+    log.exception/log.error/log.warning fired during the failing call."""
+    import logging as _logging
+    api, _ = _make_api()
+    api._window = MagicMock()
+    api._window.evaluate_js.side_effect = Exception("boom")
+
+    with caplog.at_level(_logging.WARNING, logger="outwarp.api"):
+        api._emit("log", {"msg": "x"})
+
+    assert caplog.records == []

@@ -168,8 +168,19 @@ def parse_checksums(text: str) -> dict[str, str]:
     return out
 
 
+class _ChecksumsFetchError(Exception):
+    """Raised by fetch_checksums when the manifest URL was provided but the
+    download failed. Distinct from 'no manifest URL', which is silent."""
+
+
 def fetch_checksums(url: str, *, timeout: float = 10.0) -> dict[str, str]:
-    """Download and parse the SHA256SUMS manifest. Returns {} on any failure."""
+    """Download and parse the SHA256SUMS manifest.
+
+    - Empty ``url`` (release has no manifest at all): returns ``{}``.
+    - Network/parse failure on a non-empty url: raises ``_ChecksumsFetchError``.
+      The caller must NOT treat that as "no checksum to verify" — that would
+      let a MITM that selectively drops the manifest downgrade verification.
+    """
     if not url:
         return {}
     try:
@@ -178,21 +189,33 @@ def fetch_checksums(url: str, *, timeout: float = 10.0) -> dict[str, str]:
             return parse_checksums(resp.read().decode("utf-8", "replace"))
     except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
         log.warning("could not fetch checksums: %s", exc)
-        return {}
+        raise _ChecksumsFetchError(str(exc)) from exc
 
 
 def verify_download(path: Path, asset_name: str, checksums_url: str) -> tuple[bool, str]:
     """Check `path` against the published SHA256SUMS.
 
-    Returns (ok, detail). ok is True when the hash matches OR when no checksum
-    is available for this asset (older releases predate the manifest — we don't
-    block them). ok is False only on a real mismatch, which the caller must
-    treat as a failed/compromised download and refuse to run.
+    Returns ``(ok, detail)``. Decisions:
+
+    - No ``checksums_url`` at all (legacy release, predates the manifest):
+      skip with ``ok=True`` — refusing to update off legacy releases is worse
+      than the lack of a hash for them.
+    - Manifest URL present but the fetch fails: ``ok=False``. A network path
+      that can selectively drop the manifest must not be able to downgrade
+      verification.
+    - Manifest fetched but the asset isn't listed: ``ok=False``. If the
+      publisher attached a manifest, every shipped asset should be in it.
+    - Hash mismatch: ``ok=False``.
     """
-    sums = fetch_checksums(checksums_url)
+    if not checksums_url:
+        return True, "no SHA256SUMS published (skipping verification)"
+    try:
+        sums = fetch_checksums(checksums_url)
+    except _ChecksumsFetchError as exc:
+        return False, f"could not fetch SHA256SUMS: {exc}"
     expected = sums.get(asset_name)
     if not expected:
-        return True, "no checksum published for this asset (skipping verification)"
+        return False, f"{asset_name} is not listed in SHA256SUMS"
     actual = sha256_file(path)
     if actual.lower() == expected.lower():
         return True, "sha256 verified"
@@ -232,3 +255,119 @@ def download_installer(
     if progress_cb is not None:
         progress_cb(100)
     return dest
+
+
+# ── Linux wheel updates ──────────────────────────────────────────────────────
+#
+# On Linux we don't ship an .exe — releases include `outwarp_{client,server}-*.whl`
+# assets instead, and the in-venv updater (outwarp-cli update / outwarp-server
+# update) reuses the same SHA256SUMS.txt verification flow.
+
+_LINUX_CLIENT_WHEEL_RE = re.compile(r"^outwarp[_-]client-[0-9].*\.whl$", re.IGNORECASE)
+_LINUX_SERVER_WHEEL_RE = re.compile(r"^outwarp[_-]server-[0-9].*\.whl$", re.IGNORECASE)
+
+
+def check_for_linux_update(
+    current: str,
+    package: str,
+    *,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    """Query GitHub Releases for the latest Linux wheel of `package`.
+
+    `package` is "client" or "server". Returns the same shape as
+    ``check_for_update`` but with ``wheel_url`` / ``wheel_name`` /
+    ``wheel_size`` in place of the .exe asset fields. Never raises.
+    """
+    if package == "client":
+        pattern = _LINUX_CLIENT_WHEEL_RE
+    elif package == "server":
+        pattern = _LINUX_SERVER_WHEEL_RE
+    else:
+        return {"available": False, "current": current, "error": f"unknown package: {package}"}
+
+    try:
+        req = urllib.request.Request(_LATEST_API, headers={"User-Agent": _USER_AGENT})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
+        log.warning("linux update check failed: %s", exc)
+        return {"available": False, "current": current, "error": str(exc)}
+
+    latest = str(data.get("tag_name") or "").lstrip("vV")
+    html_url = str(data.get("html_url") or _RELEASES_PAGE)
+    assets = data.get("assets") or []
+
+    wheel: dict[str, Any] | None = None
+    for asset in assets:
+        if pattern.match(str(asset.get("name") or "")):
+            wheel = asset
+            break
+
+    checksums_url = ""
+    for a in assets:
+        if str(a.get("name") or "").lower() == _CHECKSUMS_ASSET.lower():
+            checksums_url = str(a.get("browser_download_url") or "")
+            break
+
+    wheel_url = str(wheel.get("browser_download_url") or "") if wheel else ""
+    wheel_name = str(wheel.get("name") or "") if wheel else ""
+    wheel_size = int(wheel.get("size") or 0) if wheel else 0
+
+    return {
+        "available": bool(latest) and _is_newer(latest, current) and bool(wheel_url),
+        "current": current,
+        "latest": latest,
+        "wheel_url": wheel_url,
+        "wheel_name": wheel_name,
+        "wheel_size": wheel_size,
+        "checksums_url": checksums_url,
+        "html_url": html_url,
+    }
+
+
+PIP_INSTALL_TIMEOUT = 600.0
+"""Seconds before ``pip install`` is killed. 10 minutes is comfortable for the
+slowest realistic transitive-dep resolution (textual + qrcode + pillow over
+flaky Wi-Fi) without leaving the user staring at a frozen CLI indefinitely
+if the network drops mid-resolve."""
+
+
+def apply_linux_update(
+    wheel_path: Path,
+    extras: str = "",
+    *,
+    progress_cb: Callable[[str], None] | None = None,
+    timeout: float = PIP_INSTALL_TIMEOUT,
+) -> None:
+    """Install `wheel_path` into the current venv via ``pip install --upgrade``.
+
+    Uses ``sys.executable`` so the upgrade always targets the venv that's
+    running this code, even under ``sudo outwarp-cli update``. Under the
+    pipx-managed layout (``PIPX_HOME=/opt/pipx``), that venv lives at
+    ``/opt/pipx/venvs/outwarp-client/`` and pip inside it is fully functional
+    — we deliberately do NOT shell out to ``pipx upgrade`` here because that
+    would re-bootstrap the venv from the original spec and discard local
+    state (e.g. a manually-injected debug package). The in-place
+    ``pip install --upgrade`` is the surgical option and matches the
+    semantics ``outwarp-cli update`` advertises. Raises
+    ``subprocess.CalledProcessError`` on pip failure or
+    ``subprocess.TimeoutExpired`` when the install runs longer than
+    ``timeout`` seconds.
+    """
+    import subprocess
+    import sys
+
+    target = str(wheel_path)
+    if extras:
+        target = f"{target}[{extras}]"
+    if progress_cb is not None:
+        progress_cb("Installing...")
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install",
+         "--upgrade", "--disable-pip-version-check", "--quiet", target],
+        check=True,
+        timeout=timeout,
+    )
+    if progress_cb is not None:
+        progress_cb("Done.")

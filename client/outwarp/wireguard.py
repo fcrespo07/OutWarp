@@ -133,6 +133,84 @@ def _allowed_ips_excluding(bypass_ips: list[str]) -> str:
     return ", ".join(str(n) for n in sorted(remaining))
 
 
+_RESOLVED_SYMLINK_PREFIXES = (
+    # Default Debian/Ubuntu/Arch layout: stub-resolv.conf written by
+    # systemd-resolved itself.
+    "/run/systemd/resolve/",
+    # Fedora / RHEL 9 layout: the distro ships a static resolv.conf shim under
+    # /usr/lib/systemd that's just the 127.0.0.53 stub on a system where
+    # systemd-resolved is the active resolver. Same "resolvconf -a fails with
+    # signature mismatch" outcome as the canonical case.
+    "/usr/lib/systemd/",
+)
+
+
+def _systemd_resolved_active() -> bool:
+    """True on Linux when systemd-resolved owns ``/etc/resolv.conf``.
+
+    In that setup openresolv's ``resolvconf -a`` refuses with
+    ``signature mismatch`` (it only writes files it owns) and ``wg-quick up``
+    aborts before the link comes up — observed on Arch + systemd-resolved.
+
+    When this returns True, ``build_wg_conf`` emits ``PostUp``/``PreDown``
+    hooks that drive systemd-resolved directly via ``resolvectl`` instead of
+    the standard ``DNS = `` line that triggers the broken resolvconf path.
+
+    Detection covers three layouts:
+
+    1. ``/etc/resolv.conf`` is a symlink under ``/run/systemd/resolve/``
+       (Debian/Ubuntu/Arch default).
+    2. The symlink points under ``/usr/lib/systemd/`` (Fedora/RHEL).
+    3. Neither (cloud-init / netplan writes a regular file) but the file's
+       only nameserver is the systemd-resolved stub ``127.0.0.53`` AND the
+       ``resolvectl`` binary exists. The 127.0.0.53 sentinel is the
+       resolved-owned loopback — non-resolved resolvers don't use it.
+    """
+    if sys.platform != "linux":
+        return False
+    if not shutil.which("resolvectl"):
+        return False
+    try:
+        target = Path("/etc/resolv.conf").resolve()
+    except OSError:
+        return False
+    target_s = str(target)
+    if any(target_s.startswith(p) for p in _RESOLVED_SYMLINK_PREFIXES):
+        return True
+    # Static file with 127.0.0.53: parse the first uncommented `nameserver`
+    # directive. Any other resolver (1.1.1.1, 8.8.8.8, the box's LAN dnsmasq)
+    # → not resolved → fall back to the classic DNS= line.
+    try:
+        text = Path("/etc/resolv.conf").read_text(encoding="utf-8", errors="replace")
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or line.startswith(";"):
+                continue
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].lower() == "nameserver":
+                return parts[1] == "127.0.0.53"
+    except OSError:
+        return False
+    return False
+
+
+def _dns_lines_for(wg) -> str:
+    """Render the ``[Interface]`` DNS block for the running environment."""
+    if not wg.dns:
+        return ""
+    if _systemd_resolved_active():
+        # Drive systemd-resolved directly: %i is the interface name, "~." adds
+        # the tunnel as the default route for every domain. Revert lives in
+        # PreDown so the interface still exists when resolvectl needs it.
+        dns_str = " ".join(wg.dns)
+        return (
+            f"PostUp = resolvectl dns %i {dns_str}\n"
+            f"PostUp = resolvectl domain %i ~.\n"
+            f"PreDown = resolvectl revert %i\n"
+        )
+    return f"DNS = {', '.join(wg.dns)}\n"
+
+
 def build_wg_conf(config: ClientConfig) -> str:
     wg = config.wireguard
     tunnel = config.tunnel
@@ -145,7 +223,7 @@ def build_wg_conf(config: ClientConfig) -> str:
     if config.server.endpoint:
         bypass.append(config.server.endpoint)
     allowed_ips = _allowed_ips_excluding(bypass) if bypass else "0.0.0.0/0"
-    dns_line = f"DNS = {', '.join(wg.dns)}\n" if wg.dns else ""
+    dns_line = _dns_lines_for(wg)
     psk_line = f"PresharedKey = {wg.preshared_key}\n" if wg.preshared_key else ""
     return (
         "[Interface]\n"

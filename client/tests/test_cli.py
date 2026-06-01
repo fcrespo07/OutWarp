@@ -193,30 +193,65 @@ def test_logs_print(tmp_path, monkeypatch, capsys):
     assert "line1" in out and "line2" in out
 
 
-# ── uninstall ───────────────────────────────────────────────────────────────
+# ── forget-profile (was: `uninstall` in 0.4.x) ──────────────────────────────
 
 
-def test_uninstall_no_profile(isolated_config, capsys):
-    rc = cli.main(["uninstall", "--yes"])
+def test_forget_profile_no_profile(isolated_config, capsys):
+    rc = cli.main(["forget-profile", "--yes"])
     assert rc == 0
     assert "Nothing to remove" in capsys.readouterr().out
 
 
-def test_uninstall_removes_profile(imported_profile):
+def test_forget_profile_removes_profile(imported_profile):
     fake_platform = MagicMock()
     fake_platform.is_wg_tunnel_active.return_value = False
     with patch("outwarp.cli.get_platform", return_value=fake_platform):
-        rc = cli.main(["uninstall", "--yes"])
+        rc = cli.main(["forget-profile", "--yes"])
     assert rc == 0
     assert not imported_profile.exists()
     assert not imported_profile.with_name("config.original.json").exists()
 
 
-def test_uninstall_refuses_while_active(imported_profile, capsys):
+def test_forget_profile_refuses_while_active(imported_profile, capsys):
     fake_platform = MagicMock()
     fake_platform.is_wg_tunnel_active.return_value = True
     with patch("outwarp.cli.get_platform", return_value=fake_platform):
-        rc = cli.main(["uninstall", "--yes"])
+        rc = cli.main(["forget-profile", "--yes"])
     assert rc == 1
     assert imported_profile.exists()
     assert "Refusing to remove" in capsys.readouterr().err
+
+
+# ── uninstall (delegates to outwarp.uninstall.main) ─────────────────────────
+
+
+def test_uninstall_subcommand_delegates_to_uninstall_main(isolated_config):
+    """The new ``outwarp-cli uninstall`` is the system-wide purge that 0.4.x
+    shipped as a separate ``outwarp-uninstall`` binary. Verify the dispatch
+    forwards to ``outwarp.uninstall.main`` and propagates --yes."""
+    with patch("outwarp.uninstall.main", return_value=0) as mock_main:
+        rc = cli.main(["uninstall", "--yes"])
+    assert rc == 0
+    mock_main.assert_called_once_with(["--yes"])
+
+
+def test_uninstall_subcommand_without_yes_forwards_none(isolated_config):
+    """Without --yes the dispatch forwards ``None`` so the underlying parser
+    falls back to its own interactive confirmation."""
+    with patch("outwarp.uninstall.main", return_value=0) as mock_main:
+        rc = cli.main(["uninstall"])
+    assert rc == 0
+    mock_main.assert_called_once_with(None)
+
+
+# ── gui (delegates to outwarp.app.main) ─────────────────────────────────────
+
+
+def test_gui_subcommand_delegates_to_app_main(isolated_config):
+    """``outwarp-cli gui`` replaces the standalone ``outwarp`` gui-script.
+    The dispatch table forwards to ``outwarp.app.main`` so the boot logic
+    only lives in one place."""
+    with patch("outwarp.app.main", return_value=0) as mock_main:
+        rc = cli.main(["gui"])
+    assert rc == 0
+    mock_main.assert_called_once_with()

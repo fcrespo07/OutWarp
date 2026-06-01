@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import os
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -33,6 +35,13 @@ _PRIVILEGED_COMMANDS = frozenset({
     "setup", "add-client", "list-clients", "revoke-client", "prune-expired",
     "status", "restart", "uninstall", "doctor", "init", "serve", "tui",
 })
+# ``gui`` is intentionally NOT in the privileged set: the pywebview shell is
+# safe to launch as the invoking user, and the underlying API enforces root
+# on each privileged call itself.
+# ``update`` is intentionally NOT in the privileged set: ``--check-only`` is a
+# read-only network call that anyone should be able to run, and ``_cmd_update``
+# enforces root itself just before the pip-install step. Mirrors the client's
+# ``outwarp-cli update`` flow.
 
 
 def _require_root(command: str) -> None:
@@ -541,18 +550,18 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     console.print(
         Panel(
-            "[bold]Modo de pruebas / Doctor[/bold]\n"
-            "Comprueba todo lo necesario para que el túnel funcione end-to-end.",
+            "[bold]Doctor[/bold]\n"
+            "Checks everything required for the tunnel to work end-to-end.",
             border_style="cyan",
         )
     )
 
     results = run_all(config)
 
-    table = Table(title="Resultados", show_lines=False)
+    table = Table(title="Results", show_lines=False)
     table.add_column("", width=2)
     table.add_column("Check", style="bold")
-    table.add_column("Detalle")
+    table.add_column("Detail")
 
     icons = {
         Status.PASS: "[green]✓[/green]",
@@ -566,7 +575,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     needs_action = [r for r in results if r.status in (Status.FAIL, Status.WARN) and r.remediation]
     if needs_action:
-        console.print("\n[bold]Acciones sugeridas:[/bold]")
+        console.print("\n[bold]Suggested actions:[/bold]")
         for r in needs_action:
             style = "red" if r.status == Status.FAIL else "yellow"
             console.print(f"  [{style}]•[/{style}] [bold]{r.name}[/bold]: {r.remediation}")
@@ -647,13 +656,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser(
         "doctor",
-        help="Run the full diagnostics battery (modo de pruebas) — "
+        help="Run the full diagnostics battery — "
              "checks NAT, forwarding, services, firewall, etc.",
     )
 
     sub.add_parser(
         "tui",
         help="Launch the interactive admin TUI (Linux / headless)",
+    )
+
+    sub.add_parser(
+        "gui",
+        help="Launch the admin GUI (was the 'outwarp-server-gui' binary in 0.4.x)",
+    )
+
+    p_update = sub.add_parser(
+        "update",
+        help="Check GitHub Releases for a newer outwarp-server wheel and install it",
+    )
+    p_update.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Just report whether a newer version is available - don't install",
     )
 
     return parser
@@ -673,6 +697,122 @@ def _cmd_tui(args: argparse.Namespace) -> int:
     return OutWarpServerTUI(config_dir).run() or 0
 
 
+def _cmd_gui(args: argparse.Namespace) -> int:
+    """Delegate to outwarp_server.server_app:main — the pywebview admin GUI.
+
+    Was the dedicated ``outwarp-server-gui`` binary in 0.4.x; collapsed into a
+    subcommand in 0.5.0 so the Linux install surface is a single executable.
+    """
+    from outwarp_server.server_app import main as _gui_main
+    return _gui_main() or 0
+
+
+def _cmd_update(args: argparse.Namespace) -> int:
+    """Check GitHub Releases for a newer outwarp-server wheel and install it."""
+    import tempfile
+
+    from outwarp_server import updater as _upd
+
+    console.print(f"Checking for updates (current: v{__version__})...")
+    info = _upd.check_for_update(__version__)
+
+    if info.get("error"):
+        console.print(f"[red]Update check failed:[/red] {info['error']}")
+        return 1
+
+    if not info.get("available"):
+        latest = info.get("latest") or __version__
+        # If a newer tag exists but the release has no Linux wheel attached
+        # (e.g. an older Windows-only release), say so explicitly rather than
+        # claiming we're already on the latest version.
+        from outwarp_server.updater import _is_newer as _newer
+        if latest and _newer(latest, __version__) and not info.get("wheel_url"):
+            console.print(
+                f"[yellow]Latest release v{latest} has no Linux wheel attached.[/yellow]"
+            )
+            console.print(f"  See {info.get('html_url', '')}")
+        else:
+            console.print(f"[green]Already up to date[/green] (v{latest}).")
+        return 0
+
+    latest = info["latest"]
+    console.print(f"[bold]New version available:[/bold] v{latest}")
+    console.print(f"  Release: {info.get('html_url', '')}")
+
+    if args.check_only:
+        console.print("Run [bold]sudo outwarp-server update[/bold] to install.")
+        return 0
+
+    # Anything below this line writes to the venv (pip install --upgrade) or
+    # the system temp dir as root. Enforce the root check here — not in the
+    # dispatcher — so ``outwarp-server update --check-only`` above stays open
+    # to unprivileged users.
+    if sys.platform != "win32" and hasattr(os, "geteuid") and os.geteuid() != 0:
+        console.print(
+            "[red]Error:[/red] Installing the update needs root.\n"
+            "  Try: [bold]sudo outwarp-server update[/bold]"
+        )
+        return 1
+
+    wheel_url = info.get("wheel_url", "")
+    wheel_name = info.get("wheel_name") or Path(wheel_url).name
+    if not wheel_url:
+        console.print(
+            f"[red]No Linux wheel found in release v{latest}[/red] - "
+            f"see {info.get('html_url', '')}"
+        )
+        return 1
+
+    with tempfile.NamedTemporaryFile(suffix=".whl", delete=False) as tmp:
+        wheel_path = Path(tmp.name)
+
+    try:
+        console.print(f"Downloading [bold]{wheel_name}[/bold]...")
+        last_milestone = [-1]
+
+        def _progress(pct: int) -> None:
+            milestone = pct // 20
+            if milestone > last_milestone[0]:
+                last_milestone[0] = milestone
+                console.print(f"  {pct}%")
+
+        try:
+            _upd.download_wheel(wheel_url, wheel_path, _progress)
+        except Exception as exc:
+            console.print(f"[red]Download failed:[/red] {exc}")
+            return 1
+
+        ok, detail = _upd.verify_wheel(wheel_path, wheel_name, info.get("checksums_url", ""))
+        if not ok:
+            console.print(f"[red]Integrity check failed:[/red] {detail}")
+            return 1
+        console.print(f"  {detail}")
+
+        console.print("Installing into venv (pip)...")
+        try:
+            _upd.apply_update(wheel_path, extras="tui")
+        except subprocess.TimeoutExpired:
+            console.print(
+                "[red]pip install timed out[/red] (network stall while "
+                "resolving transitive deps?). Re-run when the connection is "
+                "stable."
+            )
+            return 1
+        except Exception as exc:
+            console.print(f"[red]pip install failed:[/red] {exc}")
+            return 1
+
+        console.print(f"\n[green]Updated to v{latest}.[/green]")
+        console.print(
+            "Restart the service to pick up the new code: "
+            "[bold]sudo outwarp-server restart[/bold]"
+        )
+        return 0
+    finally:
+        with contextlib.suppress(OSError):
+            wheel_path.unlink(missing_ok=True)
+
+
 _COMMANDS: dict[str, callable] = {
     "setup": _cmd_setup,
     "init": _cmd_init,
@@ -686,6 +826,8 @@ _COMMANDS: dict[str, callable] = {
     "uninstall": _cmd_uninstall,
     "doctor": _cmd_doctor,
     "tui": _cmd_tui,
+    "gui": _cmd_gui,
+    "update": _cmd_update,
 }
 
 

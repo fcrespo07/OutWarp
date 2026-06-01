@@ -284,9 +284,84 @@ def test_verify_download_mismatch_is_rejected(tmp_path):
 
 
 def test_verify_download_no_checksum_passes(tmp_path):
-    # Releases predating the manifest: no entry for the asset -> don't block.
+    # Legacy releases that predate the manifest have an empty checksums_url:
+    # skip verification rather than refuse to update off them.
     p = tmp_path / "OutWarpSetup-0.3.0.exe"
     p.write_bytes(b"whatever")
     with patch("outwarp.updater.fetch_checksums", return_value={}):
         ok, _ = verify_download(p, "OutWarpSetup-0.3.0.exe", "")
     assert ok is True
+
+
+def test_verify_download_manifest_fetch_failure_is_rejected(tmp_path):
+    """When a SHA256SUMS URL is published but unreachable, ok must be False:
+    treating fetch failure as 'no checksum, pass' would let a MITM that drops
+    only the manifest downgrade integrity checks."""
+    from outwarp.updater import _ChecksumsFetchError
+
+    p = tmp_path / "OutWarpSetup-0.3.0.exe"
+    p.write_bytes(b"whatever")
+    with patch(
+        "outwarp.updater.fetch_checksums",
+        side_effect=_ChecksumsFetchError("captive proxy"),
+    ):
+        ok, detail = verify_download(
+            p, "OutWarpSetup-0.3.0.exe", "https://x/SHA256SUMS.txt"
+        )
+    assert ok is False
+    assert "could not fetch" in detail.lower()
+
+
+def test_apply_linux_update_passes_timeout_to_subprocess(tmp_path):
+    """pip install must run with a timeout — without one a network stall
+    during transitive-dep resolution would hang the updater indefinitely
+    with the CLI frozen on 'Installing into venv (pip)…'."""
+    from outwarp.updater import PIP_INSTALL_TIMEOUT, apply_linux_update
+
+    wheel = tmp_path / "outwarp_client-0.4.2-py3-none-any.whl"
+    wheel.write_bytes(b"wheel-bytes")
+    with patch("subprocess.run") as run:
+        apply_linux_update(wheel, extras="tui")
+    args, kwargs = run.call_args
+    assert kwargs.get("timeout") == PIP_INSTALL_TIMEOUT
+    assert kwargs.get("check") is True
+    assert args[0][-1] == f"{wheel}[tui]"
+
+
+def test_apply_linux_update_uses_pip_in_current_venv_not_pipx(tmp_path):
+    """Regression for the pipx migration: ``outwarp-cli update`` must keep
+    upgrading in place via ``sys.executable -m pip install --upgrade`` so the
+    update inherits the running process's privileges (root via sudo, etc.).
+    Calling ``pipx upgrade`` would re-bootstrap the venv from the original
+    spec, losing any operator-injected debug packages and breaking the
+    progress-bar contract the CLI documents."""
+    import sys as _sys
+
+    from outwarp.updater import apply_linux_update
+
+    wheel = tmp_path / "outwarp_client-0.4.2-py3-none-any.whl"
+    wheel.write_bytes(b"wheel-bytes")
+    with patch("subprocess.run") as run:
+        apply_linux_update(wheel)
+    cmd = run.call_args[0][0]
+    assert cmd[0] == _sys.executable, f"expected sys.executable, got {cmd[0]}"
+    assert cmd[1:4] == ["-m", "pip", "install"], f"expected pip invocation, got {cmd[1:4]}"
+    # Belt-and-suspenders: no pipx anywhere in the argv.
+    assert not any("pipx" in str(arg) for arg in cmd), f"pipx leaked into cmd: {cmd}"
+
+
+def test_verify_download_asset_missing_from_manifest_is_rejected(tmp_path):
+    """If the publisher attached SHA256SUMS but our asset isn't listed in it
+    something is wrong — either we're looking at the wrong release, or the
+    manifest was truncated by a MITM. Refuse the install."""
+    p = tmp_path / "OutWarpSetup-0.3.0.exe"
+    p.write_bytes(b"whatever")
+    with patch(
+        "outwarp.updater.fetch_checksums",
+        return_value={"some-other-file.exe": "0" * 64},
+    ):
+        ok, detail = verify_download(
+            p, "OutWarpSetup-0.3.0.exe", "https://x/SHA256SUMS.txt"
+        )
+    assert ok is False
+    assert "not listed" in detail

@@ -8,6 +8,7 @@ from textual.widgets import Static
 _LINES = [
     "[bold]Global[/bold]",
     "  q      Quit",
+    "  s      Settings (TLS-intercept, auto-reconnect, auto-connect)",
     "  ?      Help",
     "  Esc    Back / cancel",
     "",

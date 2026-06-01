@@ -165,6 +165,12 @@ class Api:
         on_manager_replaced: Callable[[ServerManager], None] | None = None,
     ) -> None:
         self._window: Any = None
+        # Sticky kill-switch for the Python→JS bridge. Kept separate from
+        # ``_window`` so window chrome methods (minimize/close,
+        # pick_owcfg_file's create_file_dialog) keep working even when the
+        # renderer can't accept JS events. See the matching note in
+        # ``outwarp.api.Api``.
+        self._emit_disabled = False
         self._maximized = False
         self._memory_handler = memory_handler
         self._manager: ServerManager | None = manager
@@ -330,7 +336,7 @@ class Api:
         self._poll_thread.start()
 
     def _emit(self, name: str, payload: Any) -> None:
-        if self._window is None:
+        if self._window is None or self._emit_disabled:
             return
         js = (
             "window.dispatchEvent(new CustomEvent('outwarp:"
@@ -339,8 +345,17 @@ class Api:
         )
         try:
             self._window.evaluate_js(js)
-        except Exception:
-            log.exception("evaluate_js failed for outwarp:%s", name)
+        except Exception as exc:
+            # Same fix as the client api: flip a sticky kill-switch so further
+            # emits no-op, and write to stderr (NOT log.exception) to avoid the
+            # MemoryLogHandler watcher picking it up, calling _emit("log", ...),
+            # failing again, and looping forever. We keep ``_window`` populated
+            # so the title-bar buttons and pick_owcfg_file's file dialog still
+            # work.
+            self._emit_disabled = True
+            sys.stderr.write(
+                f"outwarp_server.api: evaluate_js disabled (outwarp:{name}): {exc}\n"
+            )
 
     # ── status ────────────────────────────────────────────────────────────────
 

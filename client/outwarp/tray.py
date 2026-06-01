@@ -54,6 +54,29 @@ _STATE_TOOLTIPS_EN: dict[TunnelState, str] = {
 }
 _NO_CONFIG_TOOLTIP_EN = "OutWarp — no configuration"
 
+
+def _x11_safe_title(text: str) -> str:
+    """Strip characters pystray's Xlib backend can't encode in latin-1.
+
+    pystray's ``_xorg`` calls ``window.set_wm_name(self.title)`` which goes
+    through ``Xatom.STRING`` (latin-1). Any non-latin-1 char raises
+    ``UnicodeEncodeError`` and kills the tray boot, taking the GUI down with it.
+    The em-dash (— U+2014) we use as a separator is the typical culprit.
+
+    On Wayland and Windows the title is UTF-8 and this is a no-op (the early
+    `encode("latin-1")` succeeds). We only get into the replacement branch on
+    X11 with non-ASCII text, so the visual degradation (— → -) is paid only
+    where it would otherwise crash.
+    """
+    try:
+        text.encode("latin-1")
+        return text
+    except UnicodeEncodeError:
+        pass
+    # Replace the typographic dashes first so we preserve the visual separator.
+    fixed = text.replace("—", "-").replace("–", "-")
+    return fixed.encode("latin-1", "replace").decode("latin-1")
+
 # Menu labels. Followed live via a lang_getter so the tray tracks the UI's
 # language setting (re-read each time the menu opens).
 _MENU_STR: dict[str, dict[str, str]] = {
@@ -127,11 +150,15 @@ class TrayApp:
     def _tooltip(self, state: TunnelState | None) -> str:
         if self._lang() == "en":
             if state is None:
-                return _NO_CONFIG_TOOLTIP_EN
-            return _STATE_TOOLTIPS_EN.get(state, _NO_CONFIG_TOOLTIP_EN)
-        if state is None:
-            return _NO_CONFIG_TOOLTIP
-        return _STATE_TOOLTIPS.get(state, _NO_CONFIG_TOOLTIP)
+                text = _NO_CONFIG_TOOLTIP_EN
+            else:
+                text = _STATE_TOOLTIPS_EN.get(state, _NO_CONFIG_TOOLTIP_EN)
+        else:
+            if state is None:
+                text = _NO_CONFIG_TOOLTIP
+            else:
+                text = _STATE_TOOLTIPS.get(state, _NO_CONFIG_TOOLTIP)
+        return _x11_safe_title(text)
 
     def _is_active(self) -> bool:
         st = self._manager.state if self._manager else None

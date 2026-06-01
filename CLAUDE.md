@@ -51,7 +51,7 @@ El HTML se sirve **desde el filesystem** (`file://…/ui/index.html`) directamen
 ### Servidor
 
 - Wizard CLI interactivo (`rich` + `prompt_toolkit`) — sigue siendo el flujo recomendado en VPS headless (`sudo outwarp-server setup`).
-- Wizard GUI con la misma estética que el cliente (pywebview + HTML) en `outwarp-server-gui` para administradores con escritorio.
+- Wizard GUI con la misma estética que el cliente (pywebview + HTML) accesible como subcomando `outwarp-server gui` (era un binario aparte `outwarp-server-gui` hasta 0.4.x) para administradores con escritorio.
 - Instalación como servicio nativo: **systemd** (Linux) y **Windows Service Manager** (Windows). También despliegue **Docker/Kubernetes** vía manifests.
 - Genera un `.owcfg` por cliente, listo para importar.
 
@@ -63,14 +63,14 @@ OutWarp/
 │   ├── outwarp/
 │   │   ├── app.py            # Entry point: crea Api, abre pywebview, arranca tray
 │   │   ├── api.py            # Clase Api expuesta como window.pywebview.api
-│   │   ├── cli.py            # outwarp-cli (cliente headless para Linux)
+│   │   ├── cli.py            # outwarp-cli (única binary del cliente: subcomandos import/connect/status/profile/logs/forget-profile/uninstall/tui/gui/update)
 │   │   ├── tray.py           # pystray + menú contextual
 │   │   ├── tunnel.py         # Gestión del proceso wstunnel + watchdog + reconexión
 │   │   ├── wireguard.py      # Fachada WireGuard (delega en platforms/)
 │   │   ├── network.py        # TCP probe + TLS fingerprint pinning
 │   │   ├── config.py         # Schema + I/O del .owcfg / config.json
 │   │   ├── logs.py           # Logger + rotación + MemoryLogHandler
-│   │   ├── uninstall.py      # outwarp-uninstall CLI
+│   │   ├── uninstall.py      # Lógica del subcomando `outwarp-cli uninstall` (purga venv pipx + helper + sudoers + autostart)
 │   │   ├── ui/               # HTML/JS de la UI (Claude Design)
 │   │   │   ├── index.html    # Carga react + scripts (bundle JSX pre-compilado)
 │   │   │   ├── app.jsx       # Shell interactivo cableado al Api
@@ -89,8 +89,8 @@ OutWarp/
 │
 ├── server/
 │   ├── outwarp_server/
-│   │   ├── cli.py            # outwarp-server (rich CLI)
-│   │   ├── server_app.py     # outwarp-server-gui (pywebview)
+│   │   ├── cli.py            # outwarp-server (única binary del servidor: setup/init/serve/add-client/list-clients/revoke-client/prune-expired/status/restart/doctor/uninstall/tui/gui/update)
+│   │   ├── server_app.py     # Lógica del subcomando `outwarp-server gui` (pywebview)
 │   │   ├── api.py            # Clase Api del lado servidor
 │   │   ├── server_manager.py # ServerManager (start/stop/add-client/revoke)
 │   │   ├── server_tray.py    # Tray del modo GUI
@@ -263,7 +263,11 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 ## Estado actual
 
-**Versión actual: `0.2.0`** (en código; instaladores `.exe` publicados de 0.1.0 a 0.1.4, tags hasta `v0.1.2`). La 0.2.0 añade el **auto-updater in-app** (botón "Actualizar" en About) y la **ventana frameless con title bar propio**. El proyecto pasó de las fases de scaffolding a **releases versionados y bugfixing post-lanzamiento** (~130 commits en `main`).
+**Versión actual: `0.5.0`** (en código). Cambios mayores respecto a 0.4.x:
+- **Linux ahora se distribuye vía wheels + pipx** (`/opt/pipx/venvs/outwarp-{client,server}/`). El `install.sh` migra automáticamente desde la layout legacy `/opt/outwarp-*/.venv`.
+- **CLI unificada**: solo dos binarios (`outwarp-cli` y `outwarp-server`). El tray del cliente vive en `outwarp-cli gui` (era el binario `outwarp`), la admin GUI del servidor en `outwarp-server gui` (era `outwarp-server-gui`), y la purga de la app en `outwarp-cli uninstall` (era `outwarp-uninstall`); el borrado solo del perfil se renombró a `outwarp-cli forget-profile`.
+- **Hardening de secretos**: `.owcfg`, `server_config.json` y la clave privada TLS se escriben atómicamente con permisos 0o600 (antes 0o644 por umask).
+- **SHA256 verificado**: `install.sh` ahora valida también el binario de `wstunnel` contra el manifest de erebe (los wheels de OutWarp ya se verificaban desde 0.4.x).
 
 ### Cliente
 

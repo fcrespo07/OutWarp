@@ -52,7 +52,13 @@ def test_tray_state_change_updates_icon() -> None:
     tray._on_state_change(TunnelState.CONNECTED)
 
     assert fake_icon.icon is not None
-    assert fake_icon.title == _STATE_TOOLTIPS[TunnelState.CONNECTED]
+    # The title goes through _x11_safe_title before reaching pystray (the Xlib
+    # backend rejects non-latin-1 chars and crashes the tray boot — see the
+    # docstring on _x11_safe_title). Assert on the post-sanitisation value
+    # plus the invariant that the result is latin-1-encodable.
+    from outwarp.tray import _x11_safe_title
+    assert fake_icon.title == _x11_safe_title(_STATE_TOOLTIPS[TunnelState.CONNECTED])
+    fake_icon.title.encode("latin-1")
 
 
 def test_tray_state_change_noop_before_run() -> None:
@@ -90,3 +96,25 @@ def test_tray_update_manager_subscribes_new_listener() -> None:
     new_manager = MagicMock()
     tray.update_manager(new_manager)
     new_manager.add_listener.assert_called_once()
+
+
+def test_x11_safe_title_strips_emdash() -> None:
+    """Regression: pystray Xlib backend raises UnicodeEncodeError on '\\u2014'.
+
+    The school-network reconnect attempt on 2026-05-29 17:10 crashed because
+    the tray title contained an em-dash. Sanitisation must replace dashes
+    with ASCII '-' and produce a strictly latin-1 string.
+    """
+    from outwarp.tray import _x11_safe_title
+
+    safe = _x11_safe_title("OutWarp — conectando")
+    assert "—" not in safe
+    assert safe == "OutWarp - conectando"
+    # The actual invariant: pystray must be able to encode this in latin-1.
+    safe.encode("latin-1")
+
+    safe2 = _x11_safe_title("OutWarp – reconectando")  # en-dash too
+    assert safe2 == "OutWarp - reconectando"
+
+    # ASCII passes through unchanged (avoids unnecessary work in the hot path).
+    assert _x11_safe_title("OutWarp connected") == "OutWarp connected"

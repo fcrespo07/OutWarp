@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "outwarp-client"
-version = "0.4.1"
+version = "0.5.0"
 description = "Cliente de bandeja multiplataforma para tuneles WireGuard sobre WebSocket (wstunnel)"
 requires-python = ">=3.11"
 authors = [
@@ -13,13 +13,11 @@ authors = [
 ]
 keywords = ["wireguard", "wstunnel", "vpn", "tray", "tunnel"]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 4 - Beta",
     "Environment :: Win32 (MS Windows)",
     "Environment :: X11 Applications",
-    "Environment :: MacOS X",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
-    "Operating System :: MacOS",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Internet",
@@ -41,21 +39,48 @@ dev = [
 ]
 build = [
     "pyinstaller>=6.0",
+    "build>=1.0",
 ]
 tui = [
     "textual>=0.85",
     "rich>=13.0",
 ]
 
-[project.gui-scripts]
-outwarp = "outwarp.app:main"
-
 [project.scripts]
-outwarp-uninstall = "outwarp.uninstall:main"
+# Single Linux entry-point as of 0.5.0. The tray/GUI now lives behind
+# ``outwarp-cli gui`` and the legacy ``outwarp-uninstall`` is reachable as
+# ``outwarp-cli uninstall``.
 outwarp-cli = "outwarp.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["outwarp"]
+# Defensive excludes: Hatchling already ships every file under outwarp/ by
+# default (UI assets, fonts, icons, .tcss), but without an explicit exclude
+# block a stray __pycache__/, editor swap, or accidental tests/ symlink could
+# leak into a published wheel. Keep this list tight.
+exclude = [
+    "**/__pycache__",
+    "**/*.pyc",
+    "**/*.pyo",
+    "**/.DS_Store",
+    "**/*.swp",
+    "outwarp/tests",
+    "outwarp/**/tests",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "outwarp/",
+    "tests/",
+    "pyproject.toml",
+]
+exclude = [
+    "**/__pycache__",
+    "**/*.pyc",
+    "**/*.pyo",
+    "dist/",
+    "build/",
+]
 
 [tool.ruff]
 line-length = 100

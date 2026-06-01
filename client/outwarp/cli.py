@@ -17,6 +17,7 @@ import logging
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -256,12 +257,11 @@ def _cmd_logs(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_uninstall(args: argparse.Namespace) -> int:
+def _cmd_forget_profile(args: argparse.Namespace) -> int:
     """Remove the imported profile and its baseline snapshot.
 
     Does NOT touch the helper script, sudoers rule, autostart entry, or the
-    venv — those are owned by installer/linux/install.sh. Removing the system
-    install is the installer's job (TODO: write uninstall.sh).
+    pipx venv — for a full purge use ``outwarp-cli uninstall`` instead.
     """
     cfg = default_config_path()
     baseline = original_config_path(cfg)
@@ -354,12 +354,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Tail the log file (like 'tail -f'); Ctrl+C to stop",
     )
 
-    p_un = sub.add_parser("uninstall", help="Remove the imported profile")
+    p_forget = sub.add_parser(
+        "forget-profile",
+        help="Remove the imported profile (was 'uninstall' in 0.4.x)",
+    )
+    p_forget.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
+
+    p_un = sub.add_parser(
+        "uninstall",
+        help="Purge OutWarp client entirely (venv, helper, sudoers, autostart)",
+    )
     p_un.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
 
     sub.add_parser(
         "tui",
         help="Launch the interactive Textual UI (Linux / headless)",
+    )
+
+    sub.add_parser(
+        "gui",
+        help="Launch the tray/pywebview GUI (was the 'outwarp' binary in 0.4.x)",
+    )
+
+    p_update = sub.add_parser(
+        "update",
+        help="Check GitHub Releases for a newer version and install it "
+             "(needs root to upgrade /opt/outwarp-client/.venv)",
+    )
+    p_update.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Just report whether a newer version is available - don't install",
     )
 
     return parser
@@ -377,14 +402,145 @@ def _cmd_tui(args: argparse.Namespace) -> int:
     return OutWarpClientTUI().run() or 0
 
 
+def _cmd_gui(args: argparse.Namespace) -> int:
+    """Delegate to outwarp.app:main — the pywebview tray entry-point.
+
+    Was the dedicated ``outwarp`` binary in 0.4.x; collapsed into a subcommand
+    in 0.5.0 so the Linux install surface is a single executable.
+    """
+    from outwarp.app import main as _gui_main
+    return _gui_main() or 0
+
+
+def _cmd_uninstall(args: argparse.Namespace) -> int:
+    """Purge OutWarp client entirely — delegates to outwarp.uninstall.main.
+
+    Replaces the standalone ``outwarp-uninstall`` binary that 0.4.x shipped.
+    The previous behaviour (delete profile only) is now ``forget-profile``.
+    """
+    from outwarp.uninstall import main as _uninstall_main
+    # Forward --yes when present; otherwise pass None so outwarp.uninstall.main
+    # falls back to its own interactive confirmation flow.
+    argv = ["--yes"] if args.yes else None
+    return _uninstall_main(argv)
+
+
+def _cmd_update(args: argparse.Namespace) -> int:
+    """Check GitHub Releases for a newer outwarp-client wheel and install it.
+
+    Without --check-only, the actual ``pip install --upgrade`` step needs to
+    write into the venv at /opt/outwarp-client/.venv, so the command refuses
+    to run unless invoked with root (typically via ``sudo outwarp-cli update``).
+    """
+    import contextlib
+    import tempfile
+
+    from outwarp.updater import (
+        apply_linux_update,
+        check_for_linux_update,
+        download_installer,
+        verify_download,
+    )
+
+    _print(f"Checking for updates (current: v{__version__})...")
+    info = check_for_linux_update(__version__, "client")
+
+    if info.get("error"):
+        _err(f"Update check failed: {info['error']}")
+        return 1
+
+    if not info.get("available"):
+        latest = info.get("latest") or __version__
+        # If a newer tag exists but the release has no Linux wheel attached
+        # (e.g. an older Windows-only release), say so explicitly rather than
+        # claiming we're already on the latest version.
+        from outwarp.updater import _is_newer as _newer
+        if latest and _newer(latest, __version__) and not info.get("wheel_url"):
+            _print(f"Latest release v{latest} has no Linux wheel attached.")
+            _print(f"  See {info.get('html_url', '')}")
+        else:
+            _print(f"Already up to date (v{latest}).")
+        return 0
+
+    latest = info["latest"]
+    _print(f"New version available: v{latest}")
+    _print(f"  Release: {info.get('html_url', '')}")
+
+    if args.check_only:
+        _print("Run 'sudo outwarp-cli update' to install.")
+        return 0
+
+    wheel_url = info.get("wheel_url", "")
+    wheel_name = info.get("wheel_name") or Path(wheel_url).name
+    if not wheel_url:
+        _err(f"No Linux wheel found in release v{latest} - see {info.get('html_url', '')}")
+        return 1
+
+    # ``geteuid`` is POSIX-only but the client is shipped only on Linux for
+    # the Python wheel flow, so anchor the gate on the platform explicitly.
+    # On Windows the installer ships the GUI wheel separately and there's no
+    # ``outwarp-cli update`` flow yet.
+    if sys.platform == "linux" and os.geteuid() != 0:
+        _err("Root required to upgrade the venv. Run: sudo outwarp-cli update")
+        return 1
+
+    with tempfile.NamedTemporaryFile(suffix=".whl", delete=False) as tmp:
+        wheel_path = Path(tmp.name)
+
+    try:
+        _print(f"Downloading {wheel_name}...")
+        last_milestone = [-1]
+
+        def _progress(pct: int) -> None:
+            milestone = pct // 20
+            if milestone > last_milestone[0]:
+                last_milestone[0] = milestone
+                _print(f"  {pct}%")
+
+        try:
+            download_installer(wheel_url, wheel_path, _progress)
+        except Exception as exc:
+            _err(f"Download failed: {exc}")
+            return 1
+
+        ok, detail = verify_download(wheel_path, wheel_name, info.get("checksums_url", ""))
+        if not ok:
+            _err(f"Integrity check failed: {detail}")
+            return 1
+        _print(f"  {detail}")
+
+        _print("Installing into venv (pip)...")
+        try:
+            apply_linux_update(wheel_path, extras="tui")
+        except subprocess.TimeoutExpired:
+            _err(
+                "pip install timed out (network stall while resolving "
+                "transitive deps?). Re-run when the connection is stable."
+            )
+            return 1
+        except Exception as exc:
+            _err(f"pip install failed: {exc}")
+            return 1
+
+        _print(f"\nUpdated to v{latest}.")
+        _print("Restart 'outwarp-cli connect' (or the tray app) for changes to take effect.")
+        return 0
+    finally:
+        with contextlib.suppress(OSError):
+            wheel_path.unlink(missing_ok=True)
+
+
 _COMMANDS = {
-    "import":    _cmd_import,
-    "connect":   _cmd_connect,
-    "status":    _cmd_status,
-    "profile":   _cmd_profile,
-    "logs":      _cmd_logs,
-    "uninstall": _cmd_uninstall,
-    "tui":       _cmd_tui,
+    "import":         _cmd_import,
+    "connect":        _cmd_connect,
+    "status":         _cmd_status,
+    "profile":        _cmd_profile,
+    "logs":           _cmd_logs,
+    "forget-profile": _cmd_forget_profile,
+    "uninstall":      _cmd_uninstall,
+    "tui":            _cmd_tui,
+    "gui":            _cmd_gui,
+    "update":         _cmd_update,
 }
 
 

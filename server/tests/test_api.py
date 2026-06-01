@@ -721,3 +721,32 @@ def test_probe_external_port_returns_reachable_false_on_error():
         r = api.probe_external_port()
     assert r["reachable"] is False
     assert "blocked" in r["detail"]
+
+
+def test_emit_disables_window_on_failure_and_does_not_recurse(caplog):
+    """Regression for the log-spam loop also present on the server: when the
+    pywebview window failed to start, _emit's except branch used to call
+    log.exception(...). That ERROR line entered MemoryLogHandler, the log
+    watcher emitted it, _emit failed again, and the log filled forever.
+    Fix: flip a sticky ``_emit_disabled`` flag so further emits no-op, and
+    write the failure to stderr (never through the logging system, otherwise
+    the watcher catches it). ``_window`` stays populated so the title-bar
+    chrome and pick_*_file dialogs keep working."""
+    import logging as _logging
+
+    api, _ = _make_api()
+    bad_window = MagicMock()
+    bad_window.evaluate_js.side_effect = Exception("Main window failed to start")
+    api._window = bad_window
+
+    with caplog.at_level(_logging.WARNING, logger="outwarp_server.api"):
+        api._emit("status", {"x": 1})
+
+    assert api._emit_disabled is True
+    assert api._window is bad_window
+    assert bad_window.evaluate_js.call_count == 1
+    assert caplog.records == []
+
+    # Subsequent emits short-circuit and don't touch the dead window again.
+    api._emit("clients", [])
+    assert bad_window.evaluate_js.call_count == 1

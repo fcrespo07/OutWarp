@@ -1,19 +1,33 @@
 #!/usr/bin/env bash
 # OutWarp - Linux installer / bootstrapper
 #
+# Installs the OutWarp client or server as a pipx-managed venv under
+# /opt/pipx/venvs/outwarp-{client,server}/, exposing the entry-points under
+# /usr/local/bin/. The system-wide pipx layout (PIPX_HOME=/opt/pipx,
+# PIPX_BIN_DIR=/usr/local/bin) keeps every system service - the systemd unit,
+# the autostart desktop file, the privileged helper - pointing at a single
+# stable binary path that survives in-place upgrades.
+#
 # Two ways to run:
 #   1. Local (from a clone):    sudo bash installer/linux/install.sh
 #   2. Remote (via curl pipe):  curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/linux/install.sh | sudo bash
 #
 # Environment overrides:
 #   OUTWARP_COMPONENT=server|client       Skip the interactive prompt
-#   OUTWARP_REPO_DIR=/path/to/clone       Use existing repo instead of cloning
+#   OUTWARP_VERSION=v0.5.0                Pin a specific OutWarp release tag
+#                                         (default: latest from GitHub Releases)
+#   OUTWARP_REPO_DIR=/path/to/clone       Dev mode: install from local source
+#                                         instead of downloading a wheel
 #   OUTWARP_RUN_WIZARD=0                  Skip the final `outwarp-server setup`
 #   OUTWARP_SERVER_GUI=1                  Install the pywebview server GUI too
 #                                         (default: auto-detect via $DISPLAY/$WAYLAND_DISPLAY)
 #   WSTUNNEL_VERSION=v10.5.2              Pin a specific wstunnel release
 #   OUTWARP_FORCE_IPV4=0                  Disable the default IPv4-only mode for apt/curl
 #                                         (default: 1 - many bridged-VM LANs have broken IPv6)
+#   OUTWARP_SKIP_CHECKSUM=1               Skip SHA256SUMS verification of the downloaded
+#                                         wheel (only honoured on legacy releases that
+#                                         pre-date the manifest; never use as a workaround
+#                                         for a fetch failure).
 
 set -euo pipefail
 
@@ -29,16 +43,27 @@ CURL_OPTS=(--fail --silent --show-error --location --connect-timeout 10 --max-ti
 # ----------------------------------------------------------------------------
 readonly GITHUB_REPO="fcrespo07/OutWarp"
 readonly GITHUB_REPO_URL="https://github.com/${GITHUB_REPO}"
-readonly INSTALL_PREFIX="/opt/outwarp-server"
-readonly BIN_LINK="/usr/local/bin/outwarp-server"
-readonly GUI_BIN_LINK="/usr/local/bin/outwarp-server-gui"
-readonly CLIENT_PREFIX="/opt/outwarp-client"
-readonly CLIENT_BIN_LINK="/usr/local/bin/outwarp"
-readonly CLIENT_CLI_BIN_LINK="/usr/local/bin/outwarp-cli"
+# pipx layout: PIPX_HOME holds the venvs (one per app under venvs/<app>/);
+# PIPX_BIN_DIR holds the exposed entry-points. Setting them via env keeps the
+# script working on pipx >= 1.0 (where the `--global` flag does not yet exist)
+# while still producing the same on-disk result as `pipx install --global`.
+readonly PIPX_HOME="/opt/pipx"
+readonly PIPX_BIN_DIR="/usr/local/bin"
+readonly CLIENT_BIN_LINK="${PIPX_BIN_DIR}/outwarp"
+readonly CLIENT_CLI_BIN_LINK="${PIPX_BIN_DIR}/outwarp-cli"
+readonly SERVER_BIN_LINK="${PIPX_BIN_DIR}/outwarp-server"
+readonly SERVER_GUI_BIN_LINK="${PIPX_BIN_DIR}/outwarp-server-gui"
 readonly CLIENT_SUDOERS="/etc/sudoers.d/outwarp"
 readonly CLIENT_HELPER="/usr/local/libexec/outwarp-priv"
 readonly WSTUNNEL_BIN="/usr/local/bin/wstunnel"
-readonly DEFAULT_REPO_DIR="${HOME:-/root}/OutWarp"
+# pipx venv paths (canonical PIPX_HOME layout: $PIPX_HOME/venvs/<app>/).
+readonly CLIENT_VENV="${PIPX_HOME}/venvs/outwarp-client"
+readonly SERVER_VENV="${PIPX_HOME}/venvs/outwarp-server"
+# Legacy install layout - pre-pipx; cleaned up by migrate_legacy_install().
+readonly LEGACY_CLIENT_PREFIX="/opt/outwarp-client"
+readonly LEGACY_SERVER_PREFIX="/opt/outwarp-server"
+# Minimum pipx version required for `pipx install "<path>[extras]"`.
+readonly REQUIRED_PIPX="1.4.0"
 
 # ----------------------------------------------------------------------------
 # UI helpers
@@ -66,18 +91,6 @@ ask() {
         read -rp "$prompt: " reply </dev/tty || true
         echo "$reply"
     fi
-}
-
-ask_choice() {
-    local prompt="$1" reply
-    while true; do
-        read -rp "$prompt " reply </dev/tty || true
-        case "$reply" in
-            [Ss]|[Yy]|[Ss][Ii]) return 0 ;;
-            [Nn]|[Nn][Oo])      return 1 ;;
-            *) echo "Please answer s/n" ;;
-        esac
-    done
 }
 
 banner() {
@@ -203,7 +216,6 @@ install_python() {
         apt)
             info "Refreshing apt index (this can take ~30s)"
             $SUDO bash -c "$PKG_UPDATE_CMD" >/dev/null
-            # Try native first
             if $SUDO bash -c "$PKG_INSTALL_CMD python3.12 python3.12-venv" 2>/dev/null; then
                 :
             else
@@ -225,9 +237,9 @@ install_python() {
 }
 
 ensure_python_venv() {
-    # Debian/Ubuntu split out `pythonX.Y-venv` from `pythonX.Y`. If the user
-    # already had Python installed without the venv module, `python -m venv`
-    # bails with "ensurepip is not available". Install the matching package.
+    # pipx itself depends on the venv module. Debian/Ubuntu split out
+    # `pythonX.Y-venv` from `pythonX.Y`, so this is a real failure mode on a
+    # fresh Ubuntu where the system Python isn't paired with its venv package.
     if "$PYTHON_BIN" -m venv --help >/dev/null 2>&1; then
         return 0
     fi
@@ -240,14 +252,11 @@ ensure_python_venv() {
             info "Installing $pkg"
             $SUDO bash -c "$PKG_UPDATE_CMD" >/dev/null
             if ! $SUDO bash -c "$PKG_INSTALL_CMD $pkg" 2>/dev/null; then
-                # Some distros only ship python3-venv (no version-specific package)
                 $SUDO bash -c "$PKG_INSTALL_CMD python3-venv" \
                     || die "Could not install $pkg or python3-venv. Install manually and rerun."
             fi
             ;;
         dnf|pacman)
-            # On Fedora/Arch venv is part of the base python package; if it's
-            # missing the python install itself is broken — bail with a hint.
             die "$PYTHON_BIN is missing the venv module. Reinstall python (e.g. '$PKG_INSTALL_CMD python3') and rerun."
             ;;
     esac
@@ -265,6 +274,93 @@ ensure_python() {
         ok "Python installed: ${BOLD}${PYTHON_BIN}${RESET}"
     fi
     ensure_python_venv
+}
+
+# ----------------------------------------------------------------------------
+# pipx
+# ----------------------------------------------------------------------------
+# Compare two semantic-ish version strings (X.Y.Z or X.Y). Returns 0 if
+# $1 >= $2, else 1. Reused by the version-floor check for pipx.
+_version_ge() {
+    [[ "$1" == "$2" ]] && return 0
+    # sort -V handles X.Y / X.Y.Z / X.Y.Z.dev mixed inputs reasonably.
+    local lower
+    lower=$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)
+    [[ "$lower" == "$2" ]]
+}
+
+_install_pipx_native() {
+    # Try the distro package first - it ships a sane PIPX_HOME default and
+    # tracks security updates via the package manager.
+    case "$PKG_MANAGER" in
+        apt)
+            $SUDO bash -c "$PKG_UPDATE_CMD" >/dev/null 2>&1 || true
+            $SUDO bash -c "$PKG_INSTALL_CMD pipx"
+            ;;
+        dnf)
+            $SUDO bash -c "$PKG_INSTALL_CMD pipx"
+            ;;
+        pacman)
+            $SUDO bash -c "$PKG_INSTALL_CMD python-pipx"
+            ;;
+    esac
+}
+
+_bootstrap_pipx_from_pip() {
+    # Fallback for distros that don't ship pipx (Ubuntu 22.04 etc.). Build a
+    # dedicated venv at /opt/pipx-bootstrap/ to host pipx itself, then expose
+    # its entry-point under /usr/local/bin/. This venv is owned by us and the
+    # only thing it ships is the pipx launcher - safe to wipe and recreate
+    # on a re-run.
+    info "Bootstrapping pipx into /opt/pipx-bootstrap (distro has no pipx package)"
+    $SUDO rm -rf /opt/pipx-bootstrap
+    $SUDO "$PYTHON_BIN" -m venv /opt/pipx-bootstrap
+    $SUDO /opt/pipx-bootstrap/bin/pip install --quiet --disable-pip-version-check \
+        "pipx>=${REQUIRED_PIPX}"
+    $SUDO ln -sf /opt/pipx-bootstrap/bin/pipx "${PIPX_BIN_DIR}/pipx"
+}
+
+ensure_pipx() {
+    local current
+    if command -v pipx >/dev/null 2>&1; then
+        current=$(pipx --version 2>/dev/null | head -1 | tr -d '[:space:]')
+        if [[ -n "$current" ]] && _version_ge "$current" "$REQUIRED_PIPX"; then
+            ok "pipx: ${BOLD}${current}${RESET}"
+            return
+        fi
+        warn "pipx ${current:-unknown} is older than required ${REQUIRED_PIPX} - upgrading"
+    else
+        info "pipx not found - installing"
+    fi
+
+    # Try the package manager first; fall back to the bootstrap venv on failure
+    # (e.g. Ubuntu 22.04 ships no pipx package at all).
+    if _install_pipx_native 2>/dev/null && command -v pipx >/dev/null 2>&1; then
+        current=$(pipx --version 2>/dev/null | head -1 | tr -d '[:space:]')
+        if [[ -n "$current" ]] && _version_ge "$current" "$REQUIRED_PIPX"; then
+            ok "pipx installed via $PKG_MANAGER: ${BOLD}${current}${RESET}"
+            return
+        fi
+        warn "distro pipx ${current:-unknown} too old - falling back to a bootstrap venv"
+    fi
+
+    _bootstrap_pipx_from_pip
+    current=$(pipx --version 2>/dev/null | head -1 | tr -d '[:space:]')
+    _version_ge "$current" "$REQUIRED_PIPX" \
+        || die "pipx bootstrap produced version $current (need $REQUIRED_PIPX+)"
+    ok "pipx bootstrapped: ${BOLD}${current}${RESET}"
+}
+
+# Run pipx with the system-wide PIPX_HOME/PIPX_BIN_DIR layout so every install
+# lands under /opt/pipx/ with entry-points in /usr/local/bin/.
+pipx_run() {
+    $SUDO env "PIPX_HOME=${PIPX_HOME}" "PIPX_BIN_DIR=${PIPX_BIN_DIR}" \
+        "PIPX_DEFAULT_PYTHON=${PYTHON_BIN}" pipx "$@"
+}
+
+# Is the given pipx app already installed in the system-wide layout?
+pipx_has_app() {
+    pipx_run list --short 2>/dev/null | awk '{print $1}' | grep -qx "$1"
 }
 
 # ----------------------------------------------------------------------------
@@ -291,13 +387,9 @@ ensure_wireguard() {
 # ----------------------------------------------------------------------------
 # wstunnel binary
 # ----------------------------------------------------------------------------
-# Last-resort version when api.github.com is unreachable / rate-limited.
-# Bump occasionally; users can always override with WSTUNNEL_VERSION=vX.Y.Z.
 readonly WSTUNNEL_FALLBACK_VERSION="v10.5.2"
 
 fetch_latest_wstunnel_version() {
-    # Prints the tag (vX.Y.Z) on stdout, or returns non-zero with a diagnostic
-    # on stderr. Never triggers errexit in the caller - wrap with `|| true`.
     local response
     if ! response=$(curl "${CURL_OPTS[@]}" \
         "https://api.github.com/repos/erebe/wstunnel/releases/latest" 2>&1); then
@@ -357,63 +449,254 @@ ensure_wstunnel() {
 }
 
 # ----------------------------------------------------------------------------
-# Repository: locate or clone
+# Install source resolution (wheel from GitHub Releases, or local checkout)
 # ----------------------------------------------------------------------------
-REPO_DIR=""
-locate_repo() {
-    # Override via env
+INSTALL_SOURCE=""           # path passed to pipx install: wheel file OR src dir
+SOURCE_IS_LOCAL=0           # 1 = local source tree, 0 = downloaded wheel
+_WHEEL_TMP=""               # the temp .whl file, cleaned up on EXIT
+_WHEEL_DIR_TMP=""           # tmp dir hosting wheel + SHA256SUMS during verify
+OUTWARP_VERSION_RESOLVED="" # cached `latest` tag (without leading v)
+
+_cleanup_tmp_wheel() {
+    [[ -n "$_WHEEL_TMP" && -f "$_WHEEL_TMP" ]] && rm -f "$_WHEEL_TMP" || true
+    [[ -n "$_WHEEL_DIR_TMP" && -d "$_WHEEL_DIR_TMP" ]] && rm -rf "$_WHEEL_DIR_TMP" || true
+}
+trap _cleanup_tmp_wheel EXIT
+
+_resolve_outwarp_version() {
+    if [[ -n "${OUTWARP_VERSION:-}" ]]; then
+        OUTWARP_VERSION_RESOLVED="${OUTWARP_VERSION#v}"
+        info "Using pinned OutWarp version: ${BOLD}v${OUTWARP_VERSION_RESOLVED}${RESET}"
+        return
+    fi
+    info "Querying GitHub for latest OutWarp release..."
+    local response tag
+    if ! response=$(curl "${CURL_OPTS[@]}" \
+        "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" 2>&1); then
+        die "Failed to query GitHub API: $response"
+    fi
+    tag=$(printf '%s\n' "$response" | grep -m1 '"tag_name":' \
+        | sed -E 's/.*"([^"]+)".*/\1/')
+    [[ -n "$tag" ]] || die "Could not parse latest OutWarp release tag (API rate limited? set OUTWARP_VERSION=vX.Y.Z to bypass)"
+    OUTWARP_VERSION_RESOLVED="${tag#v}"
+    ok "Latest OutWarp release: ${BOLD}v${OUTWARP_VERSION_RESOLVED}${RESET}"
+}
+
+# Validate a wheel filename against PEP 427. The release pipeline guarantees
+# the format; we belt-and-suspenders check it here so a tampered redirect that
+# served a `.tar.gz` or a wrong-version wheel fails loudly instead of pip
+# silently building from sdist.
+_assert_pep427_wheel_name() {
+    local name="$1" expected_pkg="$2" expected_version="$3"
+    local re="^${expected_pkg}-${expected_version//./\\.}-py3-none-any\\.whl\$"
+    [[ "$name" =~ $re ]] \
+        || die "Wheel filename does not match PEP 427: got '$name', expected '${expected_pkg}-${expected_version}-py3-none-any.whl'"
+}
+
+# Verify the downloaded wheel's SHA256 against the release's SHA256SUMS.txt.
+# Semantics intentionally mirror the in-app updater (updater.py::verify_*):
+#   - empty URL  → legacy release without manifest; skip with a warning
+#   - fetch fail → refuse (could be a MITM dropping the manifest selectively)
+#   - missing entry → refuse (wrong release or tampered manifest)
+#   - mismatch   → refuse
+_verify_wheel_sha256() {
+    local wheel_path="$1" wheel_name="$2" checksums_url="$3"
+
+    if [[ "${OUTWARP_SKIP_CHECKSUM:-0}" == "1" ]]; then
+        warn "OUTWARP_SKIP_CHECKSUM=1 - skipping integrity check (NOT recommended)"
+        return 0
+    fi
+
+    if [[ -z "$checksums_url" ]]; then
+        warn "Release has no SHA256SUMS.txt asset (legacy release) - integrity check skipped"
+        return 0
+    fi
+
+    info "Verifying SHA256 against ${BOLD}$(basename "$checksums_url")${RESET}"
+    local sums_tmp
+    sums_tmp=$(mktemp)
+    if ! curl "${CURL_OPTS[@]}" -o "$sums_tmp" "$checksums_url" 2>/dev/null; then
+        rm -f "$sums_tmp"
+        die "Could not fetch SHA256SUMS from $checksums_url
+
+A network failure here is not the same as 'no manifest available' — refusing
+to install. Re-run when the connection is stable, or set
+OUTWARP_SKIP_CHECKSUM=1 only if you understand the risk."
+    fi
+
+    local expected actual
+    expected=$(grep -E "  ${wheel_name}\$" "$sums_tmp" | awk '{print $1}' | head -1)
+    rm -f "$sums_tmp"
+    if [[ -z "$expected" ]]; then
+        die "Wheel '$wheel_name' is not listed in SHA256SUMS.txt - aborting (wrong release or tampered manifest)"
+    fi
+    actual=$(sha256sum "$wheel_path" | awk '{print $1}')
+    if [[ "$expected" != "$actual" ]]; then
+        die "SHA256 mismatch for $wheel_name:
+  expected: $expected
+  actual:   $actual"
+    fi
+    ok "Integrity verified (SHA256: ${actual:0:16}...)"
+}
+
+# Sets INSTALL_SOURCE + SOURCE_IS_LOCAL for the given package ("server" or
+# "client"). Downloads the wheel into a temp file if needed, validating its
+# filename + integrity before returning.
+prepare_install_source() {
+    local package="$1"
+
     if [[ -n "${OUTWARP_REPO_DIR:-}" ]]; then
-        REPO_DIR="$OUTWARP_REPO_DIR"
-        [[ -d "$REPO_DIR" ]] || die "OUTWARP_REPO_DIR=$REPO_DIR does not exist"
-        ok "Using repo at: ${BOLD}${REPO_DIR}${RESET}"
+        INSTALL_SOURCE="$OUTWARP_REPO_DIR/$package"
+        SOURCE_IS_LOCAL=1
+        [[ -d "$INSTALL_SOURCE" ]] \
+            || die "OUTWARP_REPO_DIR set but $INSTALL_SOURCE does not exist"
+        ok "Using local source: ${BOLD}${INSTALL_SOURCE}${RESET}"
         return
     fi
 
-    # Detect if we're being run from inside a clone
     local script_dir candidate
     script_dir="$( cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd )"
     candidate="$( cd "$script_dir/../.." && pwd 2>/dev/null || true )"
-    if [[ -n "$candidate" && -f "$candidate/CLAUDE.md" && -d "$candidate/server" ]]; then
-        REPO_DIR="$candidate"
-        ok "Using local checkout: ${BOLD}${REPO_DIR}${RESET}"
+    if [[ -n "$candidate" && -f "$candidate/CLAUDE.md" && -d "$candidate/$package" ]]; then
+        INSTALL_SOURCE="$candidate/$package"
+        SOURCE_IS_LOCAL=1
+        ok "Using local checkout: ${BOLD}${INSTALL_SOURCE}${RESET}"
         return
     fi
 
-    # Need to clone
-    info "Repository not found locally - cloning"
-    if ! command -v git >/dev/null 2>&1; then
-        $SUDO bash -c "$PKG_INSTALL_CMD git"
+    SOURCE_IS_LOCAL=0
+    [[ -n "$OUTWARP_VERSION_RESOLVED" ]] || _resolve_outwarp_version
+
+    local pkg_norm
+    case "$package" in
+        client) pkg_norm="outwarp_client" ;;
+        server) pkg_norm="outwarp_server" ;;
+        *) die "Unknown package: $package" ;;
+    esac
+
+    local wheel="${pkg_norm}-${OUTWARP_VERSION_RESOLVED}-py3-none-any.whl"
+    local release_base="https://github.com/${GITHUB_REPO}/releases/download/v${OUTWARP_VERSION_RESOLVED}"
+    local wheel_url="${release_base}/${wheel}"
+    # SHA256SUMS.txt has been a release asset since 0.4.x. Older releases that
+    # predate it return 404; _verify_wheel_sha256 handles that gracefully (a
+    # 404 reaches us as a fetch failure, which is now strict — but those old
+    # releases also lack OUTWARP_SKIP_CHECKSUM-worthy wheels, so install older
+    # versions with OUTWARP_VERSION=v0.3.x at your own risk).
+    local sums_url="${release_base}/SHA256SUMS.txt"
+
+    _WHEEL_DIR_TMP=$(mktemp -d --suffix=".outwarp-wheel")
+    _WHEEL_TMP="${_WHEEL_DIR_TMP}/${wheel}"
+
+    info "Downloading ${BOLD}${wheel}${RESET} (~few MB)..."
+    if ! curl "${CURL_OPTS[@]}" -o "$_WHEEL_TMP" "$wheel_url"; then
+        die "Failed to download wheel: $wheel_url
+
+Possible causes:
+  • The release v${OUTWARP_VERSION_RESOLVED} doesn't include Linux wheels yet
+    (re-run with OUTWARP_VERSION=<older-tag> if you need a specific version)
+  • Network problem (check https://github.com/${GITHUB_REPO}/releases)"
+    fi
+    ok "Downloaded $(du -h "$_WHEEL_TMP" | awk '{print $1}') wheel"
+
+    _assert_pep427_wheel_name "$wheel" "$pkg_norm" "$OUTWARP_VERSION_RESOLVED"
+
+    # If the SHA256SUMS asset HEADs as missing (legacy release), pass empty URL
+    # so the helper skips politely instead of refusing on a fetch failure.
+    local effective_sums_url="$sums_url"
+    if ! curl "${CURL_OPTS[@]}" --head -o /dev/null "$sums_url" 2>/dev/null; then
+        effective_sums_url=""
+    fi
+    _verify_wheel_sha256 "$_WHEEL_TMP" "$wheel" "$effective_sums_url"
+
+    INSTALL_SOURCE="$_WHEEL_TMP"
+}
+
+# ----------------------------------------------------------------------------
+# Legacy install migration
+# ----------------------------------------------------------------------------
+# Pre-pipx installs lived in /opt/outwarp-{client,server}/.venv/ with symlinks
+# pointing at .venv/bin/<entry-point>. Detect that layout and dismantle it
+# cleanly before pipx takes over /usr/local/bin/. This runs *before* pipx
+# install for the same component so a half-finished pipx install on top of a
+# stale venv can't surprise the user with `outwarp` resolving to two different
+# pythons depending on $PATH order.
+migrate_legacy_install() {
+    local component="$1" legacy_prefix old_bin
+    case "$component" in
+        client)
+            legacy_prefix="$LEGACY_CLIENT_PREFIX"
+            ;;
+        server)
+            legacy_prefix="$LEGACY_SERVER_PREFIX"
+            ;;
+        *) die "Unknown component for legacy migration: $component" ;;
+    esac
+
+    [[ -d "$legacy_prefix/.venv" ]] || return 0
+
+    warn "Found legacy install at ${BOLD}${legacy_prefix}${RESET} - migrating to pipx layout"
+
+    # Stop the tray process (client only) so we're not yanking the .venv from
+    # under a running app. Best-effort: this is a graceful nudge, not a kill.
+    if [[ "$component" == "client" ]]; then
+        # pkill returns non-zero when nothing matches; tolerate that.
+        $SUDO pkill -f "${legacy_prefix}/.venv/bin/outwarp" 2>/dev/null || true
     fi
 
-    REPO_DIR="$DEFAULT_REPO_DIR"
-    if [[ -d "$REPO_DIR" ]]; then
-        warn "Directory $REPO_DIR exists - using as-is"
-        return
-    fi
-
-    # Prefer gh if authenticated, fall back to https git.
-    # GIT_TERMINAL_PROMPT=0 prevents git from blocking on a credential prompt
-    # when the repo is private and no auth is available - fail fast instead.
-    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-        info "Cloning via gh (authenticated)"
-        gh repo clone "$GITHUB_REPO" "$REPO_DIR"
-    else
-        warn "gh not authenticated - trying HTTPS clone (will fail fast if repo is private)"
-        if ! GIT_TERMINAL_PROMPT=0 git clone "$GITHUB_REPO_URL" "$REPO_DIR" 2>&1; then
-            die "git clone failed. If the repo is private, either:
-    1) Install + auth gh:  ${BOLD}gh auth login${RESET}  and re-run this installer, or
-    2) Clone manually and re-run with: ${BOLD}OUTWARP_REPO_DIR=/path/to/clone${RESET}"
+    # Remove only symlinks that point into the legacy venv. A symlink pointing
+    # elsewhere (e.g. user-created shim) gets left alone.
+    for old_bin in "$CLIENT_BIN_LINK" "$CLIENT_CLI_BIN_LINK" "$SERVER_BIN_LINK" "$SERVER_GUI_BIN_LINK"; do
+        if [[ -L "$old_bin" ]]; then
+            local target
+            target=$(readlink "$old_bin")
+            if [[ "$target" == "$legacy_prefix/.venv/bin/"* ]]; then
+                $SUDO rm -f "$old_bin"
+                ok "Removed legacy symlink: $old_bin"
+            fi
         fi
+    done
+
+    $SUDO rm -rf "$legacy_prefix/.venv"
+    # Empty parent dir is harmless to leave; only remove if it has no contents
+    # other than the venv we just deleted (config dirs etc. stay).
+    $SUDO rmdir "$legacy_prefix" 2>/dev/null || true
+    ok "Legacy venv removed"
+}
+
+# ----------------------------------------------------------------------------
+# pipx install helper
+# ----------------------------------------------------------------------------
+# Install or upgrade an OutWarp app under the system-wide pipx layout. Handles
+# both fresh installs and in-place upgrades (so re-running the script after
+# `OUTWARP_VERSION=vX.Y.Z` was bumped just works).
+pipx_install_app() {
+    local app="$1" source="$2" extras="$3" force="${4:-}"
+
+    local spec
+    if [[ -n "$extras" ]]; then
+        spec="${source}[${extras}]"
+    else
+        spec="$source"
     fi
-    ok "Cloned to: ${BOLD}${REPO_DIR}${RESET}"
+
+    if pipx_has_app "$app"; then
+        info "Reinstalling existing ${BOLD}${app}${RESET} (pipx)"
+        # `pipx reinstall <name>` does NOT accept a new spec, so we uninstall
+        # and reinstall to swap the wheel/source under a stable app name.
+        pipx_run uninstall "$app" >/dev/null
+    else
+        info "Installing ${BOLD}${app}${RESET} via pipx"
+    fi
+
+    local pipx_args=("install" "--pip-args" "--disable-pip-version-check")
+    [[ -n "$force" ]] && pipx_args+=("--force")
+    pipx_args+=("$spec")
+    pipx_run "${pipx_args[@]}"
 }
 
 # ----------------------------------------------------------------------------
 # Server install
 # ----------------------------------------------------------------------------
-# Decide whether to install the optional [gui] extras for the server (pywebview
-# + pystray + Pillow). On a desktop session we install them automatically; on a
-# pure VPS/headless box we skip them. User can force via OUTWARP_SERVER_GUI=0|1.
 want_server_gui() {
     case "${OUTWARP_SERVER_GUI:-auto}" in
         1|true|yes) return 0 ;;
@@ -426,8 +709,6 @@ ensure_server_gui_system_deps() {
     info "Installing server GUI system dependencies (webkitgtk + tray indicator)"
     case "$PKG_MANAGER" in
         apt)
-            # pywebview on Linux uses GTK + WebKit2. webkit2 4.1 is the modern
-            # package (Ubuntu 22.04+); fall back to 4.0 on older releases.
             local webkit_pkg="gir1.2-webkit2-4.1"
             if ! $SUDO bash -c "$PKG_INSTALL_CMD $webkit_pkg" >/dev/null 2>&1; then
                 webkit_pkg="gir1.2-webkit2-4.0"
@@ -437,65 +718,51 @@ ensure_server_gui_system_deps() {
                 || warn "Some GUI deps failed - the GUI may not start (CLI is unaffected)"
             ;;
         dnf)
-            # Fedora 38+: webkit2gtk4.1 / older: webkit2gtk4.0
             $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.1 libappindicator-gtk3" \
                 || $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.0 libappindicator-gtk3" \
                 || warn "Some GUI deps failed - the GUI may not start (CLI is unaffected)"
             ;;
         pacman)
-            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk-4.1 libayatana-appindicator" \
+                || $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3" \
                 || warn "Some GUI deps failed - the GUI may not start (CLI is unaffected)"
             ;;
     esac
 }
 
 install_server() {
-    info "Installing OutWarp server to ${BOLD}${INSTALL_PREFIX}${RESET}"
+    info "Installing OutWarp server (pipx layout: ${BOLD}${SERVER_VENV}${RESET})"
 
-    [[ -d "$REPO_DIR/server" ]] || die "Server source not found at $REPO_DIR/server"
+    migrate_legacy_install "server"
+    prepare_install_source "server"
 
-    local install_gui="false"
+    local install_gui="false" extras="tui"
     if want_server_gui; then
         install_gui="true"
+        extras="gui,tui"
         ensure_server_gui_system_deps
     else
         info "Headless install (no display) - skipping GUI extras."
         info "Set OUTWARP_SERVER_GUI=1 to install the pywebview admin GUI too."
     fi
 
-    $SUDO mkdir -p "$INSTALL_PREFIX"
-    if [[ ! -x "$INSTALL_PREFIX/.venv/bin/pip" ]]; then
-        if [[ -d "$INSTALL_PREFIX/.venv" ]]; then
-            warn "Existing venv at $INSTALL_PREFIX/.venv is broken - recreating"
-            $SUDO rm -rf "$INSTALL_PREFIX/.venv"
-        fi
-        info "Creating venv with $PYTHON_BIN"
-        $SUDO "$PYTHON_BIN" -m venv "$INSTALL_PREFIX/.venv"
-    else
-        ok "venv already exists - reusing"
-    fi
+    pipx_install_app "outwarp-server" "$INSTALL_SOURCE" "$extras"
 
-    info "Installing Python dependencies (this may take ~30-60s)"
-    $SUDO "$INSTALL_PREFIX/.venv/bin/pip" install --upgrade --disable-pip-version-check pip
-    # Always include the [tui] extra on Linux — `outwarp-server tui` is the
-    # primary interactive frontend there. [gui] adds pywebview/pystray on top.
+    # Sanity check: the entry-point pipx exposes must resolve to the venv we
+    # just created. If something else (an old symlink, a /usr/local stray) is
+    # in the way, `outwarp-server --version` would silently invoke the wrong
+    # binary.
+    [[ -x "$SERVER_BIN_LINK" ]] \
+        || die "pipx finished but $SERVER_BIN_LINK is missing - investigate /usr/local/bin/"
+    ok "outwarp-server installed: ${BOLD}$(${SUDO} ${SERVER_BIN_LINK} --version 2>/dev/null | awk '{print $2}')${RESET}"
+
+    # 0.5.0 collapse: no more outwarp-server-gui binary - the admin GUI lives
+    # behind `outwarp-server gui`. We only check the GUI extras pulled the
+    # pywebview deps in.
     if [[ "$install_gui" == "true" ]]; then
-        $SUDO "$INSTALL_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/server[gui,tui]"
-    else
-        $SUDO "$INSTALL_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/server[tui]"
+        $SUDO "$SERVER_VENV/bin/python" -c "import webview" 2>/dev/null \
+            || warn "GUI extras requested but pywebview is missing in $SERVER_VENV"
     fi
-
-    # CLI symlink (always)
-    $SUDO ln -sf "$INSTALL_PREFIX/.venv/bin/outwarp-server" "$BIN_LINK"
-    ok "Linked: ${BOLD}${BIN_LINK}${RESET} -> ${INSTALL_PREFIX}/.venv/bin/outwarp-server"
-
-    # GUI symlink (only when [gui] extras were installed)
-    if [[ "$install_gui" == "true" && -x "$INSTALL_PREFIX/.venv/bin/outwarp-server-gui" ]]; then
-        $SUDO ln -sf "$INSTALL_PREFIX/.venv/bin/outwarp-server-gui" "$GUI_BIN_LINK"
-        ok "Linked: ${BOLD}${GUI_BIN_LINK}${RESET} -> ${INSTALL_PREFIX}/.venv/bin/outwarp-server-gui"
-    fi
-
-    ok "Server installed (version: $(outwarp-server --version | awk '{print $2}'))"
 }
 
 run_setup_wizard() {
@@ -519,10 +786,6 @@ ensure_client_system_deps() {
     info "Installing client GUI dependencies (webkitgtk + tray indicator)"
     case "$PKG_MANAGER" in
         apt)
-            # pywebview on Linux uses GTK + WebKit2. webkit2 4.1 is the modern
-            # package (Ubuntu 22.04+); fall back to 4.0 on older releases.
-            # gir1.2-ayatanaappindicator3-0.1: pystray tray indicator for
-            # GNOME/Cinnamon shells that route trays through AppIndicator.
             local webkit_pkg="gir1.2-webkit2-4.1"
             if ! $SUDO bash -c "$PKG_INSTALL_CMD $webkit_pkg" >/dev/null 2>&1; then
                 webkit_pkg="gir1.2-webkit2-4.0"
@@ -537,14 +800,13 @@ ensure_client_system_deps() {
                 || warn "Some GUI deps failed"
             ;;
         pacman)
-            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk-4.1 libayatana-appindicator" \
+                || $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3" \
                 || warn "Some GUI deps failed"
             ;;
     esac
 }
 
-# Resolve the desktop user the tray will run as. When this script is invoked
-# via `sudo`, $SUDO_USER points to the real user; otherwise we ask.
 TARGET_USER=""
 TARGET_HOME=""
 resolve_target_user() {
@@ -622,11 +884,6 @@ case "$cmd" in
         ip route del "$ip/32" >/dev/null 2>&1 || true
         ;;
     killswitch-on)
-        # Block all outbound traffic except: loopback, already-established
-        # connections, and the allowlist IPs (the server endpoint(s), so the
-        # wstunnel reconnect can still reach the server). Implemented as a
-        # dedicated nftables table so release is a clean single delete and we
-        # never touch the user's other firewall rules.
         command -v nft >/dev/null 2>&1 || die "nftables (nft) not installed — cannot engage kill switch"
         [[ $# -ge 1 ]] || die "killswitch-on needs at least one allowlist IP"
         for ip in "$@"; do need_ipv4 "$ip"; done
@@ -656,8 +913,6 @@ HELPER_EOF
 }
 
 write_client_sudoers() {
-    # Single entry: whitelist the helper. The helper itself enforces input
-    # validation, so this is the entire blast radius granted to $TARGET_USER.
     info "Writing sudoers rule to ${CLIENT_SUDOERS}"
     local tmp
     tmp=$(mktemp)
@@ -677,63 +932,73 @@ EOF
     ok "sudoers rule installed"
 }
 
+# Resolve the bundled tray icon under the pipx-managed venv.
+_client_icon_path() {
+    # Dev mode: read straight from the checkout.
+    if [[ "$SOURCE_IS_LOCAL" == "1" && -n "$INSTALL_SOURCE" ]]; then
+        local local_icon="${INSTALL_SOURCE}/outwarp/resources/app_icon.png"
+        [[ -f "$local_icon" ]] && { printf '%s\n' "$local_icon"; return; }
+    fi
+    # Wheel install: ask the pipx venv's python where importlib.resources
+    # parked it. CLIENT_VENV/bin/python is guaranteed to exist post-install.
+    local resolved=""
+    if [[ -x "$CLIENT_VENV/bin/python" ]]; then
+        resolved=$("$CLIENT_VENV/bin/python" -c \
+            "from importlib.resources import files; print(files('outwarp').joinpath('resources/app_icon.png'))" \
+            2>/dev/null || true)
+    fi
+    printf '%s\n' "$resolved"
+}
+
 write_client_autostart() {
     local autostart_dir="$TARGET_HOME/.config/autostart"
     local desktop_file="$autostart_dir/outwarp.desktop"
-    local icon_path="$REPO_DIR/client/outwarp/resources/app_icon.png"
+
+    local icon_path
+    icon_path=$(_client_icon_path)
+    if [[ -z "$icon_path" || ! -f "$icon_path" ]]; then
+        warn "Could not locate app icon at $icon_path - desktop entry will have no Icon= line"
+        icon_path=""
+    fi
 
     info "Creating autostart entry: $desktop_file"
-    $SUDO -u "$TARGET_USER" mkdir -p "$autostart_dir"
-    $SUDO -u "$TARGET_USER" tee "$desktop_file" >/dev/null <<EOF
+    # Drop privileges to TARGET_USER unconditionally - we don't want to write
+    # files into ~/.config as root. `install -o/-g` handles ownership without
+    # the `$SUDO -u` quirk that breaks when SUDO is empty (already root).
+    install -d -o "$TARGET_USER" -g "$TARGET_USER" -m 0700 "$autostart_dir"
+    tee "$desktop_file" >/dev/null <<EOF
 [Desktop Entry]
 Type=Application
 Name=OutWarp
 Comment=WireGuard over WebSocket - tray client
-Exec=$CLIENT_BIN_LINK
-Icon=$icon_path
-Terminal=false
+Exec=$CLIENT_CLI_BIN_LINK gui
+${icon_path:+Icon=$icon_path
+}Terminal=false
 X-GNOME-Autostart-enabled=true
 Categories=Network;
 EOF
+    chown "$TARGET_USER:$TARGET_USER" "$desktop_file"
+    chmod 0644 "$desktop_file"
     ok "Autostart entry installed (will launch at next login)"
 }
 
 install_client() {
-    info "Installing OutWarp client to ${BOLD}${CLIENT_PREFIX}${RESET}"
-    [[ -d "$REPO_DIR/client" ]] || die "Client source not found at $REPO_DIR/client"
+    info "Installing OutWarp client (pipx layout: ${BOLD}${CLIENT_VENV}${RESET})"
+
+    migrate_legacy_install "client"
+    prepare_install_source "client"
 
     resolve_target_user
     ensure_client_system_deps
 
-    $SUDO mkdir -p "$CLIENT_PREFIX"
-    if [[ ! -x "$CLIENT_PREFIX/.venv/bin/pip" ]]; then
-        if [[ -d "$CLIENT_PREFIX/.venv" ]]; then
-            warn "Existing client venv at $CLIENT_PREFIX/.venv is broken - recreating"
-            $SUDO rm -rf "$CLIENT_PREFIX/.venv"
-        fi
-        info "Creating client venv with $PYTHON_BIN"
-        $SUDO "$PYTHON_BIN" -m venv "$CLIENT_PREFIX/.venv"
-    else
-        ok "Client venv already exists - reusing"
-    fi
+    pipx_install_app "outwarp-client" "$INSTALL_SOURCE" "tui"
 
-    info "Installing Python dependencies (this may take ~30-60s)"
-    $SUDO "$CLIENT_PREFIX/.venv/bin/pip" install --upgrade --disable-pip-version-check pip
-    # [tui] pulls in textual; the base deps still cover pywebview/pystray for
-    # the GUI flavour. `outwarp-cli tui` is the recommended Linux entry point.
-    $SUDO "$CLIENT_PREFIX/.venv/bin/pip" install --disable-pip-version-check "$REPO_DIR/client[tui]"
-
-    # `outwarp` is declared as a gui-script in pyproject.toml; on Linux the
-    # installed name is identical to a regular script, so the symlink works.
-    $SUDO ln -sf "$CLIENT_PREFIX/.venv/bin/outwarp" "$CLIENT_BIN_LINK"
-    ok "Linked: ${BOLD}${CLIENT_BIN_LINK}${RESET} -> ${CLIENT_PREFIX}/.venv/bin/outwarp"
-
-    # outwarp-cli is the console-mode entry point — works on headless servers
-    # (no DISPLAY/Wayland needed) and is what systemd units should ExecStart.
-    if [[ -x "$CLIENT_PREFIX/.venv/bin/outwarp-cli" ]]; then
-        $SUDO ln -sf "$CLIENT_PREFIX/.venv/bin/outwarp-cli" "$CLIENT_CLI_BIN_LINK"
-        ok "Linked: ${BOLD}${CLIENT_CLI_BIN_LINK}${RESET} -> ${CLIENT_PREFIX}/.venv/bin/outwarp-cli"
-    fi
+    # 0.5.0 collapse: the only entry-point pipx ships is outwarp-cli; the GUI
+    # lives behind `outwarp-cli gui`. Old `outwarp` / `outwarp-uninstall` bins
+    # are removed automatically by `pipx reinstall` on upgrade.
+    [[ -x "$CLIENT_CLI_BIN_LINK" ]] \
+        || die "pipx finished but $CLIENT_CLI_BIN_LINK is missing - investigate /usr/local/bin/"
+    ok "outwarp-cli installed: ${BOLD}$(${SUDO} ${CLIENT_CLI_BIN_LINK} --version 2>/dev/null | awk '{print $2}')${RESET}"
 
     write_client_helper
     write_client_sudoers
@@ -745,7 +1010,7 @@ ${BOLD}${GREEN}Client installed.${RESET}
 
   ${BOLD}GUI:${RESET}
     1. Drop your ${BOLD}.owcfg${RESET} file somewhere accessible by ${TARGET_USER}.
-    2. Launch ${BOLD}outwarp${RESET} (or log out/in to trigger autostart).
+    2. Launch ${BOLD}outwarp-cli gui${RESET} (or log out/in to trigger autostart).
     3. The first run prompts for the .owcfg via the import wizard.
 
   ${BOLD}Console (headless / SSH / systemd):${RESET}
@@ -757,6 +1022,7 @@ ${BOLD}${GREEN}Client installed.${RESET}
   ${DIM}Autostart entry: $TARGET_HOME/.config/autostart/outwarp.desktop${RESET}
   ${DIM}Privileged helper: $CLIENT_HELPER${RESET}
   ${DIM}Sudoers rule: $CLIENT_SUDOERS  (revoke with: sudo rm $CLIENT_SUDOERS)${RESET}
+  ${DIM}pipx venv: $CLIENT_VENV${RESET}
 
 EOF
 }
@@ -799,16 +1065,16 @@ main() {
     detect_distro
     detect_package_manager
 
-    # Both server and client need: Python 3.11+, wireguard-tools, wstunnel.
+    # Both server and client need: Python 3.11+, pipx, wireguard-tools, wstunnel.
     # GUI-only deps (webkitgtk for pywebview, appindicator for pystray) are
     # installed inside install_client / install_server to keep headless server
     # installs minimal.
     info "Preparing system dependencies"
     ensure_python
+    ensure_pipx
     ensure_wireguard
     ensure_wstunnel
 
-    locate_repo
     pick_component
 
     echo
