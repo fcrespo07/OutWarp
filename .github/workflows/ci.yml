@@ -14,8 +14,8 @@ concurrency:
 
 jobs:
   test:
-    name: pytest (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: pytest (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -23,7 +23,16 @@ jobs:
         # we exercise the full supported range so a 3.12/3.13-only syntax or
         # stdlib change (e.g. `subprocess.CompletedProcess` repr) gets caught
         # before a user hits it.
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13"]
+        exclude:
+          # Cuts the Windows leg to a single Python version — full matrix on
+          # the OS that actually ships installers, smoke-only on Windows.
+          # 3.12 is the version Windows wheels are built against today.
+          - os: windows-latest
+            python-version: "3.11"
+          - os: windows-latest
+            python-version: "3.13"
 
     steps:
       - uses: actions/checkout@v4
@@ -40,25 +49,32 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e '.[tui,dev]'
 
-      - name: Run client tests
+      - name: Run client tests (Linux)
+        if: runner.os != 'Windows'
         working-directory: client
         # tests/test_platforms.py imports outwarp.platforms.windows at module
         # scope, which references subprocess.CREATE_NO_WINDOW — only defined
-        # on Windows. Skipping the file on Linux runners is the simplest
-        # cross-platform escape hatch; the suite reaches the same coverage on
-        # a Windows runner whenever we add one.
+        # on Windows. The Windows leg of the matrix runs the full file.
         run: pytest -q --ignore=tests/test_platforms.py
+
+      - name: Run client tests (Windows)
+        if: runner.os == 'Windows'
+        working-directory: client
+        run: pytest -q
 
       - name: Install server (with TUI + dev extras)
         working-directory: server
         run: pip install -e '.[tui,dev]'
 
-      - name: Run server tests
+      - name: Run server tests (Linux)
+        if: runner.os != 'Windows'
         working-directory: server
-        # Same Windows-only import problem as the client (see note above):
-        # outwarp_server.platforms.windows touches subprocess.CREATE_NO_WINDOW
-        # at module scope, so its companion test file can't load on Linux.
         run: pytest -q --ignore=tests/test_platforms.py
+
+      - name: Run server tests (Windows)
+        if: runner.os == 'Windows'
+        working-directory: server
+        run: pytest -q
 
   lint:
     name: ruff (informational)
