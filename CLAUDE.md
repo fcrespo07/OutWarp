@@ -46,7 +46,7 @@ Se valoró C# + WinForms (descartado: no cross-platform sin reescribir UI entera
 
 El HTML se sirve **desde el filesystem** (`file://…/ui/index.html`) directamente a la ventana pywebview, no por HTTP. La clase `Api` (`outwarp/api.py`) se expone con `js_api=api` al crear la ventana; el JS la invoca como `window.pywebview.api.<método>` y recibe eventos vía `window.addEventListener('outwarp:<name>', …)` (Python emite con `window.evaluate_js`). Sin FastAPI ni uvicorn — el JS bridge directo es el modelo definitivo.
 
-**Versión TUI futura**: hay un acuerdo de hacer una segunda versión del cliente como TUI (probablemente con [`textual`](https://textual.textualize.io/)) cuando la versión GUI sea estable. Encajaría como cliente alternativo del mismo `TunnelManager` — la lógica de túnel ya está separada de la UI y puede compartirse. (Ya existe `outwarp-cli`, un cliente headless por consola para Linux sin escritorio.)
+**TUI Textual** (ya implementada): cliente y servidor exponen además `outwarp-cli tui` / `outwarp-server tui`, una interfaz en terminal basada en [`textual`](https://textual.textualize.io/). Comparte el mismo `TunnelManager` / `ServerManager` que la GUI y el CLI headless, así que las tres rutas se cruzan sin duplicar lógica. La paleta TCSS replica los design tokens de `styles.css`; los glyphs son BMP-only (caja, bloques sparkline, formas, flechas) para correr en cualquier terminal — incluidos tmux, screen y SSH. La especificación visual vive en `design_handoff_outwarp/tui_linux/` (mockup HTML + `IMPLEMENTATION_PLAN.md`).
 
 ### Servidor
 
@@ -71,7 +71,7 @@ OutWarp/
 │   │   ├── config.py         # Schema + I/O del .owcfg / config.json
 │   │   ├── logs.py           # Logger + rotación + MemoryLogHandler
 │   │   ├── uninstall.py      # Lógica del subcomando `outwarp-cli uninstall` (purga venv pipx + helper + sudoers + autostart)
-│   │   ├── ui/               # HTML/JS de la UI (Claude Design)
+│   │   ├── ui/               # HTML/JS de la UI (Claude Design — pywebview)
 │   │   │   ├── index.html    # Carga react + scripts (bundle JSX pre-compilado)
 │   │   │   ├── app.jsx       # Shell interactivo cableado al Api
 │   │   │   ├── var-a.jsx     # Variante "consumer" del diseño (referencia)
@@ -79,6 +79,13 @@ OutWarp/
 │   │   │   ├── shared.jsx    # i18n (STR) + atoms (Btn/Pill/StatusDot/Toggle)
 │   │   │   ├── brand.jsx     # Logo + wordmark "OutWarp"
 │   │   │   └── styles.css    # Design tokens (light/dark)
+│   │   ├── tui/              # Textual TUI (Linux, terminal-only — sin GTK/WebKit)
+│   │   │   ├── app.py        # OutWarpClientTUI(App) — entry point de `outwarp-cli tui`
+│   │   │   ├── styles.tcss   # TCSS (paleta mirror de styles.css, glyphs BMP-only)
+│   │   │   ├── screens/      # empty / connecting / dashboard / logs / failed / profile
+│   │   │   ├── modals/       # import_owcfg / settings / help
+│   │   │   └── widgets/      # status_card / traffic_card / tunnel_card / live_log
+│   │   ├── tunnel_stats.py   # StatsSampler — rx/tx rate + ping para el dashboard TUI
 │   │   ├── resources/        # app_icon.{ico,png}
 │   │   └── platforms/
 │   │       ├── base.py       # Interfaz abstracta
@@ -95,11 +102,15 @@ OutWarp/
 │   │   ├── server_manager.py # ServerManager (start/stop/add-client/revoke)
 │   │   ├── server_tray.py    # Tray del modo GUI
 │   │   ├── setup_wizard.py   # Wizard rich del CLI
+│   │   ├── operations.py     # add/revoke/restart "puros" (sin rich) que reusa el TUI
+│   │   ├── traffic_history.py# SQLite snapshots de transfer rx/tx (60s, retención 7 días)
+│   │   ├── diagnostics.py    # Doctor checks (common + win32 + linux) + fix_kind + fix_callable
 │   │   ├── crypto.py         # TLS cert self-signed + fingerprint + WG keypairs
 │   │   ├── ip_pool.py        # Asignación de IPs del pool de clientes
 │   │   ├── wireguard.py      # build_server_wg_conf + add/remove peer (hot-reload)
 │   │   ├── owcfg.py          # build_owcfg / write_owcfg
-│   │   ├── ui/               # HTML/JS del servidor (Claude Design)
+│   │   ├── ui/               # HTML/JS del servidor (Claude Design — pywebview)
+│   │   ├── tui/              # Textual TUI (Linux): dashboard, clients, doctor, logs + modals
 │   │   └── platforms/        # systemd (linux) / SCM (windows) / k8s manifests (kubernetes)
 │   └── pyproject.toml
 │

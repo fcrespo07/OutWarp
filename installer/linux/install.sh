@@ -1047,12 +1047,13 @@ install_client() {
 
 ${BOLD}${GREEN}Client installed.${RESET}
 
-  ${BOLD}GUI:${RESET}
+  ${BOLD}Quick start:${RESET}
     1. Drop your ${BOLD}.owcfg${RESET} file somewhere accessible by ${TARGET_USER}.
-    2. Launch ${BOLD}outwarp-cli gui${RESET} (or log out/in to trigger autostart).
+    2. Launch ${BOLD}outwarp-cli tui${RESET} — interactive terminal UI (recommended).
+       Or ${BOLD}outwarp-cli gui${RESET} for the tray window (needs webkitgtk).
     3. The first run prompts for the .owcfg via the import wizard.
 
-  ${BOLD}Console (headless / SSH / systemd):${RESET}
+  ${BOLD}Headless / SSH / systemd:${RESET}
     1. ${BOLD}outwarp-cli import /path/to/profile.owcfg${RESET}
     2. ${BOLD}outwarp-cli connect${RESET}        # foreground, Ctrl+C to stop
        ${BOLD}outwarp-cli status${RESET}         # one-shot state probe

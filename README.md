@@ -32,11 +32,36 @@ For automated / unattended deploys (Intune, Ansible, …) see [`scripts/install-
 curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/linux/install.sh | sudo bash
 ```
 
-The installer will ask whether you want to set up the **client** or the **server** and guide you through the rest.
+The installer will ask whether you want to set up the **client** or the **server** and guide you through the rest. On Linux the primary interface is a **Textual TUI** that runs in any terminal (GNOME Terminal, Konsole, Alacritty, kitty, foot, tmux, SSH) — no GUI dependencies, no display server required.
+
+```bash
+outwarp-cli tui          # client dashboard: live status, traffic, logs, profile editor
+sudo outwarp-server tui  # server admin: clients table, add/revoke, doctor checks
+```
+
+Both TUIs share the same backend as the headless CLI subcommands (`connect`, `add-client`, etc.) so any scripts you already have keep working unchanged.
 
 ### macOS
 
-> macOS support is planned but not yet implemented.
+> macOS support is out of scope. The dispatch tables only cover Windows and Linux.
+
+---
+
+## Linux client at a glance
+
+After `outwarp-cli import path/to/profile.owcfg`:
+
+| Action | How |
+|---|---|
+| Foreground connect (Ctrl+C to stop) | `outwarp-cli connect` |
+| Headless status probe | `outwarp-cli status` |
+| Tail the log file (`tail -f` style) | `outwarp-cli logs --follow` |
+| Interactive TUI (recommended) | `outwarp-cli tui` |
+| Tray window (still available via webkitgtk) | `outwarp-cli gui` |
+| Edit MTU / DNS / address / routing | TUI → **s** Settings → **p** Profile (or **p** from the dashboard) |
+| Check for updates | `sudo outwarp-cli update` |
+
+The autostart entry installed by `install.sh` launches the GUI tray by default; switch it to the TUI by pointing `Exec=` at `outwarp-cli tui` in `~/.config/autostart/outwarp.desktop`.
 
 ---
 
@@ -50,8 +75,11 @@ After running the server installer, the following commands are available:
 | `outwarp-server add-client <name>` | Generate a `.owcfg` file for a new client |
 | `outwarp-server list-clients` | List registered clients with their live status (online/offline, last handshake, transfer) |
 | `outwarp-server revoke-client <name>` | Remove a client |
+| `outwarp-server prune-expired` | Drop clients past their `expires_at` date |
 | `outwarp-server status` | Show service status |
 | `outwarp-server restart` | Regenerate config and fully restart wg-quick + wstunnel |
+| `outwarp-server doctor` | Run diagnostic checks (binaries, kmod, services, listen ports, IP forward, NAT) |
+| `outwarp-server tui` | Open the interactive admin TUI (Linux) |
 | `outwarp-server uninstall` | Remove OutWarp server completely |
 
 ---
