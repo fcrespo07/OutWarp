@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import shutil
 import signal
 import subprocess
 import sys

@@ -6,12 +6,13 @@ import shutil
 import socket
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
-from outwarp_server.config import ServerConfig, default_config_dir
+from outwarp_server.config import ServerConfig
 
 log = logging.getLogger(__name__)
 

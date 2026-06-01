@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 
@@ -98,10 +99,8 @@ class ClientsScreen(Screen):
             table.add_row(dot, c.name, c.address, status, hs, rx, tx, endpoint)
 
         if cursor is not None and cursor < table.row_count:
-            try:
+            with contextlib.suppress(Exception):
                 table.move_cursor(row=cursor)
-            except Exception:
-                pass
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "search":

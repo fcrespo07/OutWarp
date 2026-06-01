@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 from collections.abc import Callable
@@ -120,10 +121,8 @@ class ServerTrayApp:
 
     def stop(self) -> None:
         if self._icon is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._icon.stop()
-            except Exception:
-                pass
 
     def run(self) -> None:
         import pystray

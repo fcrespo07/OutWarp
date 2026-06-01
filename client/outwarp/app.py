@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 import tempfile
@@ -86,10 +87,8 @@ class _SingleInstanceLock:
                 pass
             self._handle = None
             if self._lock_path and self._lock_path.exists():
-                try:
+                with contextlib.suppress(Exception):
                     self._lock_path.unlink()
-                except Exception:
-                    pass
 
 
 def _try_load_config() -> ClientConfig | None:
@@ -284,10 +283,8 @@ def main() -> int:
             log.info("Shutting down OutWarp client")
             api.shutdown()
             tray.stop()
-            try:
+            with contextlib.suppress(Exception):
                 window.destroy()
-            except Exception:
-                pass
 
         # Let apply_update() quit the app after launching the installer so it
         # can replace our files and relaunch us.

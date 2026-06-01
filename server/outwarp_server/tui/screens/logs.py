@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import shutil
 import subprocess
@@ -61,8 +62,6 @@ class LogsScreen(Screen):
 
     def on_unmount(self) -> None:
         if self._proc is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._proc.terminate()
-            except Exception:
-                pass
             self._proc = None

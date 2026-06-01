@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
@@ -27,13 +29,9 @@ class LogsScreen(Screen):
         yield Footer()
 
     def action_scroll_home(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.query_one(LiveLog).scroll_home(animate=False)
-        except Exception:
-            pass
 
     def action_scroll_end(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.query_one(LiveLog).scroll_end(animate=False)
-        except Exception:
-            pass

@@ -8,13 +8,13 @@ from textual.app import App
 from outwarp.config import ClientConfig, ConfigError, default_config_path
 from outwarp.logs import setup_logging
 from outwarp.settings import load_settings
-from outwarp.tunnel import TunnelManager, TunnelState
 from outwarp.tui.screens.connecting import ConnectingScreen
 from outwarp.tui.screens.dashboard import DashboardScreen
 from outwarp.tui.screens.empty import EmptyScreen
 from outwarp.tui.screens.failed import FailedScreen
 from outwarp.tui.screens.logs import LogsScreen
 from outwarp.tui.screens.profile import ProfileScreen
+from outwarp.tunnel import TunnelManager, TunnelState
 
 log = logging.getLogger(__name__)
 

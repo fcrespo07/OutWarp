@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import urllib.error
 import urllib.request
@@ -84,10 +85,8 @@ class DashboardScreen(Screen):
             return
         if not text:
             return
-        try:
+        with contextlib.suppress(Exception):
             self.query_one(StatusCard).set_geo(text)
-        except Exception:
-            pass
 
     def _fetch_geo(self) -> str | None:
         url = "http://ip-api.com/line/?fields=status,country,city,query"

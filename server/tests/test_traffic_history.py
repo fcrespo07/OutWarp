@@ -4,8 +4,6 @@ import sqlite3
 import time
 from pathlib import Path
 
-import pytest
-
 from outwarp_server.config import ClientEntry, ServerConfig
 from outwarp_server.traffic_history import TrafficHistory
 from outwarp_server.wireguard import LivePeer

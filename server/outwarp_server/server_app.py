@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 import time
@@ -197,10 +198,8 @@ def main() -> int:
             log.info("Shutting down OutWarp Server")
             api.shutdown()
             tray.stop()
-            try:
+            with contextlib.suppress(Exception):
                 window.destroy()
-            except Exception:
-                pass
 
         tray = ServerTrayApp(manager=manager, on_show=_show_window, on_quit=_on_quit)
         _stage("tray constructed")

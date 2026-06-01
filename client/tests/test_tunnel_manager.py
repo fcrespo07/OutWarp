@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 from threading import Event
-from unittest.mock import MagicMock
 
 from outwarp.config import (
     ClientConfig,

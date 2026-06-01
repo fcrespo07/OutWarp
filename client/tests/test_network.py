@@ -12,7 +12,6 @@ from outwarp.network import (
     verify_tls_fingerprint,
 )
 
-
 # --- tcp_probe ---
 
 def test_tcp_probe_returns_true_on_success():

@@ -9,14 +9,11 @@ test_tunnel_manager.py already covers.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from outwarp import cli
-from outwarp.config import default_config_path
-
 
 VALID_OWCFG = {
     "schema_version": 1,

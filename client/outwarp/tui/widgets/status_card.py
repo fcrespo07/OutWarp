@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 from textual.containers import Container
 from textual.widgets import Static
 
@@ -35,7 +37,5 @@ class StatusCard(Container):
 
     def set_geo(self, label: str | None) -> None:
         self._geo = label
-        try:
+        with contextlib.suppress(Exception):
             self.query_one("#geo", Static).update(label or "—")
-        except Exception:
-            pass

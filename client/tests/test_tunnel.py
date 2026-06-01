@@ -17,10 +17,10 @@ from outwarp.config import (
 from outwarp.network import NetworkError
 from outwarp.platforms.base import Platform, PlatformError
 from outwarp.tunnel import (
-    Tunnel,
-    TunnelError,
     _ANSI_ESCAPE_RE,
     _WSTUNNEL_NOISE_RE,
+    Tunnel,
+    TunnelError,
     build_wstunnel_command,
     find_wstunnel,
 )

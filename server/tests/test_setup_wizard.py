@@ -3,8 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from outwarp_server.setup_wizard import _detect_public_ip, _probe_localhost, run_setup
 
 

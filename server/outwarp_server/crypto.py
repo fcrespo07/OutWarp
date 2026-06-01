@@ -130,8 +130,8 @@ def generate_wg_keypair(wg_bin: Path | None = None) -> tuple[str, str]:
             check=True,
         )
         public_key = pubkey.stdout.strip()
-    except FileNotFoundError:
-        raise CryptoError(f"wg binary not found at {wg}")
+    except FileNotFoundError as exc:
+        raise CryptoError(f"wg binary not found at {wg}") from exc
     except subprocess.CalledProcessError as exc:
         raise CryptoError(f"WireGuard key generation failed: {exc.stderr.strip()}") from exc
 

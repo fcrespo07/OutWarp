@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 from collections.abc import Callable
@@ -226,10 +227,8 @@ class TrayApp:
     def stop(self) -> None:
         """Stop the tray icon (called during shutdown)."""
         if self._icon is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._icon.stop()
-            except Exception:
-                pass
 
     def run(self) -> None:
         """Start pystray in a background thread (non-blocking)."""

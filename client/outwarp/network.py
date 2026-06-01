@@ -37,7 +37,9 @@ def get_tls_fingerprint(host: str, port: int, timeout: float = 5.0) -> str:
             with ctx.wrap_socket(sock, server_hostname=host) as ssock:
                 der = ssock.getpeercert(binary_form=True)
     except OSError as exc:
-        raise NetworkError(f"Could not establish TLS connection to {host}:{port}: {exc}")
+        raise NetworkError(
+            f"Could not establish TLS connection to {host}:{port}: {exc}"
+        ) from exc
     if not der:
         raise NetworkError(f"Server at {host}:{port} did not present a TLS certificate")
     digest = hashlib.sha256(der).hexdigest().upper()

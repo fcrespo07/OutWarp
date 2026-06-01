@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from outwarp_server.config import ServerConfig
-from outwarp_server.wireguard import LivePeer, get_live_peers
+from outwarp_server.wireguard import get_live_peers
 
 log = logging.getLogger(__name__)
 

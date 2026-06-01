@@ -98,12 +98,12 @@ class ClientConfig:
     def load(cls, path: Path) -> ClientConfig:
         try:
             text = path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            raise ConfigError(f"Config file not found: {path}")
+        except FileNotFoundError as exc:
+            raise ConfigError(f"Config file not found: {path}") from exc
         try:
             raw = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise ConfigError(f"Config file is not valid JSON: {exc}")
+            raise ConfigError(f"Config file is not valid JSON: {exc}") from exc
         return _parse(raw)
 
     @classmethod
@@ -261,8 +261,8 @@ def _parse_wireguard(d: Any) -> WireguardConfig:
     mtu_raw = d.get("mtu", 1380)
     try:
         mtu = int(mtu_raw)
-    except (TypeError, ValueError):
-        raise ConfigError(f"wireguard.mtu must be an integer, got {mtu_raw!r}")
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"wireguard.mtu must be an integer, got {mtu_raw!r}") from exc
     if not (576 <= mtu <= 1500):
         raise ConfigError(f"wireguard.mtu must be between 576 and 1500, got {mtu}")
     return WireguardConfig(
@@ -371,8 +371,8 @@ def _parse_ip_list(value: Any, label: str, *, allow_cidr: bool) -> list[str]:
                 ipaddress.ip_network(item, strict=False)
             else:
                 ipaddress.ip_address(item)
-        except ValueError:
-            raise ConfigError(f"{label}: dirección inválida '{item}'")
+        except ValueError as exc:
+            raise ConfigError(f"{label}: dirección inválida '{item}'") from exc
         out.append(item)
     return out
 
@@ -437,8 +437,8 @@ def apply_profile_patch(cfg: ClientConfig, patch: dict[str, Any]) -> ClientConfi
     if "mtu" in patch:
         try:
             mtu = int(patch["mtu"])
-        except (TypeError, ValueError):
-            raise ConfigError("El MTU debe ser un número entero")
+        except (TypeError, ValueError) as exc:
+            raise ConfigError("El MTU debe ser un número entero") from exc
         if not (576 <= mtu <= 1500):
             raise ConfigError("El MTU debe estar entre 576 y 1500")
         wg_changes["mtu"] = mtu
@@ -450,10 +450,10 @@ def apply_profile_patch(cfg: ClientConfig, patch: dict[str, Any]) -> ClientConfi
         addr = str(patch["client_address"]).strip()
         try:
             ipaddress.ip_interface(addr)
-        except ValueError:
+        except ValueError as exc:
             raise ConfigError(
                 f"IP del cliente inválida: '{addr}' (usa formato 10.0.0.2/32)"
-            )
+            ) from exc
         wg_changes["client_address"] = addr
 
     if "bypass_ips" in patch:
@@ -465,8 +465,8 @@ def apply_profile_patch(cfg: ClientConfig, patch: dict[str, Any]) -> ClientConfi
     if "reconnect_max_attempts" in patch:
         try:
             ma = int(patch["reconnect_max_attempts"])
-        except (TypeError, ValueError):
-            raise ConfigError("Los reintentos de reconexión deben ser un entero")
+        except (TypeError, ValueError) as exc:
+            raise ConfigError("Los reintentos de reconexión deben ser un entero") from exc
         if not (1 <= ma <= 100):
             raise ConfigError("Los reintentos de reconexión deben estar entre 1 y 100")
         rc_changes["max_attempts"] = ma
@@ -479,8 +479,8 @@ def apply_profile_patch(cfg: ClientConfig, patch: dict[str, Any]) -> ClientConfi
         for tok in tokens:
             try:
                 v = int(tok)
-            except (TypeError, ValueError):
-                raise ConfigError(f"Tiempo de reconexión inválido: '{tok}'")
+            except (TypeError, ValueError) as exc:
+                raise ConfigError(f"Tiempo de reconexión inválido: '{tok}'") from exc
             if v < 1:
                 raise ConfigError("Los tiempos de reconexión deben ser positivos")
             delays.append(v)

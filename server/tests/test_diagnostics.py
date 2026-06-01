@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import json
-import socket
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from outwarp_server import diagnostics
 from outwarp_server.config import ClientEntry, ServerConfig
@@ -73,16 +70,14 @@ class TestClientsRegistered:
 
 class TestTlsCertFiles:
     def test_fails_when_missing(self, tmp_path: Path) -> None:
-        with patch("outwarp_server.diagnostics.default_config_dir", return_value=tmp_path):
-            r = check_tls_cert_files(_make_config(tmp_path))
+        r = check_tls_cert_files(_make_config(tmp_path))
         assert r.status is Status.FAIL
         assert "server_cert.pem" in r.detail
 
     def test_passes_when_present(self, tmp_path: Path) -> None:
         (tmp_path / "server_cert.pem").write_text("cert")
         (tmp_path / "server_key.pem").write_text("key")
-        with patch("outwarp_server.diagnostics.default_config_dir", return_value=tmp_path):
-            r = check_tls_cert_files(_make_config(tmp_path))
+        r = check_tls_cert_files(_make_config(tmp_path))
         assert r.status is Status.PASS
 
 
@@ -98,7 +93,7 @@ class TestEgress:
     def test_fails_when_unreachable(self, tmp_path: Path) -> None:
         with patch(
             "outwarp_server.diagnostics.socket.create_connection",
-            side_effect=socket.timeout("timed out"),
+            side_effect=TimeoutError("timed out"),
         ):
             r = check_egress(_make_config(tmp_path))
         assert r.status is Status.FAIL

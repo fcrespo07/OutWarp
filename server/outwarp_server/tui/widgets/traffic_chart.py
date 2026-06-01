@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 from textual.containers import Container
 from textual.widgets import Sparkline, Static
 
@@ -17,10 +19,8 @@ class TrafficChart(Container):
 
     def update_buckets(self, buckets: list[tuple[int, int, int]]) -> None:
         if not buckets:
-            try:
+            with contextlib.suppress(Exception):
                 self.query_one("#totals", Static).update("[#6e747e]no data yet[/]")
-            except Exception:
-                pass
             return
         rx_series = [float(b[1]) for b in buckets]
         tx_series = [float(b[2]) for b in buckets]

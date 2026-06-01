@@ -52,10 +52,10 @@ class ServerConfig:
     def load(cls, path: Path) -> ServerConfig:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            raise ConfigError(f"Config file not found: {path}")
+        except FileNotFoundError as exc:
+            raise ConfigError(f"Config file not found: {path}") from exc
         except json.JSONDecodeError as exc:
-            raise ConfigError(f"Config file is not valid JSON: {exc}")
+            raise ConfigError(f"Config file is not valid JSON: {exc}") from exc
         return _parse(raw)
 
     def save(self, path: Path) -> None:

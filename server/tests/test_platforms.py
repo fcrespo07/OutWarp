@@ -159,8 +159,9 @@ class TestLinuxPlatform:
 
 class TestStubPlatforms:
     def test_windows_wstunnel_service_is_noop(self) -> None:
-        from outwarp_server.platforms.windows import WindowsServerPlatform
         from unittest.mock import patch
+
+        from outwarp_server.platforms.windows import WindowsServerPlatform
 
         p = WindowsServerPlatform()
         # install/uninstall are no-ops on Windows (ServerManager owns wstunnel)
@@ -279,9 +280,8 @@ class TestWindowsCreateNatRaises:
         with patch(
             "outwarp_server.platforms.windows._ps",
             side_effect=lambda *a, **kw: next(responses),
-        ):
-            with pytest.raises(PlatformError, match="MSFT_NetNat WMI provider"):
-                self._platform()._create_nat("10.0.0.0/24")
+        ), pytest.raises(PlatformError, match="MSFT_NetNat WMI provider"):
+            self._platform()._create_nat("10.0.0.0/24")
 
     def test_raises_with_underlying_error_on_other_failures(self) -> None:
         responses = iter([
@@ -291,9 +291,8 @@ class TestWindowsCreateNatRaises:
         with patch(
             "outwarp_server.platforms.windows._ps",
             side_effect=lambda *a, **kw: next(responses),
-        ):
-            with pytest.raises(PlatformError, match="some other error"):
-                self._platform()._create_nat("10.0.0.0/24")
+        ), pytest.raises(PlatformError, match="some other error"):
+            self._platform()._create_nat("10.0.0.0/24")
 
     def test_noop_when_nat_already_exists(self) -> None:
         with patch(

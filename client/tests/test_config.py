@@ -1,6 +1,8 @@
 import json
-import pytest
 from pathlib import Path
+
+import pytest
+
 from outwarp.config import (
     ClientConfig,
     ConfigError,
