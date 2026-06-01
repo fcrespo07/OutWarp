@@ -12,6 +12,7 @@ from outwarp.tui.modals.import_owcfg import ImportModal
 from outwarp.tui.modals.settings import SettingsModal
 from outwarp.tui.screens.empty import EmptyScreen
 from outwarp.tui.screens.failed import FailedScreen
+from outwarp.tui.screens.profile import ProfileScreen
 
 
 def _write_owcfg(tmp_path: Path) -> Path:
@@ -199,3 +200,150 @@ async def test_settings_modal_persists_tls_intercept(tmp_path: Path, monkeypatch
         await pilot.press("escape")
         await pilot.pause(0.1)
         assert not isinstance(app.screen, SettingsModal)
+
+
+# ─── ProfileScreen ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_profile_screen_saves_valid_edit(tmp_path: Path, monkeypatch) -> None:
+    """The save action must run inputs through apply_profile_patch, persist
+    the new config.json, snapshot the pre-edit state as config.original.json,
+    and ask the app to rebuild its TunnelManager with the fresh config."""
+    from unittest.mock import MagicMock, patch
+
+    from textual.widgets import Input
+
+    from outwarp.config import (
+        ClientConfig,
+        default_config_path,
+        import_owcfg,
+        original_config_path,
+    )
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    import_owcfg(_write_owcfg(tmp_path))
+
+    # Strip the original snapshot import_owcfg writes so we can prove that
+    # ProfileScreen.action_save takes its own snapshot on first edit. (Without
+    # this, the snapshot path would already exist and we couldn't tell which
+    # write produced it.)
+    original_config_path(default_config_path()).unlink()
+
+    # TunnelManager is patched so start_manager() doesn't hit wstunnel; the
+    # MagicMock still satisfies the listener/start_manager contract.
+    with patch("outwarp.tui.app.TunnelManager", return_value=MagicMock()):
+        app = OutWarpClientTUI()
+        async with app.run_test() as pilot:
+            await pilot.pause(0.2)
+            app.push_screen("profile")
+            await pilot.pause(0.2)
+            assert isinstance(app.screen, ProfileScreen)
+
+            app.screen.query_one("#field-mtu", Input).value = "1400"
+            app.screen.query_one("#field-dns", Input).value = "9.9.9.9, 1.1.1.1"
+
+            with patch.object(app, "start_manager") as restart:
+                await pilot.press("ctrl+s")
+                await pilot.pause(0.2)
+                restart.assert_called_once()
+
+            saved = ClientConfig.load(default_config_path())
+            assert saved.wireguard.mtu == 1400
+            assert saved.wireguard.dns == ["9.9.9.9", "1.1.1.1"]
+            # First-edit snapshot must now exist with the *pre-edit* values
+            # (MTU 1380 from the imported owcfg), so a later reset restores
+            # them — not the post-edit state.
+            orig = ClientConfig.load(original_config_path(default_config_path()))
+            assert orig.wireguard.mtu == 1380
+
+
+@pytest.mark.asyncio
+async def test_profile_screen_surfaces_validation_error(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An out-of-range MTU must not crash the screen — the ConfigError that
+    apply_profile_patch raises lands in the status line so the user can fix it."""
+    from unittest.mock import MagicMock, patch
+
+    from textual.widgets import Input, Static
+
+    from outwarp.config import ClientConfig, default_config_path, import_owcfg
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    import_owcfg(_write_owcfg(tmp_path))
+
+    with patch("outwarp.tui.app.TunnelManager", return_value=MagicMock()):
+        app = OutWarpClientTUI()
+        async with app.run_test() as pilot:
+            await pilot.pause(0.2)
+            app.push_screen("profile")
+            await pilot.pause(0.2)
+
+            app.screen.query_one("#field-mtu", Input).value = "200"  # below 576
+
+            with patch.object(app, "start_manager") as restart:
+                await pilot.press("ctrl+s")
+                await pilot.pause(0.2)
+                restart.assert_not_called()
+
+            status = app.screen.query_one("#profile-status", Static)
+            # The renderable carries the Spanish error from apply_profile_patch.
+            rendered = status.render() if hasattr(status, "render") else status._renderable
+            assert "MTU" in str(rendered)
+            # The on-disk config must be untouched.
+            saved = ClientConfig.load(default_config_path())
+            assert saved.wireguard.mtu == 1380
+
+
+@pytest.mark.asyncio
+async def test_profile_screen_reset_restores_original_snapshot(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Pressing R reloads config.original.json into config.json so the user
+    walks back every local edit in one step."""
+    from unittest.mock import MagicMock, patch
+
+    from outwarp.config import (
+        ClientConfig,
+        apply_profile_patch,
+        default_config_path,
+        import_owcfg,
+    )
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    import_owcfg(_write_owcfg(tmp_path))
+
+    # Pre-edit the live config so reset has something meaningful to undo —
+    # the snapshot was captured at import time with MTU 1380.
+    edited = apply_profile_patch(
+        ClientConfig.load(default_config_path()),
+        {"mtu": 1400},
+    )
+    edited.save(default_config_path())
+
+    with patch("outwarp.tui.app.TunnelManager", return_value=MagicMock()):
+        app = OutWarpClientTUI()
+        async with app.run_test() as pilot:
+            await pilot.pause(0.2)
+            app.push_screen("profile")
+            await pilot.pause(0.2)
+
+            with patch.object(app, "start_manager"):
+                await pilot.press("r")
+                await pilot.pause(0.2)
+
+            restored = ClientConfig.load(default_config_path())
+            assert restored.wireguard.mtu == 1380

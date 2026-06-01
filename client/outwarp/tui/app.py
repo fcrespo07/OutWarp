@@ -14,6 +14,7 @@ from outwarp.tui.screens.dashboard import DashboardScreen
 from outwarp.tui.screens.empty import EmptyScreen
 from outwarp.tui.screens.failed import FailedScreen
 from outwarp.tui.screens.logs import LogsScreen
+from outwarp.tui.screens.profile import ProfileScreen
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class OutWarpClientTUI(App):
         "dashboard": DashboardScreen,
         "logs": LogsScreen,
         "failed": FailedScreen,
+        "profile": ProfileScreen,
     }
     BINDINGS = [
         ("q", "quit", "Quit"),

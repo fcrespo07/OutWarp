@@ -27,12 +27,18 @@ class DashboardScreen(Screen):
         ("k", "disconnect", "Disconnect"),
         ("r", "reconnect", "Reconnect"),
         ("l", "open_logs", "Logs"),
+        ("p", "open_profile", "Profile"),
         ("q", "quit", "Quit"),
         ("question_mark", "help", "Help"),
     ]
 
     def action_open_logs(self) -> None:
         self.app.push_screen("logs")
+
+    def action_open_profile(self) -> None:
+        # Same destination as the SettingsModal's profile entry — both routes
+        # end up at the per-profile editor (see screens/profile.py).
+        self.app.push_screen("profile")
 
     def compose(self) -> ComposeResult:
         config = self.app.config

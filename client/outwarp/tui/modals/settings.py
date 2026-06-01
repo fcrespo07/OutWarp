@@ -53,6 +53,7 @@ class SettingsModal(ModalScreen[None]):
     BINDINGS = [
         ("escape", "dismiss", "Close"),
         ("q", "dismiss", "Close"),
+        ("p", "edit_profile", "Edit profile"),
     ]
 
     def __init__(self) -> None:
@@ -74,6 +75,16 @@ class SettingsModal(ModalScreen[None]):
                     with Container(classes="settings-text"):
                         yield Static(f"[b]{label}[/b]")
                         yield Static(f"[dim]{hint}[/]")
+            # Connection-config editing lives on its own screen (room for the
+            # 7 editable fields + validation feedback). The modal just exposes
+            # the entry point so users discover it from the same surface where
+            # they tweak preferences.
+            yield Static(
+                "[b]Connection profile[/b]\n"
+                "[dim]Edit name, MTU, DNS, address, bypass routes and reconnect schedule.[/]\n"
+                "[dim]Press [b]p[/b] to open the editor.[/]",
+                classes="settings-profile-link",
+            )
             yield Static("", id="settings-status")
             yield Static(
                 "[dim]Press [b]Esc[/b] / [b]q[/b] to close. Changes save instantly.[/]"
@@ -114,3 +125,10 @@ class SettingsModal(ModalScreen[None]):
 
     def action_dismiss(self) -> None:
         self.dismiss(None)
+
+    def action_edit_profile(self) -> None:
+        # Close the modal first so the editor screen owns the layout — pushing
+        # a Screen on top of a ModalScreen leaves the modal's dim overlay
+        # rendered behind the inputs, which looks broken.
+        self.dismiss(None)
+        self.app.push_screen("profile")

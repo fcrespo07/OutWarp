@@ -156,3 +156,54 @@ ModalScreen {
     margin: 1 2;
     border: tall $bad;
 }
+
+/* ── Profile editor ────────────────────────────────────────────────────── */
+
+#profile-scroll {
+    padding: 1 3;
+}
+
+.profile-title {
+    color: $bright;
+    margin-bottom: 0;
+}
+
+.profile-subtitle {
+    margin-bottom: 1;
+}
+
+.profile-row {
+    height: auto;
+    margin-bottom: 1;
+    border: tall $dim2;
+    padding: 1 2;
+}
+
+.profile-label {
+    color: $bright;
+}
+
+.profile-hint {
+    color: $dim;
+    margin-bottom: 1;
+}
+
+.profile-input {
+    margin-top: 0;
+}
+
+.profile-actions {
+    height: auto;
+    padding: 1 2;
+}
+
+#profile-status {
+    width: 1fr;
+}
+
+.settings-profile-link {
+    margin-top: 1;
+    padding: 1 2;
+    border: tall $brand;
+    height: auto;
+}
