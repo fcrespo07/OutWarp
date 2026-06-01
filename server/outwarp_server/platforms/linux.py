@@ -13,7 +13,11 @@ _SERVICE_NAME = "wstunnel-outwarp.service"
 _SERVICE_PATH = Path("/etc/systemd/system") / _SERVICE_NAME
 _SYSCTL_DROP_IN = Path("/etc/sysctl.d/99-outwarp.conf")
 # These mirror the paths in installer/linux/install.sh — keep in sync.
-_INSTALL_PREFIX = Path("/opt/outwarp-server")
+# 0.5.x ships via pipx (PIPX_HOME=/opt/pipx); 0.4.x used a plain venv under
+# /opt/outwarp-server. Detect whichever exists so in-place upgrades and
+# downgrades keep finding the install. The pipx layout is preferred.
+_INSTALL_PREFIX_PIPX = Path("/opt/pipx/venvs/outwarp-server")
+_INSTALL_PREFIX_LEGACY = Path("/opt/outwarp-server")
 _BIN_LINK = Path("/usr/local/bin/outwarp-server")
 
 _UNIT_TEMPLATE = """\
@@ -160,7 +164,11 @@ class LinuxServerPlatform(ServerPlatform):
         return Path("/etc/wireguard")
 
     def install_prefix(self) -> Path | None:
-        return _INSTALL_PREFIX
+        if _INSTALL_PREFIX_PIPX.exists():
+            return _INSTALL_PREFIX_PIPX
+        if _INSTALL_PREFIX_LEGACY.exists():
+            return _INSTALL_PREFIX_LEGACY
+        return None
 
     def bin_link(self) -> Path | None:
         return _BIN_LINK

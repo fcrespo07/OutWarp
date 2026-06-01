@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from outwarp_server.cli import build_parser, main
-from outwarp_server.config import ClientEntry, ServerConfig
+from outwarp_server.config import ServerConfig
 
 
 def _write_server_config(tmp_path: Path, **overrides: object) -> Path:
@@ -411,6 +412,52 @@ class TestUninstall:
         mock_platform.return_value = fake
         main(["--config-dir", str(config_dir), "uninstall", "--yes"])
         mock_spawn.assert_not_called()
+
+    @pytest.mark.skipif(sys.platform != "linux", reason="Linux path layout")
+    @patch("outwarp_server.cli._spawn_deferred_cleanup")
+    @patch("outwarp_server.platforms.get_server_platform")
+    def test_uninstall_cleans_stray_legacy_prefix_in_place(
+        self,
+        mock_platform: MagicMock,
+        mock_spawn: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """In-place 0.4.x → 0.5.0 upgrades can leave /opt/outwarp-server next
+        to the new /opt/pipx/venvs/outwarp-server. The running interpreter
+        lives in install_prefix (pipx) — the legacy tree is just dead bytes
+        and must be wiped synchronously. Same idea covers the legacy
+        outwarp-server-gui shim collapsed into `server gui` in 0.5.0."""
+        etc_dir = tmp_path / "etc"
+        etc_dir.mkdir()
+        config_dir = _write_server_config(etc_dir)
+
+        running_prefix = tmp_path / "opt-pipx-venv"
+        running_prefix.mkdir()
+        bin_link = tmp_path / "outwarp-server"
+        bin_link.touch()
+
+        legacy_prefix = tmp_path / "opt-outwarp-server-legacy"
+        legacy_prefix.mkdir()
+        (legacy_prefix / "marker").touch()
+        legacy_gui_shim = tmp_path / "outwarp-server-gui-legacy"
+        legacy_gui_shim.touch()
+
+        fake = MagicMock()
+        fake.install_prefix.return_value = running_prefix
+        fake.bin_link.return_value = bin_link
+        mock_platform.return_value = fake
+
+        with patch(
+            "outwarp_server.cli._legacy_artifacts",
+            return_value=[legacy_prefix, legacy_gui_shim],
+        ):
+            rc = main(["--config-dir", str(config_dir), "uninstall", "--yes"])
+
+        assert rc == 0
+        assert not legacy_prefix.exists()
+        assert not legacy_gui_shim.exists()
+        # The running interpreter's prefix is still scheduled (not synchronous).
+        mock_spawn.assert_called_once_with(running_prefix, bin_link)
 
 
 class TestRevokeClient:

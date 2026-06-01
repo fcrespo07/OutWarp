@@ -1,4 +1,25 @@
-"""outwarp-uninstall — removes all client files installed by install.ps1 / install.sh."""
+"""outwarp-cli uninstall — purges every artifact installed by install.ps1 / install.sh.
+
+Layout we need to clean on Linux (handles both the 0.4.x legacy and the 0.5.x
+pipx-managed install, since users may upgrade in place):
+
+  Legacy (≤ 0.4.x)
+    /opt/outwarp-client/             venv prefix
+    /usr/local/bin/outwarp           tray launcher
+    /usr/local/bin/outwarp-cli       headless CLI
+    /usr/local/bin/outwarp-uninstall the standalone uninstaller binary
+
+  Pipx (≥ 0.5.0)
+    /opt/pipx/venvs/outwarp-client/  pipx-managed venv
+    /usr/local/bin/outwarp-cli       single entry-point
+
+  Shared
+    /usr/local/libexec/outwarp-priv  privileged helper (added in 0.5.0)
+    /etc/sudoers.d/outwarp           NOPASSWD rule for the helper
+    ~/.config/autostart/outwarp.desktop  legacy XDG autostart (0.4.x → removed)
+
+Windows still uses %ProgramFiles%\\OutWarp\\client + %ProgramFiles%\\OutWarp\\outwarp.bat.
+"""
 from __future__ import annotations
 
 import os
@@ -13,12 +34,12 @@ def _require_admin() -> None:
         if not ctypes.windll.shell32.IsUserAnAdmin():
             print("Error: run this command from an elevated (Administrator) prompt.")
             print("  Right-click PowerShell → 'Run as administrator', then:")
-            print("  outwarp-uninstall")
+            print("  outwarp-cli uninstall")
             raise SystemExit(1)
     else:
         if os.geteuid() != 0:
             print("Error: run with sudo.")
-            print("  sudo outwarp-uninstall")
+            print("  sudo outwarp-cli uninstall")
             raise SystemExit(1)
 
 
@@ -38,16 +59,16 @@ def _confirm(yes: bool) -> None:
 
 
 def _what_gets_removed() -> list[str]:
-    items = []
-    prefix = _client_prefix()
-    shim = _client_shim()
+    items: list[str] = []
+    for prefix in _client_prefixes():
+        items.append(f"Install directory: {prefix}")
+    for shim in _client_shims():
+        items.append(f"Binary: {shim}")
+    for path in _extra_artifacts():
+        items.append(f"File: {path}")
     config = _config_dir()
     startup = _startup_shortcut()
     desktop = _desktop_shortcut()
-    if prefix:
-        items.append(f"Install directory: {prefix}")
-    if shim and shim.exists():
-        items.append(f"CLI shim: {shim}")
     if config and config.exists():
         items.append(f"Config and logs: {config}")
     if startup and startup.exists():
@@ -63,24 +84,56 @@ def _what_gets_removed() -> list[str]:
 # Path detection — mirrors what install.ps1 / install.sh write
 # ---------------------------------------------------------------------------
 
-def _client_prefix() -> Path | None:
+def _client_prefixes() -> list[Path]:
+    """Every install prefix we have to wipe. A normal machine has exactly
+    one; in-place upgrades from 0.4.x → 0.5.x can briefly have both."""
     if sys.platform == "win32":
         prog = os.environ.get("ProgramFiles", "C:\\Program Files")
         p = Path(prog) / "OutWarp" / "client"
-        return p if p.exists() else None
+        return [p] if p.exists() else []
     if sys.platform == "linux":
-        p = Path("/opt/outwarp-client")
-        return p if p.exists() else None
-    return None
+        candidates = [
+            Path("/opt/pipx/venvs/outwarp-client"),
+            Path("/opt/outwarp-client"),
+        ]
+        return [p for p in candidates if p.exists()]
+    return []
 
 
-def _client_shim() -> Path | None:
+def _client_shims() -> list[Path]:
+    """Every entry-point binary install.sh / pipx have ever produced for the
+    client. We try them all — a no-op if the file doesn't exist."""
     if sys.platform == "win32":
         prog = os.environ.get("ProgramFiles", "C:\\Program Files")
-        return Path(prog) / "OutWarp" / "outwarp.bat"
+        p = Path(prog) / "OutWarp" / "outwarp.bat"
+        return [p] if p.exists() else []
     if sys.platform == "linux":
-        return Path("/usr/local/bin/outwarp")
-    return None
+        candidates = [
+            Path("/usr/local/bin/outwarp"),
+            Path("/usr/local/bin/outwarp-cli"),
+            Path("/usr/local/bin/outwarp-uninstall"),
+        ]
+        return [p for p in candidates if p.exists()]
+    return []
+
+
+def _extra_artifacts() -> list[Path]:
+    """Files outside the venv prefix and shims that install.sh writes —
+    the privileged helper, sudoers rule, and the 0.4.x autostart entry that
+    0.5.x's install.sh sweeps but a fresh `uninstall` should also reach."""
+    if sys.platform != "linux":
+        return []
+    paths = [
+        Path("/usr/local/libexec/outwarp-priv"),
+        Path("/etc/sudoers.d/outwarp"),
+    ]
+    target_user = os.environ.get("SUDO_USER") or os.environ.get("USER")
+    if target_user and target_user != "root":
+        home = Path(f"/home/{target_user}")
+        if not home.exists():
+            home = Path(os.path.expanduser(f"~{target_user}"))
+        paths.append(home / ".config" / "autostart" / "outwarp.desktop")
+    return [p for p in paths if p.exists()]
 
 
 def _config_dir() -> Path | None:
@@ -132,22 +185,17 @@ def _kill_running() -> None:
 # (we can't delete the tree we're running from while we're in it)
 # ---------------------------------------------------------------------------
 
-def _spawn_deferred_cleanup_windows(prefix: Path, shim: Path | None) -> None:
+def _spawn_deferred_cleanup_windows(prefixes: list[Path], shims: list[Path]) -> None:
     import subprocess
     import tempfile
 
     pid = os.getpid()
-    targets = [str(prefix)]
-    if shim is not None:
-        targets.append(str(shim))
-
-    lines = [f'rmdir /s /q "{prefix}"']
-    if shim is not None:
-        lines.append(f'del /f /q "{shim}"')
+    lines = [f'rmdir /s /q "{p}"' for p in prefixes]
+    lines += [f'del /f /q "{s}"' for s in shims]
 
     script = (
         "@echo off\r\n"
-        f":wait\r\n"
+        ":wait\r\n"
         f"tasklist /FI \"PID eq {pid}\" 2>nul | find \"{pid}\" >nul && goto wait\r\n"
         "timeout /t 1 /nobreak >nul\r\n"
         + "\r\n".join(lines)
@@ -167,15 +215,14 @@ def _spawn_deferred_cleanup_windows(prefix: Path, shim: Path | None) -> None:
     )
 
 
-def _spawn_deferred_cleanup_posix(prefix: Path, shim: Path | None) -> None:
+def _spawn_deferred_cleanup_posix(prefixes: list[Path], shims: list[Path]) -> None:
     import shlex
     import subprocess
     import tempfile
 
     pid = os.getpid()
-    lines = [f"rm -rf {shlex.quote(str(prefix))}"]
-    if shim is not None:
-        lines.append(f"rm -f {shlex.quote(str(shim))}")
+    lines = [f"rm -rf {shlex.quote(str(p))}" for p in prefixes]
+    lines += [f"rm -f {shlex.quote(str(s))}" for s in shims]
 
     script = (
         "#!/usr/bin/env bash\n"
@@ -205,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="outwarp-uninstall",
+        prog="outwarp-cli uninstall",
         description="Remove all OutWarp client files installed by the official installer.",
     )
     parser.add_argument(
@@ -232,8 +279,9 @@ def main(argv: list[str] | None = None) -> int:
     config = _config_dir()
     startup = _startup_shortcut()
     desktop = _desktop_shortcut()
-    prefix = _client_prefix()
-    shim = _client_shim()
+    prefixes = _client_prefixes()
+    shims = _client_shims()
+    extras = _extra_artifacts()
 
     if config and config.exists():
         step(f"Removing config/logs ({config})", lambda: shutil.rmtree(config))
@@ -244,20 +292,25 @@ def main(argv: list[str] | None = None) -> int:
     if desktop and desktop.exists():
         step("Removing desktop shortcut", desktop.unlink)
 
-    # The venv and shim are deferred: we can't delete the tree we're running from.
-    if prefix and prefix.exists():
+    for extra in extras:
+        step(f"Removing {extra}", extra.unlink)
+
+    # The venv prefixes and shims live in the tree we're running from, so they
+    # have to wait until this process exits — a detached script does the work.
+    if prefixes:
         try:
             if sys.platform == "win32":
-                _spawn_deferred_cleanup_windows(prefix, shim if shim and shim.exists() else None)
+                _spawn_deferred_cleanup_windows(prefixes, shims)
             else:
-                _spawn_deferred_cleanup_posix(prefix, shim if shim and shim.exists() else None)
-            shim_note = f" and {shim}" if shim else ""
-            print(f"  Scheduled removal of {prefix}{shim_note} after exit... done")
+                _spawn_deferred_cleanup_posix(prefixes, shims)
+            removed = ", ".join(str(p) for p in prefixes + shims)
+            print(f"  Scheduled removal of {removed} after exit... done")
         except Exception as exc:
             warnings.append(f"deferred cleanup: {exc}")
             print(f"  Scheduling deferred cleanup... warning: {exc}")
-    elif shim and shim.exists():
-        step(f"Removing CLI shim ({shim})", shim.unlink)
+    else:
+        for shim in shims:
+            step(f"Removing binary ({shim})", shim.unlink)
 
     print()
     if warnings:
@@ -265,5 +318,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print("OutWarp client uninstalled successfully.")
-    print("You can also remove WireGuard for Windows from Add/Remove Programs if no longer needed.")
+    if sys.platform == "win32":
+        print("You can also remove WireGuard for Windows from Add/Remove Programs if no longer needed.")
     return 0

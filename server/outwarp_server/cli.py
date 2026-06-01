@@ -83,7 +83,7 @@ def _load_config(args: argparse.Namespace) -> ServerConfig:
         console.print(
             "Run [bold]outwarp-server setup[/bold] first to configure the server."
         )
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
 
 
 def _cmd_setup(args: argparse.Namespace) -> int:
@@ -417,6 +417,24 @@ def _spawn_deferred_cleanup(install_prefix: Path, bin_link: Path | None) -> None
     )
 
 
+def _legacy_artifacts(install_prefix: Path | None) -> list[Path]:
+    """Stray paths from earlier installs that aren't the running interpreter's
+    prefix — safe to remove synchronously. Covers in-place upgrades where both
+    layouts coexist (pipx + legacy /opt/outwarp-server) and the 0.4.x
+    ``outwarp-server-gui`` shim that 0.5.0 collapsed into ``server gui``."""
+    if sys.platform != "linux":
+        return []
+    candidates = [
+        Path("/opt/pipx/venvs/outwarp-server"),
+        Path("/opt/outwarp-server"),
+        Path("/usr/local/bin/outwarp-server-gui"),
+    ]
+    return [
+        p for p in candidates
+        if p.exists() and (install_prefix is None or p != install_prefix)
+    ]
+
+
 def _cmd_uninstall(args: argparse.Namespace) -> int:
     from outwarp_server.platforms import PlatformError, get_server_platform
 
@@ -425,6 +443,7 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     platform = get_server_platform()
     install_prefix = platform.install_prefix()
     bin_link = platform.bin_link()
+    legacy = _legacy_artifacts(install_prefix)
 
     console.print("[bold red]WARNING:[/bold red] This will permanently remove OutWarp server:")
     console.print("  • wstunnel systemd service")
@@ -435,6 +454,8 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
         console.print(f"  • Install directory: {install_prefix}")
     if bin_link is not None:
         console.print(f"  • CLI symlink: {bin_link}")
+    for path in legacy:
+        console.print(f"  • Stray artifact: {path}")
 
     if not args.yes:
         answer = console.input("\nType [bold]yes[/bold] to confirm: ")
@@ -463,6 +484,17 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
             shutil.rmtree(config_dir)
 
     _step(f"Removing config dir ({config_dir})", _rm_config_dir)
+
+    # Strays first — they can't be the running interpreter's tree (we filtered
+    # install_prefix out of the candidates), so unlinking is safe right now.
+    for path in legacy:
+        def _rm(p: Path = path) -> None:
+            import shutil
+            if p.is_dir():
+                shutil.rmtree(p)
+            else:
+                p.unlink()
+        _step(f"Removing stray artifact ({path})", _rm)
 
     # Defer venv + symlink removal until after we exit (we live inside install_prefix).
     if install_prefix is not None and install_prefix.exists():
