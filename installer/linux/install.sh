@@ -644,16 +644,20 @@ migrate_legacy_install() {
         *) die "Unknown component for legacy migration: $component" ;;
     esac
 
+    # Stop any leftover legacy process FIRST, before bailing out on the
+    # "no legacy dir" fast path. Reason: a previous failed run may have
+    # already removed $legacy_prefix/.venv from disk, but the running
+    # process keeps the binaries mapped via kernel-held inodes — and
+    # keeps spamming the log file with stale tracebacks against the
+    # deleted venv. Without this pre-bail kill we'd never reap that
+    # zombie on a subsequent successful install.
+    if [[ "$component" == "client" ]]; then
+        $SUDO pkill -f "${legacy_prefix}/.venv/bin/" 2>/dev/null || true
+    fi
+
     [[ -d "$legacy_prefix/.venv" ]] || return 0
 
     warn "Found legacy install at ${BOLD}${legacy_prefix}${RESET} - migrating to pipx layout"
-
-    # Stop the tray process (client only) so we're not yanking the .venv from
-    # under a running app. Best-effort: this is a graceful nudge, not a kill.
-    if [[ "$component" == "client" ]]; then
-        # pkill returns non-zero when nothing matches; tolerate that.
-        $SUDO pkill -f "${legacy_prefix}/.venv/bin/outwarp" 2>/dev/null || true
-    fi
 
     # Remove only symlinks that point into the legacy venv. A symlink pointing
     # elsewhere (e.g. user-created shim) gets left alone.
