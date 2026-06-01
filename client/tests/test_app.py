@@ -80,6 +80,25 @@ class TestMainEntryPoint:
         with patch.object(_SingleInstanceLock, "acquire", return_value=False):
             assert main() == 1
 
+    @pytest.mark.skipif(sys.platform != "linux", reason="Linux-only TUI fallback path")
+    def test_linux_redirects_to_tui_when_webview_missing(self) -> None:
+        """On Linux, pywebview is excluded from the wheel by a PEP 508 marker
+        (see client/pyproject.toml). app.main() must spot the ImportError and
+        hand off to `outwarp-cli tui` instead of crashing. Without this guard
+        the entry-point would explode the first time the legacy `outwarp` shim
+        was double-clicked on a default Linux install."""
+        from outwarp import app as app_mod
+
+        # Surface the same ImportError pip's marker leaves behind: no `webview`
+        # in sys.modules and no import path resolving it. patch.dict ensures
+        # the cleanup runs even when pywebview IS installed in the dev venv.
+        with (
+            patch.dict(sys.modules, {"webview": None}),
+            patch("outwarp.cli.main", return_value=0) as fake_cli,
+        ):
+            assert app_mod.main() == 0
+            fake_cli.assert_called_once_with(["tui"])
+
     def test_orchestrates_without_config(self, tmp_path) -> None:
         """main() with no config should create a pywebview window and start the tray.
 

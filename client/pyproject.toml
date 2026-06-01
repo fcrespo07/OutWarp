@@ -27,7 +27,12 @@ dependencies = [
     "pystray>=0.19",
     "Pillow>=10.0",
     "platformdirs>=4.0",
-    "pywebview>=5.0",
+    # pywebview is the GUI tray renderer on macOS/Windows; on Linux the
+    # primary UI is the Textual TUI (`outwarp-cli tui`), which has no
+    # WebKit dependency. The PEP 508 marker keeps Linux wheels free of
+    # the webkit2gtk stack — users who still want the tray GUI can opt
+    # in with `pip install 'outwarp-client[gui-linux]'`.
+    "pywebview>=5.0 ; sys_platform != 'linux'",
 ]
 
 [project.optional-dependencies]
@@ -44,6 +49,12 @@ build = [
 tui = [
     "textual>=0.85",
     "rich>=13.0",
+]
+# Opt-in extra for Linux users who still want the pywebview tray GUI
+# instead of the TUI. Activated via `pip install outwarp-client[gui-linux]`
+# or by passing OUTWARP_CLIENT_GUI=1 to install.sh in a future revision.
+gui-linux = [
+    "pywebview>=5.0",
 ]
 
 [project.scripts]

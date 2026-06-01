@@ -726,11 +726,25 @@ pipx_install_app() {
 # Server install
 # ----------------------------------------------------------------------------
 want_server_gui() {
-    case "${OUTWARP_SERVER_GUI:-auto}" in
+    # Default OFF as of 0.5.x: the Textual TUI (`outwarp-server tui`) is the
+    # primary admin UI on Linux and the pywebview GUI is opt-in. Set
+    # OUTWARP_SERVER_GUI=1 to ALSO install the GTK/WebKit stack and pull
+    # pywebview via the `gui-linux` extra. This keeps a vanilla server
+    # install minimal (no webkit2gtk, no libayatana-appindicator).
+    case "${OUTWARP_SERVER_GUI:-0}" in
         1|true|yes) return 0 ;;
-        0|false|no) return 1 ;;
+        *) return 1 ;;
     esac
-    [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]
+}
+
+want_client_gui() {
+    # Mirror of want_server_gui — see the comment there. The TUI is the
+    # default on Linux; this gate (OUTWARP_CLIENT_GUI=1) opts into the
+    # webkitgtk + appindicator stack and pulls pywebview via gui-linux.
+    case "${OUTWARP_CLIENT_GUI:-0}" in
+        1|true|yes) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 ensure_server_gui_system_deps() {
@@ -765,12 +779,15 @@ install_server() {
 
     local install_gui="false" extras="tui"
     if want_server_gui; then
+        # gui-linux (not gui) so we pull the unmarkered pywebview — the
+        # default `gui` extra excludes pywebview on Linux via PEP 508
+        # markers since 0.5.x.
         install_gui="true"
-        extras="gui,tui"
+        extras="gui-linux,tui"
         ensure_server_gui_system_deps
     else
-        info "Headless install (no display) - skipping GUI extras."
-        info "Set OUTWARP_SERVER_GUI=1 to install the pywebview admin GUI too."
+        info "Installing TUI-only build (Textual). The admin UI is ${BOLD}outwarp-server tui${RESET}."
+        info "Set ${BOLD}OUTWARP_SERVER_GUI=1${RESET} to also install the pywebview GUI (webkit2gtk + appindicator)."
     fi
 
     pipx_install_app "outwarp-server" "$INSTALL_SOURCE" "$extras"
@@ -965,54 +982,17 @@ EOF
     ok "sudoers rule installed"
 }
 
-# Resolve the bundled tray icon under the pipx-managed venv.
-_client_icon_path() {
-    # Dev mode: read straight from the checkout.
-    if [[ "$SOURCE_IS_LOCAL" == "1" && -n "$INSTALL_SOURCE" ]]; then
-        local local_icon="${INSTALL_SOURCE}/outwarp/resources/app_icon.png"
-        [[ -f "$local_icon" ]] && { printf '%s\n' "$local_icon"; return; }
+remove_client_autostart() {
+    # Deletes the XDG autostart entry that pre-0.5.x installs (or a
+    # OUTWARP_CLIENT_GUI=1 install on this machine before the user flipped
+    # to the TUI) might have left behind. Safe to call unconditionally:
+    # a missing file is a no-op, and the entry is owned by us so removing
+    # it does not surprise the user.
+    local desktop_file="$TARGET_HOME/.config/autostart/outwarp.desktop"
+    if [[ -f "$desktop_file" ]]; then
+        rm -f "$desktop_file"
+        ok "Removed legacy autostart entry: $desktop_file"
     fi
-    # Wheel install: ask the pipx venv's python where importlib.resources
-    # parked it. CLIENT_VENV/bin/python is guaranteed to exist post-install.
-    local resolved=""
-    if [[ -x "$CLIENT_VENV/bin/python" ]]; then
-        resolved=$("$CLIENT_VENV/bin/python" -c \
-            "from importlib.resources import files; print(files('outwarp').joinpath('resources/app_icon.png'))" \
-            2>/dev/null || true)
-    fi
-    printf '%s\n' "$resolved"
-}
-
-write_client_autostart() {
-    local autostart_dir="$TARGET_HOME/.config/autostart"
-    local desktop_file="$autostart_dir/outwarp.desktop"
-
-    local icon_path
-    icon_path=$(_client_icon_path)
-    if [[ -z "$icon_path" || ! -f "$icon_path" ]]; then
-        warn "Could not locate app icon at $icon_path - desktop entry will have no Icon= line"
-        icon_path=""
-    fi
-
-    info "Creating autostart entry: $desktop_file"
-    # Drop privileges to TARGET_USER unconditionally - we don't want to write
-    # files into ~/.config as root. `install -o/-g` handles ownership without
-    # the `$SUDO -u` quirk that breaks when SUDO is empty (already root).
-    install -d -o "$TARGET_USER" -g "$TARGET_USER" -m 0700 "$autostart_dir"
-    tee "$desktop_file" >/dev/null <<EOF
-[Desktop Entry]
-Type=Application
-Name=OutWarp
-Comment=WireGuard over WebSocket - tray client
-Exec=$CLIENT_CLI_BIN_LINK gui
-${icon_path:+Icon=$icon_path
-}Terminal=false
-X-GNOME-Autostart-enabled=true
-Categories=Network;
-EOF
-    chown "$TARGET_USER:$TARGET_USER" "$desktop_file"
-    chmod 0644 "$desktop_file"
-    ok "Autostart entry installed (will launch at next login)"
 }
 
 install_client() {
@@ -1021,9 +1001,21 @@ install_client() {
     prepare_install_source "client"
 
     resolve_target_user
-    ensure_client_system_deps
 
-    pipx_install_app "outwarp-client" "$INSTALL_SOURCE" "tui"
+    local extras="tui"
+    if want_client_gui; then
+        # gui-linux extra pulls pywebview (which the marker excludes from
+        # base deps on Linux) plus pystray/Pillow even though they're already
+        # in base deps — being explicit here keeps the spec readable when
+        # someone audits what the [gui-linux] flag actually grants.
+        extras="tui,gui-linux"
+        ensure_client_system_deps
+    else
+        info "Installing TUI-only build (Textual). The default UI is ${BOLD}outwarp-cli tui${RESET}."
+        info "Set ${BOLD}OUTWARP_CLIENT_GUI=1${RESET} to also install the pywebview tray (webkit2gtk + appindicator)."
+    fi
+
+    pipx_install_app "outwarp-client" "$INSTALL_SOURCE" "$extras"
 
     # Only purge the legacy /opt/outwarp-client install AFTER pipx confirmed
     # the new venv works. Doing it before means a pipx failure leaves the
@@ -1041,7 +1033,11 @@ install_client() {
 
     write_client_helper
     write_client_sudoers
-    write_client_autostart
+    # Autostart is a GUI-only concept: an XDG desktop entry needs a window
+    # manager to launch the tray, but the TUI lives in a terminal the user
+    # opens by hand. Sweep any leftover desktop file from previous installs
+    # so re-running the installer always converges on the TUI default.
+    remove_client_autostart
 
     cat <<EOF
 
@@ -1049,9 +1045,8 @@ ${BOLD}${GREEN}Client installed.${RESET}
 
   ${BOLD}Quick start:${RESET}
     1. Drop your ${BOLD}.owcfg${RESET} file somewhere accessible by ${TARGET_USER}.
-    2. Launch ${BOLD}outwarp-cli tui${RESET} — interactive terminal UI (recommended).
-       Or ${BOLD}outwarp-cli gui${RESET} for the tray window (needs webkitgtk).
-    3. The first run prompts for the .owcfg via the import wizard.
+    2. Launch ${BOLD}outwarp-cli tui${RESET} — interactive terminal UI.
+       The first run prompts for the .owcfg via the import modal.
 
   ${BOLD}Headless / SSH / systemd:${RESET}
     1. ${BOLD}outwarp-cli import /path/to/profile.owcfg${RESET}
@@ -1059,10 +1054,10 @@ ${BOLD}${GREEN}Client installed.${RESET}
        ${BOLD}outwarp-cli status${RESET}         # one-shot state probe
        ${BOLD}outwarp-cli logs --follow${RESET}  # tail -f the log file
 
-  ${DIM}Autostart entry: $TARGET_HOME/.config/autostart/outwarp.desktop${RESET}
   ${DIM}Privileged helper: $CLIENT_HELPER${RESET}
   ${DIM}Sudoers rule: $CLIENT_SUDOERS  (revoke with: sudo rm $CLIENT_SUDOERS)${RESET}
   ${DIM}pipx venv: $CLIENT_VENV${RESET}
+  ${DIM}Want the tray GUI too? Re-run with OUTWARP_CLIENT_GUI=1 (installs webkitgtk + pywebview).${RESET}
 
 EOF
 }

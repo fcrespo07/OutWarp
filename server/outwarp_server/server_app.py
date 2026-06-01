@@ -107,6 +107,17 @@ def _resolve_ui_path() -> str:
 
 
 def main() -> int:
+    # Mirror of outwarp.app.main: on Linux the Textual TUI is the supported
+    # admin UI and pywebview is opt-in (see server/pyproject.toml gui-linux
+    # extra). If webview can't be imported we delegate to `outwarp-server tui`
+    # instead of crashing on the first import the GUI tries.
+    if sys.platform == "linux":
+        try:
+            import webview  # noqa: F401 — presence test only
+        except ImportError:
+            from outwarp_server.cli import main as _cli_main
+            return _cli_main(["tui"])
+
     _ensure_elevated()
     memory_handler = setup_logging()
     install_crash_logging()

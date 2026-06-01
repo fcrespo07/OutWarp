@@ -29,7 +29,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Admin pywebview GUI for macOS/Windows administrators. On Linux the
+# `outwarp-server tui` Textual interface replaces it and pulls no
+# webkit2gtk dependency — install.sh installs the `[tui]` extra by
+# default, and an admin who really wants the GTK GUI can opt in with
+# `pip install 'outwarp-server[gui-linux]'`.
 gui = [
+    "pillow>=10.0",
+    "pystray>=0.19",
+    "pywebview>=5.0 ; sys_platform != 'linux'",
+]
+gui-linux = [
     "pillow>=10.0",
     "pystray>=0.19",
     "pywebview>=5.0",

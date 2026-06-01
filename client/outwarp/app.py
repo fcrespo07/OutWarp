@@ -151,6 +151,19 @@ def _release_stale_kill_switch_async() -> None:
 
 
 def main() -> int:
+    # As of 0.5.x the Textual TUI is the supported Linux UI: pywebview is
+    # excluded from Linux wheels (see pyproject.toml's PEP 508 marker) so
+    # the `import webview` below would ImportError before we got far enough
+    # to render anything. Redirect to the TUI rather than crash — users who
+    # genuinely want the tray GUI on Linux opt into it via
+    # `pip install 'outwarp-client[gui-linux]'` and that import then resolves.
+    if sys.platform == "linux":
+        try:
+            import webview  # noqa: F401 — presence test only
+        except ImportError:
+            from outwarp.cli import main as _cli_main
+            return _cli_main(["tui"])
+
     _ensure_elevated()
     memory_handler = setup_logging()
     install_crash_logging()
