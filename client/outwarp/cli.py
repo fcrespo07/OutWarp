@@ -379,7 +379,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_update = sub.add_parser(
         "update",
         help="Check GitHub Releases for a newer version and install it "
-             "(needs root to upgrade /opt/outwarp-client/.venv)",
+             "(needs root to upgrade /opt/pipx/venvs/outwarp-client)",
     )
     p_update.add_argument(
         "--check-only",
@@ -429,8 +429,9 @@ def _cmd_update(args: argparse.Namespace) -> int:
     """Check GitHub Releases for a newer outwarp-client wheel and install it.
 
     Without --check-only, the actual ``pip install --upgrade`` step needs to
-    write into the venv at /opt/outwarp-client/.venv, so the command refuses
-    to run unless invoked with root (typically via ``sudo outwarp-cli update``).
+    write into the pipx-managed venv at /opt/pipx/venvs/outwarp-client, so the
+    command refuses to run unless invoked with root (typically via
+    ``sudo outwarp-cli update``).
     """
     import contextlib
     import tempfile

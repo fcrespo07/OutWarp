@@ -35,7 +35,15 @@ set -euo pipefail
 # from a router whose upstream doesn't actually route IPv6 -> curl/apt hang for
 # minutes on TCP timeout per mirror. Override with OUTWARP_FORCE_IPV4=0.
 FORCE_IPV4="${OUTWARP_FORCE_IPV4:-1}"
-CURL_OPTS=(--fail --silent --show-error --location --connect-timeout 10 --max-time 300)
+# --retry 3 handles transient TCP RSTs and HTTP 5xx from GitHub's CDN without
+# making the user re-run the whole installer; --retry-connrefused covers the
+# (rare) DNS/SYN-level flake. --max-time bounds the worst case per attempt so a
+# stuck mirror cannot stall the install indefinitely.
+CURL_OPTS=(
+    --fail --silent --show-error --location
+    --connect-timeout 10 --max-time 300
+    --retry 3 --retry-delay 2 --retry-connrefused
+)
 [[ "$FORCE_IPV4" == "1" ]] && CURL_OPTS+=(-4)
 
 # ----------------------------------------------------------------------------
@@ -167,7 +175,11 @@ detect_distro() {
 PYTHON_BIN=""
 find_python() {
     local py ver major minor
-    for py in python3.13 python3.12 python3.11 python3; do
+    # Try newer minor versions first so 3.14/3.15-only systems work even when
+    # no `python3` symlink is present; fall back to the generic `python3` at
+    # the end for distros where only that name is exposed (the version-floor
+    # check still rejects pre-3.11 interpreters).
+    for py in python3.15 python3.14 python3.13 python3.12 python3.11 python3; do
         if command -v "$py" >/dev/null 2>&1; then
             ver=$("$py" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")
             major="${ver%.*}"
@@ -670,7 +682,7 @@ migrate_legacy_install() {
 # both fresh installs and in-place upgrades (so re-running the script after
 # `OUTWARP_VERSION=vX.Y.Z` was bumped just works).
 pipx_install_app() {
-    local app="$1" source="$2" extras="$3" force="${4:-}"
+    local app="$1" source="$2" extras="$3"
 
     local spec
     if [[ -n "$extras" ]]; then
@@ -681,16 +693,28 @@ pipx_install_app() {
 
     if pipx_has_app "$app"; then
         info "Reinstalling existing ${BOLD}${app}${RESET} (pipx)"
-        # `pipx reinstall <name>` does NOT accept a new spec, so we uninstall
-        # and reinstall to swap the wheel/source under a stable app name.
-        pipx_run uninstall "$app" >/dev/null
     else
         info "Installing ${BOLD}${app}${RESET} via pipx"
     fi
 
-    local pipx_args=("install" "--pip-args" "--disable-pip-version-check")
-    [[ -n "$force" ]] && pipx_args+=("--force")
-    pipx_args+=("$spec")
+    # `pipx install --force` is idempotent: it covers both fresh installs and
+    # in-place upgrades while overwriting any stale /usr/local/bin/ symlink
+    # from a previous (legacy or pipx) install. We deliberately avoid the
+    # separate uninstall+install pair because between the two there's no
+    # working entry-point on disk — a failure there leaves the user with
+    # nothing installed.
+    #
+    # `--pip-args` MUST use `=` to glue the value: pipx >= 1.12 parses its
+    # argv with argparse, which refuses values that start with `-` when the
+    # option and value are separate tokens (the dash makes argparse think
+    # it's another option, not the value). See:
+    #   https://github.com/pypa/pipx/issues/<rejects-flag-like-pip-args>
+    local pipx_args=(
+        "install"
+        "--force"
+        "--pip-args=--disable-pip-version-check"
+        "$spec"
+    )
     pipx_run "${pipx_args[@]}"
 }
 
@@ -733,7 +757,6 @@ ensure_server_gui_system_deps() {
 install_server() {
     info "Installing OutWarp server (pipx layout: ${BOLD}${SERVER_VENV}${RESET})"
 
-    migrate_legacy_install "server"
     prepare_install_source "server"
 
     local install_gui="false" extras="tui"
@@ -747,6 +770,12 @@ install_server() {
     fi
 
     pipx_install_app "outwarp-server" "$INSTALL_SOURCE" "$extras"
+
+    # Only purge the legacy /opt/outwarp-server install AFTER pipx confirmed
+    # the new venv works. Doing it before means a pipx failure leaves the
+    # host with nothing installed at all (and the still-running service holds
+    # only file inodes from a wiped venv).
+    migrate_legacy_install "server"
 
     # Sanity check: the entry-point pipx exposes must resolve to the venv we
     # just created. If something else (an old symlink, a /usr/local stray) is
@@ -985,13 +1014,19 @@ EOF
 install_client() {
     info "Installing OutWarp client (pipx layout: ${BOLD}${CLIENT_VENV}${RESET})"
 
-    migrate_legacy_install "client"
     prepare_install_source "client"
 
     resolve_target_user
     ensure_client_system_deps
 
     pipx_install_app "outwarp-client" "$INSTALL_SOURCE" "tui"
+
+    # Only purge the legacy /opt/outwarp-client install AFTER pipx confirmed
+    # the new venv works. Doing it before means a pipx failure leaves the
+    # user with nothing installed and the running tray pinned to a wiped
+    # venv via kernel-held inodes (the failure mode that bit 0.4.x → 0.5.0
+    # upgraders during the --pip-args incident).
+    migrate_legacy_install "client"
 
     # 0.5.0 collapse: the only entry-point pipx ships is outwarp-cli; the GUI
     # lives behind `outwarp-cli gui`. Old `outwarp` / `outwarp-uninstall` bins
