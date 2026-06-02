@@ -6,8 +6,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         wireguard-tools \
         iproute2 \
         iptables \
+        procps \
         curl \
     && rm -rf /var/lib/apt/lists/*
+# procps ships /usr/sbin/sysctl, which wg-quick's PostUp hook needs to set
+# net.ipv4.ip_forward=1 — without it `wg-quick up` aborts and the WireGuard
+# interface is rolled back.
 
 # wstunnel: arch-aware download. uname -m returns 'aarch64' on Raspberry Pi 5
 # (arm64); install.sh maps that to 'arm64' — the filename convention erebe uses
