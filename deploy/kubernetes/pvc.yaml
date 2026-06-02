@@ -2,9 +2,13 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: outwarp-server-data
+  namespace: outwarp
 spec:
+  # local-path is the default k3s storage class. It provisions a directory
+  # under /var/lib/rancher/k3s/storage/ on the node.
+  storageClassName: local-path
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 1Gi
+      storage: 256Mi

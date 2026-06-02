@@ -2,10 +2,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: outwarp-server
+  namespace: outwarp
   labels:
     app: outwarp-server
 spec:
-  replicas: 1  # WireGuard is stateful — do not scale horizontally
+  replicas: 1  # WireGuard is stateful — never scale horizontally
   selector:
     matchLabels:
       app: outwarp-server
@@ -14,8 +15,13 @@ spec:
       labels:
         app: outwarp-server
     spec:
-      # WireGuard requires the kernel module on the node.
-      # Tested on: Ubuntu 20.04+, Debian 11+, Amazon Linux 2023.
+      # hostNetwork binds wstunnel directly to the Pi's NIC — no kube-proxy
+      # NAT overhead and no port conflicts with klipper-lb or Traefik.
+      # The WireGuard interface (wg0) is created in the HOST network namespace,
+      # which is correct for a VPN server: traffic flows Pi ↔ clients directly.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+
       initContainers:
         - name: outwarp-init
           image: outwarp-server:latest
@@ -24,6 +30,11 @@ spec:
           envFrom:
             - configMapRef:
                 name: outwarp-config
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+                - NET_RAW
           volumeMounts:
             - name: data
               mountPath: /data
@@ -36,20 +47,32 @@ spec:
           envFrom:
             - configMapRef:
                 name: outwarp-config
-          ports:
-            - name: wss
-              containerPort: 443
-              protocol: TCP
           securityContext:
             capabilities:
               add:
-                - NET_ADMIN  # required for wg-quick + iptables
-                - NET_RAW    # required for iptables MASQUERADE
+                - NET_ADMIN  # wg-quick + iptables MASQUERADE
+                - NET_RAW    # iptables raw table (MASQUERADE on some kernels)
+          # Pi 5 has plenty of headroom; these limits prevent a runaway process
+          # from starving other pods while leaving >7 GB free for the OS + k3s.
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "96Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          livenessProbe:
+            tcpSocket:
+              # Must match OUTWARP_PORT in the ConfigMap.
+              port: 443
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
           volumeMounts:
             - name: data
               mountPath: /data
-            # emptyDir so wg0.conf is always regenerated from /data/server_config.json
-            # on pod restart — no stale interface config survives a restart.
+            # emptyDir so /etc/wireguard is always fresh on pod restart — wg0.conf
+            # is regenerated from /data/server_config.json by `serve` at startup.
             - name: wireguard
               mountPath: /etc/wireguard
 

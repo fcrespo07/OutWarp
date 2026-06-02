@@ -2,8 +2,13 @@ apiVersion: v1
 kind: Service
 metadata:
   name: outwarp-server
+  namespace: outwarp
 spec:
-  type: LoadBalancer
+  # ClusterIP only: with hostNetwork the wstunnel port is already bound on
+  # the Pi's NIC, so external traffic reaches it directly (no LoadBalancer
+  # needed). This service exists purely for `kubectl exec` DNS resolution
+  # and internal cluster use.
+  type: ClusterIP
   selector:
     app: outwarp-server
   ports:

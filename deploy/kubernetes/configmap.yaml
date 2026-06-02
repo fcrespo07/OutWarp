@@ -2,12 +2,16 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: outwarp-config
+  namespace: outwarp
 data:
-  # Required: public IP or domain that clients will connect to.
-  OUTWARP_ENDPOINT: "YOUR_SERVER_IP_OR_DOMAIN"
-  # Optional overrides (defaults shown):
+  # Required: the public IP or domain your clients will connect to.
+  # On a home Pi behind a router this is your WAN IP (check ip.me or your
+  # router's status page). On a Pi with a static IP set it directly.
+  OUTWARP_ENDPOINT: "YOUR_WAN_IP_OR_DOMAIN"
+  # Port wstunnel listens on inside the container (and on the Pi host via
+  # hostNetwork). Make sure your router forwards this port to the Pi's LAN IP.
   OUTWARP_PORT: "443"
   OUTWARP_WG_PORT: "51820"
   OUTWARP_SUBNET: "10.0.0.0/24"
   OUTWARP_SERVER_ADDRESS: "10.0.0.1/24"
-  # OUTWARP_UPGRADE_PATH: ""  # auto-generated random secret if not set
+  # OUTWARP_UPGRADE_PATH: ""  # leave blank — auto-generated random secret
