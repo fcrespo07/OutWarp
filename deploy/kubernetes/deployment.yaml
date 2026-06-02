@@ -24,7 +24,7 @@ spec:
 
       initContainers:
         - name: outwarp-init
-          image: outwarp-server:latest
+          image: ghcr.io/fcrespo07/outwarp-server:0.5.0
           imagePullPolicy: IfNotPresent
           command: ["outwarp-server", "--config-dir", "/data", "init"]
           envFrom:
@@ -41,7 +41,7 @@ spec:
 
       containers:
         - name: outwarp-server
-          image: outwarp-server:latest
+          image: ghcr.io/fcrespo07/outwarp-server:0.5.0
           imagePullPolicy: IfNotPresent
           command: ["outwarp-server", "--config-dir", "/data", "serve"]
           envFrom:
@@ -64,7 +64,7 @@ spec:
           livenessProbe:
             tcpSocket:
               # Must match OUTWARP_PORT in the ConfigMap.
-              port: 443
+              port: 8443
             initialDelaySeconds: 15
             periodSeconds: 30
             failureThreshold: 3

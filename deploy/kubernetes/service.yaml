@@ -13,6 +13,6 @@ spec:
     app: outwarp-server
   ports:
     - name: wss
-      port: 443
-      targetPort: 443
+      port: 8443
+      targetPort: 8443
       protocol: TCP

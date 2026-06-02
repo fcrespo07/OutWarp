@@ -4,14 +4,19 @@ metadata:
   name: outwarp-config
   namespace: outwarp
 data:
-  # Required: the public IP or domain your clients will connect to.
-  # On a home Pi behind a router this is your WAN IP (check ip.me or your
-  # router's status page). On a Pi with a static IP set it directly.
-  OUTWARP_ENDPOINT: "YOUR_WAN_IP_OR_DOMAIN"
-  # Port wstunnel listens on inside the container (and on the Pi host via
-  # hostNetwork). Make sure your router forwards this port to the Pi's LAN IP.
-  OUTWARP_PORT: "443"
-  OUTWARP_WG_PORT: "51820"
-  OUTWARP_SUBNET: "10.0.0.0/24"
-  OUTWARP_SERVER_ADDRESS: "10.0.0.1/24"
-  # OUTWARP_UPGRADE_PATH: ""  # leave blank — auto-generated random secret
+  # Endpoint that goes into every .owcfg as the WSS target.
+  OUTWARP_ENDPOINT: "wg.fcrespo.tech"
+  # WSS port wstunnel listens on. Picked so it doesn't collide with the
+  # existing caddy (80) or wg-easy (51820/UDP) on this Pi. You need to add
+  # a port-forward on your router: TCP 8443 → 192.168.1.210:8443.
+  OUTWARP_PORT: "8443"
+  # WireGuard server's UDP listen port. Default 51820 is already bound on the
+  # host by wg-easy's hostPort, so OutWarp uses 51822 instead. This port is
+  # loopback-only (wstunnel forwards to 127.0.0.1:51822) — no router rule
+  # needed.
+  OUTWARP_WG_PORT: "51822"
+  # WireGuard subnet for OutWarp clients. wg-easy uses 10.8.0.0/24, so we
+  # pick a non-overlapping range to keep routing tables clean if any client
+  # ever holds both profiles.
+  OUTWARP_SUBNET: "10.9.0.0/24"
+  OUTWARP_SERVER_ADDRESS: "10.9.0.1/24"
