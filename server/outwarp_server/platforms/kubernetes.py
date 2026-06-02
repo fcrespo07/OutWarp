@@ -38,6 +38,16 @@ class KubernetesServerPlatform(LinuxServerPlatform):
     # ── WireGuard: wg-quick directly, no systemd ─────────────────────────────
 
     def install_wg_config(self, conf_text: str, interface: str = "wg0") -> None:
+        # The shared PostUp template writes `sysctl -w net.ipv4.ip_forward=1`
+        # before adding the iptables MASQUERADE rules. /proc/sys is read-only
+        # in containers without SYS_ADMIN, so that write fails and wg-quick
+        # rolls the whole interface back. The cluster operator is expected to
+        # have ip_forward set on the node (or via pod sysctls) — strip the
+        # line so the rest of the PostUp runs cleanly with just NET_ADMIN.
+        conf_text = conf_text.replace(
+            "sysctl -w net.ipv4.ip_forward=1; ", "",
+        )
+
         conf_path = self.wg_config_dir() / f"{interface}.conf"
         conf_path.parent.mkdir(parents=True, exist_ok=True)
         try:
