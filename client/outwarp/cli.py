@@ -484,8 +484,8 @@ def _cmd_update(args: argparse.Namespace) -> int:
         _err("Root required to upgrade the venv. Run: sudo outwarp-cli update")
         return 1
 
-    with tempfile.NamedTemporaryFile(suffix=".whl", delete=False) as tmp:
-        wheel_path = Path(tmp.name)
+    tmp_dir = Path(tempfile.mkdtemp())
+    wheel_path = tmp_dir / wheel_name
 
     try:
         _print(f"Downloading {wheel_name}...")
@@ -528,6 +528,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
     finally:
         with contextlib.suppress(OSError):
             wheel_path.unlink(missing_ok=True)
+            tmp_dir.rmdir()
 
 
 _COMMANDS = {
