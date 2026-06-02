@@ -4,7 +4,7 @@
 # Run this script FROM THE REPO ROOT on the Pi:
 #   chmod +x deploy/build-pi.sh
 #   ./deploy/build-pi.sh            # → outwarp-server:latest
-#   ./deploy/build-pi.sh v0.5.0     # → outwarp-server:v0.5.0
+#   ./deploy/build-pi.sh v0.5.5     # → outwarp-server:v0.5.5
 #
 # Requirements on the Pi: docker (just for building — k3s uses its own containerd).
 #   sudo apt-get install -y docker.io

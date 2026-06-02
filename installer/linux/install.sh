@@ -14,7 +14,7 @@
 #
 # Environment overrides:
 #   OUTWARP_COMPONENT=server|client       Skip the interactive prompt
-#   OUTWARP_VERSION=v0.5.0                Pin a specific OutWarp release tag
+#   OUTWARP_VERSION=v0.5.5                Pin a specific OutWarp release tag
 #                                         (default: latest from GitHub Releases)
 #   OUTWARP_REPO_DIR=/path/to/clone       Dev mode: install from local source
 #                                         instead of downloading a wheel

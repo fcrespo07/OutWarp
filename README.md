@@ -45,6 +45,31 @@ Both TUIs share the same backend as the headless CLI subcommands (`connect`, `ad
 
 > macOS support is out of scope. The dispatch tables only cover Windows and Linux.
 
+### Docker / Kubernetes (server only)
+
+If you'd rather run the server in a container — VPS, home server, k3s on a
+Raspberry Pi 5 — there's a published multi-arch image (`linux/amd64` +
+`linux/arm64`) on GHCR and ready-to-apply manifests in `deploy/`:
+
+```bash
+# Docker / Compose: pull, run with NET_ADMIN, expose /data as a volume.
+docker run -d --name outwarp-server --network host \
+  --cap-add NET_ADMIN --cap-add NET_RAW \
+  -e OUTWARP_ENDPOINT="your-server.example.com" \
+  -v outwarp-data:/data \
+  ghcr.io/<repo-owner>/outwarp-server:latest
+
+# Kubernetes: edit deploy/kubernetes/configmap.yaml then:
+kubectl apply -k deploy/kubernetes/
+```
+
+Full guide — Docker, Docker Compose, Kubernetes (k3s and upstream), Pi 5
+specifics, image tagging policy, troubleshooting — lives in
+[`deploy/README.md`](deploy/README.md).
+
+The client is desktop / TUI software and is **not** meant to run in a
+container; install it on the machine that needs the tunnel.
+
 ---
 
 ## Linux client at a glance

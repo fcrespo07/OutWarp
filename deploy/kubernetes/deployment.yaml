@@ -26,7 +26,7 @@ spec:
         - name: outwarp-init
           image: ghcr.io/fcrespo07/outwarp-server:main
           # `:main` is the rolling tag rebuilt on every push to main. For
-          # pinned releases switch to `:0.5.0` (built when a `v0.5.0` git tag
+          # pinned releases switch to `:0.5.5` (built when a `v0.5.5` git tag
           # exists — see .github/workflows/docker-publish.yml).
           imagePullPolicy: Always
           command: ["outwarp-server", "--config-dir", "/data", "init"]
@@ -46,7 +46,7 @@ spec:
         - name: outwarp-server
           image: ghcr.io/fcrespo07/outwarp-server:main
           # `:main` is the rolling tag rebuilt on every push to main. For
-          # pinned releases switch to `:0.5.0` (built when a `v0.5.0` git tag
+          # pinned releases switch to `:0.5.5` (built when a `v0.5.5` git tag
           # exists — see .github/workflows/docker-publish.yml).
           imagePullPolicy: Always
           command: ["outwarp-server", "--config-dir", "/data", "serve"]

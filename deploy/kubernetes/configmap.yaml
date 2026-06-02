@@ -3,20 +3,28 @@ kind: ConfigMap
 metadata:
   name: outwarp-config
   namespace: outwarp
+# All values below are EXAMPLES — edit them before `kubectl apply`. The server
+# bakes OUTWARP_ENDPOINT and OUTWARP_PORT into every generated .owcfg, so any
+# change here means you must re-run `outwarp-server add-client` for new
+# clients to pick the new values up.
 data:
-  # Endpoint that goes into every .owcfg as the WSS target.
-  OUTWARP_ENDPOINT: "wg.fcrespo.tech"
-  # WSS port wstunnel listens on. Picked so it doesn't collide with the
-  # existing caddy (80) or wg-easy (51820/UDP) on this Pi. You need to add
-  # a port-forward on your router: TCP 8443 → 192.168.1.210:8443.
-  OUTWARP_PORT: "8443"
-  # WireGuard server's UDP listen port. Default 51820 is already bound on the
-  # host by wg-easy's hostPort, so OutWarp uses 51822 instead. This port is
-  # loopback-only (wstunnel forwards to 127.0.0.1:51822) — no router rule
-  # needed.
-  OUTWARP_WG_PORT: "51822"
-  # WireGuard subnet for OutWarp clients. wg-easy uses 10.8.0.0/24, so we
-  # pick a non-overlapping range to keep routing tables clean if any client
-  # ever holds both profiles.
-  OUTWARP_SUBNET: "10.9.0.0/24"
-  OUTWARP_SERVER_ADDRESS: "10.9.0.1/24"
+  # Endpoint that goes into every .owcfg as the WSS target. Use a DNS name if
+  # you have one, otherwise your server's public IPv4 address. Clients will
+  # add a static bypass route to this host so wstunnel traffic never enters
+  # the WireGuard tunnel itself.
+  OUTWARP_ENDPOINT: "your-server.example.com"
+  # WSS port wstunnel listens on. Default is 443 to mimic plain HTTPS; pick a
+  # different value if another service already owns 443 on the same node (e.g.
+  # a Caddy / Traefik ingress). Whatever you pick must be open on the public
+  # internet — port-forward on a home router or open the security-group rule
+  # on a VPS.
+  OUTWARP_PORT: "443"
+  # WireGuard server's UDP listen port. Loopback-only (wstunnel forwards to
+  # 127.0.0.1:<this>) so no router rule is needed. Change it if another wg-*
+  # process on the host already binds 51820.
+  OUTWARP_WG_PORT: "51820"
+  # WireGuard subnet for OutWarp clients. Must NOT overlap any LAN, k8s pod /
+  # service CIDR or other VPN subnet the clients will reach.
+  OUTWARP_SUBNET: "10.0.0.0/24"
+  # Server's address inside that subnet. Convention: first usable host.
+  OUTWARP_SERVER_ADDRESS: "10.0.0.1/24"

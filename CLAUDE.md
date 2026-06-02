@@ -274,11 +274,14 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 ## Estado actual
 
-**Versión actual: `0.5.0`** (en código). Cambios mayores respecto a 0.4.x:
-- **Linux ahora se distribuye vía wheels + pipx** (`/opt/pipx/venvs/outwarp-{client,server}/`). El `install.sh` migra automáticamente desde la layout legacy `/opt/outwarp-*/.venv`.
-- **CLI unificada**: solo dos binarios (`outwarp-cli` y `outwarp-server`). El tray del cliente vive en `outwarp-cli gui` (era el binario `outwarp`), la admin GUI del servidor en `outwarp-server gui` (era `outwarp-server-gui`), y la purga de la app en `outwarp-cli uninstall` (era `outwarp-uninstall`); el borrado solo del perfil se renombró a `outwarp-cli forget-profile`.
-- **Hardening de secretos**: `.owcfg`, `server_config.json` y la clave privada TLS se escriben atómicamente con permisos 0o600 (antes 0o644 por umask).
-- **SHA256 verificado**: `install.sh` ahora valida también el binario de `wstunnel` contra el manifest de erebe (los wheels de OutWarp ya se verificaban desde 0.4.x).
+**Versión actual: `0.5.5`** (en código). Cambios desde 0.5.0:
+- **Docker + Kubernetes oficiales**: imagen multi-arch (`linux/amd64` + `linux/arm64`) publicada en `ghcr.io/<owner>/outwarp-server` desde `.github/workflows/docker-publish.yml`. Manifests listos en `deploy/kubernetes/` + helper `deploy/build-pi.sh` para k3s en Raspberry Pi 5. Guía end-to-end en `deploy/README.md`.
+- **TUI como UI primaria en Linux**: el `install.sh` ya no exige `libwebkit2gtk`; el autostart apunta a `outwarp-cli tui` por defecto y la GUI pywebview es opt-in. Editor de perfil completo dentro del TUI del cliente.
+- **CI completo**: `.github/workflows/ci.yml` corre pytest + ruff + wheel build en `ubuntu-latest` y `windows-latest`; `docker-publish.yml` publica imágenes en cada push a main y en cada tag `v*`.
+- **Fixes contenedor**: el `wg-quick` PostUp ya no falla en pods sin `SYS_ADMIN` (sysctl despojado del PostUp) y la imagen incluye `procps` para que `wg-quick` encuentre `/usr/sbin/sysctl` cuando se ejecuta con `SYS_ADMIN`.
+- **Linux wheels + pipx** (desde 0.5.0): `/opt/pipx/venvs/outwarp-{client,server}/`. El `install.sh` migra desde la layout legacy `/opt/outwarp-*/.venv` y detecta el layout pipx 0.5.0+/1.12 al desinstalar.
+- **CLI unificada** (desde 0.5.0): solo `outwarp-cli` y `outwarp-server`. Subcomandos `gui` / `tui` / `uninstall` / `forget-profile` consolidados.
+- **Hardening de secretos** (desde 0.5.0): `.owcfg`, `server_config.json` y clave privada TLS con permisos 0o600. `install.sh` valida SHA256 de `wstunnel` contra el manifest de erebe.
 
 ### Cliente
 
