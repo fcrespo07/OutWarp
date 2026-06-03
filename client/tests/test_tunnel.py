@@ -144,13 +144,39 @@ def test_build_wstunnel_command_has_expected_structure():
     assert forward == "udp://127.0.0.1:51820:10.0.0.1:51820?timeout_sec=0"
     assert "--http-upgrade-path-prefix" in cmd
     assert cmd[cmd.index("--http-upgrade-path-prefix") + 1] == "s3cret"
-    assert cmd[-1] == "wss://203.0.113.42:443"
+    # Default port 443 is omitted from the URL so the wstunnel-generated
+    # Host header matches what a real browser sends — see build_wstunnel_command.
+    assert cmd[-1] == "wss://203.0.113.42"
 
 
 def test_build_wstunnel_command_honours_port_override():
     cfg = _make_config()
     cmd = build_wstunnel_command(cfg, Path("/usr/bin/wstunnel"), port=8443)
     assert cmd[-1] == "wss://203.0.113.42:8443"
+
+
+def test_build_wstunnel_command_always_sets_ws_ping_frequency():
+    # The legacy WarpSocket script kept the WS half-open detection tight at
+    # 25 s so corporate NATs couldn't quietly drop the connection without
+    # wstunnel noticing. We adopted the same value as a universal default.
+    cmd = build_wstunnel_command(_make_config(), Path("/usr/bin/wstunnel"))
+    i = cmd.index("--websocket-ping-frequency")
+    assert cmd[i + 1] == "25s"
+
+
+def test_build_wstunnel_command_hostile_adds_dns_bypass_flags():
+    cmd = build_wstunnel_command(_make_config(), Path("/usr/bin/wstunnel"), hostile=True)
+    assert "--dns-resolver" in cmd
+    assert cmd[cmd.index("--dns-resolver") + 1] == "dns://1.1.1.1"
+    assert "--dns-resolver-prefer-ipv4" in cmd
+    # And the URL still comes at the very end.
+    assert cmd[-1] == "wss://203.0.113.42"
+
+
+def test_build_wstunnel_command_default_omits_dns_flags():
+    cmd = build_wstunnel_command(_make_config(), Path("/usr/bin/wstunnel"))
+    assert "--dns-resolver" not in cmd
+    assert "--dns-resolver-prefer-ipv4" not in cmd
 
 
 # --- Tunnel.connect / disconnect ---

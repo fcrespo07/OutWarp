@@ -80,6 +80,14 @@ _FIELDS: list[tuple[str, str, str, Any]] = [
         "Back-off schedule between retries, in seconds. Comma-separated.",
         lambda c: ", ".join(str(d) for d in c.reconnect.delays_seconds),
     ),
+    (
+        "hostile_mode",
+        "Hostile-network mode",
+        "auto / on / off. 'auto' probes the network at connect and enables "
+        "DNS-bypass (1.1.1.1) only if interception is detected. 'on' forces it. "
+        "Useful on captive/edu/corp networks.",
+        lambda c: c.network.hostile_mode,
+    ),
 ]
 
 

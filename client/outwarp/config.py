@@ -68,6 +68,16 @@ class ReconnectConfig:
 
 
 @dataclass(frozen=True)
+class NetworkConfig:
+    # Hostile-network mode controls whether the wstunnel client uses an explicit
+    # public DNS resolver + IPv4-only resolution. "auto" probes the network at
+    # connect time and switches behaviour transparently; "on"/"off" force it.
+    # Why: captive/edu/corp networks frequently intercept DNS or poison AAAA
+    # responses, which kills the tunnel before the WS upgrade even starts.
+    hostile_mode: str = "auto"
+
+
+@dataclass(frozen=True)
 class ClientConfig:
     schema_version: int
     server: ServerConfig
@@ -76,6 +86,7 @@ class ClientConfig:
     wireguard: WireguardConfig
     routing: RoutingConfig
     reconnect: ReconnectConfig
+    network: NetworkConfig = field(default_factory=NetworkConfig)
     # Human-readable label assigned by the server (outwarp-server add-client <name>).
     # Distinct from wireguard.tunnel_name, which is the OS network interface name.
     name: str = ""
@@ -185,6 +196,7 @@ def _parse(raw: dict[str, Any]) -> ClientConfig:
     wireguard = _parse_wireguard(_require(raw, "wireguard", "root"))
     routing = _parse_routing(_require(raw, "routing", "root"))
     reconnect = _parse_reconnect(raw.get("reconnect", {}))
+    network = _parse_network(raw.get("network", {}))
 
     meta = raw.get("meta", {})
     expires_at = str(meta.get("expires_at", "")) if isinstance(meta, dict) else ""
@@ -197,6 +209,7 @@ def _parse(raw: dict[str, Any]) -> ClientConfig:
         wireguard=wireguard,
         routing=routing,
         reconnect=reconnect,
+        network=network,
         name=str(raw.get("name", "")),
         expires_at=expires_at,
     )
@@ -285,6 +298,23 @@ def _parse_routing(d: Any) -> RoutingConfig:
     return RoutingConfig(bypass_ips=bypass)
 
 
+_HOSTILE_MODES = ("auto", "on", "off")
+
+
+def _parse_network(d: Any) -> NetworkConfig:
+    if not isinstance(d, dict):
+        return NetworkConfig()
+    raw_mode = d.get("hostile_mode", "auto")
+    if not isinstance(raw_mode, str):
+        raise ConfigError("network.hostile_mode must be a string")
+    mode = raw_mode.strip().lower()
+    if mode not in _HOSTILE_MODES:
+        raise ConfigError(
+            f"network.hostile_mode must be one of {_HOSTILE_MODES}, got '{raw_mode}'"
+        )
+    return NetworkConfig(hostile_mode=mode)
+
+
 def _parse_reconnect(d: Any) -> ReconnectConfig:
     if not isinstance(d, dict):
         return ReconnectConfig()
@@ -326,6 +356,9 @@ def _to_dict(cfg: ClientConfig) -> dict[str, Any]:
             "max_attempts": cfg.reconnect.max_attempts,
             "delays_seconds": cfg.reconnect.delays_seconds,
         },
+        "network": {
+            "hostile_mode": cfg.network.hostile_mode,
+        },
     }
     if cfg.server.fallback_ports:
         d["server"]["fallback_ports"] = list(cfg.server.fallback_ports)
@@ -349,6 +382,7 @@ EDITABLE_FIELDS = (
     "bypass_ips",
     "reconnect_max_attempts",
     "reconnect_delays",
+    "hostile_mode",
 )
 
 
@@ -427,6 +461,7 @@ def apply_profile_patch(cfg: ClientConfig, patch: dict[str, Any]) -> ClientConfi
     wg_changes: dict[str, Any] = {}
     routing = cfg.routing
     rc_changes: dict[str, Any] = {}
+    network = cfg.network
 
     if "name" in patch:
         n = str(patch["name"]).strip()
@@ -486,10 +521,22 @@ def apply_profile_patch(cfg: ClientConfig, patch: dict[str, Any]) -> ClientConfi
             delays.append(v)
         rc_changes["delays_seconds"] = delays
 
+    if "hostile_mode" in patch:
+        raw_h = patch["hostile_mode"]
+        if not isinstance(raw_h, str):
+            raise ConfigError("hostile_mode debe ser auto / on / off")
+        mode = raw_h.strip().lower() or "auto"
+        if mode not in _HOSTILE_MODES:
+            raise ConfigError(
+                f"hostile_mode debe ser uno de {_HOSTILE_MODES}, recibido '{raw_h}'"
+            )
+        network = replace(cfg.network, hostile_mode=mode)
+
     return replace(
         cfg,
         name=name,
         wireguard=replace(cfg.wireguard, **wg_changes) if wg_changes else cfg.wireguard,
         routing=routing,
         reconnect=replace(cfg.reconnect, **rc_changes) if rc_changes else cfg.reconnect,
+        network=network,
     )

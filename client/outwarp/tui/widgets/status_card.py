@@ -30,7 +30,7 @@ class StatusCard(Container):
         yield Static("LOCATION", classes="card-title")
         yield Static(self._geo or "—", id="geo", classes="value")
         yield Static("WG ADDRESS", classes="card-title")
-        yield Static(self._config.wireguard.client_address, classes="value")
+        yield Static(self._config.wireguard.client_address, id="wg-address", classes="value")
 
     def _render_endpoint(self) -> str:
         s = self._config.server
@@ -40,3 +40,11 @@ class StatusCard(Container):
         self._geo = label
         with contextlib.suppress(Exception):
             self.query_one("#geo", Static).update(label or "—")
+
+    def update_config(self, config: ClientConfig) -> None:
+        """Repaint endpoint + WG address after a profile edit, see
+        TunnelCard.update_config for the rationale."""
+        self._config = config
+        with contextlib.suppress(Exception):
+            self.query_one("#endpoint", Static).update(self._render_endpoint())
+            self.query_one("#wg-address", Static).update(config.wireguard.client_address)

@@ -299,6 +299,27 @@ class Api:
         process after launching the installer. Called once by app.py."""
         self._on_quit = fn
 
+    def _maybe_emit_hostile(self) -> None:
+        """Read the manager's hostile-detection probe and emit a banner event.
+
+        Defensive against test doubles: a MagicMock manager returns a
+        MagicMock here, which fails the isinstance check and gets ignored —
+        only real HostileDetection objects (set by Tunnel.connect()) bubble up.
+        """
+        from outwarp.network import HostileDetection
+        detection = getattr(self._manager, "last_hostile_detection", None)
+        if not isinstance(detection, HostileDetection) or not detection.hostile:
+            return
+        try:
+            mode = self._manager.config.network.hostile_mode
+        except AttributeError:
+            mode = "auto"
+        self._emit("hostile", {
+            "detected": True,
+            "reason": detection.reason,
+            "mode": mode,
+        })
+
     def _emit(self, name: str, payload: dict[str, Any]) -> None:
         if self._window is None or self._emit_disabled:
             return
@@ -423,6 +444,12 @@ class Api:
         payload["status"] = _STATE_TO_JS.get(state, "disconnected")
         self._emit("status", payload)
         self._sync_kill_switch(state)
+        # CONNECTING/CONNECTED is when the Tunnel has had a chance to run its
+        # hostile-network probe; surface the result so the UI banner can warn
+        # the user that DNS interception was detected (and that wstunnel is
+        # now using 1.1.1.1 under the hood).
+        if state in (TunnelState.CONNECTING, TunnelState.CONNECTED):
+            self._maybe_emit_hostile()
         if state is TunnelState.CONNECTED:
             self._stats["session_start"] = time.time()
             self._stats["last_handshake"] = time.time()
@@ -504,7 +531,12 @@ class Api:
                          "Pide uno nuevo al administrador del servidor.",
             }
         try:
-            cfg = import_owcfg_text(file_content)
+            # Pass the resolved path explicitly so a test patching
+            # ``outwarp.api.default_config_path`` actually redirects the write
+            # — import_owcfg_text would otherwise resolve its own
+            # ``outwarp.config.default_config_path`` and clobber the real
+            # user config (we hit that during local validation).
+            cfg = import_owcfg_text(file_content, dest=default_config_path())
         except ConfigError as exc:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:

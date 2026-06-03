@@ -54,13 +54,41 @@ class DashboardScreen(Screen):
 
     def on_mount(self) -> None:
         config = self.app.config
+        self._sampler_iface: str | None = None
+        self._sampler_peer: str | None = None
+        self._rebuild_sampler(config)
+        self.set_interval(1.0, self.refresh_stats)
+        # Public IP / geo lookup runs once in the background — best-effort.
+        asyncio.create_task(self._lookup_geo(), name="geo-lookup")
+
+    def _rebuild_sampler(self, config) -> None:
         self._sampler = StatsSampler(
             iface=config.wireguard.tunnel_name,
             peer_endpoint_host=config.server.endpoint,
         )
-        self.set_interval(1.0, self.refresh_stats)
-        # Public IP / geo lookup runs once in the background — best-effort.
-        asyncio.create_task(self._lookup_geo(), name="geo-lookup")
+        self._sampler_iface = config.wireguard.tunnel_name
+        self._sampler_peer = config.server.endpoint
+
+    def on_screen_resume(self) -> None:
+        """Re-sync cards + stats sampler with the latest app.config.
+
+        Textual memoises screens registered in ``App.SCREENS`` by class, so a
+        DashboardScreen instance gets ``compose()``d once for the entire app
+        lifetime. When the user edits the profile and we route back here, the
+        cards still hold values from the first compose unless we push the new
+        config in explicitly.
+        """
+        config = self.app.config
+        if config is None:
+            return
+        for card_cls in (StatusCard, TunnelCard):
+            with contextlib.suppress(Exception):
+                self.query_one(card_cls).update_config(config)
+        if (
+            self._sampler_iface != config.wireguard.tunnel_name
+            or self._sampler_peer != config.server.endpoint
+        ):
+            self._rebuild_sampler(config)
 
     def refresh_stats(self) -> None:
         try:

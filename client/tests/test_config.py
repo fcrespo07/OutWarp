@@ -257,6 +257,32 @@ def test_apply_profile_patch_updates_fields(tmp_path):
     assert out.wireguard.client_private_key == cfg.wireguard.client_private_key
 
 
+def test_hostile_mode_defaults_to_auto_and_roundtrips(tmp_path):
+    cfg = ClientConfig.load(write_cfg(tmp_path, VALID))
+    # Default — even when the .owcfg has no network section.
+    assert cfg.network.hostile_mode == "auto"
+    # Setting it survives a save/load round-trip.
+    patched = apply_profile_patch(cfg, {"hostile_mode": "on"})
+    target = tmp_path / "config.json"
+    patched.save(target)
+    reloaded = ClientConfig.load(target)
+    assert reloaded.network.hostile_mode == "on"
+
+
+def test_hostile_mode_rejects_garbage_values(tmp_path):
+    cfg = ClientConfig.load(write_cfg(tmp_path, VALID))
+    with pytest.raises(ConfigError, match="hostile_mode"):
+        apply_profile_patch(cfg, {"hostile_mode": "nope"})
+
+
+def test_hostile_mode_empty_string_means_auto(tmp_path):
+    # Useful when the UI input is cleared — should fall back to auto rather
+    # than rejecting it as invalid.
+    cfg = ClientConfig.load(write_cfg(tmp_path, VALID))
+    patched = apply_profile_patch(cfg, {"hostile_mode": "  "})
+    assert patched.network.hostile_mode == "auto"
+
+
 def test_apply_profile_patch_empty_patch_is_noop(tmp_path):
     cfg = _cfg(tmp_path)
     assert apply_profile_patch(cfg, {}) == cfg

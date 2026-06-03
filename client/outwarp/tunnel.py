@@ -17,7 +17,9 @@ from platformdirs import user_data_dir
 from outwarp.config import ClientConfig
 from outwarp.network import (
     FingerprintMismatchError,
+    HostileDetection,
     NetworkError,
+    detect_hostile_network,
     tcp_probe,
     verify_tls_fingerprint,
 )
@@ -95,7 +97,11 @@ def find_wstunnel() -> Path:
 
 
 def build_wstunnel_command(
-    config: ClientConfig, wstunnel_bin: Path, port: int | None = None
+    config: ClientConfig,
+    wstunnel_bin: Path,
+    port: int | None = None,
+    *,
+    hostile: bool = False,
 ) -> list[str]:
     t = config.tunnel
     s = config.server
@@ -103,21 +109,39 @@ def build_wstunnel_command(
     forward = (
         f"udp://127.0.0.1:{t.local_port}:{t.remote_host}:{t.remote_port}?timeout_sec=0"
     )
+    # Browsers never put ":443" in the Host header for wss://; some DPI boxes
+    # use that as a signal of "this isn't a browser, it's a tunnel" and drop the
+    # WS Upgrade. Omit the explicit port when it's the scheme default.
+    endpoint = f"wss://{s.endpoint}" if wss_port == 443 else f"wss://{s.endpoint}:{wss_port}"
     # TLS cert verification is disabled by default in wstunnel v10+; fingerprint
     # pinning via verify_tls_fingerprint() is the actual identity check.
-    return [
+    cmd = [
         str(wstunnel_bin),
         "client",
         # Pre-establish idle TCP+TLS+WS connections so a new WG flow doesn't pay
         # the ~30-50 ms handshake cost on first packet.
         "--connection-min-idle",
         "3",
+        # Keep the WS half-open detection tight so corporate NATs don't quietly
+        # drop the connection after their idle timeout — wstunnel will see the
+        # missed pong and reconnect instead of letting WG packets vanish.
+        "--websocket-ping-frequency",
+        "25s",
         "-L",
         forward,
         "--http-upgrade-path-prefix",
         s.http_upgrade_path_prefix,
-        f"wss://{s.endpoint}:{wss_port}",
     ]
+    if hostile:
+        # Hostile-network opt-in: bypass the system resolver (which may be
+        # hijacked or returning poisoned AAAA records on captive/edu networks)
+        # and force IPv4. Matches the flags the legacy WarpSocket script used.
+        cmd.extend([
+            "--dns-resolver", "dns://1.1.1.1",
+            "--dns-resolver-prefer-ipv4",
+        ])
+    cmd.append(endpoint)
+    return cmd
 
 
 class Tunnel:
@@ -146,6 +170,10 @@ class Tunnel:
         # corresponding step in the "Connecting…" view. None means no-op
         # (tests that don't care about phases pass nothing).
         self._phase_cb: Callable[[str], None] = phase_callback or (lambda _p: None)
+        # Set after the network probe each connect() call: the UI reads this
+        # to surface a "hostile network detected" toast or annotate Settings.
+        # Format: HostileDetection (hostile bool + human reason).
+        self.last_hostile_detection: HostileDetection | None = None
 
     def _drain_stdout(self) -> None:
         # An ``assert`` here would silently disappear under ``python -O``
@@ -208,13 +236,38 @@ class Tunnel:
             raise TunnelError(str(exc)) from exc
 
         try:
+            # Resolve hostile_mode BEFORE bringing the WG interface up. Order
+            # matters: install_wg_tunnel() captures 0.0.0.0/0 (minus the
+            # endpoint), so any DNS query made afterwards is routed through
+            # the tunnel — but wstunnel isn't running yet, so the query stalls
+            # for the full glibc DNS retry budget (~25 s). Running the probe
+            # here keeps it on the host's real resolver, where it costs
+            # <300 ms instead.
+            mode = self._config.network.hostile_mode
+            if mode == "on":
+                hostile = True
+            elif mode == "off":
+                hostile = False
+            else:  # "auto" — probe the network once per connect attempt
+                detection = detect_hostile_network(s.endpoint)
+                self.last_hostile_detection = detection
+                hostile = detection.hostile
+                if detection.hostile:
+                    log.warning(
+                        "Hostile-network heuristic triggered: %s — enabling "
+                        "wstunnel DNS bypass (1.1.1.1 + IPv4-only) for this session",
+                        detection.reason,
+                    )
+
             self._phase_cb("wg")
             wg_conf = build_wg_conf(self._config)
             self._platform.install_wg_tunnel(self._config.wireguard.tunnel_name, wg_conf)
             self._wg_installed = True
 
             self._phase_cb("ws")
-            cmd = build_wstunnel_command(self._config, self._wstunnel_bin, port=chosen_port)
+            cmd = build_wstunnel_command(
+                self._config, self._wstunnel_bin, port=chosen_port, hostile=hostile,
+            )
             log.info("Starting wstunnel: %s", " ".join(cmd))
             self._proc = subprocess.Popen(
                 cmd,
@@ -346,6 +399,15 @@ class TunnelManager:
     def allow_tls_intercept(self, value: bool) -> None:
         # Picked up on the next connect attempt — no need to restart the tunnel.
         self._tunnel.allow_tls_intercept = bool(value)
+
+    @property
+    def last_hostile_detection(self) -> HostileDetection | None:
+        """Most recent hostile-network probe result, or None if mode != auto.
+
+        Set by Tunnel.connect() each attempt. The UI reads this on state
+        transitions to surface a "DNS interception detected" toast/banner so
+        the user knows wstunnel is silently using the public resolver."""
+        return self._tunnel.last_hostile_detection
 
     @property
     def auto_reconnect(self) -> bool:

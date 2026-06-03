@@ -138,6 +138,61 @@ def test_measure_latency_ms_returns_none_when_ping_binary_missing():
         assert measure_latency_ms("10.0.0.1") is None
 
 
+def test_detect_hostile_network_skips_literal_ip():
+    # An endpoint that is already an IP literal can't suffer DNS interception,
+    # so the probe short-circuits without touching the network.
+    from outwarp.network import detect_hostile_network
+    with patch("outwarp.network.socket.gethostbyname") as gh:
+        result = detect_hostile_network("203.0.113.42")
+    assert result.hostile is False
+    gh.assert_not_called()
+
+
+def test_detect_hostile_network_detects_dns_mismatch():
+    from outwarp.network import detect_hostile_network
+    with (
+        patch("outwarp.network.socket.gethostbyname", return_value="10.99.99.99"),
+        patch("outwarp.network._query_dns_a_record_via", return_value="79.112.138.17"),
+    ):
+        result = detect_hostile_network("wg.example.com")
+    assert result.hostile is True
+    assert "10.99.99.99" in result.reason
+    assert "79.112.138.17" in result.reason
+
+
+def test_detect_hostile_network_detects_system_nxdomain_when_public_resolves():
+    from outwarp.network import detect_hostile_network
+    with (
+        patch("outwarp.network.socket.gethostbyname", side_effect=OSError("NXDOMAIN")),
+        patch("outwarp.network._query_dns_a_record_via", return_value="79.112.138.17"),
+    ):
+        result = detect_hostile_network("wg.example.com")
+    assert result.hostile is True
+    assert "system DNS cannot resolve" in result.reason
+
+
+def test_detect_hostile_network_silent_when_both_agree():
+    from outwarp.network import detect_hostile_network
+    with (
+        patch("outwarp.network.socket.gethostbyname", return_value="79.112.138.17"),
+        patch("outwarp.network._query_dns_a_record_via", return_value="79.112.138.17"),
+    ):
+        result = detect_hostile_network("wg.example.com")
+    assert result.hostile is False
+
+
+def test_detect_hostile_network_silent_when_offline():
+    # No internet at all: system fails AND public probe fails. Don't false-fire
+    # — there's nothing the hostile-mode flags can do about being offline.
+    from outwarp.network import detect_hostile_network
+    with (
+        patch("outwarp.network.socket.gethostbyname", side_effect=OSError("no net")),
+        patch("outwarp.network._query_dns_a_record_via", return_value=None),
+    ):
+        result = detect_hostile_network("wg.example.com")
+    assert result.hostile is False
+
+
 def test_measure_latency_ms_returns_none_on_empty_host():
     # Don't even shell out for an empty host.
     with patch("outwarp.network.subprocess.run") as run:

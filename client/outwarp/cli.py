@@ -344,6 +344,32 @@ def build_parser() -> argparse.ArgumentParser:
              "proxies). WireGuard stays end-to-end encrypted regardless.",
     )
 
+    # Headless background mode — the ExecStart= target for the systemd /
+    # SCM unit. Same TunnelManager as `connect`, but silent on stdout so
+    # the service journal stays readable.
+    p_daemon = sub.add_parser(
+        "daemon",
+        help="Run the tunnel in background mode for systemd/SCM (logs to file only)",
+    )
+    p_daemon.add_argument(
+        "--allow-tls-intercept",
+        action="store_true",
+        help="Tolerate TLS fingerprint mismatch — same as on `connect`.",
+    )
+
+    # `outwarp-cli service install/uninstall/status` manages the systemd
+    # user unit that drives `daemon`. On Windows this command stub-exits
+    # and tells the user to use the installer's SCM registration.
+    p_service = sub.add_parser(
+        "service",
+        help="Install/uninstall the user-level background service (systemd --user on Linux)",
+    )
+    p_service.add_argument(
+        "action",
+        choices=("install", "uninstall", "status"),
+        help="What to do with the service unit",
+    )
+
     sub.add_parser("status", help="Show profile summary and WireGuard state")
     sub.add_parser("profile", help="Print full profile details")
 
@@ -531,9 +557,25 @@ def _cmd_update(args: argparse.Namespace) -> int:
             tmp_dir.rmdir()
 
 
+def _cmd_daemon(args: argparse.Namespace) -> int:
+    from outwarp.service import run_daemon
+    return run_daemon(allow_tls_intercept=args.allow_tls_intercept)
+
+
+def _cmd_service(args: argparse.Namespace) -> int:
+    from outwarp.service import install_service, service_status, uninstall_service
+    if args.action == "install":
+        return install_service()
+    if args.action == "uninstall":
+        return uninstall_service()
+    return service_status()
+
+
 _COMMANDS = {
     "import":         _cmd_import,
     "connect":        _cmd_connect,
+    "daemon":         _cmd_daemon,
+    "service":        _cmd_service,
     "status":         _cmd_status,
     "profile":        _cmd_profile,
     "logs":           _cmd_logs,

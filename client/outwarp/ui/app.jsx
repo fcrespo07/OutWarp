@@ -143,6 +143,13 @@ function App() {
   const [integrity, setIntegrity] = useState({ ok: true, likely_av: false, issues: [] });
   const [integrityDismissed, setIntegrityDismissed] = useState(false);
 
+  // Hostile-network detection. Populated by the `outwarp:hostile` event the
+  // Python side emits from Tunnel.connect() when detect_hostile_network()
+  // flags DNS interception. Cleared when the user dismisses or when a
+  // successful disconnect/import resets the relevant state.
+  const [hostile, setHostile] = useState(null);
+  const [hostileDismissed, setHostileDismissed] = useState(false);
+
   // bootstrap
   useEffect(() => {
     waitForBridge().then(async (a) => {
@@ -192,6 +199,14 @@ function App() {
   }, []));
   useBridgeEvent("log",     useCallback((e) => setLogs((l) => [...l.slice(-1999), e]), []));
   useBridgeEvent("settings", useCallback((d) => setSettings(d), []));
+  useBridgeEvent("hostile", useCallback((d) => {
+    if (d && d.detected) {
+      setHostile({ reason: d.reason || "", mode: d.mode || "auto" });
+      setHostileDismissed(false);
+    } else {
+      setHostile(null);
+    }
+  }, []));
   useBridgeEvent("window",   useCallback((d) => setMaximized(!!d.maximized), []));
   // Tray "View logs" → jump to a screen from the Python side.
   useBridgeEvent("navigate", useCallback((d) => { if (d && d.screen) setScreen(d.screen); }, []));
@@ -311,6 +326,9 @@ function App() {
       {!integrity.ok && !integrityDismissed && (
         <IntegrityBanner T={T} api={api} report={integrity} onDismiss={() => setIntegrityDismissed(true)}/>
       )}
+      {hostile && !hostileDismissed && (
+        <HostileBanner T={T} report={hostile} onDismiss={() => setHostileDismissed(true)}/>
+      )}
       <div className="ow-body">
         <Sidebar
           T={T}
@@ -405,6 +423,45 @@ const IntegrityBanner = ({ T, api, report, onDismiss }) => {
           ))}
         </ul>
       )}
+    </div>
+  );
+};
+
+// ── Hostile-network banner ────────────────────────────────────────
+// Surfaces detect_hostile_network() hits to the user. Two flavours:
+//   - mode "auto" → Python already applied the DNS-bypass flags; banner
+//     informs the user it happened (no action needed).
+//   - mode "off"  → user disabled bypass; banner suggests flipping it to "on"
+//     if the connection keeps failing.
+// Mode "on" is silent: the user opted in and we don't need to warn them.
+const HostileBanner = ({ T, report, onDismiss }) => {
+  const headline = T.hostile_headline;
+  const body = report.mode === "auto" ? T.hostile_auto_on : T.hostile_auto_off;
+  return (
+    <div className="ow-integrity" role="alert" aria-live="polite">
+      <div className="ow-integrity-row">
+        <span className="ow-integrity-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </span>
+        <div className="ow-integrity-text">
+          <div className="ow-integrity-headline">{headline}</div>
+          <div className="ow-integrity-cta">{body}</div>
+          {report.reason && (
+            <div className="ow-integrity-cta" style={{ opacity: 0.75, marginTop: 2 }}>
+              <code style={{ fontSize: 11 }}>{report.reason}</code>
+            </div>
+          )}
+        </div>
+        <div className="ow-integrity-actions">
+          <button className="ow-integrity-btn ow-integrity-btn--ghost" onClick={onDismiss} aria-label={T.hostile_dismiss}>
+            ×
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

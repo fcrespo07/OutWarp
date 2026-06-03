@@ -274,7 +274,14 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 ## Estado actual
 
-**Versión actual: `0.5.5`** (en código). Cambios desde 0.5.0:
+**Versión actual: `0.6.0`** (en código). Cambios desde 0.5.x:
+- **Daemon mode**: nuevo subcomando `outwarp-cli daemon` — el `TunnelManager` headless que el `ExecStart=` de systemd/SCM invoca, silente en stdout (todo va al log file). Complementa: `outwarp-cli service install|uninstall|status` gestiona la unit user-level `~/.config/systemd/user/outwarp-client.service`. Windows queda con stub (el SCM wrapper llegará en un release posterior). Lógica en `outwarp/service.py`.
+- **Anti-DPI infra (parcial)**: `--websocket-ping-frequency 25s` siempre, omitir `:443` del `wss://` cuando es el puerto por defecto, y un toggle `hostile_mode` (auto/on/off) por perfil que activa `--dns-resolver dns://1.1.1.1 --dns-resolver-prefer-ipv4`. El modo `auto` corre `detect_hostile_network()` (compara DNS del sistema vs Cloudflare directo) en `Tunnel.connect()` y emite el evento `outwarp:hostile`. **No es suficiente para pasar redes con DPI agresivo como WIFI_EDU** — el firewall del instituto sigue devolviendo 400 al WS Upgrade aunque la huella TLS coincida con el cert real del server. Se considerará uTLS / Cloudflare-front en un release futuro.
+- **GUI `HostileBanner`**: pywebview muestra un banner cuando llega el evento `outwarp:hostile`, similar al `IntegrityBanner` pero con copy distinto según `mode`.
+- **TUI dashboard reactivity fix**: `TunnelCard` y `StatusCard` ya repintan tras editar el perfil. Causa: las screens registradas en `App.SCREENS` por clase se cachean → `compose()` corre una sola vez. Fix: `update_config()` en ambas tarjetas + `on_screen_resume()` en `DashboardScreen` que les pasa la config actual; el `StatsSampler` también se reconstruye si cambian `iface` o `endpoint`.
+- **Fix de `import_profile`**: `outwarp/api.py:import_profile` ahora pasa `dest=default_config_path()` explícito a `import_owcfg_text`. Antes, los tests que sólo parcheaban `outwarp.api.default_config_path` filtraban escrituras a `~/.config/OutWarp/config.json` real durante la suite completa.
+
+### Cambios desde 0.5.0:
 - **Docker + Kubernetes oficiales**: imagen multi-arch (`linux/amd64` + `linux/arm64`) publicada en `ghcr.io/<owner>/outwarp-server` desde `.github/workflows/docker-publish.yml`. Manifests listos en `deploy/kubernetes/` + helper `deploy/build-pi.sh` para k3s en Raspberry Pi 5. Guía end-to-end en `deploy/README.md`.
 - **TUI como UI primaria en Linux**: el `install.sh` ya no exige `libwebkit2gtk`; el autostart apunta a `outwarp-cli tui` por defecto y la GUI pywebview es opt-in. Editor de perfil completo dentro del TUI del cliente.
 - **CI completo**: `.github/workflows/ci.yml` corre pytest + ruff + wheel build en `ubuntu-latest` y `windows-latest`; `docker-publish.yml` publica imágenes en cada push a main y en cada tag `v*`.
