@@ -16,6 +16,10 @@ jobs:
   test:
     name: pytest (${{ matrix.os }} / Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    # Cap a hung test at a few minutes instead of GitHub's 6h default — a test
+    # that accidentally launches the real TUI (no input ever arrives) would
+    # otherwise burn a 6h runner slot before being killed.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -79,6 +83,7 @@ jobs:
   lint:
     name: ruff (informational)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Lint is non-blocking for now: the codebase carries pre-existing ruff
     # debt that CLAUDE.md documents and a future "lint cleanup" PR will
     # tackle in isolation. The job still runs so new violations are visible
@@ -107,6 +112,7 @@ jobs:
   build-wheels:
     name: build wheels
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Catches a broken pyproject.toml / missing data files (icon, .tcss, woff2)
     # before they ship — `install.sh` downloads exactly these wheels from a
     # release, so a wheel that builds but excludes a runtime resource silently

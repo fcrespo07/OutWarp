@@ -77,7 +77,15 @@ class TestSingleInstanceLock:
 class TestMainEntryPoint:
     def test_returns_one_when_lock_already_held(self) -> None:
         from outwarp.app import _SingleInstanceLock, main
-        with patch.object(_SingleInstanceLock, "acquire", return_value=False):
+        # Stub `webview` so main() doesn't take the Linux→TUI fallback (which
+        # launches the real Textual app and hangs the run forever — on a Linux
+        # box without pywebview the bare `assert main() == 1` blocks until
+        # GitHub's 6h job limit kills it). We're exercising the single-instance
+        # lock path, which lives past that import guard.
+        with (
+            patch.dict(sys.modules, {"webview": MagicMock()}),
+            patch.object(_SingleInstanceLock, "acquire", return_value=False),
+        ):
             assert main() == 1
 
     @pytest.mark.skipif(sys.platform != "linux", reason="Linux-only TUI fallback path")
