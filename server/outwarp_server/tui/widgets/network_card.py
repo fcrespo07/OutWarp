@@ -7,7 +7,7 @@ from outwarp_server.config import ServerConfig
 
 
 class NetworkCard(Container):
-    DEFAULT_CSS = "NetworkCard { layout: vertical; }"
+    DEFAULT_CSS = "NetworkCard { layout: vertical; height: auto; }"
 
     def __init__(self, config: ServerConfig) -> None:
         super().__init__()

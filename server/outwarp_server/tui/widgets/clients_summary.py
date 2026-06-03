@@ -5,7 +5,7 @@ from textual.widgets import Static
 
 
 class ClientsSummary(Container):
-    DEFAULT_CSS = "ClientsSummary { layout: vertical; }"
+    DEFAULT_CSS = "ClientsSummary { layout: vertical; height: auto; }"
 
     def compose(self):
         yield Static("CLIENTS", classes="card-title")

@@ -29,7 +29,7 @@ def _cert_expiry(path: str) -> str | None:
 
 
 class TlsCard(Container):
-    DEFAULT_CSS = "TlsCard { layout: vertical; }"
+    DEFAULT_CSS = "TlsCard { layout: vertical; height: auto; }"
 
     def __init__(self, config: ServerConfig) -> None:
         super().__init__()

@@ -32,6 +32,9 @@ Footer {
 .col {
     width: 50%;
     padding: 1 2;
+    /* Scroll so all cards in a column remain reachable on 24-row
+       terminals (default Linux tty + most SSH sessions). */
+    overflow-y: auto;
 }
 
 .col > Container {

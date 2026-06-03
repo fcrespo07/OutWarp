@@ -5,7 +5,7 @@ from textual.widgets import Static
 
 
 class ServicesCard(Container):
-    DEFAULT_CSS = "ServicesCard { layout: vertical; }"
+    DEFAULT_CSS = "ServicesCard { layout: vertical; height: auto; }"
 
     def compose(self):
         yield Static("SERVICES", classes="card-title")
