@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,14 @@ async def test_tail_follow_emits_appended_lines(tmp_path: Path) -> None:
     assert seen == ["first", "second", "third"]
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "Rotation-by-unlink is POSIX-specific: Windows refuses os.remove on a "
+        "file held open by tail_follow (WinError 32), and tail_follow's inode "
+        "detection only applies on POSIX. The TUI is Linux-primary."
+    ),
+)
 @pytest.mark.asyncio
 async def test_tail_follow_recovers_after_rotation(tmp_path: Path) -> None:
     path = tmp_path / "log.txt"

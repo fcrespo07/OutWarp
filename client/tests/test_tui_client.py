@@ -43,6 +43,13 @@ async def test_empty_state_when_no_profile(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    # platformdirs honours XDG_* only on Linux; on Windows it resolves to the
+    # real %APPDATA%, so the env vars above don't isolate the config dir and the
+    # app would read (and other tests would leak into) real user state. Patch
+    # the resolver the app actually calls so "no profile" holds on every OS.
+    monkeypatch.setattr(
+        "outwarp.tui.app.default_config_path", lambda: tmp_path / "config.json",
+    )
     app = OutWarpClientTUI()
     async with app.run_test() as pilot:
         await pilot.pause()
