@@ -19,6 +19,7 @@ class TunnelCard(Container):
     DEFAULT_CSS = """
     TunnelCard {
         layout: vertical;
+        height: auto;
     }
     """
 

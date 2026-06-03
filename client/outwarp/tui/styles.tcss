@@ -33,6 +33,10 @@ Footer {
 .status-col {
     width: 50%;
     padding: 1 2;
+    /* Allow scrolling so all three cards remain reachable on short
+       terminals (24-row windows can't fit StatusCard + TrafficCard +
+       TunnelCard at once with chrome + content). */
+    overflow-y: auto;
 }
 
 .status-col > Container {

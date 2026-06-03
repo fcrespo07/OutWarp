@@ -38,6 +38,7 @@ class TrafficCard(Container):
     DEFAULT_CSS = """
     TrafficCard {
         layout: vertical;
+        height: auto;
     }
     """
 

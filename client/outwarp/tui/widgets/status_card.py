@@ -14,6 +14,7 @@ class StatusCard(Container):
     DEFAULT_CSS = """
     StatusCard {
         layout: vertical;
+        height: auto;
     }
     """
 
