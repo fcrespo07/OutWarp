@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -119,6 +120,7 @@ class TestLinuxPlatform:
         cmds = [call.args[0] for call in mock_run.call_args_list]
         assert ["sysctl", "--system"] in cmds
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Linux-only install paths (/opt/...)")
     def test_install_prefix_and_bin_link_match_installer(self) -> None:
         p = LinuxServerPlatform()
         assert p.install_prefix() == Path("/opt/outwarp-server")

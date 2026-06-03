@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
+import pytest
 
 from outwarp_server.config import ServerConfig
 from outwarp_server.owcfg import build_owcfg, write_owcfg
@@ -84,6 +87,7 @@ def test_write_owcfg(tmp_path: Path) -> None:
     assert loaded["server"]["endpoint"] == "203.0.113.42"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits not enforced on NTFS")
 def test_write_owcfg_is_0600(tmp_path: Path) -> None:
     """The .owcfg embeds a fresh WireGuard client private key — leaving it
     world-readable lets any local user impersonate that client. The atomic

@@ -130,10 +130,12 @@ class TestGetLivePeers:
     )
 
     def test_parses_two_peers(self) -> None:
+        # Pass wg_bin so the test does not depend on `wg` being on PATH —
+        # CI runners (and stock Windows) do not ship it.
         with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = self._DUMP_OUTPUT
-            peers = get_live_peers()
+            peers = get_live_peers(wg_bin=Path("wg"))
         assert set(peers.keys()) == {"peer1pubkey", "peer2pubkey"}
 
         active = peers["peer1pubkey"]
@@ -152,12 +154,12 @@ class TestGetLivePeers:
         with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
             mock_run.return_value.returncode = 1
             mock_run.return_value.stdout = ""
-            assert get_live_peers() == {}
+            assert get_live_peers(wg_bin=Path("wg")) == {}
 
     def test_returns_empty_when_wg_not_installed(self) -> None:
         with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError("wg")
-            assert get_live_peers() == {}
+            assert get_live_peers(wg_bin=Path("wg")) == {}
 
 
 class TestRemovePeerLive:

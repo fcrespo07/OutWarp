@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +26,7 @@ class TestTlsCert:
         assert cert_path.read_text().startswith("-----BEGIN CERTIFICATE-----")
         assert key_path.read_text().startswith("-----BEGIN")
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX perm bits not enforced on NTFS")
     def test_key_file_is_0600(self, tmp_path: Path) -> None:
         """The TLS private key is unencrypted at rest (so wstunnel can boot
         unattended via systemd). 0o600 is the only thing standing between a

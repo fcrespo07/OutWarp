@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -105,6 +106,10 @@ async def test_add_client_modal_creates_owcfg(
         assert owcfg.exists()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="TUI doctor is Linux-primary; Windows WMI probes race with pilot.pause",
+)
 @pytest.mark.asyncio
 async def test_doctor_fix_kind_applied(tmp_path: Path) -> None:
     _write_config(tmp_path)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,7 @@ def test_save_roundtrip(tmp_path: Path) -> None:
     assert cfg == cfg2
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits not enforced on NTFS")
 def test_save_is_0600(tmp_path: Path) -> None:
     """server_config.json embeds the WG private key (and the wstunnel
     path-prefix). 0o644 is a local-user information leak — must be 0o600
