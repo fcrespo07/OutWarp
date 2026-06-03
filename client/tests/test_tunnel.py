@@ -112,7 +112,8 @@ def test_find_wstunnel_falls_back_to_path(monkeypatch, tmp_path):
     fake.write_text("x")
     with patch("outwarp.tunnel.Path") as mock_path:
         # standard location does NOT exist
-        mock_path.return_value.__truediv__.return_value.__truediv__.return_value.exists.return_value = False
+        std_loc = mock_path.return_value.__truediv__.return_value.__truediv__.return_value
+        std_loc.exists.return_value = False
         mock_path.side_effect = lambda x: Path(x)
         with patch("outwarp.tunnel.shutil.which", return_value=str(fake)):
             assert find_wstunnel() == fake
@@ -120,10 +121,10 @@ def test_find_wstunnel_falls_back_to_path(monkeypatch, tmp_path):
 
 def test_find_wstunnel_raises_when_nowhere(monkeypatch):
     monkeypatch.delenv("OUTWARP_WSTUNNEL", raising=False)
-    with patch("outwarp.tunnel.shutil.which", return_value=None):
-        with patch("pathlib.Path.exists", return_value=False):
-            with pytest.raises(TunnelError, match="wstunnel binary not found"):
-                find_wstunnel()
+    with patch("outwarp.tunnel.shutil.which", return_value=None), \
+            patch("pathlib.Path.exists", return_value=False), \
+            pytest.raises(TunnelError, match="wstunnel binary not found"):
+        find_wstunnel()
 
 
 # --- build_wstunnel_command ---
@@ -252,14 +253,14 @@ def test_connect_phase_stops_at_resolve_when_endpoint_unreachable():
 
 
 def test_connect_phase_stops_at_tls_on_fingerprint_mismatch():
-    from outwarp.network import FingerprintMismatch
+    from outwarp.network import FingerprintMismatchError
     cfg = _make_config()
     plat = FakePlatform()
     phases: list[str] = []
     with (
         patch("outwarp.tunnel.tcp_probe", return_value=True),
         patch("outwarp.tunnel.verify_tls_fingerprint",
-              side_effect=FingerprintMismatch("nope")),
+              side_effect=FingerprintMismatchError("nope")),
     ):
         t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"),
                    phase_callback=phases.append)
@@ -403,7 +404,10 @@ def test_ansi_escape_re_strips_color_sequences():
     # when it thinks stdout is a TTY (which subprocess pipes look like to it).
     # The drain thread strips them before logging so the UI log panel doesn't
     # show literal `[2m...[0m` noise.
-    raw = "\x1b[2m2026-05-16T19:35:50.153691Z\x1b[0m \x1b[32m INFO\x1b[0m \x1b[2mwstunnel\x1b[0m: Starting"
+    raw = (
+        "\x1b[2m2026-05-16T19:35:50.153691Z\x1b[0m \x1b[32m INFO\x1b[0m "
+        "\x1b[2mwstunnel\x1b[0m: Starting"
+    )
     assert _ANSI_ESCAPE_RE.sub("", raw) == "2026-05-16T19:35:50.153691Z  INFO wstunnel: Starting"
 
 
@@ -411,8 +415,13 @@ def test_ansi_escape_re_preserves_unicode_content():
     # The Rust panic message that surfaced the regression had Spanish text
     # (UTF-8 encoded). Make sure the regex doesn't eat anything beyond the
     # escape sequence itself.
-    raw = "\x1b[31mError\x1b[0m: Solo se permite un uso de cada dirección de socket"
-    assert _ANSI_ESCAPE_RE.sub("", raw) == "Error: Solo se permite un uso de cada dirección de socket"
+    raw = (
+        "\x1b[31mError\x1b[0m: Solo se permite un uso de cada "
+        "dirección de socket"
+    )
+    assert _ANSI_ESCAPE_RE.sub("", raw) == (
+        "Error: Solo se permite un uso de cada dirección de socket"
+    )
 
 
 def test_wstunnel_noise_re_matches_pool_rotation_lines():

@@ -131,7 +131,9 @@ class DashboardScreen(Screen):
                 )
             self.query_one("#top", Static).update("\n".join(lines))
         else:
-            self.query_one("#top", Static).update("[bold]TOP TALKERS (1h)[/bold]\n[dim]no data yet[/]")
+            self.query_one("#top", Static).update(
+                "[bold]TOP TALKERS (1h)[/bold]\n[dim]no data yet[/]",
+            )
 
     def action_add(self) -> None:
         from outwarp_server.tui.modals.add_client import AddClientModal

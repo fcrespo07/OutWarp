@@ -46,10 +46,10 @@ def _fake_tls_session(der: bytes) -> MagicMock:
 
 def test_get_tls_fingerprint_returns_colon_separated_sha256():
     sock_cm, ssl_cm = _fake_tls_session(der=b"some-cert-bytes")
-    with patch("socket.create_connection", return_value=sock_cm):
-        with patch("ssl.create_default_context") as mock_ctx:
-            mock_ctx.return_value.wrap_socket.return_value = ssl_cm
-            fp = get_tls_fingerprint("1.2.3.4", 443)
+    with patch("socket.create_connection", return_value=sock_cm), \
+            patch("ssl.create_default_context") as mock_ctx:
+        mock_ctx.return_value.wrap_socket.return_value = ssl_cm
+        fp = get_tls_fingerprint("1.2.3.4", 443)
 
     # Format check: 32 pairs of hex separated by colons
     parts = fp.split(":")
@@ -60,17 +60,17 @@ def test_get_tls_fingerprint_returns_colon_separated_sha256():
 
 def test_get_tls_fingerprint_raises_when_no_cert_presented():
     sock_cm, ssl_cm = _fake_tls_session(der=None)
-    with patch("socket.create_connection", return_value=sock_cm):
-        with patch("ssl.create_default_context") as mock_ctx:
-            mock_ctx.return_value.wrap_socket.return_value = ssl_cm
-            with pytest.raises(NetworkError, match="did not present a TLS certificate"):
-                get_tls_fingerprint("1.2.3.4", 443)
+    with patch("socket.create_connection", return_value=sock_cm), \
+            patch("ssl.create_default_context") as mock_ctx:
+        mock_ctx.return_value.wrap_socket.return_value = ssl_cm
+        with pytest.raises(NetworkError, match="did not present a TLS certificate"):
+            get_tls_fingerprint("1.2.3.4", 443)
 
 
 def test_get_tls_fingerprint_raises_on_connection_error():
-    with patch("socket.create_connection", side_effect=ConnectionRefusedError("nope")):
-        with pytest.raises(NetworkError, match="Could not establish TLS connection"):
-            get_tls_fingerprint("1.2.3.4", 443)
+    with patch("socket.create_connection", side_effect=ConnectionRefusedError("nope")), \
+            pytest.raises(NetworkError, match="Could not establish TLS connection"):
+        get_tls_fingerprint("1.2.3.4", 443)
 
 
 # --- verify_tls_fingerprint ---
@@ -81,9 +81,9 @@ def test_verify_tls_fingerprint_passes_on_match():
 
 
 def test_verify_tls_fingerprint_raises_on_mismatch():
-    with patch("outwarp.network.get_tls_fingerprint", return_value="AB:CD"):
-        with pytest.raises(NetworkError, match="fingerprint mismatch"):
-            verify_tls_fingerprint("h", 443, "FF:FF")
+    with patch("outwarp.network.get_tls_fingerprint", return_value="AB:CD"), \
+            pytest.raises(NetworkError, match="fingerprint mismatch"):
+        verify_tls_fingerprint("h", 443, "FF:FF")
 
 
 # --- measure_latency_ms ---

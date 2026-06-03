@@ -40,9 +40,17 @@ def _completed(stdout: str = "", returncode: int = 0, stderr: str = ""):
 
 class TestBinaries:
     def test_pass_when_both_present(self) -> None:
-        with patch("outwarp_server.diagnostics.shutil.which", side_effect=lambda b: f"/usr/bin/{b}"):
-            with patch("outwarp_server.diagnostics._run_linux", return_value=_completed("wireguard-tools v1.0\n")):
-                r = diagnostics.check_linux_binaries(_config())
+        with (
+            patch(
+                "outwarp_server.diagnostics.shutil.which",
+                side_effect=lambda b: f"/usr/bin/{b}",
+            ),
+            patch(
+                "outwarp_server.diagnostics._run_linux",
+                return_value=_completed("wireguard-tools v1.0\n"),
+            ),
+        ):
+            r = diagnostics.check_linux_binaries(_config())
         assert r.status is Status.PASS
 
     def test_fail_when_both_missing(self) -> None:
@@ -93,7 +101,10 @@ class TestSystemd:
 
 class TestListen443:
     def test_pass_when_port_bound(self) -> None:
-        ss_out = "State    Recv-Q  Send-Q  Local        Peer\nLISTEN   0       128     0.0.0.0:443  0.0.0.0:*\n"
+        ss_out = (
+            "State    Recv-Q  Send-Q  Local        Peer\n"
+            "LISTEN   0       128     0.0.0.0:443  0.0.0.0:*\n"
+        )
         with patch("outwarp_server.diagnostics._run_linux", return_value=_completed(ss_out)):
             r = diagnostics.check_linux_listen_443(_config())
         assert r.status is Status.PASS
@@ -128,28 +139,28 @@ class TestIpForward:
     def test_pass_when_runtime_and_persistent(self, tmp_path) -> None:
         drop_in = tmp_path / "99-outwarp.conf"
         drop_in.write_text("net.ipv4.ip_forward=1\n", encoding="utf-8")
-        with patch("outwarp_server.diagnostics._run_linux", return_value=_completed("1\n")):
-            with patch("outwarp_server.diagnostics.Path") as mock_path:
-                mock_path.return_value.exists.return_value = True
-                mock_path.return_value.glob.return_value = [drop_in]
-                r = diagnostics.check_linux_ip_forward(_config())
+        with patch("outwarp_server.diagnostics._run_linux", return_value=_completed("1\n")), \
+                patch("outwarp_server.diagnostics.Path") as mock_path:
+            mock_path.return_value.exists.return_value = True
+            mock_path.return_value.glob.return_value = [drop_in]
+            r = diagnostics.check_linux_ip_forward(_config())
         assert r.status is Status.PASS
 
     def test_warn_when_runtime_only(self, tmp_path) -> None:
-        with patch("outwarp_server.diagnostics._run_linux", return_value=_completed("1\n")):
-            with patch("outwarp_server.diagnostics.Path") as mock_path:
-                mock_path.return_value.exists.return_value = True
-                mock_path.return_value.glob.return_value = []
-                r = diagnostics.check_linux_ip_forward(_config())
+        with patch("outwarp_server.diagnostics._run_linux", return_value=_completed("1\n")), \
+                patch("outwarp_server.diagnostics.Path") as mock_path:
+            mock_path.return_value.exists.return_value = True
+            mock_path.return_value.glob.return_value = []
+            r = diagnostics.check_linux_ip_forward(_config())
         assert r.status is Status.WARN
         assert r.fix_kind == "auto"
 
     def test_fail_when_neither(self, tmp_path) -> None:
-        with patch("outwarp_server.diagnostics._run_linux", return_value=_completed("0\n")):
-            with patch("outwarp_server.diagnostics.Path") as mock_path:
-                mock_path.return_value.exists.return_value = True
-                mock_path.return_value.glob.return_value = []
-                r = diagnostics.check_linux_ip_forward(_config())
+        with patch("outwarp_server.diagnostics._run_linux", return_value=_completed("0\n")), \
+                patch("outwarp_server.diagnostics.Path") as mock_path:
+            mock_path.return_value.exists.return_value = True
+            mock_path.return_value.glob.return_value = []
+            r = diagnostics.check_linux_ip_forward(_config())
         assert r.status is Status.FAIL
         assert r.fix_kind == "auto"
 
@@ -176,7 +187,10 @@ class TestNatMasquerade:
 
 class TestFail2ban:
     def test_pass_when_present(self) -> None:
-        with patch("outwarp_server.diagnostics.shutil.which", return_value="/usr/bin/fail2ban-client"):
+        with patch(
+            "outwarp_server.diagnostics.shutil.which",
+            return_value="/usr/bin/fail2ban-client",
+        ):
             r = diagnostics.check_linux_fail2ban(_config())
         assert r.status is Status.PASS
 
@@ -193,21 +207,21 @@ class TestReverseDns:
         assert r.status is Status.SKIP
 
     def test_pass_when_rdns_matches(self) -> None:
-        with patch("socket.gethostbyname", return_value="203.0.113.42"):
-            with patch("socket.gethostbyaddr", return_value=("vpn.example.com", [], [])):
-                r = diagnostics.check_linux_reverse_dns(_config(endpoint="vpn.example.com"))
+        with patch("socket.gethostbyname", return_value="203.0.113.42"), \
+                patch("socket.gethostbyaddr", return_value=("vpn.example.com", [], [])):
+            r = diagnostics.check_linux_reverse_dns(_config(endpoint="vpn.example.com"))
         assert r.status is Status.PASS
 
     def test_warn_when_rdns_mismatches(self) -> None:
-        with patch("socket.gethostbyname", return_value="203.0.113.42"):
-            with patch("socket.gethostbyaddr", return_value=("other.example.com", [], [])):
-                r = diagnostics.check_linux_reverse_dns(_config(endpoint="vpn.example.com"))
+        with patch("socket.gethostbyname", return_value="203.0.113.42"), \
+                patch("socket.gethostbyaddr", return_value=("other.example.com", [], [])):
+            r = diagnostics.check_linux_reverse_dns(_config(endpoint="vpn.example.com"))
         assert r.status is Status.WARN
 
     def test_warn_when_no_ptr(self) -> None:
-        with patch("socket.gethostbyname", return_value="203.0.113.42"):
-            with patch("socket.gethostbyaddr", side_effect=socket.herror("no PTR")):
-                r = diagnostics.check_linux_reverse_dns(_config(endpoint="vpn.example.com"))
+        with patch("socket.gethostbyname", return_value="203.0.113.42"), \
+                patch("socket.gethostbyaddr", side_effect=socket.herror("no PTR")):
+            r = diagnostics.check_linux_reverse_dns(_config(endpoint="vpn.example.com"))
         assert r.status is Status.WARN
 
 

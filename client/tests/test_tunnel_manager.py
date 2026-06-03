@@ -69,7 +69,9 @@ def _wait_until(predicate, timeout: float = 2.0, interval: float = 0.01) -> bool
 
 
 def _make_manager(cfg, tunnel, *, stability_seconds: float = 100.0) -> TunnelManager:
-    return TunnelManager(cfg, tunnel=tunnel, stability_seconds=stability_seconds, poll_interval=0.005)
+    return TunnelManager(
+        cfg, tunnel=tunnel, stability_seconds=stability_seconds, poll_interval=0.005,
+    )
 
 
 # --- happy path ---

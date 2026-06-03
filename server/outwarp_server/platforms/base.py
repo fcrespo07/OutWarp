@@ -100,7 +100,7 @@ class ServerPlatform(ABC):
         """
         return "wg0"
 
-    def prepare_system(self, subnet: str, wss_port: int) -> None:
+    def prepare_system(self, subnet: str, wss_port: int) -> None:  # noqa: B027
         """One-time OS-level setup: IP forwarding, NAT, firewall rules.
 
         Called once after first-run setup wizard completes.

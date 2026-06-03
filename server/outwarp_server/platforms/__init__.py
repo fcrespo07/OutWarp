@@ -8,7 +8,8 @@ from outwarp_server.platforms.base import PlatformError, ServerPlatform
 
 def get_server_platform() -> ServerPlatform:
     # Explicit override or auto-detected Kubernetes environment.
-    if os.environ.get("OUTWARP_PLATFORM") == "kubernetes" or "KUBERNETES_SERVICE_HOST" in os.environ:
+    if (os.environ.get("OUTWARP_PLATFORM") == "kubernetes"
+            or "KUBERNETES_SERVICE_HOST" in os.environ):
         from outwarp_server.platforms.kubernetes import KubernetesServerPlatform
         return KubernetesServerPlatform()
     if sys.platform == "win32":

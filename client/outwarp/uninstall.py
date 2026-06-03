@@ -88,7 +88,7 @@ def _client_prefixes() -> list[Path]:
     """Every install prefix we have to wipe. A normal machine has exactly
     one; in-place upgrades from 0.4.x → 0.5.x can briefly have both."""
     if sys.platform == "win32":
-        prog = os.environ.get("ProgramFiles", "C:\\Program Files")
+        prog = os.environ.get("PROGRAMFILES", "C:\\Program Files")
         p = Path(prog) / "OutWarp" / "client"
         return [p] if p.exists() else []
     if sys.platform == "linux":
@@ -104,7 +104,7 @@ def _client_shims() -> list[Path]:
     """Every entry-point binary install.sh / pipx have ever produced for the
     client. We try them all — a no-op if the file doesn't exist."""
     if sys.platform == "win32":
-        prog = os.environ.get("ProgramFiles", "C:\\Program Files")
+        prog = os.environ.get("PROGRAMFILES", "C:\\Program Files")
         p = Path(prog) / "OutWarp" / "outwarp.bat"
         return [p] if p.exists() else []
     if sys.platform == "linux":
@@ -148,7 +148,10 @@ def _startup_shortcut() -> Path | None:
     if sys.platform == "win32":
         appdata = os.environ.get("APPDATA", "")
         if appdata:
-            return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "OutWarp.lnk"
+            return (
+                Path(appdata) / "Microsoft" / "Windows" / "Start Menu"
+                / "Programs" / "Startup" / "OutWarp.lnk"
+            )
     return None
 
 
@@ -319,5 +322,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print("OutWarp client uninstalled successfully.")
     if sys.platform == "win32":
-        print("You can also remove WireGuard for Windows from Add/Remove Programs if no longer needed.")
+        print(
+            "You can also remove WireGuard for Windows from Add/Remove Programs "
+            "if no longer needed.",
+        )
     return 0

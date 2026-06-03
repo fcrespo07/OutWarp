@@ -871,9 +871,8 @@ def main(argv: list[str] | None = None) -> int:
     if handler is None:
         parser.print_help()
         return 1
-    if args.command in _PRIVILEGED_COMMANDS:
-        # Skip the root check when --config-dir points to a writable location
-        # (used by tests). Real installations always use the default /etc path.
-        if not args.config_dir:
-            _require_root(args.command)
+    # Skip the root check when --config-dir points to a writable location
+    # (used by tests). Real installations always use the default /etc path.
+    if args.command in _PRIVILEGED_COMMANDS and not args.config_dir:
+        _require_root(args.command)
     return handler(args)

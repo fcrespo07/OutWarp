@@ -287,7 +287,9 @@ def _enable_ip_forwarding(config_dir: Path) -> None:
         _sp.run(["sysctl", "-p", str(sysctl_path)], capture_output=True, check=False)
         log.info("IP forwarding enabled persistently via %s", sysctl_path)
     except OSError as exc:
-        log.warning("Could not write %s: %s — IP forwarding must be enabled manually", sysctl_path, exc)
+        log.warning(
+            "Could not write %s: %s — IP forwarding must be enabled manually", sysctl_path, exc,
+        )
 
 
 def _probe_localhost(port: int) -> bool:

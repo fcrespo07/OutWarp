@@ -19,7 +19,10 @@ VALID: dict = {
     "http_upgrade_path_prefix": "s3cr3t-path",
     "cert_path": "/etc/outwarp/cert.pem",
     "key_path": "/etc/outwarp/key.pem",
-    "cert_fingerprint_sha256": "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89",
+    "cert_fingerprint_sha256": (
+        "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:"
+        "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89"
+    ),
     "wg_private_key": "cHJpdmF0ZWtleQ==",
     "wg_public_key": "cHVibGlja2V5",
     "subnet": "10.0.0.0/24",

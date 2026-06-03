@@ -775,7 +775,9 @@ def test_update_profile_applies_and_persists(tmp_path):
         patch("outwarp.api.default_config_path", return_value=tmp_path / "config.json"),
         patch("outwarp.api.TunnelManager", return_value=MagicMock()),
     ):
-        r = api.update_profile("OutWarp", {"name": "Trabajo", "mtu": 1400, "dns": "9.9.9.9, 1.1.1.1"})
+        r = api.update_profile(
+            "OutWarp", {"name": "Trabajo", "mtu": 1400, "dns": "9.9.9.9, 1.1.1.1"},
+        )
     assert r["ok"] is True
     assert r["profile"]["name"] == "Trabajo"
     assert r["profile"]["mtu"] == 1400

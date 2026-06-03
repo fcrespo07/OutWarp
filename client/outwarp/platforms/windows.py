@@ -80,7 +80,9 @@ class WindowsPlatform(Platform):
         # Clean up any stale service left over from a previous session.
         stale = _run(["sc", "query", f"WireGuardTunnel${name}"])
         if stale.returncode == 0:
-            log.warning("Stale WireGuard service found for '%s'; uninstalling before reinstall", name)
+            log.warning(
+                "Stale WireGuard service found for '%s'; uninstalling before reinstall", name,
+            )
             self.uninstall_wg_tunnel(name)
 
         self._conf_dir.mkdir(parents=True, exist_ok=True)

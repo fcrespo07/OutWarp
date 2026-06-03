@@ -12,7 +12,7 @@ class NetworkError(RuntimeError):
     pass
 
 
-class FingerprintMismatch(NetworkError):
+class FingerprintMismatchError(NetworkError):
     """The endpoint presented a certificate other than the pinned one.
 
     Distinct from a plain NetworkError (unreachable / no cert) so callers can
@@ -33,9 +33,9 @@ def get_tls_fingerprint(host: str, port: int, timeout: float = 5.0) -> str:
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     try:
-        with socket.create_connection((host, port), timeout=timeout) as sock:
-            with ctx.wrap_socket(sock, server_hostname=host) as ssock:
-                der = ssock.getpeercert(binary_form=True)
+        with socket.create_connection((host, port), timeout=timeout) as sock, \
+                ctx.wrap_socket(sock, server_hostname=host) as ssock:
+            der = ssock.getpeercert(binary_form=True)
     except OSError as exc:
         raise NetworkError(
             f"Could not establish TLS connection to {host}:{port}: {exc}"
@@ -90,7 +90,7 @@ def measure_latency_ms(host: str, timeout_ms: int = 2000) -> int | None:
 def verify_tls_fingerprint(host: str, port: int, expected: str, timeout: float = 5.0) -> None:
     actual = get_tls_fingerprint(host, port, timeout)
     if actual.upper() != expected.upper():
-        raise FingerprintMismatch(
+        raise FingerprintMismatchError(
             f"TLS certificate fingerprint mismatch for {host}:{port}.\n"
             f"  Expected: {expected.upper()}\n"
             f"  Got:      {actual}\n"

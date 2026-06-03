@@ -173,7 +173,7 @@ def main() -> int:
         # matches the rest of the log line so it stays grep-friendly.
         log.info("startup [%5.2fs] %s", time.monotonic() - t0, label)
 
-    _stage("OutWarp client v%s starting" % __version__)
+    _stage(f"OutWarp client v{__version__} starting")
     _release_stale_kill_switch_async()
 
     lock = _SingleInstanceLock()

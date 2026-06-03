@@ -68,7 +68,10 @@ def test_install_wg_tunnel_writes_conf_and_invokes_wireguard(tmp_path, monkeypat
 
     assert path == tmp_path / "MyTunnel.conf"
     assert path.read_text(encoding="utf-8").startswith("[Interface]")
-    install_call = next(c for c in install_calls if "/installtunnelservice" in (c[1] if len(c) > 1 else ""))
+    install_call = next(
+        c for c in install_calls
+        if "/installtunnelservice" in (c[1] if len(c) > 1 else "")
+    )
     assert install_call[2] == str(path)
 
 
@@ -78,9 +81,9 @@ def test_install_wg_tunnel_raises_on_failure(tmp_path, monkeypatch):
     monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
     (tmp_path / "wireguard.exe").write_text("fake")
 
-    with patch("subprocess.run", return_value=_mock_run(1, stderr="access denied")):
-        with pytest.raises(PlatformError, match="access denied"):
-            p.install_wg_tunnel("MyTunnel", "...")
+    with patch("subprocess.run", return_value=_mock_run(1, stderr="access denied")), \
+            pytest.raises(PlatformError, match="access denied"):
+        p.install_wg_tunnel("MyTunnel", "...")
 
 
 def test_install_wg_tunnel_raises_when_wireguard_missing(tmp_path, monkeypatch):
@@ -196,16 +199,16 @@ def test_get_default_gateway_parses_ipv4():
 
 def test_get_default_gateway_raises_on_invalid_output():
     p = WindowsPlatform()
-    with patch("subprocess.run", return_value=_mock_run(0, stdout="not-an-ip\n")):
-        with pytest.raises(PlatformError, match="Could not parse"):
-            p.get_default_gateway()
+    with patch("subprocess.run", return_value=_mock_run(0, stdout="not-an-ip\n")), \
+            pytest.raises(PlatformError, match="Could not parse"):
+        p.get_default_gateway()
 
 
 def test_get_default_gateway_raises_on_command_failure():
     p = WindowsPlatform()
-    with patch("subprocess.run", return_value=_mock_run(1, stderr="boom")):
-        with pytest.raises(PlatformError, match="Failed to query default gateway"):
-            p.get_default_gateway()
+    with patch("subprocess.run", return_value=_mock_run(1, stderr="boom")), \
+            pytest.raises(PlatformError, match="Failed to query default gateway"):
+        p.get_default_gateway()
 
 
 # --- WindowsPlatform: routes ---
@@ -220,9 +223,9 @@ def test_add_host_route_calls_route_add():
 
 def test_add_host_route_raises_on_failure():
     p = WindowsPlatform()
-    with patch("subprocess.run", return_value=_mock_run(1, stderr="access denied")):
-        with pytest.raises(PlatformError, match="Failed to add host route"):
-            p.add_host_route("203.0.113.42", "192.168.1.1")
+    with patch("subprocess.run", return_value=_mock_run(1, stderr="access denied")), \
+            pytest.raises(PlatformError, match="Failed to add host route"):
+        p.add_host_route("203.0.113.42", "192.168.1.1")
 
 
 def test_remove_host_route_idempotent():
@@ -273,8 +276,8 @@ def test_linux_install_wg_tunnel_invokes_helper_with_conf_on_stdin(linux_helper)
         path = p.install_wg_tunnel("OutWarp", "[Interface]\nPrivateKey=k\n")
 
     # Returned path is the canonical /etc/wireguard location written by the helper.
-    from pathlib import Path as _P
-    assert path == _P("/etc/wireguard/OutWarp.conf")
+    from pathlib import Path
+    assert path == Path("/etc/wireguard/OutWarp.conf")
 
     cmd = mock_run.call_args[0][0]
     assert cmd == [str(linux_helper), "up", "OutWarp"]
@@ -284,9 +287,9 @@ def test_linux_install_wg_tunnel_invokes_helper_with_conf_on_stdin(linux_helper)
 
 def test_linux_install_wg_tunnel_raises_on_helper_failure(linux_helper):
     p = _linux_platform(linux_helper)
-    with patch("subprocess.run", return_value=_mock_run(1, stderr="Address already in use")):
-        with pytest.raises(PlatformError, match="Address already in use"):
-            p.install_wg_tunnel("OutWarp", "...")
+    with patch("subprocess.run", return_value=_mock_run(1, stderr="Address already in use")), \
+            pytest.raises(PlatformError, match="Address already in use"):
+        p.install_wg_tunnel("OutWarp", "...")
 
 
 def test_linux_install_wg_tunnel_raises_when_helper_missing(tmp_path, monkeypatch):
@@ -399,16 +402,16 @@ def test_linux_get_default_gateway_skips_non_ipv4_lines(linux_helper):
 
 def test_linux_get_default_gateway_raises_on_invalid_output(linux_helper):
     p = _linux_platform(linux_helper)
-    with patch("subprocess.run", return_value=_mock_run(0, stdout="default dev eth0\n")):
-        with pytest.raises(PlatformError, match="Could not parse"):
-            p.get_default_gateway()
+    with patch("subprocess.run", return_value=_mock_run(0, stdout="default dev eth0\n")), \
+            pytest.raises(PlatformError, match="Could not parse"):
+        p.get_default_gateway()
 
 
 def test_linux_get_default_gateway_raises_on_command_failure(linux_helper):
     p = _linux_platform(linux_helper)
-    with patch("subprocess.run", return_value=_mock_run(1, stderr="boom")):
-        with pytest.raises(PlatformError, match="Failed to query default gateway"):
-            p.get_default_gateway()
+    with patch("subprocess.run", return_value=_mock_run(1, stderr="boom")), \
+            pytest.raises(PlatformError, match="Failed to query default gateway"):
+        p.get_default_gateway()
 
 
 # --- LinuxPlatform: routes ---
@@ -433,9 +436,9 @@ def test_linux_add_host_route_idempotent_when_already_exists(linux_helper):
 
 def test_linux_add_host_route_raises_on_other_failure(linux_helper):
     p = _linux_platform(linux_helper)
-    with patch("subprocess.run", return_value=_mock_run(1, stderr="permission denied")):
-        with pytest.raises(PlatformError, match="Failed to add host route"):
-            p.add_host_route("203.0.113.42", "192.168.1.1")
+    with patch("subprocess.run", return_value=_mock_run(1, stderr="permission denied")), \
+            pytest.raises(PlatformError, match="Failed to add host route"):
+        p.add_host_route("203.0.113.42", "192.168.1.1")
 
 
 def test_linux_remove_host_route_idempotent(linux_helper):
@@ -470,9 +473,9 @@ class _FakeWinreg:
         winreg_self = self
 
         class _CtxKey:
-            def __enter__(self_inner):
+            def __enter__(self):
                 return winreg_self
-            def __exit__(self_inner, *exc):
+            def __exit__(self, *exc):
                 return False
 
         return _CtxKey()
@@ -710,9 +713,9 @@ def test_windows_engage_kill_switch_rolls_back_allow_when_block_fails():
             return _mock_run(1, stderr="boom")
         return _mock_run(0)  # the allow add succeeds first
 
-    with patch("subprocess.run", side_effect=fake_run):
-        with pytest.raises(PlatformError, match="block rule"):
-            p.engage_kill_switch(["1.1.1.1"])
+    with patch("subprocess.run", side_effect=fake_run), \
+            pytest.raises(PlatformError, match="block rule"):
+        p.engage_kill_switch(["1.1.1.1"])
 
     # After the block-rule add failed we should have deleted the allow rule
     # we added, otherwise we leave a half-engaged switch behind.

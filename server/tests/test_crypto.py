@@ -89,9 +89,9 @@ class TestWgKeypair:
         assert mock_run.call_count == 2
 
     def test_raises_on_missing_binary(self) -> None:
-        with patch("outwarp_server.crypto.shutil.which", return_value=None):
-            with pytest.raises(CryptoError, match="WireGuard tools not found"):
-                generate_wg_keypair()
+        with patch("outwarp_server.crypto.shutil.which", return_value=None), \
+                pytest.raises(CryptoError, match="WireGuard tools not found"):
+            generate_wg_keypair()
 
     def test_raises_on_subprocess_failure(self) -> None:
         import subprocess

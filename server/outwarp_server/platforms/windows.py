@@ -245,11 +245,14 @@ class WindowsServerPlatform(ServerPlatform):
         # Also activate immediately without requiring a reboot.
         result = _ps("Get-NetIPInterface | Set-NetIPInterface -Forwarding Enabled")
         if result.returncode != 0:
-            log.warning("Could not enable forwarding via Set-NetIPInterface: %s", result.stderr.strip())
+            log.warning(
+                "Could not enable forwarding via Set-NetIPInterface: %s", result.stderr.strip(),
+            )
 
     def _create_nat(self, subnet: str) -> None:
         check = _ps(
-            f"Get-NetNat -Name '{_NAT_NAME}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name"
+            f"Get-NetNat -Name '{_NAT_NAME}' -ErrorAction SilentlyContinue "
+            "| Select-Object -ExpandProperty Name"
         )
         if _NAT_NAME in check.stdout:
             log.debug("NetNat '%s' already exists", _NAT_NAME)

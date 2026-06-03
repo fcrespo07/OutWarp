@@ -80,17 +80,17 @@ class TestLinuxPlatform:
     @patch("outwarp_server.platforms.linux._run")
     def test_install_wstunnel_raises_on_systemctl_failure(self, mock_run: MagicMock) -> None:
         mock_run.side_effect = subprocess.CalledProcessError(1, "systemctl", stderr="fail")
-        with patch("outwarp_server.platforms.linux._SERVICE_PATH"):
-            with patch("outwarp_server.platforms.linux.os.chmod"):
-                with pytest.raises(PlatformError, match="Failed to enable"):
-                    LinuxServerPlatform().install_wstunnel_service(
-                        port=443,
-                        cert_path=Path("/x"),
-                        key_path=Path("/y"),
-                        upgrade_path="s",
-                        wg_listen_port=51820,
-                        wstunnel_bin=Path("/usr/bin/wstunnel"),
-                    )
+        with patch("outwarp_server.platforms.linux._SERVICE_PATH"), \
+                patch("outwarp_server.platforms.linux.os.chmod"), \
+                pytest.raises(PlatformError, match="Failed to enable"):
+            LinuxServerPlatform().install_wstunnel_service(
+                port=443,
+                cert_path=Path("/x"),
+                key_path=Path("/y"),
+                upgrade_path="s",
+                wg_listen_port=51820,
+                wstunnel_bin=Path("/usr/bin/wstunnel"),
+            )
 
 
     @patch("outwarp_server.platforms.linux._SYSCTL_DROP_IN")

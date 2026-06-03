@@ -21,7 +21,10 @@ VALID = {
         "http_upgrade_path_prefix": "s3cr3t",
     },
     "tls": {
-        "cert_fingerprint_sha256": "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89",
+        "cert_fingerprint_sha256": (
+            "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:"
+            "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89"
+        ),
     },
     "tunnel": {"local_port": 51820, "remote_host": "10.0.0.1", "remote_port": 51820},
     "wireguard": {

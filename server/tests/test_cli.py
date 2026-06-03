@@ -19,7 +19,10 @@ def _write_server_config(tmp_path: Path, **overrides: object) -> Path:
         "http_upgrade_path_prefix": "s3cr3t",
         "cert_path": str(tmp_path / "cert.pem"),
         "key_path": str(tmp_path / "key.pem"),
-        "cert_fingerprint_sha256": "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89",
+        "cert_fingerprint_sha256": (
+            "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:"
+            "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89"
+        ),
         "wg_private_key": "server_priv",
         "wg_public_key": "server_pub",
         "subnet": "10.0.0.0/24",
@@ -75,7 +78,10 @@ def test_parser_has_config_dir_option() -> None:
 
 class TestAddClient:
     @patch("outwarp_server.operations.add_peer_live")
-    @patch("outwarp_server.operations.generate_wg_keypair", return_value=("client_priv", "client_pub"))
+    @patch(
+        "outwarp_server.operations.generate_wg_keypair",
+        return_value=("client_priv", "client_pub"),
+    )
     def test_add_client_creates_warpcfg(
         self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path
     ) -> None:

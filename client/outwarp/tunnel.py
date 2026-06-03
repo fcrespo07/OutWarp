@@ -16,7 +16,7 @@ from platformdirs import user_data_dir
 
 from outwarp.config import ClientConfig
 from outwarp.network import (
-    FingerprintMismatch,
+    FingerprintMismatchError,
     NetworkError,
     tcp_probe,
     verify_tls_fingerprint,
@@ -194,7 +194,7 @@ class Tunnel:
             verify_tls_fingerprint(
                 s.endpoint, chosen_port, self._config.tls.cert_fingerprint_sha256
             )
-        except FingerprintMismatch as exc:
+        except FingerprintMismatchError as exc:
             if not self.allow_tls_intercept:
                 raise TunnelError(str(exc)) from exc
             log.warning(

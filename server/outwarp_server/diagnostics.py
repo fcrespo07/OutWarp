@@ -8,7 +8,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -17,7 +17,7 @@ from outwarp_server.config import ServerConfig
 log = logging.getLogger(__name__)
 
 
-class Status(str, Enum):
+class Status(StrEnum):
     PASS = "pass"
     WARN = "warn"
     FAIL = "fail"
@@ -194,7 +194,8 @@ def check_win_ip_forwarding(config: ServerConfig) -> CheckResult:
             "-Name IPEnableRouter -Value 1` and reboot."
         ),
         remediation_command=(
-            "Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters' "
+            "Set-ItemProperty -Path "
+            "'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters' "
             "-Name IPEnableRouter -Value 1"
         ),
     )
@@ -636,7 +637,9 @@ def check_linux_systemd(config: ServerConfig) -> CheckResult:
 
     def _fix_restart(_config: ServerConfig) -> None:
         for svc in inactive:
-            subprocess.run(["systemctl", "restart", svc], check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["systemctl", "restart", svc], check=True, capture_output=True, text=True,
+            )
 
     cmd = " && ".join(f"systemctl restart {svc}" for svc in inactive)
     return CheckResult(
@@ -727,7 +730,9 @@ def check_linux_listen_wg(config: ServerConfig) -> CheckResult:
 
 def _ip_forward_fix(_config: ServerConfig) -> None:
     Path(_LINUX_SYSCTL_DROP_IN).write_text("net.ipv4.ip_forward=1\n", encoding="utf-8")
-    subprocess.run(["sysctl", "-p", _LINUX_SYSCTL_DROP_IN], check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["sysctl", "-p", _LINUX_SYSCTL_DROP_IN], check=True, capture_output=True, text=True,
+    )
 
 
 def check_linux_ip_forward(config: ServerConfig) -> CheckResult:
