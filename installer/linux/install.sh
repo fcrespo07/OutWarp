@@ -924,6 +924,15 @@ case "$cmd" in
         name="${1:-}"; need_name "$name"
         wg show "$name" >/dev/null 2>&1
         ;;
+    dump)
+        # Bridges `wg show <iface> dump` across the privilege boundary so the
+        # TUI's StatsSampler can read rx/tx/handshake counters without sudo.
+        # `wg show` requires CAP_NET_ADMIN; without root it prints
+        # "Operation not permitted" on stderr and still exits 0, so the
+        # StatsSampler can't detect the failure from a direct call.
+        name="${1:-}"; need_name "$name"
+        wg show "$name" dump
+        ;;
     route-add)
         ip="${1:-}"; gw="${2:-}"
         need_ipv4 "$ip"; need_ipv4 "$gw"

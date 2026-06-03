@@ -8,6 +8,7 @@ to compute deltas, and gate negative deltas (interface restart) to zero.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import socket
 import subprocess
@@ -31,6 +32,7 @@ class TunnelStats:
 
 
 _DEFAULT_WIN_WG = Path(r"C:\Program Files\WireGuard\wg.exe")
+_DEFAULT_HELPER = Path("/usr/local/libexec/outwarp-priv")
 
 
 def _find_wg() -> Path | None:
@@ -40,8 +42,68 @@ def _find_wg() -> Path | None:
     return Path(found) if found else None
 
 
+def _wg_dump_via_helper(iface: str) -> str | None:
+    """Linux only: ask the OutWarp privileged helper for `wg show <iface> dump`.
+
+    `wg show` requires CAP_NET_ADMIN. As a regular user it prints
+    "Operation not permitted" on stderr and (annoyingly) still exits 0,
+    so a direct subprocess.run() leaves the StatsSampler reading empty
+    stdout and reporting all zeros. The installer drops a setuid-equivalent
+    helper at /usr/local/libexec/outwarp-priv whitelisted in sudoers.d
+    for `sudo -n` from the desktop user; the `dump` subcommand wraps the
+    privileged read.
+
+    Returns the raw dump stdout, or None if the helper is missing, the
+    sudoers rule is not in place, or the helper version pre-dates the
+    `dump` subcommand (older install.sh — graceful fallback).
+    """
+    helper_path = Path(os.environ.get("OUTWARP_HELPER") or _DEFAULT_HELPER)
+    if not helper_path.exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", str(helper_path), "dump", iface],
+            capture_output=True, text=True, check=False, timeout=2,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
 def _read_wg_transfer(iface: str) -> tuple[int, int, int | None] | None:
     """Return (rx_total, tx_total, last_handshake_ts) or None if unavailable."""
+    stdout = _wg_dump_stdout(iface)
+    if not stdout:
+        return None
+    lines = [ln for ln in stdout.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return None
+    parts = lines[1].split("\t")
+    if len(parts) < 8:
+        return None
+    _pub, _psk, _ep, _allowed, handshake, rx, tx, _ka = parts[:8]
+    try:
+        hs = int(handshake)
+    except ValueError:
+        hs = 0
+    rx_n = int(rx) if rx.isdigit() else 0
+    tx_n = int(tx) if tx.isdigit() else 0
+    return rx_n, tx_n, hs if hs > 0 else None
+
+
+def _wg_dump_stdout(iface: str) -> str | None:
+    """Get raw `wg show <iface> dump` output across the privilege boundary.
+
+    Linux non-root: try the OutWarp privileged helper first. On any
+    other platform — or when running as root, or when the helper isn't
+    deployed yet — fall through to a direct `wg show` invocation.
+    """
+    if sys.platform == "linux" and hasattr(os, "geteuid") and os.geteuid() != 0:
+        via_helper = _wg_dump_via_helper(iface)
+        if via_helper is not None:
+            return via_helper
     wg = _find_wg()
     if wg is None:
         return None
@@ -57,20 +119,7 @@ def _read_wg_transfer(iface: str) -> tuple[int, int, int | None] | None:
         return None
     if result.returncode != 0:
         return None
-    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
-    if len(lines) < 2:
-        return None
-    parts = lines[1].split("\t")
-    if len(parts) < 8:
-        return None
-    _pub, _psk, _ep, _allowed, handshake, rx, tx, _ka = parts[:8]
-    try:
-        hs = int(handshake)
-    except ValueError:
-        hs = 0
-    rx_n = int(rx) if rx.isdigit() else 0
-    tx_n = int(tx) if tx.isdigit() else 0
-    return rx_n, tx_n, hs if hs > 0 else None
+    return result.stdout
 
 
 def _ping_once(host: str, *, timeout_s: float = 1.0) -> float | None:
