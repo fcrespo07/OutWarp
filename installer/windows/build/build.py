@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,60 @@ SPECS = [
     BUILD_DIR / "outwarp-client.spec",
     BUILD_DIR / "outwarp-server.spec",
 ]
+
+# Canonical version source — what `outwarp-cli --version` reports. Used as the
+# default for --version and to regenerate the PyInstaller version_info_*.txt
+# files just before each build so the .exe metadata never drifts behind the
+# wheel.
+_CANONICAL_VERSION_FILE = ROOT / "client" / "outwarp" / "__init__.py"
+_VERSION_INFO_TARGETS = [
+    BUILD_DIR / "version_info_client.txt",
+    BUILD_DIR / "version_info_server.txt",
+]
+_VERSION_TUPLE_RE = re.compile(r"\(\d+,\s*\d+,\s*\d+,\s*\d+\)")
+_VERSION_DOTTED_RE = re.compile(r"u'\d+\.\d+\.\d+\.\d+'")
+
+
+def _read_canonical_version() -> str:
+    """Pull X.Y.Z out of ``client/outwarp/__init__.py``.
+
+    Single source of truth — every other version-bearing artefact (wheel,
+    Inno Setup, PyInstaller VS_VERSION_INFO) is derived from this.
+    """
+    text = _CANONICAL_VERSION_FILE.read_text(encoding="utf-8")
+    match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', text)
+    if not match:
+        raise SystemExit(
+            f"could not parse __version__ from {_CANONICAL_VERSION_FILE}"
+        )
+    return match.group(1)
+
+
+def _refresh_version_info(version: str) -> None:
+    """Rewrite the checked-in ``version_info_*.txt`` files in place.
+
+    PyInstaller VS_VERSION_INFO needs literal tuples + strings; we don't
+    template the files, we just rewrite the two version-bearing fields each
+    time. Idempotent — re-running with the same version is a no-op.
+    """
+    parts = version.split(".")
+    if len(parts) != 3:
+        raise SystemExit(
+            f"unexpected version format: {version!r} (need MAJOR.MINOR.PATCH)"
+        )
+    try:
+        major, minor, patch = (int(p) for p in parts)
+    except ValueError as exc:
+        raise SystemExit(f"non-integer in version {version!r}: {exc}") from exc
+    tuple_repr = f"({major}, {minor}, {patch}, 0)"
+    dotted_repr = f"u'{major}.{minor}.{patch}.0'"
+    for path in _VERSION_INFO_TARGETS:
+        original = path.read_text(encoding="utf-8")
+        rewritten = _VERSION_TUPLE_RE.sub(tuple_repr, original)
+        rewritten = _VERSION_DOTTED_RE.sub(dotted_repr, rewritten)
+        if rewritten != original:
+            path.write_text(rewritten, encoding="utf-8")
+            print(f"  updated {path.name} -> {version}.0")
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None) -> None:
@@ -218,7 +273,11 @@ def step_checksums(version: str) -> Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--version", default=os.environ.get("OUTWARP_VERSION", "0.4.1"))
+    ap.add_argument(
+        "--version",
+        default=os.environ.get("OUTWARP_VERSION") or _read_canonical_version(),
+        help="installer version; defaults to __version__ in client/outwarp/__init__.py",
+    )
     ap.add_argument("--skip-ui", action="store_true")
     ap.add_argument("--skip-fetch", action="store_true")
     ap.add_argument("--skip-pyinstaller", action="store_true")
@@ -239,6 +298,9 @@ def main() -> int:
         step_fetch()
     if not args.skip_pyinstaller:
         _ensure_runtime_deps(python_bin)
+        # Keep the .exe FileVersion / ProductVersion in sync with --version
+        # right before PyInstaller reads version_info_*.txt.
+        _refresh_version_info(args.version)
         step_pyinstaller(python_bin, clean=not args.no_clean)
     if not args.no_installer:
         editions = [e.strip() for e in args.editions.split(",") if e.strip()]
