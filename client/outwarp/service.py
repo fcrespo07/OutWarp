@@ -113,6 +113,10 @@ def _resolve_daemon_executable() -> Path:
 
 
 def _unit_content(exe_path: Path) -> str:
+    # systemd is Linux-only; the unit must use POSIX separators even when the
+    # generator runs on Windows (the unit-content tests run on every OS in CI).
+    # str(PurePosixPath) would also work but as_posix() is the documented hook.
+    exe_str = exe_path.as_posix()
     return (
         "[Unit]\n"
         "Description=OutWarp client (WireGuard over WebSocket)\n"
@@ -122,7 +126,7 @@ def _unit_content(exe_path: Path) -> str:
         "\n"
         "[Service]\n"
         "Type=simple\n"
-        f"ExecStart={exe_path} daemon\n"
+        f"ExecStart={exe_str} daemon\n"
         "Restart=on-failure\n"
         "RestartSec=10\n"
         # Tunnel state lives in $HOME/.config and $HOME/.local/state, so
@@ -163,7 +167,7 @@ def install_service() -> int:
     exe_path = _resolve_daemon_executable()
     unit_path.write_text(_unit_content(exe_path), encoding="utf-8")
     print(f"Wrote {unit_path}")
-    print(f"  ExecStart={exe_path} daemon")
+    print(f"  ExecStart={exe_path.as_posix()} daemon")
 
     for step in (("daemon-reload",), ("enable", "--now", SERVICE_NAME)):
         res = _systemctl(*step)
