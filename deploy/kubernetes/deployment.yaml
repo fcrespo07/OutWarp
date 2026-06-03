@@ -70,7 +70,7 @@ spec:
           livenessProbe:
             tcpSocket:
               # Must match OUTWARP_PORT in the ConfigMap.
-              port: 8443
+              port: 443
             initialDelaySeconds: 15
             periodSeconds: 30
             failureThreshold: 3
