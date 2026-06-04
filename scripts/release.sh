@@ -151,6 +151,46 @@ else
     ok "Tag $TAG already on origin"
 fi
 
+# ─── Release notes (from CHANGELOG.md) ────────────────────────────────────────
+# Pull the section for this version out of CHANGELOG.md so the GitHub Release
+# body carries the actual change list, not just install boilerplate. Falls back
+# to a minimal note when the version has no section yet.
+NOTES_FILE="$(mktemp)"
+trap 'rm -f "$NOTES_FILE"' EXIT
+
+CHANGELOG="$REPO_ROOT/CHANGELOG.md"
+if [[ -f "$CHANGELOG" ]]; then
+    # Print from the "## [<version>]" heading up to (not including) the next
+    # "## " heading. index()/exact-bracket match avoids regex-escaping the dots.
+    awk -v tag="[$VERSION]" '
+        /^## / { if (started) exit; if (index($0, tag)) started=1 }
+        started { print }
+    ' "$CHANGELOG" > "$NOTES_FILE"
+fi
+if [[ ! -s "$NOTES_FILE" ]]; then
+    warn "No CHANGELOG.md section for $VERSION — using minimal release notes"
+    printf '## %s\n' "$TAG" > "$NOTES_FILE"
+fi
+cat >> "$NOTES_FILE" <<EOF
+
+---
+
+### Install / upgrade
+
+Linux (client or server):
+\`\`\`
+curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/linux/install.sh | sudo bash
+\`\`\`
+Or upgrade in place:
+\`\`\`
+sudo outwarp-cli update      # client
+sudo outwarp-server update   # server
+\`\`\`
+
+Windows: download the matching \`OutWarpSetup-*.exe\` below and run it.
+Verify any asset against \`SHA256SUMS.txt\`.
+EOF
+
 # ─── GitHub Release ───────────────────────────────────────────────────────────
 ASSETS=(
     "$DIST_DIR"/outwarp_client-*.whl
@@ -159,25 +199,15 @@ ASSETS=(
 )
 
 if gh -R "$GH_REPO" release view "$TAG" >/dev/null 2>&1; then
-    info "Release $TAG exists - uploading wheel assets (--clobber)..."
+    info "Release $TAG exists - refreshing notes + uploading wheel assets (--clobber)..."
+    gh -R "$GH_REPO" release edit "$TAG" --notes-file "$NOTES_FILE" >/dev/null
     gh -R "$GH_REPO" release upload "$TAG" "${ASSETS[@]}" --clobber
-    ok "Assets uploaded to existing release"
+    ok "Notes refreshed and assets uploaded to existing release"
 else
     info "Creating release $TAG..."
     gh -R "$GH_REPO" release create "$TAG" \
         --title "$TAG" \
-        --notes "Linux wheels for OutWarp $TAG.
-
-Install / upgrade with the one-liner:
-\`\`\`
-curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/linux/install.sh | sudo bash
-\`\`\`
-
-Or upgrade in place:
-\`\`\`
-sudo outwarp-cli update      # client
-sudo outwarp-server update   # server
-\`\`\`" \
+        --notes-file "$NOTES_FILE" \
         "${ASSETS[@]}"
     ok "Release $TAG created"
 fi
