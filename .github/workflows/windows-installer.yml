@@ -1,0 +1,104 @@
+name: Windows installer
+
+# Builds the OutWarp Windows installers (full + client + server editions) and
+# attaches them to the GitHub Release, so the .exe stops being a manual step.
+#
+# Triggers:
+#   - release: published  → fires automatically when scripts/release.sh creates
+#     a GitHub Release (the local PAT trigger re-runs Actions, unlike GITHUB_TOKEN).
+#   - workflow_dispatch   → manual run against any existing tag (e.g. to build
+#     0.6.1 retroactively, or to rebuild after a runner hiccup).
+#
+# The build itself (UI bundle → fetch wstunnel/WireGuard → PyInstaller → Inno
+# Setup → checksums) lives in installer/windows/build/build.py; this workflow
+# only provides the Windows runner + toolchain and uploads the artifacts.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach the installer to (e.g. v0.6.1)"
+        required: true
+
+permissions:
+  contents: write   # upload assets to the release
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          if (-not $tag) { $tag = "${{ github.event.inputs.tag }}" }
+          if (-not $tag) { throw "no tag resolved from event or input" }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          Write-Host "Building installers for $tag"
+
+      - name: Checkout the released sources
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Inno Setup 6
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installers
+        shell: pwsh
+        run: python installer/windows/build/build.py
+        # No --version: build.py defaults to __version__ in the checked-out
+        # tag, and refreshes the PE VS_VERSION_INFO + Inno /DAppVersion from it.
+
+      - name: List build output
+        shell: pwsh
+        run: Get-ChildItem installer/windows/output
+
+      - name: Merge Windows checksums into the release SHA256SUMS.txt
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          # Both updaters read ONE SHA256SUMS.txt per release and look an asset up
+          # by name, so the manifest must list the wheels (uploaded by release.sh)
+          # AND the .exe installers. Pull the existing wheel manifest and merge.
+          gh release download $tag --pattern "SHA256SUMS.txt" --output existing.txt
+          $global:LASTEXITCODE = 0   # missing asset is fine; we start from empty
+          if (-not (Test-Path existing.txt)) { New-Item existing.txt -ItemType File | Out-Null }
+          $merged = Get-Content existing.txt, installer/windows/output/SHA256SUMS.txt `
+            | Where-Object { $_.Trim() -ne "" } | Sort-Object -Unique
+          $merged | Set-Content -Encoding ascii installer/windows/output/SHA256SUMS.txt
+          Write-Host "Merged manifest:"
+          Get-Content installer/windows/output/SHA256SUMS.txt
+
+      - name: Upload installers + merged checksums to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          $exes = Get-ChildItem installer/windows/output/OutWarpSetup-*.exe
+          if (-not $exes) { throw "no OutWarpSetup-*.exe produced" }
+          gh release upload $tag $exes.FullName installer/windows/output/SHA256SUMS.txt --clobber
+
+      - name: Upload installers as workflow artifacts (debugging)
+        uses: actions/upload-artifact@v4
+        with:
+          name: OutWarp-windows-installers-${{ steps.tag.outputs.tag }}
+          path: installer/windows/output/OutWarpSetup-*.exe
+          if-no-files-found: error

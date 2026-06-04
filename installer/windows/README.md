@@ -84,9 +84,26 @@ The version surfaces in three places — keep them aligned:
 
 ## Publishing a release
 
+Automated. `.github/workflows/windows-installer.yml` runs on every published
+GitHub Release: it spins up a `windows-latest` runner, executes
+`installer/windows/build/build.py` against the released tag, and uploads the
+three `OutWarpSetup-*.exe` editions plus a merged `SHA256SUMS.txt` (wheel +
+installer hashes) to the Release. So the normal flow is just:
+
+1. `bash scripts/release.sh` (Linux) — builds wheels, tags, and creates the
+   Release. Publishing the Release triggers the Windows installer build.
+
+To build the installer for an existing tag (or rerun after a hiccup):
+
+```bash
+gh workflow run windows-installer.yml -f tag=v0.6.1
+```
+
+Manual fallback (on a Windows box, no Actions):
+
 1. Tag the commit: `git tag v0.1.0 && git push origin v0.1.0`.
 2. Run `python installer\windows\build\build.py --version 0.1.0`.
-3. Upload `installer\windows\output\OutWarpSetup-0.1.0.exe` to the
+3. Upload `installer\windows\output\OutWarpSetup-*.exe` to the
    GitHub Release named `v0.1.0`.
 
 End users download the `.exe` from the Release page and double-click
