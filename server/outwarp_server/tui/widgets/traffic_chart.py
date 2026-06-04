@@ -5,6 +5,8 @@ import contextlib
 from textual.containers import Container
 from textual.widgets import Sparkline, Static
 
+from outwarp_server.tui.tokens import DIM, OK
+
 
 class TrafficChart(Container):
     DEFAULT_CSS = "TrafficChart { layout: vertical; height: auto; }"
@@ -20,7 +22,7 @@ class TrafficChart(Container):
     def update_buckets(self, buckets: list[tuple[int, int, int]]) -> None:
         if not buckets:
             with contextlib.suppress(Exception):
-                self.query_one("#totals", Static).update("[#6e747e]no data yet[/]")
+                self.query_one("#totals", Static).update(f"[{DIM}]no data yet[/]")
             return
         rx_series = [float(b[1]) for b in buckets]
         tx_series = [float(b[2]) for b in buckets]
@@ -30,7 +32,7 @@ class TrafficChart(Container):
             total_rx = sum(b[1] for b in buckets)
             total_tx = sum(b[2] for b in buckets)
             self.query_one("#totals", Static).update(
-                f"24h  rx [#2ee0b3]{_fmt(total_rx)}[/]  tx [#2ee0b3]{_fmt(total_tx)}[/]"
+                f"24h  rx [{OK}]{_fmt(total_rx)}[/]  tx [{OK}]{_fmt(total_tx)}[/]"
             )
         except Exception:
             pass

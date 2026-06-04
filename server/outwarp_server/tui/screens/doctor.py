@@ -9,21 +9,22 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from outwarp_server.diagnostics import CheckResult, Status, run_all
+from outwarp_server.tui.tokens import BAD, BRAND, DIM, OK, WARN
 
 log = logging.getLogger(__name__)
 
 _ICON = {
-    Status.PASS: "[#2ee0b3]✓[/]",
-    Status.WARN: "[#ff9b4a]⚠[/]",
-    Status.FAIL: "[#ff5c7a]✗[/]",
-    Status.SKIP: "[#6e747e]—[/]",
+    Status.PASS: f"[{OK}]✓[/]",
+    Status.WARN: f"[{WARN}]⚠[/]",
+    Status.FAIL: f"[{BAD}]✗[/]",
+    Status.SKIP: f"[{DIM}]—[/]",
 }
 
 
 class DoctorScreen(Screen):
     BINDINGS = [
         Binding("r", "rerun", "Re-run"),
-        Binding("F", "apply_fix", "Apply fix"),
+        Binding("f", "apply_fix", "Apply fix"),
         Binding("escape", "app.pop_screen", "Back", priority=True),
         Binding("q", "app.quit", "Quit", priority=True),
         Binding("question_mark", "help", "Help"),
@@ -43,7 +44,7 @@ class DoctorScreen(Screen):
         t = self.query_one(DataTable)
         t.add_columns(" ", "Check", "Detail")
         t.focus()
-        self.query_one("#detail", Static).update("[#6e747e]Running checks...[/]")
+        self.query_one("#detail", Static).update(f"[{DIM}]Running checks...[/]")
         asyncio.create_task(self._run_async(), name="doctor-run")
 
     def action_rerun(self) -> None:
@@ -80,11 +81,11 @@ class DoctorScreen(Screen):
         r = self._results[idx]
         parts = [f"[bold]{r.name}[/bold]  {_ICON[r.status]}", r.detail or ""]
         if r.remediation:
-            parts.append(f"[#6e747e]→[/] {r.remediation}")
+            parts.append(f"[{DIM}]→[/] {r.remediation}")
         if r.remediation_command:
-            parts.append(f"[#2563ff]$[/] {r.remediation_command}")
+            parts.append(f"[{BRAND}]$[/] {r.remediation_command}")
         if r.fix_kind:
-            parts.append(f"[#6e747e]fix:[/] {r.fix_kind}")
+            parts.append(f"[{DIM}]fix:[/] {r.fix_kind}")
         self.query_one("#detail", Static).update("\n".join(parts))
 
     def action_apply_fix(self) -> None:

@@ -5,6 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from outwarp_server.config import _atomic_write_secret
 from outwarp_server.platforms.base import PlatformError, ServerPlatform
 
 log = logging.getLogger(__name__)
@@ -103,8 +104,10 @@ class LinuxServerPlatform(ServerPlatform):
     def install_wg_config(self, conf_text: str, interface: str = "wg0") -> None:
         conf_path = self.wg_config_dir() / f"{interface}.conf"
         try:
-            conf_path.write_text(conf_text, encoding="utf-8")
-            os.chmod(conf_path, 0o600)
+            # Atomic 0o600 write: the WG config carries the server's private key,
+            # so it must never exist at the umask default (0o644) — not even for
+            # the instant between write_text() and chmod().
+            _atomic_write_secret(conf_path, conf_text)
         except OSError as exc:
             raise PlatformError(f"Failed to write WG config: {exc}") from exc
 

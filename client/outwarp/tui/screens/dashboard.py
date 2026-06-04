@@ -56,6 +56,9 @@ class DashboardScreen(Screen):
         config = self.app.config
         self._sampler_iface: str | None = None
         self._sampler_peer: str | None = None
+        # Guards against piling up executor jobs: sample() can take several
+        # seconds (subprocess wg + ping) while the tick fires every 1s.
+        self._sampling = False
         self._rebuild_sampler(config)
         self.set_interval(1.0, self.refresh_stats)
         # Public IP / geo lookup runs once in the background — best-effort.
@@ -91,16 +94,30 @@ class DashboardScreen(Screen):
             self._rebuild_sampler(config)
 
     def refresh_stats(self) -> None:
+        # Cheap, main-thread-only: reflect the live tunnel state on the card so a
+        # disconnected (or reconnecting) tunnel is visible at a glance.
+        mgr = self.app.manager
+        with contextlib.suppress(Exception):
+            self.query_one(StatusCard).set_state(mgr.state if mgr is not None else None)
+        # StatsSampler.sample() shells out to `wg` and `ping` (blocking up to a
+        # few seconds). Run it off the event loop so the TUI stays responsive.
+        if self._sampling:
+            return
+        self._sampling = True
+        asyncio.create_task(self._async_refresh_stats(), name="refresh-stats")
+
+    async def _async_refresh_stats(self) -> None:
         try:
-            stats = self._sampler.sample()
+            loop = asyncio.get_running_loop()
+            stats = await loop.run_in_executor(None, self._sampler.sample)
         except Exception:
             log.exception("StatsSampler failed")
             return
-        try:
+        finally:
+            self._sampling = False
+        with contextlib.suppress(Exception):
             card = self.query_one(TrafficCard)
             card.update_stats(stats, self._sampler.history_ping_ms())
-        except Exception:
-            pass
 
     async def _lookup_geo(self) -> None:
         # Per the goal sign-off: geolocate the exit IP via ip-api.com.
@@ -117,7 +134,7 @@ class DashboardScreen(Screen):
             self.query_one(StatusCard).set_geo(text)
 
     def _fetch_geo(self) -> str | None:
-        url = "http://ip-api.com/line/?fields=status,country,city,query"
+        url = "https://ip-api.com/line/?fields=status,country,city,query"
         try:
             with urllib.request.urlopen(url, timeout=3) as resp:
                 if resp.status != 200:
@@ -135,16 +152,28 @@ class DashboardScreen(Screen):
         return f"{label} ({ip})" if label else ip or None
 
     def action_disconnect(self) -> None:
+        # mgr.stop() joins the watchdog thread (up to ~10s). Off-load it so 'k'
+        # doesn't freeze the whole TUI while we wait.
+        asyncio.create_task(self._async_disconnect(), name="tui-disconnect")
+
+    async def _async_disconnect(self) -> None:
         mgr = self.app.manager
         if mgr is not None:
-            mgr.stop()
+            loop = asyncio.get_running_loop()
+            with contextlib.suppress(Exception):
+                await loop.run_in_executor(None, mgr.stop)
         self.app.exit(0)
 
     def action_reconnect(self) -> None:
+        asyncio.create_task(self._async_reconnect(), name="tui-reconnect")
+
+    async def _async_reconnect(self) -> None:
         mgr = self.app.manager
         if mgr is None:
             return
-        mgr.stop()
+        loop = asyncio.get_running_loop()
+        with contextlib.suppress(Exception):
+            await loop.run_in_executor(None, mgr.stop)
         self.app.start_manager()
 
     def action_help(self) -> None:

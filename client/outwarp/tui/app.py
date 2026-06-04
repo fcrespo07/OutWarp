@@ -165,9 +165,13 @@ class OutWarpClientTUI(App):
         self.push_screen(SettingsModal())
 
     async def action_quit(self) -> None:
+        # manager.stop() joins the watchdog thread (up to ~10s); run it off the
+        # event loop so the UI doesn't freeze between pressing 'q' and exit.
         if self.manager is not None:
+            import asyncio
+            loop = asyncio.get_running_loop()
             try:
-                self.manager.stop()
+                await loop.run_in_executor(None, self.manager.stop)
             except Exception:
                 log.exception("Error stopping manager on quit")
         self.exit(0)

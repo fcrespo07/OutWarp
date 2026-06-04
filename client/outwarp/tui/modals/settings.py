@@ -21,6 +21,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Static, Switch
 
 from outwarp.settings import load_settings, save_settings
+from outwarp.tui.tokens import BAD, OK
 
 log = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ class SettingsModal(ModalScreen[None]):
         except OSError as exc:
             log.exception("Could not save settings.json")
             self.query_one("#settings-status", Static).update(
-                f"[#ff5c7a]Could not save: {exc}[/]"
+                f"[{BAD}]Could not save: {exc}[/]"
             )
             return
 
@@ -120,7 +121,7 @@ class SettingsModal(ModalScreen[None]):
             elif key == "auto_reconnect":
                 mgr.auto_reconnect = new_value
         self.query_one("#settings-status", Static).update(
-            f"[#2ee0b3]✓[/] {key.replace('_', ' ')} = {new_value}"
+            f"[{OK}]✓[/] {key.replace('_', ' ')} = {new_value}"
         )
 
     def action_dismiss(self) -> None:

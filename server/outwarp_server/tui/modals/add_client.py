@@ -8,6 +8,7 @@ from textual.widgets import Input, Static
 from outwarp_server import operations
 from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
 from outwarp_server.server_manager import validate_client_name
+from outwarp_server.tui.tokens import BAD, DIM, OK, WARN
 
 
 class AddClientModal(ModalScreen[operations.AddClientResult | None]):
@@ -28,11 +29,11 @@ class AddClientModal(ModalScreen[operations.AddClientResult | None]):
             yield Static("", id="preview", classes="info")
             yield Static("", id="result")
             yield Static(
-                "[#ff9b4a]⚠  Send the .owcfg over a secure channel — "
+                f"[{WARN}]⚠  Send the .owcfg over a secure channel — "
                 "it contains the client's private key.[/]"
             )
             yield Static(
-                "[#6e747e]Enter to create, Esc to cancel, Q to show QR after success.[/]"
+                f"[{DIM}]Enter to create, Esc to cancel, Q to show QR after success.[/]"
             )
 
     def on_mount(self) -> None:
@@ -48,14 +49,14 @@ class AddClientModal(ModalScreen[operations.AddClientResult | None]):
         try:
             ip = next_available_ip(config.subnet, config.server_address, allocated)
         except PoolExhaustedError as exc:
-            self.query_one("#preview", Static).update(f"[#ff5c7a]{exc}[/]")
+            self.query_one("#preview", Static).update(f"[{BAD}]{exc}[/]")
             return
         msg = f"next address  {ip}  auto-assigned"
         if name.strip():
             try:
                 validate_client_name(name)
             except ValueError as exc:
-                msg = f"[#ff5c7a]{exc}[/]"
+                msg = f"[{BAD}]{exc}[/]"
         self.query_one("#preview", Static).update(msg)
 
     def action_submit(self) -> None:
@@ -63,28 +64,28 @@ class AddClientModal(ModalScreen[operations.AddClientResult | None]):
         try:
             name = validate_client_name(raw)
         except ValueError as exc:
-            self.query_one("#result", Static).update(f"[#ff5c7a]{exc}[/]")
+            self.query_one("#result", Static).update(f"[{BAD}]{exc}[/]")
             return
         try:
             self._result = operations.add_client(
                 self.app.config, name, config_path=self.app.config_path,
             )
         except ValueError as exc:
-            self.query_one("#result", Static).update(f"[#ff5c7a]{exc}[/]")
+            self.query_one("#result", Static).update(f"[{BAD}]{exc}[/]")
             return
         except Exception as exc:
-            self.query_one("#result", Static).update(f"[#ff5c7a]Error: {exc}[/]")
+            self.query_one("#result", Static).update(f"[{BAD}]Error: {exc}[/]")
             return
 
         self.app.reload_config()
         result = self._result
         short_fp = result.owcfg_sha256.replace(":", "")[:10].lower()
         msg = (
-            f"[#2ee0b3]✓[/]  {result.owcfg_path.name}  sha256 {short_fp}…\n"
+            f"[{OK}]✓[/]  {result.owcfg_path.name}  sha256 {short_fp}…\n"
             f"  written to {result.owcfg_path}\n"
             f"  hot-added to wireguard: "
-            f"{'[#2ee0b3]yes[/]' if result.hot_added else '[#ff9b4a]no[/]'}\n"
-            f"[#6e747e]Press Q to view as QR, or Esc to close.[/]"
+            f"{f'[{OK}]yes[/]' if result.hot_added else f'[{WARN}]no[/]'}\n"
+            f"[{DIM}]Press Q to view as QR, or Esc to close.[/]"
         )
         self.query_one("#result", Static).update(msg)
 

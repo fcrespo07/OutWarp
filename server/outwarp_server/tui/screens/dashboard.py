@@ -9,6 +9,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
+from outwarp_server.tui.tokens import OK
 from outwarp_server.tui.widgets.clients_summary import ClientsSummary
 from outwarp_server.tui.widgets.network_card import NetworkCard
 from outwarp_server.tui.widgets.services_card import ServicesCard
@@ -126,8 +127,8 @@ class DashboardScreen(Screen):
             lines = ["[bold]TOP TALKERS (1h)[/bold]"]
             for t in talkers:
                 lines.append(
-                    f"  {t['name']:<24} rx [#2ee0b3]{_fmt_bytes(t['rx_delta'])}[/]"
-                    f"  tx [#2ee0b3]{_fmt_bytes(t['tx_delta'])}[/]"
+                    f"  {t['name']:<24} rx [{OK}]{_fmt_bytes(t['rx_delta'])}[/]"
+                    f"  tx [{OK}]{_fmt_bytes(t['tx_delta'])}[/]"
                 )
             self.query_one("#top", Static).update("\n".join(lines))
         else:

@@ -132,6 +132,14 @@
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
 }
 .ow-integrity-path { color: var(--text-3); }
+/* Informational variant of the banner (hostile-network auto-bypass): brand/info
+   palette instead of the warning orange, so it doesn't read as an error the user
+   must act on the way the IntegrityBanner does. */
+.ow-hostile {
+  background: color-mix(in srgb, var(--brand) 10%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--brand) 35%, var(--line));
+}
+.ow-hostile .ow-integrity-icon { color: var(--brand); }
 .ow-winbtn {
   all: unset;
   width: 46px; height: 100%;

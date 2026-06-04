@@ -679,6 +679,10 @@ class Api:
 
         def _switch() -> None:
             if old is not None:
+                # Detach first so the old manager can't emit DISCONNECTED (and
+                # other transitions) into the API while it tears down, which
+                # would race the new manager's own state events.
+                old.remove_listener(self._on_state_change)
                 try:
                     old.stop()
                 except Exception:
@@ -1168,7 +1172,11 @@ class Api:
                 # evaluate_js call was dropped by the webview backend before
                 # the page was ready to receive it.
                 self._emit("status", self._status_payload())
-                time.sleep(1.0)
+                # Wait on the stop event (not time.sleep) so stop() interrupts
+                # the tick immediately — otherwise a restart could spawn a second
+                # loop while this one is still mid-sleep, racing on self._stats.
+                if self._stats_stop.wait(1.0):
+                    break
 
         self._stats_thread = threading.Thread(
             target=_loop, daemon=True, name="outwarp-stats"
@@ -1177,7 +1185,10 @@ class Api:
 
     def _stop_stats_loop(self) -> None:
         self._stats_stop.set()
+        thread = self._stats_thread
         self._stats_thread = None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
 
     def _start_exit_ip_probe(self) -> None:
         """After connecting, query our public IP so the UI can show the user
@@ -1249,7 +1260,10 @@ class Api:
 
     def _stop_latency_loop(self) -> None:
         self._latency_stop.set()
+        thread = self._latency_thread
         self._latency_thread = None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 

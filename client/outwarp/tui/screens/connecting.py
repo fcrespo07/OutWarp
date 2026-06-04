@@ -6,11 +6,16 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
+from outwarp.tui.tokens import BAD
+
+# Mirror the GUI stepper (shared.jsx step_*): the final "ready" row gives the
+# same close-the-loop confirmation before the screen flips to the dashboard.
 PHASE_LABELS: list[tuple[str, str]] = [
     ("resolve", "dns + tcp connect"),
     ("tls",     "tls handshake"),
     ("wg",      "wireguard interface up"),
     ("ws",      "wstunnel websocket upgrade"),
+    ("done",    "ready"),
 ]
 PHASE_ORDER = [k for k, _ in PHASE_LABELS]
 
@@ -87,7 +92,7 @@ class ConnectingScreen(Screen):
             self.query_one("#attempt", Static).update("")
         err = getattr(mgr, "last_error", None)
         self.query_one("#error", Static).update(
-            f"[#ff5c7a]{err}[/]" if err else ""
+            f"[{BAD}]{err}[/]" if err else ""
         )
 
     def action_cancel(self) -> None:

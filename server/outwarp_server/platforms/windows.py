@@ -5,6 +5,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from outwarp_server.config import _atomic_write_secret
 from outwarp_server.platforms.base import (
     PlatformError,
     PrerequisiteResult,
@@ -74,8 +75,10 @@ class WindowsServerPlatform(ServerPlatform):
         self._require_wireguard()
         conf_path = self.wg_config_dir() / f"{interface}.conf"
         try:
-            self.wg_config_dir().mkdir(parents=True, exist_ok=True)
-            conf_path.write_text(conf_text, encoding="utf-8")
+            # Atomic replace so wireguard.exe never reads a half-written conf;
+            # the file (which holds the server private key) lives under
+            # C:\ProgramData\WireGuard, whose ACLs WireGuard for Windows locks down.
+            _atomic_write_secret(conf_path, conf_text)
         except OSError as exc:
             raise PlatformError(f"Failed to write WireGuard config: {exc}") from exc
 

@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,22 +36,26 @@ def _find_wg_bin() -> Path | None:
 
 # Module-level deduplication for the periodic poll: the JS-side poll calls
 # get_live_peers every 2 s, so without this we would flood the Logs screen
-# with one warning every 2 s for as long as the interface is missing.
+# with one warning every 2 s for as long as the interface is missing. The TUI
+# and GUI can poll from different threads, so guard the shared state with a lock.
 _last_failure_message: str | None = None
+_failure_lock = threading.Lock()
 
 
 def _log_failure(message: str) -> None:
     global _last_failure_message
-    if message != _last_failure_message:
-        log.warning("get_live_peers: %s", message)
-        _last_failure_message = message
+    with _failure_lock:
+        if message != _last_failure_message:
+            log.warning("get_live_peers: %s", message)
+            _last_failure_message = message
 
 
 def _clear_failure(interface: str) -> None:
     global _last_failure_message
-    if _last_failure_message is not None:
-        log.info("get_live_peers: 'wg show %s dump' is working again", interface)
-        _last_failure_message = None
+    with _failure_lock:
+        if _last_failure_message is not None:
+            log.info("get_live_peers: 'wg show %s dump' is working again", interface)
+            _last_failure_message = None
 
 
 def get_live_peers(interface: str = "wg0", wg_bin: Path | None = None) -> dict[str, LivePeer]:

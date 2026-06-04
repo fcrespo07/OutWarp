@@ -5,6 +5,8 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
+from outwarp.tui.tokens import BAD
+
 
 class FailedScreen(Screen):
     """Terminal state after max_attempts retries — offers a manual retry."""
@@ -27,7 +29,7 @@ class FailedScreen(Screen):
                 or (self.app.manager and self.app.manager.last_error)
                 or "unknown error"
             )
-            yield Static(f"[#ff5c7a]{err}[/]")
+            yield Static(f"[{BAD}]{err}[/]")
             yield Static("Press [b]r[/b] to retry, [b]l[/b] to view logs, [b]q[/b] to quit.")
         yield Footer()
 

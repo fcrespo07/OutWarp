@@ -155,18 +155,25 @@ class TrafficHistory:
         with self._lock:
             try:
                 with self._connect() as conn:
+                    # Sum per-step LAG() deltas (clamping resets to zero) rather
+                    # than MAX-MIN: an interface restart drops the counter back
+                    # near zero, so MAX-MIN would report almost the peer's whole
+                    # lifetime transfer as if it happened inside the window.
                     cur = conn.execute(
                         """
-                        WITH first_last AS (
+                        WITH deltas AS (
                             SELECT public_key,
-                                   MIN(rx_bytes) AS rx_lo, MAX(rx_bytes) AS rx_hi,
-                                   MIN(tx_bytes) AS tx_lo, MAX(tx_bytes) AS tx_hi
+                                   rx_bytes - COALESCE(LAG(rx_bytes) OVER w, rx_bytes) AS d_rx,
+                                   tx_bytes - COALESCE(LAG(tx_bytes) OVER w, tx_bytes) AS d_tx
                             FROM snapshot
                             WHERE ts >= ?
-                            GROUP BY public_key
+                            WINDOW w AS (PARTITION BY public_key ORDER BY ts)
                         )
-                        SELECT public_key, (rx_hi - rx_lo) AS d_rx, (tx_hi - tx_lo) AS d_tx
-                        FROM first_last
+                        SELECT public_key,
+                               SUM(CASE WHEN d_rx > 0 THEN d_rx ELSE 0 END) AS d_rx,
+                               SUM(CASE WHEN d_tx > 0 THEN d_tx ELSE 0 END) AS d_tx
+                        FROM deltas
+                        GROUP BY public_key
                         ORDER BY (d_rx + d_tx) DESC
                         LIMIT ?
                         """,

@@ -1,10 +1,11 @@
 /* OutWarp client TUI tokens — mirrors the Claude Design palette.
  * BMP glyphs only; no emoji, no nerd fonts. */
 
+/* Canonical values mirror ui/styles.css and tui/tokens.py — keep in sync. */
 $brand: #2563ff;
 $ok: #2ee0b3;
-$warn: #ff9b4a;
-$bad: #ff5c7a;
+$warn: #ff8a3d;
+$bad: #ff4d6d;
 $dim: #6e747e;
 $dim2: #4a4f57;
 $bright: #f4f5f7;

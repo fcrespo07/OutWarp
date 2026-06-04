@@ -301,15 +301,15 @@ def test_apply_profile_patch_accepts_hostnames_in_bypass(tmp_path):
 
 
 @pytest.mark.parametrize("patch,match", [
-    ({"name": "   "}, "vacío"),
+    ({"name": "   "}, "empty"),
     ({"mtu": 99999}, "MTU"),
     ({"mtu": "abc"}, "MTU"),
     ({"dns": "not-an-ip"}, "DNS"),
-    ({"client_address": "999.0.0.1/32"}, "IP del cliente"),
-    ({"bypass_ips": "bad!host"}, "bypass"),
-    ({"reconnect_max_attempts": 0}, "reconexión"),
-    ({"reconnect_delays": ""}, "reconexión"),
-    ({"reconnect_delays": "5, -1"}, "positivos"),
+    ({"client_address": "999.0.0.1/32"}, "client IP"),
+    ({"bypass_ips": "bad!host"}, "[Bb]ypass"),
+    ({"reconnect_max_attempts": 0}, "[Rr]econnect attempts"),
+    ({"reconnect_delays": ""}, "reconnect delay"),
+    ({"reconnect_delays": "5, -1"}, "positive"),
 ])
 def test_apply_profile_patch_rejects_bad_input(tmp_path, patch, match):
     with pytest.raises(ConfigError, match=match):

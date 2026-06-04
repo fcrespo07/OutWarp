@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -455,6 +456,12 @@ class TunnelManager:
     def add_listener(self, callback: StateListener) -> None:
         with self._lock:
             self._listeners.append(callback)
+
+    def remove_listener(self, callback: StateListener) -> None:
+        """Detach a listener. Used when swapping managers so a stopping manager
+        can't keep emitting state changes that race the replacement."""
+        with self._lock, contextlib.suppress(ValueError):
+            self._listeners.remove(callback)
 
     def start(self) -> None:
         with self._lock:

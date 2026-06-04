@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import secrets
 import socket
 import ssl
 import struct
@@ -113,8 +114,9 @@ def _query_dns_a_record_via(server_ip: str, hostname: str, timeout: float = 2.0)
     except UnicodeEncodeError:
         return None
     qname = b"".join(labels) + b"\x00"
-    # Random-ish txn id; we don't keep state, the socket pairs req/resp by 4-tuple.
-    txn = struct.pack(">H", 0x4F57)
+    # Randomised txn id: a fixed value let an on-path attacker who knows the
+    # OutWarp signature pre-forge a matching response and skew the heuristic.
+    txn = secrets.token_bytes(2)
     header = txn + struct.pack(">HHHHH", 0x0100, 1, 0, 0, 0)
     question = qname + struct.pack(">HH", 1, 1)  # QTYPE=A, QCLASS=IN
     packet = header + question

@@ -27,6 +27,7 @@ from outwarp.config import (
     default_config_path,
     original_config_path,
 )
+from outwarp.tui.tokens import BAD, OK
 
 log = logging.getLogger(__name__)
 
@@ -94,9 +95,8 @@ _FIELDS: list[tuple[str, str, str, Any]] = [
 class ProfileScreen(Screen[None]):
     """Edit the active profile's user-facing fields.
 
-    Validation is delegated to ``apply_profile_patch``: errors surface as a
-    Spanish message in the status line so the user sees the exact same wording
-    as the GUI editor.
+    Validation is delegated to ``apply_profile_patch``: errors surface as an
+    English message in the status line, the same wording the GUI editor shows.
     """
 
     BINDINGS = [
@@ -214,7 +214,7 @@ class ProfileScreen(Screen[None]):
             self._set_status(f"Saved, but reconnect failed: {exc}", ok=False)
 
     def _set_status(self, message: str, *, ok: bool) -> None:
-        colour = "#2ee0b3" if ok else "#ff5c7a"
+        colour = OK if ok else BAD
         marker = "✓" if ok else "✗"
         self.query_one("#profile-status", Static).update(
             f"[{colour}]{marker}[/] {message}"

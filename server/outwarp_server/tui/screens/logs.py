@@ -15,7 +15,13 @@ log = logging.getLogger(__name__)
 
 
 class LogsScreen(Screen):
-    """Tail journald (wstunnel-outwarp.service) when available."""
+    """Tail journald for both server services when available.
+
+    Includes wg-quick@wg0 alongside wstunnel: most client-connection failures
+    (handshake errors, interface that won't come up, bad config) only surface in
+    the WireGuard unit's journal, so tailing wstunnel alone left the admin blind
+    to them — matching what the GUI logs view already advertises.
+    """
 
     BINDINGS = [
         Binding("escape", "app.pop_screen", "Back", priority=True),
@@ -34,7 +40,12 @@ class LogsScreen(Screen):
             self.query_one(RichLog).write("journalctl not available on this host.")
             return
         self._proc = subprocess.Popen(
-            ["journalctl", "-u", "wstunnel-outwarp.service", "-f", "-n", "200", "--no-pager"],
+            [
+                "journalctl",
+                "-u", "wstunnel-outwarp.service",
+                "-u", "wg-quick@wg0.service",
+                "-f", "-n", "200", "--no-pager",
+            ],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
         self.set_interval(0.25, self._drain)

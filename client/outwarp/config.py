@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -131,10 +134,11 @@ class ClientConfig:
         return _parse(raw)
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(_to_dict(self), indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        # config.json holds the client's WireGuard private key. Write it
+        # atomically at 0o600 so it is never readable by other local users,
+        # not even for the instant between create and chmod.
+        _atomic_write_secret(
+            path, json.dumps(_to_dict(self), indent=2, ensure_ascii=False)
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -171,6 +175,31 @@ def import_owcfg_text(text: str, dest: Path | None = None) -> ClientConfig:
 
 
 # --- internal helpers ---
+
+def _atomic_write_secret(path: Path, payload: str) -> None:
+    """Atomically write ``payload`` to ``path`` with 0o600 permissions.
+
+    ``tempfile.mkstemp`` opens the file with mode 0o600 on POSIX, and
+    ``os.replace`` renames atomically on the same filesystem. The result: a
+    reader either sees the old contents or the new ones, never a partial write
+    at the process umask (typically 0o644, world-readable). Mirrors the
+    server-side helper in outwarp_server.config.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
 
 def _require(data: dict[str, Any], key: str, section: str) -> Any:
     if key not in data:
@@ -318,10 +347,27 @@ def _parse_network(d: Any) -> NetworkConfig:
 def _parse_reconnect(d: Any) -> ReconnectConfig:
     if not isinstance(d, dict):
         return ReconnectConfig()
-    return ReconnectConfig(
-        max_attempts=int(d.get("max_attempts", 5)),
-        delays_seconds=list(d.get("delays_seconds", [5, 10, 20, 30, 60])),
-    )
+    raw_max = d.get("max_attempts", 5)
+    try:
+        max_attempts = int(raw_max)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"reconnect.max_attempts must be an integer, got {raw_max!r}") from exc
+    if max_attempts < 1:
+        # max_attempts=0 would make TunnelManager fail before the first connect
+        # attempt (0 >= 0), so the user sees an instant failure with no error.
+        raise ConfigError(f"reconnect.max_attempts must be >= 1, got {max_attempts}")
+    delays_raw = d.get("delays_seconds", [5, 10, 20, 30, 60])
+    if not isinstance(delays_raw, list):
+        raise ConfigError("reconnect.delays_seconds must be a list of integers")
+    try:
+        delays = [int(v) for v in delays_raw]
+    except (TypeError, ValueError) as exc:
+        # A string slips straight through to Event.wait() as a TypeError later;
+        # reject it here where we can give a useful message.
+        raise ConfigError(f"reconnect.delays_seconds must be a list of integers: {exc}") from exc
+    if any(v < 1 for v in delays):
+        raise ConfigError("reconnect.delays_seconds entries must be positive")
+    return ReconnectConfig(max_attempts=max_attempts, delays_seconds=delays)
 
 
 def _to_dict(cfg: ClientConfig) -> dict[str, Any]:
@@ -391,7 +437,7 @@ def _split_list(value: Any) -> list[str]:
         return [tok for tok in re.split(r"[,\s]+", value.strip()) if tok]
     if isinstance(value, list):
         return [str(v).strip() for v in value if str(v).strip()]
-    raise ConfigError("se esperaba una lista de valores")
+    raise ConfigError("expected a list of values")
 
 
 def _parse_ip_list(value: Any, label: str, *, allow_cidr: bool) -> list[str]:
@@ -406,7 +452,7 @@ def _parse_ip_list(value: Any, label: str, *, allow_cidr: bool) -> list[str]:
             else:
                 ipaddress.ip_address(item)
         except ValueError as exc:
-            raise ConfigError(f"{label}: dirección inválida '{item}'") from exc
+            raise ConfigError(f"{label}: invalid address '{item}'") from exc
         out.append(item)
     return out
 
@@ -447,15 +493,17 @@ def _parse_endpoint_list(value: Any, label: str) -> list[str]:
         if _is_hostname(item):
             out.append(item)
             continue
-        raise ConfigError(f"{label}: valor inválido '{item}' (usa una IP, CIDR o dominio)")
+        raise ConfigError(f"{label}: invalid value '{item}' (use an IP, CIDR or domain)")
     return out
 
 
 def apply_profile_patch(cfg: ClientConfig, patch: dict[str, Any]) -> ClientConfig:
     """Return a new ClientConfig with the user-editable fields in `patch` applied.
 
-    Raises ConfigError with a human-readable (Spanish) message on bad input so
-    the UI can surface it directly.
+    Raises ConfigError with a human-readable (English) message on bad input so
+    both the TUI and GUI editors can surface it directly. config.py is
+    platform- and locale-agnostic; localisation, if ever needed, belongs in the
+    presentation layer.
     """
     name = cfg.name
     wg_changes: dict[str, Any] = {}
@@ -466,16 +514,16 @@ def apply_profile_patch(cfg: ClientConfig, patch: dict[str, Any]) -> ClientConfi
     if "name" in patch:
         n = str(patch["name"]).strip()
         if not n:
-            raise ConfigError("El nombre del perfil no puede estar vacío")
+            raise ConfigError("Profile name cannot be empty")
         name = n
 
     if "mtu" in patch:
         try:
             mtu = int(patch["mtu"])
         except (TypeError, ValueError) as exc:
-            raise ConfigError("El MTU debe ser un número entero") from exc
+            raise ConfigError("MTU must be an integer") from exc
         if not (576 <= mtu <= 1500):
-            raise ConfigError("El MTU debe estar entre 576 y 1500")
+            raise ConfigError("MTU must be between 576 and 1500")
         wg_changes["mtu"] = mtu
 
     if "dns" in patch:
@@ -487,48 +535,48 @@ def apply_profile_patch(cfg: ClientConfig, patch: dict[str, Any]) -> ClientConfi
             ipaddress.ip_interface(addr)
         except ValueError as exc:
             raise ConfigError(
-                f"IP del cliente inválida: '{addr}' (usa formato 10.0.0.2/32)"
+                f"Invalid client IP: '{addr}' (use the form 10.0.0.2/32)"
             ) from exc
         wg_changes["client_address"] = addr
 
     if "bypass_ips" in patch:
         routing = replace(
             routing,
-            bypass_ips=_parse_endpoint_list(patch["bypass_ips"], "Rutas de bypass"),
+            bypass_ips=_parse_endpoint_list(patch["bypass_ips"], "Bypass routes"),
         )
 
     if "reconnect_max_attempts" in patch:
         try:
             ma = int(patch["reconnect_max_attempts"])
         except (TypeError, ValueError) as exc:
-            raise ConfigError("Los reintentos de reconexión deben ser un entero") from exc
+            raise ConfigError("Reconnect attempts must be an integer") from exc
         if not (1 <= ma <= 100):
-            raise ConfigError("Los reintentos de reconexión deben estar entre 1 y 100")
+            raise ConfigError("Reconnect attempts must be between 1 and 100")
         rc_changes["max_attempts"] = ma
 
     if "reconnect_delays" in patch:
         tokens = _split_list(patch["reconnect_delays"])
         if not tokens:
-            raise ConfigError("Indica al menos un tiempo de reconexión")
+            raise ConfigError("Provide at least one reconnect delay")
         delays: list[int] = []
         for tok in tokens:
             try:
                 v = int(tok)
             except (TypeError, ValueError) as exc:
-                raise ConfigError(f"Tiempo de reconexión inválido: '{tok}'") from exc
+                raise ConfigError(f"Invalid reconnect delay: '{tok}'") from exc
             if v < 1:
-                raise ConfigError("Los tiempos de reconexión deben ser positivos")
+                raise ConfigError("Reconnect delays must be positive")
             delays.append(v)
         rc_changes["delays_seconds"] = delays
 
     if "hostile_mode" in patch:
         raw_h = patch["hostile_mode"]
         if not isinstance(raw_h, str):
-            raise ConfigError("hostile_mode debe ser auto / on / off")
+            raise ConfigError("hostile_mode must be auto / on / off")
         mode = raw_h.strip().lower() or "auto"
         if mode not in _HOSTILE_MODES:
             raise ConfigError(
-                f"hostile_mode debe ser uno de {_HOSTILE_MODES}, recibido '{raw_h}'"
+                f"hostile_mode must be one of {_HOSTILE_MODES}, got '{raw_h}'"
             )
         network = replace(cfg.network, hostile_mode=mode)
 

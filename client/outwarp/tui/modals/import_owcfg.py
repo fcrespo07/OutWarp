@@ -8,6 +8,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
 from outwarp.config import ConfigError, import_owcfg
+from outwarp.tui.tokens import BAD
 
 
 class ImportModal(ModalScreen[bool]):
@@ -37,17 +38,17 @@ class ImportModal(ModalScreen[bool]):
     def action_submit(self) -> None:
         raw = self.query_one("#path", Input).value.strip()
         if not raw:
-            self.query_one("#result", Static).update("[#ff5c7a]Path is required.[/]")
+            self.query_one("#result", Static).update(f"[{BAD}]Path is required.[/]")
             return
         path = Path(raw).expanduser()
         if not path.exists():
             self.query_one("#result", Static).update(
-                f"[#ff5c7a]File not found: {path}[/]"
+                f"[{BAD}]File not found: {path}[/]"
             )
             return
         try:
             import_owcfg(path)
         except ConfigError as exc:
-            self.query_one("#result", Static).update(f"[#ff5c7a]Invalid .owcfg: {exc}[/]")
+            self.query_one("#result", Static).update(f"[{BAD}]Invalid .owcfg: {exc}[/]")
             return
         self.dismiss(True)

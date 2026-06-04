@@ -10,6 +10,8 @@ from textual.containers import Container
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input
 
+from outwarp_server.tui.tokens import OK, WARN
+
 log = logging.getLogger(__name__)
 
 _ONLINE_WINDOW_SECONDS = 180
@@ -89,9 +91,9 @@ class ClientsScreen(Screen):
             else:
                 age = now - peer.latest_handshake
                 if age < _ONLINE_WINDOW_SECONDS:
-                    dot, status = "●", "[#2ee0b3]online[/]"
+                    dot, status = "●", f"[{OK}]online[/]"
                 else:
-                    dot, status = "◐", "[#ff9b4a]offline[/]"
+                    dot, status = "◐", f"[{WARN}]offline[/]"
                 hs = _fmt_age(age)
                 rx = _fmt_bytes(peer.transfer_rx)
                 tx = _fmt_bytes(peer.transfer_tx)

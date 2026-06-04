@@ -7,6 +7,8 @@ from textual.containers import Container
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
+from outwarp_server.tui.tokens import DIM
+
 
 def _render_qr_ascii(data: bytes) -> str:
     """Half-block QR — two QR rows per terminal line, fits in ~85 cols at v25."""
@@ -69,7 +71,7 @@ class QrModal(ModalScreen[None]):
         with Container(id="qr-modal"):
             yield Static(f"[bold]QR for {self._path.name}[/bold]")
             yield Static(body)
-            yield Static("[#6e747e]Esc to close.[/]")
+            yield Static(f"[{DIM}]Esc to close.[/]")
 
     def action_dismiss(self) -> None:
         self.dismiss()

@@ -23,6 +23,53 @@ def fake_unit_dir(tmp_path, monkeypatch):
     return target
 
 
+# ── run_daemon ─────────────────────────────────────────────────────────────
+
+
+def test_run_daemon_returns_2_without_profile(monkeypatch):
+    """No imported .owcfg → the service must exit non-zero (not hang) so
+    systemd's Restart=on-failure surfaces the misconfiguration in the journal."""
+    monkeypatch.setattr(service, "setup_logging", lambda: None)
+
+    def _raise(_path):
+        raise service.ConfigError("no profile")
+
+    monkeypatch.setattr(service.ClientConfig, "load", _raise)
+    assert service.run_daemon() == 2
+
+
+def test_run_daemon_starts_then_stops_on_signal(monkeypatch):
+    """Happy path: build + start the manager, and on SIGTERM (modelled by an
+    already-set stop event) stop it cleanly and return 0."""
+    monkeypatch.setattr(service, "setup_logging", lambda: None)
+    fake_cfg = MagicMock()
+    fake_cfg.server.endpoint = "203.0.113.10"
+    fake_cfg.server.port = 443
+    monkeypatch.setattr(service.ClientConfig, "load", lambda _p: fake_cfg)
+
+    mgr = MagicMock()
+    monkeypatch.setattr(service, "TunnelManager", lambda *a, **k: mgr)
+    # Don't perturb pytest's own SIGINT/SIGTERM handlers.
+    monkeypatch.setattr(service.signal, "signal", lambda *a, **k: None)
+
+    class _ImmediateStop:
+        def is_set(self):
+            return True
+
+        def wait(self, _t):
+            return True
+
+        def set(self):
+            pass
+
+    monkeypatch.setattr(service.threading, "Event", _ImmediateStop)
+
+    rc = service.run_daemon()
+    assert rc == 0
+    mgr.start.assert_called_once()
+    mgr.stop.assert_called_once()
+
+
 # ── _unit_content ──────────────────────────────────────────────────────────
 
 

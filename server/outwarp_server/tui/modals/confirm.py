@@ -5,6 +5,8 @@ from textual.containers import Container
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
+from outwarp_server.tui.tokens import DIM
+
 
 class ConfirmModal(ModalScreen[bool]):
     BINDINGS = [
@@ -21,11 +23,11 @@ class ConfirmModal(ModalScreen[bool]):
         self._ok_label = ok_label
 
     def compose(self) -> ComposeResult:
-        with Container(id="add-modal"):
+        with Container(id="confirm-modal"):
             yield Static(f"[bold]{self._title}[/]")
             yield Static(self._body)
             yield Static(
-                f"[#6e747e]Press [b]y[/b] to {self._ok_label.lower()}, "
+                f"[{DIM}]Press [b]y[/b] to {self._ok_label.lower()}, "
                 f"[b]n[/b] or [b]Esc[/b] to cancel.[/]"
             )
 

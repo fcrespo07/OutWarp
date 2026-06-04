@@ -7,6 +7,7 @@ from pathlib import Path
 from textual.widgets import RichLog
 
 from outwarp.logs import tail_follow
+from outwarp.tui.tokens import BAD, DIM, WARN
 
 log = logging.getLogger(__name__)
 
@@ -14,12 +15,12 @@ log = logging.getLogger(__name__)
 def _style_for_line(line: str) -> str:
     upper = line[:60].upper()
     if "[ERROR]" in upper or "ERROR " in upper or "[CRITICAL]" in upper:
-        return f"[#ff5c7a]{line}[/]"
+        return f"[{BAD}]{line}[/]"
     if "[WARN" in upper or "WARN " in upper:
-        return f"[#ff9b4a]{line}[/]"
+        return f"[{WARN}]{line}[/]"
     if "[INFO]" in upper:
         return f"[#f4f5f7]{line}[/]"
-    return f"[#6e747e]{line}[/]"
+    return f"[{DIM}]{line}[/]"
 
 
 class LiveLog(RichLog):

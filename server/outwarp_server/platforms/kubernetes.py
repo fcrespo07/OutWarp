@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 from pathlib import Path
 
+from outwarp_server.config import _atomic_write_secret
 from outwarp_server.platforms.base import PlatformError
 from outwarp_server.platforms.linux import LinuxServerPlatform, _run
 
@@ -51,10 +51,9 @@ class KubernetesServerPlatform(LinuxServerPlatform):
         )
 
         conf_path = self.wg_config_dir() / f"{interface}.conf"
-        conf_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            conf_path.write_text(conf_text, encoding="utf-8")
-            os.chmod(conf_path, 0o600)
+            # Atomic 0o600 write — the WG config holds the server private key.
+            _atomic_write_secret(conf_path, conf_text)
         except OSError as exc:
             raise PlatformError(f"Failed to write WG config: {exc}") from exc
 

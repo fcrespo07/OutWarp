@@ -28,13 +28,15 @@ class _NoConfigScreen(Screen):
         self._message = message
 
     def compose(self):
+        from outwarp_server.tui.tokens import BRAND, DIM
+
         yield Header()
         with Vertical(id="root"):
             yield Static("[bold]OutWarp server[/bold]")
             yield Static(self._message, classes="fail")
-            yield Static(
-                "Run [b]outwarp-server setup[/b] first, then re-launch the TUI."
-            )
+            yield Static("No configuration found. Run the setup wizard, then re-launch the TUI:")
+            yield Static(f"  [{BRAND}]$[/] sudo outwarp-server setup")
+            yield Static(f"[{DIM}]Press q to quit.[/]")
         yield Footer()
 
 

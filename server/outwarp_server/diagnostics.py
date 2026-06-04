@@ -548,6 +548,26 @@ def _run_linux(cmd: list[str], timeout: float = 5.0) -> subprocess.CompletedProc
     )
 
 
+def _wg_tools_install_cmd() -> str:
+    """Best-effort install command for wireguard-tools on the host's distro.
+
+    The hardcoded `apt install` only made sense on Debian/Ubuntu; detect the
+    available package manager so the remediation is copy-pasteable on Arch,
+    Fedora, openSUSE and Alpine too.
+    """
+    if shutil.which("apt"):
+        return "apt install wireguard-tools"
+    if shutil.which("dnf"):
+        return "dnf install wireguard-tools"
+    if shutil.which("pacman"):
+        return "pacman -S wireguard-tools"
+    if shutil.which("zypper"):
+        return "zypper install wireguard-tools"
+    if shutil.which("apk"):
+        return "apk add wireguard-tools"
+    return "install wireguard-tools with your package manager"
+
+
 def check_linux_binaries(config: ServerConfig) -> CheckResult:
     """Ensure wstunnel and wg are reachable somewhere — PATH or known dirs."""
     wstunnel = shutil.which("wstunnel")
@@ -561,7 +581,7 @@ def check_linux_binaries(config: ServerConfig) -> CheckResult:
                 "Install the WireGuard tools and reinstall the OutWarp server "
                 "bundle that ships wstunnel."
             ),
-            remediation_command="apt install wireguard-tools",
+            remediation_command=_wg_tools_install_cmd(),
             fix_kind="interactive",
         )
     if not wstunnel:
@@ -579,7 +599,7 @@ def check_linux_binaries(config: ServerConfig) -> CheckResult:
             status=Status.FAIL,
             detail="'wg' not on PATH (wstunnel is).",
             remediation="Install wireguard-tools.",
-            remediation_command="apt install wireguard-tools",
+            remediation_command=_wg_tools_install_cmd(),
             fix_kind="interactive",
         )
     version = _run_linux([wg, "--version"]).stdout.strip()

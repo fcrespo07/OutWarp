@@ -3,6 +3,8 @@ from __future__ import annotations
 from textual.containers import Container
 from textual.widgets import Static
 
+from outwarp_server.tui.tokens import DIM, OK, WARN
+
 
 class ClientsSummary(Container):
     DEFAULT_CSS = "ClientsSummary { layout: vertical; height: auto; }"
@@ -18,13 +20,13 @@ class ClientsSummary(Container):
         try:
             self.query_one("#c-total", Static).update(f"total    {total}")
             self.query_one("#c-online", Static).update(
-                f"online   [#2ee0b3]{online}[/]"
+                f"online   [{OK}]{online}[/]"
             )
             self.query_one("#c-idle", Static).update(
-                f"idle     [#ff9b4a]{idle}[/]"
+                f"idle     [{WARN}]{idle}[/]"
             )
             self.query_one("#c-offline", Static).update(
-                f"offline  [#6e747e]{offline}[/]"
+                f"offline  [{DIM}]{offline}[/]"
             )
         except Exception:
             pass
