@@ -274,7 +274,7 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 ## Estado actual
 
-**Versión actual: `0.6.1`** (en código). Cambios desde 0.6.0 (hardening tras auditoría de código + UX):
+**Versión actual: `0.7.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz). Resumen de 0.7.0 (hardening tras auditoría de código + UX + CI del instalador Windows):
 - **Seguridad de secretos**: `ClientConfig.save()` (y `config.original.json`) ahora escriben atómicamente a 0o600 (`_atomic_write_secret`) — antes `config.json` con la clave privada WG quedaba a la umask (world-readable en Linux). La WG conf del servidor (linux/kubernetes/windows) pasa por el mismo helper (sin ventana 0o644→chmod). Txn ID de la sonda DNS de `detect_hostile_network()` ahora aleatorio (`secrets`), no fijo.
 - **TUI responsiva**: el dashboard del cliente corre `StatsSampler.sample()` (subprocess `wg`/`ping`) en executor en vez de bloquear el event loop; `disconnect`/`reconnect`/`quit` ya no congelan la TUI mientras `mgr.stop()` hace join. Indicador de estado del túnel visible en `StatusCard` (antes el dashboard era idéntico conectado vs desconectado). Stepper de conexión con 5º paso "ready" como la GUI.
 - **Robustez**: validación de `reconnect.max_attempts`/`delays_seconds` en el parser (un `max_attempts=0` ya no provoca fallo instantáneo silencioso). `top_talkers()` usa `LAG()`+clamp (no `MAX-MIN`) para no inflar tras un reset de contador. Race de `_replace_manager` cerrado con `TunnelManager.remove_listener()`. Stats/latency loops hacen join al pararse. Lock en `_last_failure_message` del servidor.
