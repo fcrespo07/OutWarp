@@ -391,6 +391,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_un.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
 
+    sub.add_parser("doctor", help="Run client health checks and show remediation hints")
+
     sub.add_parser(
         "tui",
         help="Launch the interactive Textual UI (Linux / headless)",
@@ -425,6 +427,20 @@ def _cmd_tui(args: argparse.Namespace) -> int:
         )
         return 1
     return OutWarpClientTUI().run() or 0
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    from outwarp.diagnostics import Status, run_all
+    results = run_all()
+    any_fail = False
+    for r in results:
+        icon = {"pass": "✓", "warn": "⚠", "fail": "✗", "skip": "—"}.get(r.status.value, "?")
+        _print(f"  {icon}  {r.name:<40} {r.detail or ''}")
+        if r.remediation:
+            _print(f"        → {r.remediation}")
+        if r.status in (Status.FAIL, Status.WARN):
+            any_fail = True
+    return 1 if any(r.status == Status.FAIL for r in results) else 0
 
 
 def _cmd_gui(args: argparse.Namespace) -> int:
@@ -581,6 +597,7 @@ _COMMANDS = {
     "logs":           _cmd_logs,
     "forget-profile": _cmd_forget_profile,
     "uninstall":      _cmd_uninstall,
+    "doctor":         _cmd_doctor,
     "tui":            _cmd_tui,
     "gui":            _cmd_gui,
     "update":         _cmd_update,

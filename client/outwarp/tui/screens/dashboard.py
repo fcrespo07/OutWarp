@@ -29,6 +29,7 @@ class DashboardScreen(Screen):
         ("r", "reconnect", "Reconnect"),
         ("l", "open_logs", "Logs"),
         ("p", "open_profile", "Profile"),
+        ("c", "copy_endpoint", "Copy endpoint"),
         ("q", "quit", "Quit"),
         ("question_mark", "help", "Help"),
     ]
@@ -117,7 +118,12 @@ class DashboardScreen(Screen):
             self._sampling = False
         with contextlib.suppress(Exception):
             card = self.query_one(TrafficCard)
-            card.update_stats(stats, self._sampler.history_ping_ms())
+            card.update_stats(
+                stats,
+                self._sampler.history_ping_ms(),
+                rx_history=self._sampler.history_rx_bps(),
+                tx_history=self._sampler.history_tx_bps(),
+            )
 
     async def _lookup_geo(self) -> None:
         # Per the goal sign-off: geolocate the exit IP via ip-api.com.
@@ -175,6 +181,32 @@ class DashboardScreen(Screen):
         with contextlib.suppress(Exception):
             await loop.run_in_executor(None, mgr.stop)
         self.app.start_manager()
+
+    def action_copy_endpoint(self) -> None:
+        config = self.app.config
+        if config is None:
+            return
+        endpoint = f"{config.server.endpoint}:{config.server.port}"
+        try:
+            import subprocess
+            import sys
+            if sys.platform == "linux":
+                proc = subprocess.run(
+                    ["xclip", "-selection", "clipboard"],
+                    input=endpoint, text=True, capture_output=True, check=False,
+                )
+                if proc.returncode != 0:
+                    subprocess.run(
+                        ["xsel", "--clipboard", "--input"],
+                        input=endpoint, text=True, capture_output=True, check=False,
+                    )
+            elif sys.platform == "win32":
+                subprocess.run(
+                    ["clip"], input=endpoint, text=True, capture_output=True, check=False,
+                )
+        except Exception:
+            pass
+        self.notify(f"Copied: {endpoint}", severity="information")
 
     def action_help(self) -> None:
         from outwarp.tui.modals.help import HelpModal

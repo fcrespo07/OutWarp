@@ -45,12 +45,20 @@ class TrafficCard(Container):
     def compose(self):
         yield Static("TRAFFIC", classes="card-title")
         yield Static("down  —", id="down", classes="value")
+        yield Sparkline([0.0], summary_function=max, id="rx_spark")
         yield Static("up    —", id="up", classes="value")
+        yield Sparkline([0.0], summary_function=max, id="tx_spark")
         yield Static("ping  —", id="ping", classes="value")
         yield Sparkline([0.0], summary_function=max, id="ping_spark")
         yield Static("last handshake  —", id="hs", classes="value")
 
-    def update_stats(self, stats: TunnelStats, ping_history: list[float]) -> None:
+    def update_stats(
+        self,
+        stats: TunnelStats,
+        ping_history: list[float],
+        rx_history: list[float] | None = None,
+        tx_history: list[float] | None = None,
+    ) -> None:
         try:
             self.query_one("#down", Static).update(f"down  {_fmt_rate(stats.rx_rate_bps)}")
             self.query_one("#up", Static).update(f"up    {_fmt_rate(stats.tx_rate_bps)}")
@@ -58,8 +66,9 @@ class TrafficCard(Container):
             self.query_one("#hs", Static).update(
                 f"last handshake  {_fmt_age(stats.last_handshake_age_s)}"
             )
-            spark = self.query_one("#ping_spark", Sparkline)
-            spark.data = ping_history or [0.0]
+            self.query_one("#ping_spark", Sparkline).data = ping_history or [0.0]
+            self.query_one("#rx_spark", Sparkline).data = rx_history or [0.0]
+            self.query_one("#tx_spark", Sparkline).data = tx_history or [0.0]
         except Exception:
             # Widgets removed mid-update (screen popped); benign.
             pass

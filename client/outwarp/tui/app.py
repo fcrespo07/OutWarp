@@ -13,6 +13,7 @@ from outwarp.tui.screens.dashboard import DashboardScreen
 from outwarp.tui.screens.empty import EmptyScreen
 from outwarp.tui.screens.failed import FailedScreen
 from outwarp.tui.screens.logs import LogsScreen
+from outwarp.tui.screens.doctor import DoctorScreen
 from outwarp.tui.screens.profile import ProfileScreen
 from outwarp.tunnel import TunnelManager, TunnelState
 
@@ -31,11 +32,13 @@ class OutWarpClientTUI(App):
         "logs": LogsScreen,
         "failed": FailedScreen,
         "profile": ProfileScreen,
+        "doctor": DoctorScreen,
     }
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("question_mark", "help", "Help"),
         ("s", "settings", "Settings"),
+        ("d", "doctor", "Doctor"),
     ]
 
     def __init__(self) -> None:
@@ -175,6 +178,9 @@ class OutWarpClientTUI(App):
     def action_settings(self) -> None:
         from outwarp.tui.modals.settings import SettingsModal
         self.push_screen(SettingsModal())
+
+    def action_doctor(self) -> None:
+        self.push_screen("doctor")
 
     async def action_quit(self) -> None:
         # manager.stop() joins the watchdog thread (up to ~10s); run it off the
