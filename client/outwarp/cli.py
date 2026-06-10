@@ -432,14 +432,11 @@ def _cmd_tui(args: argparse.Namespace) -> int:
 def _cmd_doctor(args: argparse.Namespace) -> int:
     from outwarp.diagnostics import Status, run_all
     results = run_all()
-    any_fail = False
     for r in results:
         icon = {"pass": "✓", "warn": "⚠", "fail": "✗", "skip": "—"}.get(r.status.value, "?")
         _print(f"  {icon}  {r.name:<40} {r.detail or ''}")
         if r.remediation:
             _print(f"        → {r.remediation}")
-        if r.status in (Status.FAIL, Status.WARN):
-            any_fail = True
     return 1 if any(r.status == Status.FAIL for r in results) else 0
 
 

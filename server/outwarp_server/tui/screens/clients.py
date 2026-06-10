@@ -59,7 +59,9 @@ class ClientsScreen(Screen):
 
     def on_mount(self) -> None:
         t = self.query_one(DataTable)
-        t.add_columns("●", "name", "address", "status", "last hs", "rx", "tx", "endpoint", "expires")
+        t.add_columns(
+            "●", "name", "address", "status", "last hs", "rx", "tx", "endpoint", "expires",
+        )
         # Default focus on the table so single-key verbs (a, r, q, ?) work
         # without a leading Tab. Pressing `/` jumps focus into search.
         t.focus()
@@ -193,7 +195,10 @@ class ClientsScreen(Screen):
         self.app.push_screen(
             ConfirmModal(
                 title=f"Rotate '{name}'?",
-                body="Generates a new WireGuard keypair + PSK. The client must reimport the new .owcfg.",
+                body=(
+                    "Generates a new WireGuard keypair + PSK. "
+                    "The client must reimport the new .owcfg."
+                ),
                 ok_label="Rotate",
             ),
             _go,
@@ -201,6 +206,7 @@ class ClientsScreen(Screen):
 
     def action_prune(self) -> None:
         import time
+
         from outwarp_server.tui.modals.confirm import ConfirmModal
 
         now = time.strftime("%Y-%m-%d")

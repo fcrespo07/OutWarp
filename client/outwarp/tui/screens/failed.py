@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import Screen
@@ -24,7 +22,10 @@ def _last_log_lines(n: int = 10) -> list[str]:
 def _error_hint(err: str) -> str:
     low = err.lower()
     if "fingerprint" in low or "cert" in low or "tls" in low:
-        return "TLS fingerprint mismatch — the server cert may have changed. Re-import the .owcfg or enable TLS-intercept in Settings."
+        return (
+            "TLS fingerprint mismatch — the server cert may have changed. "
+            "Re-import the .owcfg or enable TLS-intercept in Settings."
+        )
     if "timeout" in low or "timed out" in low:
         return "Connection timed out — check that the server is reachable and the port is open."
     if "refused" in low or "connection refused" in low:

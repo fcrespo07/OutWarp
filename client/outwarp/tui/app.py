@@ -10,10 +10,10 @@ from outwarp.logs import setup_logging
 from outwarp.settings import load_settings
 from outwarp.tui.screens.connecting import ConnectingScreen
 from outwarp.tui.screens.dashboard import DashboardScreen
+from outwarp.tui.screens.doctor import DoctorScreen
 from outwarp.tui.screens.empty import EmptyScreen
 from outwarp.tui.screens.failed import FailedScreen
 from outwarp.tui.screens.logs import LogsScreen
-from outwarp.tui.screens.doctor import DoctorScreen
 from outwarp.tui.screens.profile import ProfileScreen
 from outwarp.tunnel import TunnelManager, TunnelState
 

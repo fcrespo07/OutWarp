@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: minor bumps may carry user-visible changes).
 
+## [0.8.0] — 2026-06-10
+
+Linux UX overhaul + a major TUI feature pass on both client and server, plus
+security fixes from a full code review.
+
+### Security
+- `operations.add_client()` now validates the client name before building the
+  `.owcfg` path — a crafted name like `../evil` could previously escape the
+  output directory when running as root via the CLI.
+
+### Added
+- **`outwarp-server rotate-client <name>`**: replaces a client's WireGuard
+  keypair + PSK while preserving its IP and expiry, and writes a fresh
+  `.owcfg` to redistribute. Also available in the server TUI (`t` on the
+  clients screen, with QR modal for the new profile).
+- **`outwarp-cli doctor`** + client TUI doctor screen (`d`): health checks for
+  the wstunnel binary and version pin, WireGuard tools and kernel module, the
+  privileged helper and its sudoers rule, the systemd user unit, and
+  `notify-send` — with per-check remediation commands and auto-fix where safe
+  (mirrors the server's doctor).
+- **Desktop notifications on Linux** (`notify-send`, non-blocking): connected,
+  connection failed, and connection dropped — wired into the GUI, the TUI and
+  the headless daemon.
+- **Application launcher on Linux**: `install.sh` now installs an
+  `outwarp.desktop` entry (opens the TUI in your terminal) plus the app icon
+  into hicolor/pixmaps, so OutWarp shows up in GNOME Shell, KDE, Rofi, etc.
+- **Shell completions**: bash/zsh completions for `outwarp-cli` and
+  `outwarp-server` via argcomplete, registered by `install.sh`.
+- **Background service toggles in the client TUI settings** (Linux): enable or
+  disable the user-level systemd daemon and `loginctl` linger
+  (start-before-login) without leaving the TUI. `outwarp-cli service install`
+  now auto-enables linger.
+- **Log screen filters** (client TUI): `/` live text search, `e` errors-only,
+  `w` warnings-and-up, `p` pause/resume the tail.
+- **Import auto-scan** (client TUI): the import modal now scans `~/Downloads`,
+  `~/Desktop` and `~` for `.owcfg` files and offers them as a list — typing an
+  absolute path is the fallback, not the default.
+- **rx/tx sparklines** in the client TUI traffic card (ping already had one).
+- **Failed screen diagnosis** (client TUI): the last log lines are shown
+  inline with an error-specific hint (TLS fingerprint mismatch, timeout,
+  connection refused, missing wstunnel, …).
+- **Expiry column + prune** (server TUI): the clients table shows each
+  client's expiry date, and `P` revokes all expired clients in one action.
+- **Clipboard copy** (client TUI): `c` on the dashboard copies the server
+  endpoint.
+
+### Fixed
+- wstunnel `Popen` now uses `text=True` with explicit encoding (removes a
+  manual decode path) and reader-thread exceptions are logged instead of
+  swallowed; `add_peer_live()`/`remove_peer_live()` pass `CREATE_NO_WINDOW`
+  on Windows like the rest of the wg subprocess calls.
+- The tray icon failing to start on Linux (GNOME without the AppIndicator
+  extension) now logs an actionable hint instead of crashing the process.
+
 ## [0.7.1] — 2026-06-10
 
 ### Fixed

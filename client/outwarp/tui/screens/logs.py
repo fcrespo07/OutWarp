@@ -96,9 +96,7 @@ class LogsScreen(Screen):
     def _line_visible(self, line: str) -> bool:
         if not _passes_level(line, self._level):
             return False
-        if self._search and self._search.lower() not in line.lower():
-            return False
-        return True
+        return not self._search or self._search.lower() in line.lower()
 
     def _redraw(self) -> None:
         log_widget = self.query_one("#log", RichLog)

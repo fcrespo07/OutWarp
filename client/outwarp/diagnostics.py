@@ -66,7 +66,9 @@ def check_wstunnel_binary() -> CheckResult:
             name="wstunnel binary",
             status=Status.FAIL,
             detail="wstunnel not found on PATH.",
-            remediation="Reinstall OutWarp: bash <(curl -fsSL https://outwarp.dev/install.sh) client",
+            remediation=(
+                "Reinstall OutWarp: bash <(curl -fsSL https://outwarp.dev/install.sh) client"
+            ),
             remediation_command="bash <(curl -fsSL https://outwarp.dev/install.sh) client",
             fix_kind="manual",
         )
@@ -98,7 +100,9 @@ def check_wstunnel_version_pin() -> CheckResult:
         pin_path = _WSTUNNEL_VERSION_FILE
         if not pin_path.exists():
             # Try relative to the installed package location
-            pin_path = Path(__file__).parent.parent.parent.parent / "installer" / "wstunnel-version.txt"
+            pin_path = (
+                Path(__file__).parent.parent.parent.parent / "installer" / "wstunnel-version.txt"
+            )
         if not pin_path.exists():
             return CheckResult(
                 name="wstunnel version pin",
@@ -136,7 +140,9 @@ def check_wstunnel_version_pin() -> CheckResult:
         name="wstunnel version pin",
         status=Status.WARN,
         detail=f"installed={version}, pinned={pinned} — version mismatch may cause HTTP 400.",
-        remediation=f"Reinstall the exact version: download wstunnel {pinned} from GitHub and replace.",
+        remediation=(
+            f"Reinstall the exact version: download wstunnel {pinned} from GitHub and replace."
+        ),
         fix_kind="manual",
     )
 
@@ -160,7 +166,9 @@ def check_helper_installed() -> CheckResult:
         name="privileged helper",
         status=Status.FAIL,
         detail=f"{helper} not found — wg stats and WireGuard operations will fail.",
-        remediation="Re-run the installer: bash <(curl -fsSL https://outwarp.dev/install.sh) client",
+        remediation=(
+            "Re-run the installer: bash <(curl -fsSL https://outwarp.dev/install.sh) client"
+        ),
         remediation_command="bash <(curl -fsSL https://outwarp.dev/install.sh) client",
         fix_kind="manual",
     )

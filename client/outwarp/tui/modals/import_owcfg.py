@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Container
 from textual.screen import ModalScreen
-from textual.widgets import Input, ListView, ListItem, Static
+from textual.widgets import Input, ListItem, ListView, Static
 
 from outwarp.config import ConfigError, import_owcfg
 from outwarp.tui.tokens import BAD, DIM
@@ -16,10 +17,8 @@ def _scan_owcfg() -> list[Path]:
     candidates: list[Path] = []
     home = Path.home()
     for folder in (home / "Downloads", home / "Desktop", home):
-        try:
+        with contextlib.suppress(OSError):
             candidates.extend(folder.glob("*.owcfg"))
-        except OSError:
-            pass
     seen: set[Path] = set()
     unique: list[Path] = []
     for p in candidates:
@@ -51,7 +50,10 @@ class ImportModal(ModalScreen[bool]):
             yield Static("[bold]Import profile[/bold]")
             if self._found:
                 yield Static("Select a file or type a path below:")
-                items = [ListItem(Static(str(p)), id=f"item-{i}") for i, p in enumerate(self._found)]
+                items = [
+                    ListItem(Static(str(p)), id=f"item-{i}")
+                    for i, p in enumerate(self._found)
+                ]
                 yield ListView(*items, id="file-list")
             else:
                 yield Static("Type the absolute path to a .owcfg file:")
