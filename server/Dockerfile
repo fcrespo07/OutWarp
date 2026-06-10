@@ -1,5 +1,11 @@
 FROM python:3.11-slim
 
+# Pinned wstunnel version. The docker-publish workflow overrides this with the
+# value from installer/wstunnel-version.txt (the single source of truth); the
+# default here is the fallback for a manual `docker build` and must stay in sync
+# with that file. A client/server version split fails the WS upgrade (HTTP 400)
+# and the tunnel carries no traffic — server/tests/test_wstunnel_version_pin.py
+# enforces that every install path agrees.
 ARG WSTUNNEL_VERSION=10.5.2
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

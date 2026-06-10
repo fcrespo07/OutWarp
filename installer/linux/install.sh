@@ -21,7 +21,9 @@
 #   OUTWARP_RUN_WIZARD=0                  Skip the final `outwarp-server setup`
 #   OUTWARP_SERVER_GUI=1                  Install the pywebview server GUI too
 #                                         (default: auto-detect via $DISPLAY/$WAYLAND_DISPLAY)
-#   WSTUNNEL_VERSION=v10.5.2              Pin a specific wstunnel release
+#   WSTUNNEL_VERSION=v10.5.2              Override the pinned wstunnel release
+#                                         (default: the version OutWarp pins;
+#                                         only change it if you move the server too)
 #   OUTWARP_FORCE_IPV4=0                  Disable the default IPv4-only mode for apt/curl
 #                                         (default: 1 - many bridged-VM LANs have broken IPv6)
 #   OUTWARP_SKIP_CHECKSUM=1               Skip SHA256SUMS verification of the downloaded
@@ -399,47 +401,26 @@ ensure_wireguard() {
 # ----------------------------------------------------------------------------
 # wstunnel binary
 # ----------------------------------------------------------------------------
-readonly WSTUNNEL_FALLBACK_VERSION="v10.5.2"
+# Pinned wstunnel version. OutWarp pins this on purpose: the WebSocket-upgrade
+# handshake format changed between wstunnel releases, so a client running a
+# different version than the server fails the upgrade with HTTP 400 and the
+# tunnel carries no traffic. The single source of truth is
+# installer/wstunnel-version.txt — keep this constant in sync with it (and with
+# server/Dockerfile + scripts/fetch_bundled_binaries.py). This script is run
+# standalone via `curl | sudo bash`, so it can't read that file at runtime;
+# server/tests/test_wstunnel_version_pin.py enforces that they all agree.
+# Override for a one-off with WSTUNNEL_VERSION=vX.Y.Z (only useful if you also
+# move the server to the same version).
+readonly WSTUNNEL_VERSION_DEFAULT="10.5.2"
 
-fetch_latest_wstunnel_version() {
-    local response
-    if ! response=$(curl "${CURL_OPTS[@]}" \
-        "https://api.github.com/repos/erebe/wstunnel/releases/latest" 2>&1); then
-        printf '  %s[!]%s GitHub API query failed: %s\n' \
-            "$YELLOW" "$RESET" "$(printf '%s' "$response" | head -1)" >&2
-        return 1
-    fi
-    local tag
-    tag=$(printf '%s\n' "$response" | grep -m1 '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    if [[ -z "$tag" ]]; then
-        printf '  %s[!]%s GitHub API response did not contain a tag_name (rate limited?)\n' \
-            "$YELLOW" "$RESET" >&2
-        return 1
-    fi
-    printf '%s\n' "$tag"
+# Extract the semver from `<binary> --version` (e.g. "wstunnel-cli 10.5.5").
+wstunnel_binary_version() {
+    "$1" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
-ensure_wstunnel() {
-    if command -v wstunnel >/dev/null 2>&1; then
-        ok "wstunnel: ${BOLD}$(wstunnel --version 2>&1 | head -1 || echo present)${RESET}"
-        return
-    fi
-
-    info "Installing wstunnel..."
-    local version arch tarball url tmpdir
-    if [[ -n "${WSTUNNEL_VERSION:-}" ]]; then
-        version="$WSTUNNEL_VERSION"
-        info "Using pinned wstunnel version: $version"
-    else
-        info "Querying GitHub for latest wstunnel release"
-        version=$(fetch_latest_wstunnel_version || true)
-        if [[ -z "$version" ]]; then
-            warn "Falling back to known-good version $WSTUNNEL_FALLBACK_VERSION"
-            warn "Override with WSTUNNEL_VERSION=vX.Y.Z if you need a different one."
-            version="$WSTUNNEL_FALLBACK_VERSION"
-        fi
-    fi
-
+# Download + install a specific wstunnel version to $WSTUNNEL_BIN.
+install_wstunnel() {
+    local version="${1#v}" arch tarball url tmpdir
     arch=$(uname -m)
     case "$arch" in
         x86_64)  arch="amd64"   ;;
@@ -448,8 +429,8 @@ ensure_wstunnel() {
         *) die "Unsupported architecture: $arch" ;;
     esac
 
-    tarball="wstunnel_${version#v}_linux_${arch}.tar.gz"
-    url="https://github.com/erebe/wstunnel/releases/download/${version}/${tarball}"
+    tarball="wstunnel_${version}_linux_${arch}.tar.gz"
+    url="https://github.com/erebe/wstunnel/releases/download/v${version}/${tarball}"
 
     tmpdir=$(mktemp -d)
     info "Downloading $url (~5 MB)"
@@ -457,7 +438,51 @@ ensure_wstunnel() {
     tar -xzf "$tmpdir/$tarball" -C "$tmpdir"
     $SUDO install -m 0755 "$tmpdir/wstunnel" "$WSTUNNEL_BIN"
     rm -rf "$tmpdir"
-    ok "wstunnel installed: ${BOLD}${WSTUNNEL_BIN}${RESET}"
+    ok "wstunnel ${version} installed: ${BOLD}${WSTUNNEL_BIN}${RESET}"
+}
+
+ensure_wstunnel() {
+    local want="${WSTUNNEL_VERSION:-$WSTUNNEL_VERSION_DEFAULT}"
+    want="${want#v}"
+
+    local on_path have
+    on_path=$(command -v wstunnel 2>/dev/null || true)
+
+    # Case 1: OutWarp already manages $WSTUNNEL_BIN — make sure it's the pinned
+    # version. A leftover newer/older binary here is exactly what silently
+    # breaks tunnels, so heal it instead of accepting it.
+    if [[ -x "$WSTUNNEL_BIN" ]]; then
+        have=$(wstunnel_binary_version "$WSTUNNEL_BIN")
+        if [[ "$have" == "$want" ]]; then
+            ok "wstunnel: ${BOLD}${have}${RESET} (pinned ${want})"
+            return
+        fi
+        warn "wstunnel at $WSTUNNEL_BIN is ${have:-unknown}, but OutWarp pins ${want}."
+        warn "A client/server version mismatch breaks the WS upgrade (HTTP 400 -> no traffic)."
+        info "Replacing it with ${want}..."
+        install_wstunnel "$want"
+        return
+    fi
+
+    # Case 2: a wstunnel exists elsewhere on PATH (distro package, manual
+    # install). Install the pinned one to $WSTUNNEL_BIN — OutWarp resolves
+    # wstunnel via PATH and /usr/local/bin normally precedes /usr/bin, so this
+    # makes the tunnel use the right version. Warn in case PATH order differs.
+    if [[ -n "$on_path" ]]; then
+        have=$(wstunnel_binary_version "$on_path")
+        warn "Found wstunnel ${have:-unknown} at $on_path (not OutWarp-managed)."
+        warn "OutWarp pins ${want}; installing it to ${WSTUNNEL_BIN} so the tunnel uses the right one."
+        install_wstunnel "$want"
+        if [[ "$on_path" != "$WSTUNNEL_BIN" && "$have" != "$want" ]]; then
+            warn "Note: $on_path may still shadow ${WSTUNNEL_BIN} depending on \$PATH order."
+            warn "If tunnels fail with HTTP 400, remove $on_path or align both ends to one version."
+        fi
+        return
+    fi
+
+    # Case 3: nothing installed.
+    info "Installing wstunnel ${want}..."
+    install_wstunnel "$want"
 }
 
 # ----------------------------------------------------------------------------

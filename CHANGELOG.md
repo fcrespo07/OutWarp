@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: minor bumps may carry user-visible changes).
 
+## [Unreleased]
+
+### Fixed
+- The Linux installer (`install.sh`) now installs the **pinned** wstunnel
+  version instead of the latest GitHub release. Client and server must run the
+  same wstunnel: the WebSocket-upgrade handshake format changed between releases,
+  so a version mismatch fails the upgrade with HTTP 400 and the tunnel carries no
+  traffic (the symptom is a tunnel that "connects" but only sends, never
+  receives). `install.sh` previously fetched `latest` by default and silently
+  kept whatever wstunnel was already on `PATH` — exactly how a client drifted to
+  10.5.5 against a 10.5.2 server. It now installs the pinned version, and warns
+  about (and re-heals) `/usr/local/bin/wstunnel` when it finds a different one.
+
+### Changed
+- The pinned wstunnel version now has a single source of truth,
+  `installer/wstunnel-version.txt`, consumed by `scripts/fetch_bundled_binaries.py`
+  (the Windows bundle) and by the docker-publish workflow (the server image
+  build-arg); `installer/linux/install.sh` and `server/Dockerfile` mirror it.
+  `server/tests/test_wstunnel_version_pin.py` fails the build if any path drifts.
+
 ## [0.7.0] — 2026-06-04
 
 Hardening pass after a full code + UX audit, plus CI automation for the Windows

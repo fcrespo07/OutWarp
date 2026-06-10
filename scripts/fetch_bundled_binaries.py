@@ -34,7 +34,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLE_DIR = ROOT / "installer" / "windows" / "bundle"
 
-WSTUNNEL_DEFAULT_VERSION = "v10.5.2"
+def _read_pinned_wstunnel_version() -> str:
+    """Single source of truth for the bundled wstunnel version.
+
+    Reads installer/wstunnel-version.txt (also consumed by server/Dockerfile via
+    the docker-publish workflow and mirrored in installer/linux/install.sh).
+    Keeping every install path on the same wstunnel is mandatory: the WS-upgrade
+    handshake format changed between releases, so a client/server version split
+    fails the upgrade with HTTP 400 and the tunnel carries no traffic.
+    """
+    vfile = ROOT / "installer" / "wstunnel-version.txt"
+    try:
+        version = vfile.read_text(encoding="utf-8").strip()
+    except OSError:
+        version = "10.5.2"
+    return version if version.startswith("v") else f"v{version}"
+
+
+WSTUNNEL_DEFAULT_VERSION = _read_pinned_wstunnel_version()
 WIREGUARD_MSI_URL = "https://download.wireguard.com/windows-client/wireguard-installer.exe"
 # WireGuard publishes both .msi and .exe installers; the .exe is the canonical
 # one and supports silent install via /S. Newer hashes break across releases —
