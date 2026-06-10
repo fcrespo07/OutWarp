@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Resolve tag
         id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             tag="${{ github.event.inputs.tag }}"
@@ -39,13 +41,23 @@ jobs:
             tag="${GITHUB_REF#refs/tags/}"
           fi
           [ -n "$tag" ] || { echo "no tag resolved" >&2; exit 1; }
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "ref=$tag" >> "$GITHUB_OUTPUT"
+            echo "target=" >> "$GITHUB_OUTPUT"
+          else
+            # Tag doesn't exist yet (dispatch from a branch): build the
+            # dispatched commit and let `gh release create --target` create
+            # the tag there.
+            echo "ref=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "target=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout the tagged sources
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.tag.outputs.tag }}
+          ref: ${{ steps.tag.outputs.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -105,6 +117,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ steps.tag.outputs.tag }}"
+          target="${{ steps.tag.outputs.target }}"
           assets="dist/outwarp_client-*.whl dist/outwarp_server-*.whl dist/SHA256SUMS.txt"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release edit "$tag" --notes-file notes.md
@@ -112,5 +125,6 @@ jobs:
             gh release upload "$tag" $assets --clobber
           else
             # shellcheck disable=SC2086
-            gh release create "$tag" --title "$tag" --notes-file notes.md $assets
+            gh release create "$tag" --title "$tag" --notes-file notes.md \
+              ${target:+--target "$target"} $assets
           fi
