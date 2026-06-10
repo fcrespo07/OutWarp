@@ -27,6 +27,7 @@ from pathlib import Path
 
 from outwarp.config import ClientConfig, ConfigError, default_config_path
 from outwarp.logs import setup_logging
+from outwarp.notify import notify as _notify
 from outwarp.tunnel import TunnelManager, TunnelState
 
 log = logging.getLogger(__name__)
@@ -65,8 +66,16 @@ def run_daemon(*, allow_tls_intercept: bool = False) -> int:
     def _on_state(state: TunnelState) -> None:
         if state == last_state[0]:
             return
+        prev = last_state[0]
         last_state[0] = state
         log.info("daemon: tunnel state -> %s", state.value)
+        if state is TunnelState.CONNECTED:
+            _notify("OutWarp", "Connected")
+        elif state is TunnelState.FAILED:
+            err = manager.last_error or "unknown error"
+            _notify("OutWarp", f"Connection failed: {err}", urgency="critical")
+        elif state is TunnelState.RECONNECTING and prev is TunnelState.CONNECTED:
+            _notify("OutWarp", "Connection dropped — reconnecting...")
 
     manager.add_listener(_on_state)
 
@@ -145,6 +154,51 @@ def _systemctl(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+# ── linger helpers ───────────────────────────────────────────────────────
+
+
+def is_linger_enabled() -> bool:
+    """Return True if systemd user linger is enabled for the current user.
+
+    Checks the filesystem directly (no subprocess) — fast and root-free.
+    Always False on non-Linux or when the user can't be determined.
+    """
+    if sys.platform != "linux":
+        return False
+    user = os.environ.get("USER") or os.environ.get("LOGNAME", "")
+    return bool(user) and Path(f"/var/lib/systemd/linger/{user}").exists()
+
+
+def set_linger(enable: bool) -> tuple[bool, str]:
+    """Try to enable or disable systemd user linger without a password prompt.
+
+    Tries ``loginctl`` directly first (works on systemd >= 240 for own
+    user); falls back to ``sudo -n loginctl`` (works when the user has a
+    relevant NOPASSWD sudoers rule). Returns ``(True, "")`` on success or
+    ``(False, hint_message)`` on failure.
+    """
+    if sys.platform != "linux":
+        return False, "Linger management is only supported on Linux"
+    user = os.environ.get("USER") or os.environ.get("LOGNAME", "")
+    if not user:
+        return False, "Cannot determine current user"
+    if shutil.which("loginctl") is None:
+        return False, "loginctl not found — install systemd"
+
+    action = "enable-linger" if enable else "disable-linger"
+    for cmd in (
+        ["loginctl", action, user],
+        ["sudo", "-n", "loginctl", action, user],
+    ):
+        if cmd[0] == "sudo" and shutil.which("sudo") is None:
+            continue
+        r = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if r.returncode == 0:
+            return True, ""
+
+    return False, f"Run as root: sudo loginctl {action} {user}"
+
+
 def install_service() -> int:
     """Write the unit, reload the user manager, enable + start the service.
 
@@ -178,8 +232,13 @@ def install_service() -> int:
 
     print("\nService enabled. Check status with:")
     print(f"  systemctl --user status {SERVICE_NAME}")
-    print("\nTo survive logout (start at boot before login), run once as root:")
-    print(f"  sudo loginctl enable-linger {os.environ.get('USER', '<your-user>')}")
+
+    ok, hint = set_linger(True)
+    if ok:
+        print("\nLinger enabled — service will start at boot before login.")
+    else:
+        print("\nTo start before login, run once as root:")
+        print(f"  sudo loginctl enable-linger {os.environ.get('USER', '<your-user>')}")
     return 0
 
 

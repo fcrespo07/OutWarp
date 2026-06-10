@@ -262,4 +262,17 @@ class TrayApp:
             title=self._tooltip(initial_state),
             menu=menu,
         )
-        self._icon.run_detached()
+        try:
+            self._icon.run_detached()
+        except Exception as exc:
+            self._icon = None
+            if sys.platform == "linux":
+                log.warning(
+                    "Tray icon unavailable: %s. "
+                    "On GNOME, install the 'AppIndicator and KStatusNotifierItem "
+                    "Support' extension from extensions.gnome.org and restart the "
+                    "session. The tunnel still works — use 'outwarp-cli tui' instead.",
+                    exc,
+                )
+            else:
+                raise

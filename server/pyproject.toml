@@ -53,6 +53,7 @@ dev = [
 tui = [
     "textual>=0.85",
     "qrcode>=7.4",
+    "argcomplete>=3.0",
 ]
 build = [
     "build>=1.0",

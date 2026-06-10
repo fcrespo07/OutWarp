@@ -9,11 +9,20 @@ Live application: when the tunnel is already running, flipping
 ``allow_tls_intercept`` / ``auto_reconnect`` propagates to the active
 ``TunnelManager`` via its setters. That way the user doesn't have to
 disconnect-reconnect to re-handshake against an inspection proxy.
+
+On Linux, the modal also exposes the systemd user-service toggle and the
+``loginctl`` linger toggle so the TUI can serve as the single control surface
+for background-service management.
 """
 
 from __future__ import annotations
 
+import contextlib
+import io
 import logging
+import subprocess
+import sys
+import threading
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
@@ -47,6 +56,23 @@ _TOGGLES: list[tuple[str, str, str]] = [
     ),
 ]
 
+# Pseudo-keys for Linux system-level toggles that don't map to settings.json.
+# Prefixed with "_" so the generic settings handler recognises them as special.
+_KEY_SVC = "_svc_enabled"
+_KEY_LINGER = "_linger_enabled"
+
+
+def _is_service_enabled() -> bool:
+    """Check whether the outwarp systemd user unit is enabled."""
+    import shutil
+    if sys.platform != "linux" or shutil.which("systemctl") is None:
+        return False
+    r = subprocess.run(
+        ["systemctl", "--user", "is-enabled", "outwarp-client.service"],
+        capture_output=True, text=True, check=False,
+    )
+    return r.returncode == 0
+
 
 class SettingsModal(ModalScreen[None]):
     """Toggle-board for client preferences. Persists to ``settings.json``."""
@@ -62,6 +88,10 @@ class SettingsModal(ModalScreen[None]):
         self._settings = load_settings()
 
     def compose(self) -> ComposeResult:
+        import shutil
+
+        from outwarp.service import is_linger_enabled
+
         with Container(id="settings-modal"):
             yield Static("[bold]Settings[/bold]")
             yield Static(
@@ -76,6 +106,33 @@ class SettingsModal(ModalScreen[None]):
                     with Container(classes="settings-text"):
                         yield Static(f"[b]{label}[/b]")
                         yield Static(f"[dim]{hint}[/]")
+
+            # Linux-only: background service + linger management
+            if sys.platform == "linux" and shutil.which("systemctl") is not None:
+                yield Static(
+                    "\n[b]Background service (Linux)[/b]",
+                    classes="settings-section-header",
+                )
+                with Horizontal(classes="settings-row"):
+                    yield Switch(value=_is_service_enabled(), id=f"switch-{_KEY_SVC}")
+                    with Container(classes="settings-text"):
+                        yield Static("[b]Run as background daemon[/b]")
+                        yield Static(
+                            "[dim]Install a systemd --user unit that runs the tunnel "
+                            "headlessly. Equivalent to "
+                            "[bold]outwarp-cli service install[/bold].[/]"
+                        )
+                with Horizontal(classes="settings-row"):
+                    yield Switch(
+                        value=is_linger_enabled(), id=f"switch-{_KEY_LINGER}",
+                    )
+                    with Container(classes="settings-text"):
+                        yield Static("[b]Start before login[/b]")
+                        yield Static(
+                            "[dim]Enable systemd linger so the daemon starts at boot "
+                            "before the first login (requires root or sudo NOPASSWD).[/]"
+                        )
+
             # Connection-config editing lives on its own screen (room for the
             # 7 editable fields + validation feedback). The modal just exposes
             # the entry point so users discover it from the same surface where
@@ -92,13 +149,21 @@ class SettingsModal(ModalScreen[None]):
             )
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
-        # Switch IDs follow `switch-<settings-key>` so we can recover the key
-        # without a separate lookup table.
         sid = event.switch.id or ""
         if not sid.startswith("switch-"):
             return
         key = sid.removeprefix("switch-")
         new_value = bool(event.value)
+
+        # System-level toggles — handled separately, not saved to settings.json
+        if key == _KEY_SVC:
+            self._toggle_service(new_value)
+            return
+        if key == _KEY_LINGER:
+            self._toggle_linger(new_value)
+            return
+
+        # Standard settings.json path
         if self._settings.get(key) == new_value:
             return
         self._settings[key] = new_value
@@ -123,6 +188,54 @@ class SettingsModal(ModalScreen[None]):
         self.query_one("#settings-status", Static).update(
             f"[{OK}]✓[/] {key.replace('_', ' ')} = {new_value}"
         )
+
+    def _toggle_service(self, enable: bool) -> None:
+        """Install or uninstall the systemd user unit in a background thread."""
+        from outwarp.service import install_service, uninstall_service
+
+        status = self.query_one("#settings-status", Static)
+        status.update("[dim]Applying service change…[/]")
+
+        def _run() -> None:
+            buf = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                    rc = install_service() if enable else uninstall_service()
+                if rc == 0:
+                    msg = f"[{OK}]Service {'enabled' if enable else 'disabled'}.[/]"
+                else:
+                    out = buf.getvalue().strip()
+                    msg = f"[{BAD}]Error (rc={rc}): {out[:120]}[/]"
+            except Exception as exc:
+                log.exception("toggle_service failed")
+                msg = f"[{BAD}]{exc}[/]"
+            self.app.call_from_thread(
+                lambda: self.query_one("#settings-status", Static).update(msg)
+            )
+
+        threading.Thread(target=_run, daemon=True, name="outwarp-svc-toggle").start()
+
+    def _toggle_linger(self, enable: bool) -> None:
+        """Enable or disable systemd user linger in a background thread."""
+        from outwarp.service import set_linger
+
+        status = self.query_one("#settings-status", Static)
+        status.update("[dim]Applying linger change…[/]")
+
+        def _run() -> None:
+            ok_flag, hint = set_linger(enable)
+            if ok_flag:
+                msg = (
+                    f"[{OK}]Linger {'enabled' if enable else 'disabled'}. "
+                    f"{'Daemon will now start at boot.' if enable else ''}[/]"
+                )
+            else:
+                msg = f"[{BAD}]{hint}[/]"
+            self.app.call_from_thread(
+                lambda: self.query_one("#settings-status", Static).update(msg)
+            )
+
+        threading.Thread(target=_run, daemon=True, name="outwarp-linger-toggle").start()
 
     def action_dismiss(self) -> None:
         self.dismiss(None)

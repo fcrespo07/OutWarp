@@ -1029,6 +1029,89 @@ remove_client_autostart() {
     fi
 }
 
+install_client_desktop() {
+    # Install the application launcher .desktop entry and icon so OutWarp
+    # appears in GNOME Shell, KDE Plasma, Rofi, etc.
+    info "Installing application launcher entry"
+
+    # Locate the bundled icon from the installed venv.
+    local icon_src
+    icon_src=$(find "${CLIENT_VENV}/lib" -name "app_icon.png" \
+        -path "*/outwarp/resources/app_icon.png" 2>/dev/null | head -1 || true)
+
+    if [[ -n "$icon_src" && -f "$icon_src" ]]; then
+        $SUDO install -Dm 0644 "$icon_src" /usr/share/pixmaps/outwarp.png
+        $SUDO install -Dm 0644 "$icon_src" /usr/share/icons/hicolor/128x128/apps/outwarp.png
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            $SUDO gtk-update-icon-cache -qf /usr/share/icons/hicolor 2>/dev/null || true
+        fi
+        ok "Icon installed: /usr/share/pixmaps/outwarp.png"
+    else
+        warn "Could not locate app_icon.png — launcher will use a generic icon"
+    fi
+
+    # Write the .desktop file. Terminal=true tells the DE to open a terminal
+    # emulator — the right behaviour for a TUI application.
+    $SUDO install -Dm 0644 /dev/stdin /usr/share/applications/outwarp.desktop <<'DESKTOP_EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=OutWarp
+Comment=WireGuard-over-WebSocket VPN tunnel client
+Exec=outwarp-cli tui
+Icon=outwarp
+Terminal=true
+Categories=Network;VPN;System;
+Keywords=wireguard;vpn;wstunnel;tunnel;
+StartupNotify=false
+DESKTOP_EOF
+
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        $SUDO update-desktop-database /usr/share/applications 2>/dev/null || true
+    fi
+    ok "Launcher installed: /usr/share/applications/outwarp.desktop"
+}
+
+remove_client_desktop() {
+    # Remove the system-wide launcher installed by install_client_desktop().
+    # Called from install_client() on re-install to stay idempotent;
+    # users who want a full purge should also run this path.
+    for f in \
+        /usr/share/applications/outwarp.desktop \
+        /usr/share/pixmaps/outwarp.png \
+        /usr/share/icons/hicolor/128x128/apps/outwarp.png; do
+        if [[ -f "$f" ]]; then
+            $SUDO rm -f "$f"
+            ok "Removed: $f"
+        fi
+    done
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        $SUDO update-desktop-database /usr/share/applications 2>/dev/null || true
+    fi
+}
+
+install_client_completions() {
+    # Register shell completions via argcomplete (installed with the [tui] extra).
+    # Only attempts bash and zsh; silently skips if argcomplete is missing or
+    # the completion directories don't exist.
+    local reg
+    reg="${CLIENT_VENV}/bin/register-python-argcomplete"
+    [[ -x "$reg" ]] || return 0
+
+    if [[ -d /etc/bash_completion.d ]]; then
+        "$reg" outwarp-cli > /etc/bash_completion.d/outwarp-cli 2>/dev/null \
+            && ok "bash completions: /etc/bash_completion.d/outwarp-cli" \
+            || warn "Could not write bash completions (non-fatal)"
+    fi
+
+    local zsh_dir="/usr/share/zsh/site-functions"
+    if [[ -d "$zsh_dir" ]]; then
+        "$reg" --shell zsh outwarp-cli > "${zsh_dir}/_outwarp-cli" 2>/dev/null \
+            && ok "zsh completions: ${zsh_dir}/_outwarp-cli" \
+            || true
+    fi
+}
+
 install_client() {
     info "Installing OutWarp client (pipx layout: ${BOLD}${CLIENT_VENV}${RESET})"
 
@@ -1067,11 +1150,15 @@ install_client() {
 
     write_client_helper
     write_client_sudoers
-    # Autostart is a GUI-only concept: an XDG desktop entry needs a window
+    # Autostart is a GUI-only concept: an XDG autostart entry needs a window
     # manager to launch the tray, but the TUI lives in a terminal the user
-    # opens by hand. Sweep any leftover desktop file from previous installs
+    # opens by hand. Sweep any leftover autostart file from previous installs
     # so re-running the installer always converges on the TUI default.
     remove_client_autostart
+    # Install system-wide application launcher entry (GNOME, KDE, etc.).
+    install_client_desktop
+    # Register shell completions (bash, zsh) for outwarp-cli.
+    install_client_completions
 
     cat <<EOF
 
@@ -1081,13 +1168,16 @@ ${BOLD}${GREEN}Client installed.${RESET}
     1. Drop your ${BOLD}.owcfg${RESET} file somewhere accessible by ${TARGET_USER}.
     2. Launch ${BOLD}outwarp-cli tui${RESET} — interactive terminal UI.
        The first run prompts for the .owcfg via the import modal.
+    3. Or find ${BOLD}OutWarp${RESET} in your application launcher (GNOME, KDE, etc.).
 
   ${BOLD}Headless / SSH / systemd:${RESET}
     1. ${BOLD}outwarp-cli import /path/to/profile.owcfg${RESET}
-    2. ${BOLD}outwarp-cli connect${RESET}        # foreground, Ctrl+C to stop
-       ${BOLD}outwarp-cli status${RESET}         # one-shot state probe
-       ${BOLD}outwarp-cli logs --follow${RESET}  # tail -f the log file
+    2. ${BOLD}outwarp-cli connect${RESET}            # foreground, Ctrl+C to stop
+       ${BOLD}outwarp-cli service install${RESET}    # background daemon (systemd --user)
+       ${BOLD}outwarp-cli status${RESET}             # one-shot state probe
+       ${BOLD}outwarp-cli logs --follow${RESET}      # tail -f the log file
 
+  ${DIM}Uninstall:        outwarp-cli uninstall${RESET}
   ${DIM}Privileged helper: $CLIENT_HELPER${RESET}
   ${DIM}Sudoers rule: $CLIENT_SUDOERS  (revoke with: sudo rm $CLIENT_SUDOERS)${RESET}
   ${DIM}pipx venv: $CLIENT_VENV${RESET}

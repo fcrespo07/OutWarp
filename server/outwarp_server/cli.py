@@ -914,6 +914,11 @@ _COMMANDS: dict[str, callable] = {
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    try:
+        import argcomplete
+        argcomplete.autocomplete(parser)
+    except ImportError:
+        pass
     args = parser.parse_args(argv)
     handler = _COMMANDS.get(args.command)
     if handler is None:
