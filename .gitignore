@@ -82,3 +82,6 @@ wstunnel_*/
 
 # Claude Code local agent config / memory (not part of the project)
 .claude/
+
+# stray npm lock (OutWarp is Python-only)
+package-lock.json
