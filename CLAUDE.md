@@ -96,7 +96,7 @@ OutWarp/
 │
 ├── server/
 │   ├── outwarp_server/
-│   │   ├── cli.py            # outwarp-server (única binary del servidor: setup/init/serve/add-client/list-clients/revoke-client/prune-expired/status/restart/doctor/uninstall/tui/gui/update)
+│   │   ├── cli.py            # outwarp-server (única binary del servidor: setup/init/serve/add-client/list-clients/revoke-client/rotate-client/prune-expired/status/restart/doctor/uninstall/tui/gui/update)
 │   │   ├── server_app.py     # Lógica del subcomando `outwarp-server gui` (pywebview)
 │   │   ├── api.py            # Clase Api del lado servidor
 │   │   ├── server_manager.py # ServerManager (start/stop/add-client/revoke)
@@ -219,6 +219,7 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 - `outwarp-server add-client <nombre>` — genera nuevo par de claves WG, asigna IP del pool, escribe `<nombre>.owcfg` en el directorio actual.
 - `outwarp-server list-clients` — lista clientes registrados.
 - `outwarp-server revoke-client <nombre>` — elimina cliente del peer-list de WireGuard.
+- `outwarp-server rotate-client <nombre>` — genera nuevo keypair WG + PSK para un cliente existente; preserva su IP y expiración. Escribe un nuevo `<nombre>.owcfg` que hay que redistribuir al cliente.
 - `outwarp-server status` — estado del servicio wstunnel y de WireGuard.
 
 ## Funcionalidades heredadas del script original (a mantener)

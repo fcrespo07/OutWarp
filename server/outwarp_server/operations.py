@@ -1,4 +1,4 @@
-"""Pure operations: add/revoke/restart shared by the CLI, TUI and ServerManager.
+"""Pure operations: add/revoke/rotate/restart shared by the CLI, TUI and ServerManager.
 
 These functions own the state-changing logic (keygen, IP allocation, WG hot-add,
 config persistence, .owcfg generation) and return structured results. The TUI
@@ -45,6 +45,16 @@ class RevokeResult:
 
 
 @dataclass
+class RotateClientResult:
+    client: ClientEntry
+    config: ServerConfig
+    owcfg_path: Path
+    owcfg_sha256: str
+    hot_rotated: bool
+    wg_persist_warning: str | None
+
+
+@dataclass
 class RestartResult:
     wg_conf_written: bool
     wg_restarted: bool
@@ -66,8 +76,17 @@ def add_client(
 ) -> AddClientResult:
     """Generate a new client, persist server config, hot-add peer, write .owcfg.
 
-    Raises ValueError if the name already exists or the IP pool is exhausted.
+    Raises ValueError if the name is invalid, already exists, or the IP pool is
+    exhausted. The name is validated here because operations.py is the shared
+    entry-point for the CLI, TUI and ServerManager — centralising the check
+    prevents path traversal via a crafted name (e.g. '../evil') when the name
+    is used to build the .owcfg filename.
     """
+    # Late import avoids a module-level circular dependency (server_manager
+    # imports from operations via CLI/TUI, not directly, but being careful).
+    from outwarp_server.server_manager import validate_client_name
+    name = validate_client_name(name)
+
     for c in config.clients:
         if c.name == name:
             raise ValueError(f"Client '{name}' already exists.")
@@ -174,6 +193,91 @@ def revoke_client(
         name=name,
         config=updated,
         hot_removed=hot_removed,
+        wg_persist_warning=wg_persist_warning,
+    )
+
+
+def rotate_client(
+    config: ServerConfig,
+    name: str,
+    *,
+    config_path: Path,
+    output_dir: Path | None = None,
+) -> RotateClientResult:
+    """Generate a fresh WG keypair + PSK for an existing client.
+
+    The old public key is removed from the peer list; the new one is added.
+    The client's IP address and expiry are preserved. Returns a new .owcfg that
+    must be re-distributed to the client — the previous one becomes invalid
+    as soon as this call returns.
+
+    Raises ValueError if the client is not found.
+    """
+    from outwarp_server.server_manager import validate_client_name
+    name = validate_client_name(name)
+
+    target = next((c for c in config.clients if c.name == name), None)
+    if target is None:
+        raise ValueError(f"Client '{name}' not found.")
+
+    new_private, new_public = generate_wg_keypair()
+    try:
+        new_psk = generate_psk()
+    except Exception as exc:
+        log.warning("Could not generate preshared key on rotate (continuing without one): %s", exc)
+        new_psk = ""
+
+    hot_rotated = True
+    try:
+        remove_peer_live(target.public_key)
+    except Exception as exc:
+        log.warning("Could not hot-remove old peer (WireGuard may not be running): %s", exc)
+        hot_rotated = False
+    try:
+        add_peer_live(new_public, target.address, psk=new_psk)
+    except Exception as exc:
+        log.warning("Could not hot-add rotated peer (WireGuard may not be running): %s", exc)
+        hot_rotated = False
+
+    updated_clients = [
+        ClientEntry(
+            name=c.name, public_key=new_public, address=c.address,
+            psk=new_psk, expires_at=c.expires_at,
+        ) if c.name == name else c
+        for c in config.clients
+    ]
+    updated = replace(config, clients=updated_clients)
+    updated.save(config_path)
+
+    wg_persist_warning: str | None = None
+    from outwarp_server.platforms import PlatformError, get_server_platform
+    try:
+        get_server_platform().install_wg_config(build_server_wg_conf(updated))
+    except PlatformError as exc:
+        log.warning("Could not persist WG config to OS location: %s", exc)
+        wg_persist_warning = str(exc)
+
+    new_client = next(c for c in updated.clients if c.name == name)
+    owcfg = build_owcfg(
+        config,
+        name,
+        new_private,
+        target.address,
+        preshared_key=new_psk,
+        expires_at=target.expires_at,
+    )
+    owcfg_dir = output_dir or Path.cwd()
+    owcfg_path = owcfg_dir / f"{name}.owcfg"
+    write_owcfg(owcfg, owcfg_path)
+
+    digest = hashlib.sha256(owcfg_path.read_bytes()).hexdigest()
+
+    return RotateClientResult(
+        client=new_client,
+        config=updated,
+        owcfg_path=owcfg_path,
+        owcfg_sha256=_format_fingerprint(digest),
+        hot_rotated=hot_rotated,
         wg_persist_warning=wg_persist_warning,
     )
 

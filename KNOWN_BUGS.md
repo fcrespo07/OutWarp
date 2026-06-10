@@ -1,4 +1,4 @@
-# Bugs conocidos — WarpSocket
+# Bugs conocidos — OutWarp
 
 Catálogo vivo de bugs detectados durante el desarrollo, con su estado, causa raíz, fix aplicado y notas para no repetirlos.
 
@@ -78,10 +78,6 @@ Leyenda de estado:
 **Fix:** `uninstall_wg_config()` borra el sysctl drop-in y reaplica `sysctl --system`; `_spawn_deferred_cleanup()` lanza un script bash separado que borra el venv y el symlink tras salir el proceso (no se puede borrar el venv que estás ejecutando). (commit `3516456`)
 **Prevención:** Cuando un proceso se desinstala a sí mismo, la limpieza del propio binario tiene que diferirse a otro proceso.
 
----
-
-## Abiertos
-
 ### ✅ B-012 — Servidor Linux Mint pierde su propia conexión a internet tras `setup`
 **Síntomas:** Al instalar WarpSocket en Mint (VirtualBox, Red NAT), la VM servidor pierde acceso a internet (no sólo el cliente: el propio servidor).
 **Causa raíz confirmada:** Dos problemas combinados:
@@ -130,6 +126,12 @@ Leyenda de estado:
 **Causa raíz:** wstunnel valida el certificado TLS del servidor contra el CA store del sistema operativo. El certificado auto-firmado generado por el wizard no está en ningún CA store → wstunnel sale inmediatamente con error de verificación TLS.
 **Fix:** Añadido `--dangerous-disable-certificate-verification` al comando de wstunnel en `build_wstunnel_command`. La seguridad de identidad del servidor la proporciona el pinning SHA-256 (`verify_tls_fingerprint`) que se ejecuta antes de arrancar wstunnel, por lo que omitir la validación CA de wstunnel no introduce vulnerabilidades adicionales.
 **Prevención:** Al integrar cualquier binario externo que haga TLS, verificar siempre cómo gestiona certs auto-firmados. No asumir que el flujo Python y el binario heredan la misma configuración de confianza TLS.
+
+---
+
+## Abiertos
+
+*(Ninguno conocido actualmente.)*
 
 ---
 

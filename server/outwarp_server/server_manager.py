@@ -394,6 +394,9 @@ class ServerManager:
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 creationflags=_NO_WINDOW,
             )
             threading.Thread(
@@ -425,12 +428,12 @@ class ServerManager:
 
     def _read_output(self, proc: subprocess.Popen) -> None:
         try:
-            for raw in proc.stdout:
-                line = raw.decode("utf-8", errors="replace").rstrip()
-                if line:
-                    log.info("[wstunnel] %s", line)
+            for line in proc.stdout:
+                stripped = line.rstrip()
+                if stripped:
+                    log.info("[wstunnel] %s", stripped)
         except Exception:
-            pass
+            log.debug("_read_output: stdout reader exited unexpectedly", exc_info=True)
 
     def _monitor_loop(self) -> None:
         while not self._stop_event.wait(_MONITOR_INTERVAL):

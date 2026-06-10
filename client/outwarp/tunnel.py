@@ -546,7 +546,7 @@ class TunnelManager:
                 return
 
             log.warning("Tunnel died unexpectedly; cleaning up before retry")
-            self._set_error("La conexión se cerró inesperadamente")
+            self._set_error("Connection closed unexpectedly")
             try:
                 self._tunnel.disconnect()
             except Exception:

@@ -527,8 +527,8 @@ class Api:
         if parsed.is_expired():
             return {
                 "ok": False,
-                "error": f"Este perfil caducó el {parsed.expires_at}. "
-                         "Pide uno nuevo al administrador del servidor.",
+                "error": f"This profile expired on {parsed.expires_at}. "
+                         "Ask the server administrator for a new one.",
             }
         try:
             # Pass the resolved path explicitly so a test patching
