@@ -15,7 +15,7 @@ _WIREGUARD_EXE = Path(r"C:\Program Files\WireGuard\wireguard.exe")
 # to find conf files — the service runs as LocalSystem and cannot access %LOCALAPPDATA%.
 _WG_CONF_DIR = Path(r"C:\ProgramData\WireGuard")
 _IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
-_NO_WINDOW = subprocess.CREATE_NO_WINDOW
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 # HKCU is the right hive for per-user autostart: HKLM\…\Run would require
 # admin to write and would launch OutWarp for every user on the box.

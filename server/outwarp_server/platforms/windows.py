@@ -19,7 +19,7 @@ _WG_EXE = Path(r"C:\Program Files\WireGuard\wireguard.exe")
 _WG_DIR = Path(r"C:\ProgramData\WireGuard")
 _WG_INTERFACE = "OutWarp-Server"
 _NAT_NAME = "OutWarp"
-_NO_WINDOW = subprocess.CREATE_NO_WINDOW
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def _run(*cmd: str, check: bool = True) -> subprocess.CompletedProcess[str]:
