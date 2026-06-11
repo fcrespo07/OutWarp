@@ -123,7 +123,10 @@ class TestLinuxPlatform:
     @pytest.mark.skipif(sys.platform == "win32", reason="Linux-only install paths (/opt/...)")
     def test_install_prefix_and_bin_link_match_installer(self) -> None:
         p = LinuxServerPlatform()
-        assert p.install_prefix() == Path("/opt/outwarp-server")
+        _legacy = "/opt/outwarp-server"
+        _exists = lambda self: str(self) == _legacy  # noqa: E731
+        with patch.object(Path, "exists", autospec=True, side_effect=_exists):
+            assert p.install_prefix() == Path(_legacy)
         assert p.bin_link() == Path("/usr/local/bin/outwarp-server")
 
     @patch("outwarp_server.platforms.linux._run")

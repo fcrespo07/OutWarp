@@ -96,7 +96,7 @@ OutWarp/
 │
 ├── server/
 │   ├── outwarp_server/
-│   │   ├── cli.py            # outwarp-server (única binary del servidor: setup/init/serve/add-client/list-clients/revoke-client/prune-expired/status/restart/doctor/uninstall/tui/gui/update)
+│   │   ├── cli.py            # outwarp-server (única binary del servidor: setup/init/serve/add-client/list-clients/revoke-client/rotate-client/prune-expired/status/restart/doctor/uninstall/tui/gui/update)
 │   │   ├── server_app.py     # Lógica del subcomando `outwarp-server gui` (pywebview)
 │   │   ├── api.py            # Clase Api del lado servidor
 │   │   ├── server_manager.py # ServerManager (start/stop/add-client/revoke)
@@ -219,6 +219,7 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 - `outwarp-server add-client <nombre>` — genera nuevo par de claves WG, asigna IP del pool, escribe `<nombre>.owcfg` en el directorio actual.
 - `outwarp-server list-clients` — lista clientes registrados.
 - `outwarp-server revoke-client <nombre>` — elimina cliente del peer-list de WireGuard.
+- `outwarp-server rotate-client <nombre>` — genera nuevo keypair WG + PSK para un cliente existente; preserva su IP y expiración. Escribe un nuevo `<nombre>.owcfg` que hay que redistribuir al cliente.
 - `outwarp-server status` — estado del servicio wstunnel y de WireGuard.
 
 ## Funcionalidades heredadas del script original (a mantener)
@@ -274,7 +275,7 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 ## Estado actual
 
-**Versión actual: `0.7.1`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz). Resumen de 0.7.1: el `install.sh` de Linux instala la versión de wstunnel **pinneada** (antes bajaba la última de GitHub y aceptaba en silencio cualquier binario preexistente del PATH → un cliente derivó a 10.5.5 contra un servidor 10.5.2; el formato del WS upgrade cambió entre versiones → HTTP 400 y túnel sin tráfico, "conecta" pero solo sube). Versión centralizada en `installer/wstunnel-version.txt` (la leen `fetch_bundled_binaries.py` y el workflow de Docker; `install.sh` y `server/Dockerfile` la replican), con `server/tests/test_wstunnel_version_pin.py` como guardia anti-drift. Resumen de 0.7.0 (hardening tras auditoría de código + UX + CI del instalador Windows):
+**Versión actual: `0.8.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz). Resumen de 0.8.0 (Linux UX + TUI feature pass + fixes de code review): notificaciones de escritorio vía `notify-send` (`outwarp/notify.py`, cableado en GUI/TUI/daemon), launcher `.desktop` + icono + completions bash/zsh instalados por `install.sh`, toggles de servicio systemd + linger en el settings modal de la TUI, `outwarp-cli doctor` + DoctorScreen del cliente (`outwarp/diagnostics.py`: wstunnel/pin/wg/helper/sudoers/kmod/systemd/notify-send), `outwarp-server rotate-client` (CLI + TUI con QR), filtros del log screen (`/` búsqueda, `e`/`w` nivel, `p` pausa), auto-scan de `.owcfg` en el import modal, sparklines rx/tx, hints de error + log inline en FailedScreen, columna expires + prune (`P`) en la tabla de clientes del servidor, copy endpoint (`c`). Seguridad: `add_client()` valida el nombre antes de construir el path del `.owcfg` (path traversal vía `../`). Resumen de 0.7.1: el `install.sh` de Linux instala la versión de wstunnel **pinneada** (antes bajaba la última de GitHub y aceptaba en silencio cualquier binario preexistente del PATH → un cliente derivó a 10.5.5 contra un servidor 10.5.2; el formato del WS upgrade cambió entre versiones → HTTP 400 y túnel sin tráfico, "conecta" pero solo sube). Versión centralizada en `installer/wstunnel-version.txt` (la leen `fetch_bundled_binaries.py` y el workflow de Docker; `install.sh` y `server/Dockerfile` la replican), con `server/tests/test_wstunnel_version_pin.py` como guardia anti-drift. Resumen de 0.7.0 (hardening tras auditoría de código + UX + CI del instalador Windows):
 - **Seguridad de secretos**: `ClientConfig.save()` (y `config.original.json`) ahora escriben atómicamente a 0o600 (`_atomic_write_secret`) — antes `config.json` con la clave privada WG quedaba a la umask (world-readable en Linux). La WG conf del servidor (linux/kubernetes/windows) pasa por el mismo helper (sin ventana 0o644→chmod). Txn ID de la sonda DNS de `detect_hostile_network()` ahora aleatorio (`secrets`), no fijo.
 - **TUI responsiva**: el dashboard del cliente corre `StatsSampler.sample()` (subprocess `wg`/`ping`) en executor en vez de bloquear el event loop; `disconnect`/`reconnect`/`quit` ya no congelan la TUI mientras `mgr.stop()` hace join. Indicador de estado del túnel visible en `StatusCard` (antes el dashboard era idéntico conectado vs desconectado). Stepper de conexión con 5º paso "ready" como la GUI.
 - **Robustez**: validación de `reconnect.max_attempts`/`delays_seconds` en el parser (un `max_attempts=0` ya no provoca fallo instantáneo silencioso). `top_talkers()` usa `LAG()`+clamp (no `MAX-MIN`) para no inflar tras un reset de contador. Race de `_replace_manager` cerrado con `TunnelManager.remove_listener()`. Stats/latency loops hacen join al pararse. Lock en `_last_failure_message` del servidor.

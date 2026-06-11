@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "outwarp-client"
-version = "0.7.1"
+version = "0.8.0"
 description = "Cliente de bandeja multiplataforma para tuneles WireGuard sobre WebSocket (wstunnel)"
 requires-python = ">=3.11"
 authors = [
@@ -49,6 +49,7 @@ build = [
 tui = [
     "textual>=0.85",
     "rich>=13.0",
+    "argcomplete>=3.0",
 ]
 # Opt-in extra for Linux users who still want the pywebview tray GUI
 # instead of the TUI. Activated via `pip install outwarp-client[gui-linux]`

@@ -1,0 +1,130 @@
+name: Release
+
+# Builds the Linux wheels and creates (or refreshes) the GitHub Release for a
+# tag — the CI counterpart of scripts/release.sh for environments without a
+# local `gh` login.
+#
+# Triggers:
+#   - push of a v* tag      → publishes that tag automatically.
+#   - workflow_dispatch     → (re)publish any existing tag.
+#
+# Release notes come from the matching `## [x.y.z]` section in CHANGELOG.md,
+# same extraction as release.sh. Note: a release created here with
+# GITHUB_TOKEN does NOT fire the `release: published` trigger of
+# windows-installer.yml (GitHub blocks workflow-to-workflow recursion) —
+# dispatch that workflow manually with the same tag to attach the .exe files.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish, e.g. v0.8.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          [ -n "$tag" ] || { echo "no tag resolved" >&2; exit 1; }
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "ref=$tag" >> "$GITHUB_OUTPUT"
+            echo "target=" >> "$GITHUB_OUTPUT"
+          else
+            # Tag doesn't exist yet (dispatch from a branch): build the
+            # dispatched commit and let `gh release create --target` create
+            # the tag there.
+            echo "ref=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "target=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the tagged sources
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build wheels
+        run: |
+          python -m pip install --quiet build
+          python -m build --wheel --outdir dist client
+          python -m build --wheel --outdir dist server
+
+      - name: Verify wheel versions match the tag
+        run: |
+          v="${{ steps.tag.outputs.version }}"
+          ls "dist/outwarp_client-${v}-py3-none-any.whl" \
+             "dist/outwarp_server-${v}-py3-none-any.whl"
+
+      - name: Generate SHA256SUMS.txt
+        run: |
+          cd dist
+          sha256sum outwarp_client-*.whl outwarp_server-*.whl > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          v="${{ steps.tag.outputs.version }}"
+          awk -v tag="[$v]" '
+              /^## / { if (started) exit; if (index($0, tag)) started=1 }
+              started { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            printf '## v%s\n' "$v" > notes.md
+          fi
+          {
+            echo
+            echo "---"
+            echo
+            echo "### Install / upgrade"
+            echo
+            echo "Linux (client or server):"
+            echo '```'
+            echo "curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/linux/install.sh | sudo bash"
+            echo '```'
+            echo "Or upgrade in place:"
+            echo '```'
+            echo "sudo outwarp-cli update      # client"
+            echo "sudo outwarp-server update   # server"
+            echo '```'
+            echo
+            echo 'Windows: download the matching `OutWarpSetup-*.exe` below and run it.'
+            echo 'Verify any asset against `SHA256SUMS.txt`.'
+          } >> notes.md
+
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          target="${{ steps.tag.outputs.target }}"
+          assets="dist/outwarp_client-*.whl dist/outwarp_server-*.whl dist/SHA256SUMS.txt"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file notes.md
+            # shellcheck disable=SC2086
+            gh release upload "$tag" $assets --clobber
+          else
+            # shellcheck disable=SC2086
+            gh release create "$tag" --title "$tag" --notes-file notes.md \
+              ${target:+--target "$target"} $assets
+          fi

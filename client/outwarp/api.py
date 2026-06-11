@@ -159,6 +159,7 @@ class Api:
         self._lock = threading.Lock()
         self._settings = _load_settings()
         self._log_seq = 0
+        self._prev_notified_state: TunnelState | None = None
         # Snapshot of recent log entries with sequence numbers; the UI polls
         # via get_logs(since=N) on first paint, then receives outwarp:log
         # events for every new line.
@@ -450,6 +451,7 @@ class Api:
         # now using 1.1.1.1 under the hood).
         if state in (TunnelState.CONNECTING, TunnelState.CONNECTED):
             self._maybe_emit_hostile()
+        self._notify_state(state)
         if state is TunnelState.CONNECTED:
             self._stats["session_start"] = time.time()
             self._stats["last_handshake"] = time.time()
@@ -467,6 +469,19 @@ class Api:
             self._stats["latency_ms"] = 0
             if state in (TunnelState.DISCONNECTED, TunnelState.FAILED):
                 self._stats["session_start"] = 0
+
+    def _notify_state(self, state: TunnelState) -> None:
+        """Send a desktop notification for key tunnel state transitions (Linux)."""
+        from outwarp.notify import notify
+        prev = self._prev_notified_state
+        self._prev_notified_state = state
+        if state is TunnelState.CONNECTED:
+            notify("OutWarp", "Connected")
+        elif state is TunnelState.FAILED:
+            err = self._error_str() or "unknown error"
+            notify("OutWarp", f"Connection failed: {err}", urgency="critical")
+        elif state is TunnelState.RECONNECTING and prev is TunnelState.CONNECTED:
+            notify("OutWarp", "Connection dropped — reconnecting...")
 
     def _sync_kill_switch(self, state: TunnelState) -> None:
         """Engage/release the kill switch in response to a tunnel state change.
@@ -527,8 +542,8 @@ class Api:
         if parsed.is_expired():
             return {
                 "ok": False,
-                "error": f"Este perfil caducó el {parsed.expires_at}. "
-                         "Pide uno nuevo al administrador del servidor.",
+                "error": f"This profile expired on {parsed.expires_at}. "
+                         "Ask the server administrator for a new one.",
             }
         try:
             # Pass the resolved path explicitly so a test patching

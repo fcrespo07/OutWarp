@@ -5,6 +5,17 @@ fit into a single release — either because they are big reworks, need external
 resources (a paid certificate, an app-store account), or need hardware/network
 setups we can't validate in CI.
 
+## Shipped in 0.7.x
+
+- **Textual TUI** (`outwarp-cli tui` / `outwarp-server tui`): full terminal
+  UI for client and server, sharing the same `TunnelManager` / `ServerManager`
+  backend. Shipped in 0.5.0, hardened in 0.7.0.
+- **Daemon mode + systemd user unit** (`outwarp-cli daemon` / `service
+  install|uninstall|status`): headless background client managed as a
+  systemd user service. Shipped in 0.6.0.
+- **`rotate-client` subcommand**: generates a new WireGuard keypair + PSK
+  for an existing client without changing its IP or expiry. Shipped in 0.7.2.
+
 ## Shipped in 0.3.0
 
 These landed as code with tests:
@@ -29,20 +40,17 @@ These landed as code with tests:
 ## Planned — larger reworks
 
 ### Multi-profile support
-Today the client holds a single active `config.json`. The `Api` surface
-(`list_profiles`, `set_active_profile`, `remove_profile`) is already shaped for
-many; the work is a profile store on disk, a per-profile `TunnelManager`, a
-switcher in the UI and tray, and a migration for the current single profile.
+Today the client holds a single active `config.json`. The API methods
+(`list_profiles`, `set_active_profile`, `remove_profile`) exist as single-profile
+stubs so the UI renders uniformly; the real work is a profile store on disk
+(a `profiles/` subdirectory with one `config_<id>.json` per entry), a
+per-profile `TunnelManager`, a switcher in the UI and tray, and a migration for
+the current single-profile layout.
 
 ### Split tunnelling (per-app / per-domain)
 Bypass IPs already carve routes out of the tunnel. True per-application routing
 is OS-specific and substantial: WFP app-ID filters on Windows, cgroup/`fwmark`
 + policy routing on Linux. Per-domain needs a resolver hook.
-
-### TUI client (textual)
-Agreed second client once the GUI is stable. `outwarp-cli` already shares the
-`TunnelManager`, so a [textual](https://textual.textualize.io/) front-end would
-reuse the same backend — no tunnel logic duplicated.
 
 ### More languages
 i18n lives in `ui/shared.jsx` (`STR`) and `ui/srv-data.jsx` (`SRV_STR`),

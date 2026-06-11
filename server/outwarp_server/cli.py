@@ -32,8 +32,8 @@ console = Console()
 # Commands that read/modify privileged state (systemd, /etc/wireguard, wg interface).
 # Anything not in this set runs without a root check (--version, --help).
 _PRIVILEGED_COMMANDS = frozenset({
-    "setup", "add-client", "list-clients", "revoke-client", "prune-expired",
-    "status", "restart", "uninstall", "doctor", "init", "serve", "tui",
+    "setup", "add-client", "list-clients", "revoke-client", "rotate-client",
+    "prune-expired", "status", "restart", "uninstall", "doctor", "init", "serve", "tui",
 })
 # ``gui`` is intentionally NOT in the privileged set: the pywebview shell is
 # safe to launch as the invoking user, and the underlying API enforces root
@@ -330,6 +330,47 @@ def _cmd_revoke_client(args: argparse.Namespace) -> int:
         return 1
 
     console.print(f"[green]Client '{name}' revoked.[/green]")
+    return 0
+
+
+def _cmd_rotate_client(args: argparse.Namespace) -> int:
+    """Generate a new WireGuard keypair + PSK for an existing client.
+
+    The client's IP address and expiry are preserved. A new .owcfg is written to
+    the current directory — it must be re-distributed to the client, as the old
+    one becomes invalid immediately.
+    """
+    from outwarp_server import operations
+
+    config = _load_config(args)
+
+    try:
+        result = operations.rotate_client(
+            config,
+            args.name,
+            config_path=_resolve_config_path(args),
+        )
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        return 1
+    except Exception as exc:
+        console.print(f"[red]Error rotating keys:[/red] {exc}")
+        return 1
+
+    console.print(f"\n[green]Client '{args.name}' keys rotated.[/green]")
+    console.print(f"  New public key: {result.client.public_key[:24]}…")
+    console.print(f"  New .owcfg:     [bold]{result.owcfg_path}[/bold]")
+    console.print(f"  SHA-256:        {result.owcfg_sha256[:23]}…")
+    if result.wg_persist_warning:
+        console.print(f"  [yellow]Warning:[/yellow] {result.wg_persist_warning}")
+    if not result.hot_rotated:
+        console.print(
+            "  [yellow]Note:[/yellow] WireGuard was not reachable — restart the server "
+            "with [bold]outwarp-server restart[/bold] to apply the new key."
+        )
+    console.print(
+        "\n[bold]Send the new .owcfg to the client — the previous one is now invalid.[/bold]"
+    )
     return 0
 
 
@@ -666,6 +707,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_revoke = sub.add_parser("revoke-client", help="Revoke a client")
     p_revoke.add_argument("name", help="Client name to revoke")
 
+    p_rotate = sub.add_parser(
+        "rotate-client",
+        help="Generate a new WireGuard keypair + PSK for an existing client",
+    )
+    p_rotate.add_argument("name", help="Client name whose keys to rotate")
+
     p_prune = sub.add_parser(
         "prune-expired", help="Revoke every client whose --days expiry has passed"
     )
@@ -853,6 +900,7 @@ _COMMANDS: dict[str, callable] = {
     "add-client": _cmd_add_client,
     "list-clients": _cmd_list_clients,
     "revoke-client": _cmd_revoke_client,
+    "rotate-client": _cmd_rotate_client,
     "prune-expired": _cmd_prune_expired,
     "status": _cmd_status,
     "restart": _cmd_restart,
@@ -866,6 +914,11 @@ _COMMANDS: dict[str, callable] = {
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    try:
+        import argcomplete
+        argcomplete.autocomplete(parser)
+    except ImportError:
+        pass
     args = parser.parse_args(argv)
     handler = _COMMANDS.get(args.command)
     if handler is None:

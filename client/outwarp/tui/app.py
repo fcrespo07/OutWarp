@@ -10,6 +10,7 @@ from outwarp.logs import setup_logging
 from outwarp.settings import load_settings
 from outwarp.tui.screens.connecting import ConnectingScreen
 from outwarp.tui.screens.dashboard import DashboardScreen
+from outwarp.tui.screens.doctor import DoctorScreen
 from outwarp.tui.screens.empty import EmptyScreen
 from outwarp.tui.screens.failed import FailedScreen
 from outwarp.tui.screens.logs import LogsScreen
@@ -31,11 +32,13 @@ class OutWarpClientTUI(App):
         "logs": LogsScreen,
         "failed": FailedScreen,
         "profile": ProfileScreen,
+        "doctor": DoctorScreen,
     }
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("question_mark", "help", "Help"),
         ("s", "settings", "Settings"),
+        ("d", "doctor", "Doctor"),
     ]
 
     def __init__(self) -> None:
@@ -148,13 +151,25 @@ class OutWarpClientTUI(App):
     def _route_state(self, state: TunnelState) -> None:
         if state == self._last_state:
             return
+        prev = self._last_state
         self._last_state = state
+        self._notify_state(state, prev)
         if state in (TunnelState.CONNECTING, TunnelState.RECONNECTING):
             self._push_unique("connecting")
         elif state == TunnelState.CONNECTED:
             self._push_unique("dashboard")
         elif state == TunnelState.FAILED:
             self._push_unique("failed")
+
+    def _notify_state(self, state: TunnelState, prev: TunnelState | None) -> None:
+        from outwarp.notify import notify
+        if state is TunnelState.CONNECTED:
+            notify("OutWarp", "Connected")
+        elif state is TunnelState.FAILED:
+            err = self.manager.last_error if self.manager else None
+            notify("OutWarp", f"Connection failed: {err or 'unknown error'}", urgency="critical")
+        elif state is TunnelState.RECONNECTING and prev is TunnelState.CONNECTED:
+            notify("OutWarp", "Connection dropped — reconnecting...")
 
     def action_help(self) -> None:
         from outwarp.tui.modals.help import HelpModal
@@ -163,6 +178,9 @@ class OutWarpClientTUI(App):
     def action_settings(self) -> None:
         from outwarp.tui.modals.settings import SettingsModal
         self.push_screen(SettingsModal())
+
+    def action_doctor(self) -> None:
+        self.push_screen("doctor")
 
     async def action_quit(self) -> None:
         # manager.stop() joins the watchdog thread (up to ~10s); run it off the

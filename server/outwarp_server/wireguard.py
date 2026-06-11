@@ -202,6 +202,9 @@ def add_peer_live(
     """
     wg = str(wg_bin or "wg")
     cmd = [wg, "set", interface, "peer", public_key, "allowed-ips", allowed_ips]
+    extra: dict = {}
+    if sys.platform == "win32":
+        extra["creationflags"] = subprocess.CREATE_NO_WINDOW
     psk_file: Path | None = None
     try:
         if psk:
@@ -212,7 +215,7 @@ def add_peer_live(
             with os.fdopen(fd, "w") as fh:
                 fh.write(psk)
             cmd += ["preshared-key", str(psk_file)]
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(cmd, check=True, capture_output=True, text=True, **extra)
     except subprocess.CalledProcessError as exc:
         raise WireGuardError(f"Failed to add peer: {exc.stderr.strip()}") from exc
     finally:
@@ -228,12 +231,16 @@ def remove_peer_live(
 ) -> None:
     """Hot-remove a peer from a running WireGuard interface."""
     wg = str(wg_bin or "wg")
+    extra: dict = {}
+    if sys.platform == "win32":
+        extra["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
         subprocess.run(
             [wg, "set", interface, "peer", public_key, "remove"],
             check=True,
             capture_output=True,
             text=True,
+            **extra,
         )
     except subprocess.CalledProcessError as exc:
         raise WireGuardError(f"Failed to remove peer: {exc.stderr.strip()}") from exc

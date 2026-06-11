@@ -131,6 +131,61 @@ def test_restart_services_returns_all_three_true_on_success(
     fake.restart_wstunnel_service.assert_called_once()
 
 
+@patch("outwarp_server.operations.add_peer_live")
+@patch("outwarp_server.operations.remove_peer_live")
+@patch("outwarp_server.operations.generate_psk", return_value="newpsk")
+@patch("outwarp_server.operations.generate_wg_keypair", return_value=("new_priv", "new_pub"))
+def test_rotate_client_replaces_keypair_and_rewrites_owcfg(
+    _kg: MagicMock, _psk: MagicMock, mock_remove: MagicMock,
+    mock_add: MagicMock, tmp_path: Path,
+) -> None:
+    cfg_path = _write_server_config(
+        tmp_path,
+        clients=[{"name": "laptop", "public_key": "old_pub", "address": "10.0.0.2/32"}],
+    )
+    config = ServerConfig.load(cfg_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    result = operations.rotate_client(config, "laptop", config_path=cfg_path, output_dir=out_dir)
+
+    assert result.client.public_key == "new_pub"
+    assert result.client.address == "10.0.0.2/32"  # preserved
+    assert result.owcfg_path == out_dir / "laptop.owcfg"
+    assert result.owcfg_path.exists()
+
+    saved = ServerConfig.load(cfg_path)
+    assert saved.clients[0].public_key == "new_pub"
+
+    mock_remove.assert_called_once_with("old_pub")
+    mock_add.assert_called_once()
+
+
+@patch("outwarp_server.operations.add_peer_live")
+@patch("outwarp_server.operations.remove_peer_live")
+@patch("outwarp_server.operations.generate_psk", return_value="")
+@patch("outwarp_server.operations.generate_wg_keypair", return_value=("p", "q"))
+def test_rotate_client_raises_for_unknown(
+    _kg: MagicMock, _psk: MagicMock, _rm: MagicMock, _add: MagicMock, tmp_path: Path,
+) -> None:
+    cfg_path = _write_server_config(tmp_path)
+    config = ServerConfig.load(cfg_path)
+    with pytest.raises(ValueError, match="not found"):
+        operations.rotate_client(config, "ghost", config_path=cfg_path)
+
+
+@patch("outwarp_server.operations.add_peer_live")
+@patch("outwarp_server.operations.generate_psk", return_value="")
+@patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
+def test_add_client_rejects_path_traversal_name(
+    _kg: MagicMock, _psk: MagicMock, _add: MagicMock, tmp_path: Path,
+) -> None:
+    cfg_path = _write_server_config(tmp_path)
+    config = ServerConfig.load(cfg_path)
+    with pytest.raises(ValueError):
+        operations.add_client(config, "../evil", config_path=cfg_path, output_dir=tmp_path)
+
+
 @patch("outwarp_server.platforms.get_server_platform")
 def test_restart_services_stops_after_wg_restart_failure(
     mock_platform: MagicMock, tmp_path: Path,

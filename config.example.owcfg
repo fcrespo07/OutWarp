@@ -4,7 +4,8 @@
   "server": {
     "endpoint": "203.0.113.42",
     "port": 443,
-    "http_upgrade_path_prefix": "replace-with-random-secret"
+    "http_upgrade_path_prefix": "replace-with-random-secret",
+    "fallback_ports": [8443, 2083]
   },
   "tls": {
     "cert_fingerprint_sha256": "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89"
@@ -20,7 +21,8 @@
     "client_private_key": "<base64-encoded-private-key>",
     "server_public_key": "<base64-encoded-public-key>",
     "dns": ["1.1.1.1"],
-    "mtu": 1380
+    "mtu": 1380,
+    "preshared_key": "<base64-encoded-psk-generated-by-server>"
   },
   "routing": {
     "bypass_ips": ["203.0.113.42"]
@@ -28,5 +30,11 @@
   "reconnect": {
     "max_attempts": 5,
     "delays_seconds": [5, 10, 20, 30, 60]
+  },
+  "network": {
+    "hostile_mode": "auto"
+  },
+  "meta": {
+    "expires_at": "2027-01-01"
   }
 }

@@ -21,6 +21,8 @@ class ClientsScreen(Screen):
     BINDINGS = [
         Binding("a", "add", "Add"),
         Binding("r", "revoke", "Revoke"),
+        Binding("t", "rotate", "Rotate"),
+        Binding("P", "prune", "Prune expired"),
         Binding("slash", "focus_search", "Search"),
         Binding("escape", "back", "Back", priority=True),
         Binding("q", "quit", "Quit", priority=True),
@@ -57,7 +59,9 @@ class ClientsScreen(Screen):
 
     def on_mount(self) -> None:
         t = self.query_one(DataTable)
-        t.add_columns("●", "name", "address", "status", "last hs", "rx", "tx", "endpoint")
+        t.add_columns(
+            "●", "name", "address", "status", "last hs", "rx", "tx", "endpoint", "expires",
+        )
         # Default focus on the table so single-key verbs (a, r, q, ?) work
         # without a leading Tab. Pressing `/` jumps focus into search.
         t.focus()
@@ -98,7 +102,8 @@ class ClientsScreen(Screen):
                 rx = _fmt_bytes(peer.transfer_rx)
                 tx = _fmt_bytes(peer.transfer_tx)
                 endpoint = peer.endpoint or "—"
-            table.add_row(dot, c.name, c.address, status, hs, rx, tx, endpoint)
+            expires = c.expires_at or "—"
+            table.add_row(dot, c.name, c.address, status, hs, rx, tx, endpoint, expires)
 
         if cursor is not None and cursor < table.row_count:
             with contextlib.suppress(Exception):
@@ -153,6 +158,86 @@ class ClientsScreen(Screen):
                 title=f"Revoke '{name}'?",
                 body="The client will lose access immediately.",
                 ok_label="Revoke",
+            ),
+            _go,
+        )
+
+    def action_rotate(self) -> None:
+        name = self._selected_name()
+        if not name:
+            self.notify("Select a client first.", severity="warning")
+            return
+
+        from outwarp_server.tui.modals.confirm import ConfirmModal
+
+        def _go(result: bool | None) -> None:
+            if not result:
+                return
+            from outwarp_server import operations
+            try:
+                res = operations.rotate_client(
+                    self.app.config, name,
+                    config_path=self.app.config_path,
+                    output_dir=self.app.config_path.parent,
+                )
+            except (ValueError, KeyError) as exc:
+                self.notify(str(exc), severity="error")
+                return
+            self.app.reload_config()
+            self.refresh_table()
+            self.notify(
+                f"Rotated '{name}' → {res.owcfg_path.name}. Distribute the new .owcfg.",
+                severity="information",
+            )
+            from outwarp_server.tui.modals.qr import QrModal
+            self.app.push_screen(QrModal(res.owcfg_path))
+
+        self.app.push_screen(
+            ConfirmModal(
+                title=f"Rotate '{name}'?",
+                body=(
+                    "Generates a new WireGuard keypair + PSK. "
+                    "The client must reimport the new .owcfg."
+                ),
+                ok_label="Rotate",
+            ),
+            _go,
+        )
+
+    def action_prune(self) -> None:
+        import time
+
+        from outwarp_server.tui.modals.confirm import ConfirmModal
+
+        now = time.strftime("%Y-%m-%d")
+        expired = [
+            c.name for c in self.app.config.clients
+            if c.expires_at and c.expires_at < now
+        ]
+        if not expired:
+            self.notify("No expired clients found.", severity="information")
+            return
+
+        def _go(result: bool | None) -> None:
+            if not result:
+                return
+            from outwarp_server import operations
+            for name in expired:
+                try:
+                    operations.revoke_client(
+                        self.app.config, name, config_path=self.app.config_path,
+                    )
+                    self.app.reload_config()
+                except (KeyError, Exception) as exc:
+                    self.notify(f"Error revoking {name}: {exc}", severity="error")
+            self.refresh_table()
+            self.notify(f"Pruned {len(expired)} expired client(s).", severity="information")
+
+        self.app.push_screen(
+            ConfirmModal(
+                title=f"Prune {len(expired)} expired client(s)?",
+                body=", ".join(expired),
+                ok_label="Prune",
             ),
             _go,
         )
