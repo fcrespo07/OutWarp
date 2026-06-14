@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import sys
 import time
+
+import pytest
 
 from outwarp_server.web_auth import (
     RateLimiter,
@@ -25,6 +28,7 @@ def test_token_roundtrip_and_rotation(tmp_path):
     assert verify_token(tmp_path, rotated) is True
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits not enforced on NTFS")
 def test_token_file_is_0600(tmp_path):
     import os
     import stat
