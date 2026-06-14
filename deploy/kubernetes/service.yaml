@@ -16,3 +16,9 @@ spec:
       port: 8443
       targetPort: 8443
       protocol: TCP
+    # Web admin panel (outwarp-panel sidecar). With hostNetwork it's already
+    # bound on the node's NIC; this entry is for internal DNS / ingress wiring.
+    - name: panel
+      port: 9443
+      targetPort: 9443
+      protocol: TCP

@@ -7,6 +7,11 @@ metadata:
     app: outwarp-server
 spec:
   replicas: 1  # WireGuard is stateful — never scale horizontally
+  # Recreate (not RollingUpdate): with hostNetwork the surge pod can't bind the
+  # same host :443 as the running one, so a rolling update would deadlock. Kill
+  # the old pod first, then start the new — a brief VPN reconnect on each roll.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: outwarp-server
@@ -38,6 +43,18 @@ spec:
               add:
                 - NET_ADMIN
                 - NET_RAW
+          volumeMounts:
+            - name: data
+              mountPath: /data
+
+        # Mints the web panel's admin token on first boot. Idempotent: it only
+        # generates one when /data/admin_token.json is missing, so pod restarts
+        # never rotate it. Read the token once from this container's logs:
+        #   kubectl -n outwarp logs <pod> -c outwarp-token
+        - name: outwarp-token
+          image: ghcr.io/fcrespo07/outwarp-server:main
+          imagePullPolicy: Always
+          command: ["outwarp-server", "--config-dir", "/data", "admin-token"]
           volumeMounts:
             - name: data
               mountPath: /data
@@ -79,6 +96,37 @@ spec:
               mountPath: /data
             # emptyDir so /etc/wireguard is always fresh on pod restart — wg0.conf
             # is regenerated from /data/server_config.json by `serve` at startup.
+            - name: wireguard
+              mountPath: /etc/wireguard
+
+        # Remote web admin panel (HTTPS). A sidecar in the SAME pod so it shares
+        # the host network namespace (sees wg0 for live client hot-reload) and
+        # the /data PVC (TLS cert + config + admin token). Expose it through
+        # your own ingress/tunnel — e.g. a Cloudflare Tunnel public hostname →
+        # Caddy `reverse_proxy https://<host>:9443 { transport http { tls_insecure_skip_verify } }`.
+        # NOTE: service start/stop/restart in the panel act on this container's
+        # own manager, not the `serve` process — status may read "stopped" while
+        # the VPN is up. Client add/revoke and all read views work live.
+        - name: outwarp-panel
+          image: ghcr.io/fcrespo07/outwarp-server:main
+          imagePullPolicy: Always
+          command:
+            ["outwarp-server", "--config-dir", "/data", "web", "--host", "0.0.0.0", "--port", "9443"]
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN  # wg syncconf on live client add/revoke
+                - NET_RAW
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "48Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
             - name: wireguard
               mountPath: /etc/wireguard
 
