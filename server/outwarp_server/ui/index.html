@@ -7,14 +7,114 @@
   <!-- favicon: matches resources/app_icon.png. Inlined as base64 SVG so it
        renders identically in pywebview even with no filesystem access. -->
   <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9ImJ1dHQiIHN0cm9rZS1saW5lam9pbj0ibWl0ZXIiIHN0cm9rZS1taXRlcmxpbWl0PSIxMCIgc3Ryb2tlLXdpZHRoPSI4Ij48cG9seWxpbmUgcG9pbnRzPSI4LDEyIDE2LDI0IDgsMzYiIHN0cm9rZT0iIzBhMGQxMiIgb3BhY2l0eT0iMC4yNSIvPjxwb2x5bGluZSBwb2ludHM9IjIwLDEyIDI4LDI0IDIwLDM2IiBzdHJva2U9IiMwYTBkMTIiIG9wYWNpdHk9IjAuNTUiLz48cG9seWxpbmUgcG9pbnRzPSIzMiwxMiA0MCwyNCAzMiwzNiIgc3Ryb2tlPSIjMjU2M2ZmIi8+PC9zdmc+" type="image/svg+xml"/>
-  <!-- No CDN: the server GUI may run on a fresh VPS before the firewall
-       allows outbound HTTP, so React is vendored and JSX is pre-compiled
-       to ui/bundle.js by scripts/build_ui.py. Fonts fall back to the
-       system stack defined in styles.css. -->
+  <!-- No CDN: the panel may run on a fresh VPS before the firewall allows
+       outbound HTTP, and the browser reaches it over the same locked-down
+       link. React is vendored and JSX is pre-compiled to ui/bundle.js by
+       scripts/build_ui.py. Fonts fall back to the system stack in styles.css. -->
   <link rel="stylesheet" href="styles.css"/>
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-sans); overflow: hidden; }
-    #root { height: 100%; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+      font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+    * { box-sizing: border-box; }
+    #root { min-height: 100vh; }
+
+    .app { min-height: 100vh; background: var(--bg); color: var(--text); }
+    .main { min-height: 100vh; }
+    .app[data-nav="sidebar"] .main { margin-left: 244px; }
+    .main-inner { max-width: 1200px; margin: 0 auto; padding: 30px 34px 64px; }
+
+    /* sidebar rail */
+    .rail { position: fixed; left: 0; top: 0; bottom: 0; width: 244px; z-index: 40;
+      background: var(--bg-2); border-right: 1px solid var(--line);
+      display: flex; flex-direction: column; padding: 20px 14px 16px; }
+    .rail-brand { padding: 2px 8px 18px; display: flex; align-items: center; justify-content: space-between; }
+
+    /* mobile appbar + drawer */
+    .m-appbar { position: fixed; top: 0; left: 0; right: 0; height: 56px; z-index: 45;
+      background: var(--bg-2); border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; gap: 12px; padding: 0 14px; }
+    .app[data-nav="mobile"] .main { margin-top: 56px; }
+    .m-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 60; animation: ow-fade .15s ease; }
+    .m-drawer { position: fixed; left: 0; top: 0; bottom: 0; width: 264px; z-index: 61;
+      background: var(--bg-2); border-right: 1px solid var(--line); padding: 18px 14px;
+      display: flex; flex-direction: column; animation: ow-slide-l .2s ease; }
+
+    /* nav item */
+    .nav-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: 9px;
+      font-size: 13.5px; font-weight: 500; color: var(--text-2); cursor: pointer; border: none;
+      background: transparent; width: 100%; text-align: left; font-family: var(--font-sans);
+      transition: background .12s, color .12s; white-space: nowrap; }
+    .nav-item:hover { background: var(--chip); color: var(--text); }
+    .nav-item[data-active="true"] { background: var(--chip); color: var(--text); }
+    .nav-item[data-active="true"] .nav-ic { color: var(--brand); }
+    .nav-ic { color: var(--text-3); display: inline-flex; transition: color .12s; }
+
+    /* status chip in rail */
+    .rail-status { margin-top: auto; padding: 12px; border-radius: 12px; background: var(--bg-sunk); border: 1px solid var(--line); }
+
+    /* generic interactive */
+    .ow-btn:hover { filter: brightness(1.06); }
+    .ow-btn:active { filter: brightness(.95); }
+    .ow-btn:disabled { cursor: default; filter: none; }
+    .ow-row:hover { background: var(--chip); }
+    .ow-rowbtn { background: transparent; border: none; margin: 0; font: inherit; color: inherit; text-align: left; }
+    .ow-link { all: unset; cursor: pointer; font-size: 12px; color: var(--brand); font-family: var(--font-mono); }
+    .ow-link:hover { text-decoration: underline; }
+    .ow-iconbtn { all: unset; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+      width: 34px; height: 34px; border-radius: 8px; color: var(--text-2); }
+    .ow-iconbtn:hover { background: var(--chip); color: var(--text); }
+
+    /* overlay + modal */
+    .ow-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 80;
+      display: grid; place-items: center; padding: 20px; animation: ow-fade .15s ease; }
+    .ow-modal { width: 100%; background: var(--bg-2); border: 1px solid var(--line); border-radius: 16px;
+      padding: 24px; box-shadow: 0 28px 70px rgba(0,0,0,.42); animation: ow-pop .18s ease; }
+
+    /* client drawer */
+    .ow-drawer-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.38); z-index: 70; animation: ow-fade .15s ease; }
+    .ow-drawer { position: fixed; right: 0; top: 0; bottom: 0; width: 460px; max-width: 92vw; z-index: 71;
+      background: var(--bg-2); border-left: 1px solid var(--line); overflow: auto;
+      box-shadow: -18px 0 40px -20px rgba(0,0,0,.4); animation: ow-slide-r .22s ease; }
+
+    /* clients table responsive grid */
+    .cl-grid { display: grid; grid-template-columns: 18px 1.5fr 1fr 1fr .9fr .9fr 1.15fr 22px; gap: 10px; align-items: center; }
+    .cl-head { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .07em; font-weight: 600; font-family: var(--font-mono); }
+    .cl-show-sm { display: none; }
+    @media (max-width: 900px) {
+      .cl-grid { grid-template-columns: 18px 1.6fr 1fr 1fr .9fr .9fr 22px; }
+      .cl-hide-md { display: none !important; }
+    }
+    @media (max-width: 640px) {
+      .cl-grid { grid-template-columns: 18px 1fr auto 22px; }
+      .cl-hide-sm { display: none !important; }
+      .cl-show-sm { display: block !important; }
+    }
+
+    /* dashboard responsive */
+    @media (max-width: 720px) {
+      .dash-hero { grid-template-columns: auto 1fr !important; }
+      .dash-hero-traffic { display: none !important; }
+    }
+    @media (max-width: 860px) {
+      .app[data-nav="sidebar"] .main { margin-left: 0; }
+      .dash-split { grid-template-columns: 1fr !important; }
+    }
+    @media (max-width: 820px) { .dash-triad { grid-template-columns: 1fr 1fr !important; } }
+    @media (max-width: 520px) { .dash-triad { grid-template-columns: 1fr !important; } .set-grid { grid-template-columns: 1fr !important; } }
+
+    /* login responsive */
+    @media (max-width: 800px) {
+      .login-wrap { grid-template-columns: 1fr !important; }
+      .login-brand { display: none !important; }
+      .login-brand-mobile { display: block !important; }
+    }
+
+    @media (max-width: 540px) { .main-inner { padding: 20px 16px 48px; } }
+
+    @keyframes ow-fade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes ow-pop { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+    @keyframes ow-slide-r { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+    @keyframes ow-slide-l { from { transform: translateX(-24px); opacity: 0; } to { transform: none; opacity: 1; } }
   </style>
   <script src="vendor/react.production.min.js"></script>
   <script src="vendor/react-dom.production.min.js"></script>

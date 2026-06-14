@@ -299,6 +299,41 @@ def test_record_log_emits_event():
     assert "boom" in js
 
 
+def test_registered_sink_receives_events_without_window():
+    """Web mode has no pywebview window — _emit must still fan out to sinks."""
+    api, _ = _make_api()
+    received = []
+    api.register_sink(lambda name, payload: received.append((name, payload)))
+    api._record_log("warn", "via sink")
+    name, payload = received[0]
+    assert name == "log"
+    assert payload["level"] == "warn"
+    assert payload["msg"] == "via sink"
+    assert payload["seq"] == 1
+
+
+def test_unregister_sink_stops_delivery():
+    api, _ = _make_api()
+    received = []
+    sink = lambda name, payload: received.append(name)  # noqa: E731
+    api.register_sink(sink)
+    api._record_log("info", "first")
+    api.unregister_sink(sink)
+    api._record_log("info", "second")
+    assert received == ["log"]
+
+
+def test_window_and_sink_both_receive():
+    api, _ = _make_api()
+    fake_window = MagicMock()
+    api._window = fake_window
+    received = []
+    api.register_sink(lambda name, payload: received.append(name))
+    api._record_log("info", "dual")
+    assert fake_window.evaluate_js.called
+    assert received == ["log"]
+
+
 def test_run_diagnostics_without_manager():
     api, _ = _make_api()
     r = api.run_diagnostics()
@@ -330,12 +365,65 @@ def test_run_diagnostics_serializes_results():
     assert r["summary"] == {"pass": 1, "warn": 1, "fail": 1, "skip": 0}
     assert r["checks"][0] == {
         "name": "Check OK", "status": "pass", "detail": "all good",
-        "remediation": None, "remediation_command": None,
+        "remediation": None, "remediation_command": None, "fix_kind": None,
     }
     assert r["checks"][1]["remediation"] == "Run: do-the-thing"
     assert r["checks"][1]["status"] == "fail"
     # remediation_command defaults to None when the check didn't set it.
     assert r["checks"][1]["remediation_command"] is None
+
+
+def test_apply_remediation_runs_only_auto_fix_callable():
+    from outwarp_server.diagnostics import CheckResult, Status
+
+    mgr = _make_mgr()
+    api, _ = _make_api(mgr)
+    called = []
+
+    auto = CheckResult(
+        name="ip forwarding", status=Status.WARN, detail="off",
+        remediation_command="sysctl ...", fix_kind="auto",
+        fix_callable=lambda cfg: called.append(cfg),
+    )
+    manual = CheckResult(
+        name="fail2ban", status=Status.WARN, detail="absent",
+        remediation_command="apt install fail2ban", fix_kind="interactive",
+    )
+    with patch("outwarp_server.diagnostics.run_all", return_value=[auto, manual]):
+        ok = api.apply_remediation("ip forwarding")
+        assert ok["ok"] is True
+        assert len(called) == 1
+        # interactive checks have no callable → refused, nothing executed
+        no = api.apply_remediation("fail2ban")
+        assert no["ok"] is False
+        assert len(called) == 1
+        # unknown check name → refused
+        missing = api.apply_remediation("does-not-exist")
+        assert missing["ok"] is False
+
+
+def test_apply_remediation_without_manager():
+    api, _ = _make_api()
+    assert api.apply_remediation("anything")["ok"] is False
+
+
+def test_get_traffic_history_shapes_buckets(tmp_path):
+    mgr = _make_mgr()
+    api, _ = _make_api(mgr)
+
+    class FakeHist:
+        def hourly_buckets(self, hours):
+            return [(0, 100, 40), (3600, 200, 60)]
+
+        def top_talkers(self, since_seconds, limit):
+            return [{"name": "felix", "rx_delta": 300, "tx_delta": 100, "public_key": "k"}]
+
+    api._traffic_history = FakeHist()
+    out = api.get_traffic_history("24h")
+    assert out["rx_total"] == 300
+    assert out["tx_total"] == 100
+    assert out["rx_buckets"] == [100, 200]
+    assert out["per_client"] == [{"name": "felix", "rx": 300, "tx": 100}]
 
 
 # ── B.3 client detail / rotate ─────────────────────────────────────────────

@@ -34,6 +34,7 @@ console = Console()
 _PRIVILEGED_COMMANDS = frozenset({
     "setup", "add-client", "list-clients", "revoke-client", "rotate-client",
     "prune-expired", "status", "restart", "uninstall", "doctor", "init", "serve", "tui",
+    "web", "admin-token",
 })
 # ``gui`` is intentionally NOT in the privileged set: the pywebview shell is
 # safe to launch as the invoking user, and the underlying API enforces root
@@ -749,6 +750,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Launch the admin GUI (was the 'outwarp-server-gui' binary in 0.4.x)",
     )
 
+    p_web = sub.add_parser(
+        "web",
+        help="Launch the remote web admin panel over HTTPS",
+    )
+    p_web.add_argument(
+        "--host", default="0.0.0.0",
+        help="Address to bind (default: 0.0.0.0 — all interfaces; use 127.0.0.1 "
+             "to require an SSH tunnel)",
+    )
+    p_web.add_argument(
+        "--port", type=int, default=8443, help="TCP port for the panel (default: 8443)"
+    )
+    p_web.add_argument(
+        "--cert", default=None, help="TLS cert (default: the server's cert)"
+    )
+    p_web.add_argument(
+        "--key", default=None, help="TLS private key (default: the server's key)"
+    )
+
+    p_token = sub.add_parser(
+        "admin-token",
+        help="Print (first time) or rotate the web panel admin token",
+    )
+    p_token.add_argument(
+        "--rotate", action="store_true",
+        help="Replace the existing token with a fresh one",
+    )
+
     p_update = sub.add_parser(
         "update",
         help="Check GitHub Releases for a newer outwarp-server wheel and install it",
@@ -784,6 +813,113 @@ def _cmd_gui(args: argparse.Namespace) -> int:
     """
     from outwarp_server.server_app import main as _gui_main
     return _gui_main() or 0
+
+
+def _config_dir_from_args(args: argparse.Namespace) -> Path:
+    return Path(args.config_dir) if args.config_dir else default_config_dir()
+
+
+def _cmd_admin_token(args: argparse.Namespace) -> int:
+    """Print or rotate the web panel's admin token.
+
+    Only the salted hash is stored, so an existing token can't be re-printed —
+    rotating mints a fresh one and invalidates the old.
+    """
+    from outwarp_server.web_auth import generate_and_store_token, token_is_set
+
+    config_dir = _config_dir_from_args(args)
+    if token_is_set(config_dir) and not args.rotate:
+        console.print(
+            "An admin token is already set for the web panel.\n"
+            "It can't be shown again (only its hash is stored). To replace it, run:\n"
+            "  [bold]outwarp-server admin-token --rotate[/bold]"
+        )
+        return 0
+    token = generate_and_store_token(config_dir)
+    console.print(
+        "[bold green]Admin token generated.[/bold green] Store it now — "
+        "it will not be shown again:\n"
+    )
+    console.print(f"  [bold]{token}[/bold]\n")
+    console.print(
+        "Use it to log in at the web panel. Treat it like a password.",
+        style="dim",
+    )
+    return 0
+
+
+def _cmd_web(args: argparse.Namespace) -> int:
+    """Run the remote HTTPS admin panel.
+
+    Serves the same UI the desktop GUI uses, but over the network behind a
+    token login. Reuses the server's self-signed TLS cert; the browser will
+    warn about the self-signed cert (or front it with an SSH tunnel).
+    """
+    import signal
+    import threading
+
+    from outwarp_server.logs import setup_logging
+    from outwarp_server.server_manager import ServerManager
+    from outwarp_server.web_auth import token_is_set
+
+    config = _load_config(args)
+    config_dir = _config_dir_from_args(args)
+
+    if not token_is_set(config_dir):
+        console.print(
+            "[red]No admin token set.[/red] Create one before exposing the panel:\n"
+            "  [bold]sudo outwarp-server admin-token[/bold]"
+        )
+        return 1
+
+    certfile = args.cert or config.cert_path
+    keyfile = args.key or config.key_path
+    if not (Path(certfile).exists() and Path(keyfile).exists()):
+        console.print(
+            f"[red]TLS cert/key not found[/red] ({certfile}, {keyfile}).\n"
+            "Run [bold]outwarp-server setup[/bold] first, or pass --cert/--key."
+        )
+        return 1
+
+    memory_handler = setup_logging()
+    manager = ServerManager(config)
+
+    from outwarp_server.api import Api
+    from outwarp_server.web_server import serve
+
+    api = Api(memory_handler, manager)
+    httpd = serve(
+        api,
+        ui_dir=Path(__file__).parent / "ui",
+        config_dir=config_dir,
+        host=args.host,
+        port=args.port,
+        certfile=certfile,
+        keyfile=keyfile,
+    )
+
+    shown_host = "127.0.0.1" if args.host in ("127.0.0.1", "localhost") else config.endpoint
+    console.print(
+        f"[bold green]OutWarp web panel[/bold green] listening on "
+        f"https://{args.host}:{args.port}"
+    )
+    if args.host not in ("127.0.0.1", "localhost"):
+        console.print(
+            "[yellow]Exposed on all interfaces.[/yellow] Make sure the port is "
+            "firewalled to trusted networks, or bind 127.0.0.1 and use an SSH tunnel.",
+        )
+    console.print(f"  Open: https://{shown_host}:{args.port}", style="dim")
+
+    stop_event = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop_event.set())
+    signal.signal(signal.SIGINT, lambda *_: stop_event.set())
+    stop_event.wait()
+
+    console.print("Shutting down web panel...")
+    with contextlib.suppress(Exception):
+        httpd.shutdown()
+    api.shutdown()
+    return 0
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
@@ -908,6 +1044,8 @@ _COMMANDS: dict[str, callable] = {
     "doctor": _cmd_doctor,
     "tui": _cmd_tui,
     "gui": _cmd_gui,
+    "web": _cmd_web,
+    "admin-token": _cmd_admin_token,
     "update": _cmd_update,
 }
 

@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: minor bumps may carry user-visible changes).
 
+## [0.9.0] — 2026-06-14
+
+### Added
+- **Remote web admin panel** — `outwarp-server web` serves the server dashboard
+  over HTTPS so a headless VPS can be managed from a browser, not just the local
+  console. It runs the same `Api` as the desktop GUI behind a token login: live
+  status/throughput, client management (add/rotate/regenerate/revoke with
+  `.owcfg` download), service control, live logs, Doctor with one-click
+  auto-fixes, traffic history and TLS rotation. See `server/WEB_PANEL.md`.
+  - `outwarp-server admin-token [--rotate]` mints the login token (only a salted
+    scrypt hash is stored, `0600`).
+  - Stdlib transport only (`http.server` + SSE) — no new runtime dependency, no
+    CDN. Session cookie (`HttpOnly`+`Secure`+`SameSite=Strict`), CSRF header
+    guard, rate-limited login with lockout, method allow-list, strict CSP.
+  - The desktop GUI and the web panel now share **one** UI bundle and a
+    transport shim, so the dashboard is identical in both; the pywebview window
+    uses the native OS frame.
+  - `apply_remediation` runs only the code-defined fix for a named Doctor check,
+    never a free-text command. `get_traffic_history` exposes the existing
+    SQLite snapshots.
+
 ## [0.8.0] — 2026-06-10
 
 Linux UX overhaul + a major TUI feature pass on both client and server, plus

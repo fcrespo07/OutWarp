@@ -170,14 +170,10 @@ def main() -> int:
             min_size=(960, 640),
             background_color="#f6f5f1",
             resizable=True,
-            # Frameless: the native OS title bar clashes with the app's palette,
-            # so we draw our own (see ui/app.jsx TitleBar) — same chrome as the
-            # client. Drag + edge-resize are re-implemented natively on Windows
-            # via api.window_* (and via the pywebview-drag-region class
-            # elsewhere); easy_drag must be off or the whole client area becomes
-            # a drag handle.
-            frameless=True,
-            easy_drag=False,
+            # The unified dashboard is a web app (it also serves the remote
+            # browser panel), so it carries no custom title bar. Use the native
+            # OS frame here instead of the old frameless + custom-chrome setup.
+            frameless=False,
             shadow=True,
             # pywebview disables text selection by default; admins need to copy
             # fingerprints, log lines, client addresses, etc.

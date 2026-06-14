@@ -86,3 +86,7 @@ wstunnel_*/
 
 # stray npm lock (OutWarp is Python-only)
 package-lock.json
+
+# Design handoff (proporcionado por el autor, no forma parte del repo)
+OutWarp.zip
+design_handoff_web_dashboard/

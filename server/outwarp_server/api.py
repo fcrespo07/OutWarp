@@ -18,6 +18,7 @@ Events fired:
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -183,6 +184,17 @@ class Api:
         self._poll_stop = threading.Event()
         self._poll_thread: threading.Thread | None = None
 
+        # Event fan-out. The pywebview path still rides on ``self._window``
+        # (kept verbatim below so the existing GUI + tests are untouched);
+        # the embedded web server registers an extra sink here so the same
+        # ``_emit`` reaches browser clients over SSE. Each transport handles
+        # its own failures, so a dead renderer never starves the web sink.
+        self._sinks: list[Callable[[str, Any], None]] = []
+        self._sinks_lock = threading.Lock()
+        self._bg_started = False
+        self._watcher_started = False
+        self._traffic_history: Any = None
+
         if manager is not None:
             manager.add_listener(self._on_state_change)
 
@@ -207,6 +219,38 @@ class Api:
             window.events.restored += self._on_window_restored
         except Exception:
             log.debug("window state events unavailable on this backend", exc_info=True)
+        self._start_log_watcher()
+        self._bg_started = True
+
+    # ── transport sinks (pywebview window + embedded web server) ──────────────
+
+    def register_sink(self, sink: Callable[[str, Any], None]) -> None:
+        """Register an extra event sink (used by the web server's SSE fan-out).
+
+        The pywebview window is *not* a sink — it stays wired through
+        ``self._window`` so the desktop GUI keeps working unchanged. Sinks are
+        the headless/web transport.
+        """
+        with self._sinks_lock:
+            if sink not in self._sinks:
+                self._sinks.append(sink)
+
+    def unregister_sink(self, sink: Callable[[str, Any], None]) -> None:
+        with self._sinks_lock, contextlib.suppress(ValueError):
+            self._sinks.remove(sink)
+
+    def start_background(self) -> None:
+        """Boot log backfill + watcher without a pywebview window (web mode).
+
+        ``bind_window`` drives the same work for the desktop GUI; this is the
+        headless entry point the embedded web server calls so log streaming and
+        the live poll work with no renderer attached.
+        """
+        if self._bg_started:
+            return
+        self._bg_started = True
+        for line in self._memory_handler.snapshot():
+            self._record_log("info", line)
         self._start_log_watcher()
 
     # ── window chrome (custom frameless title bar) ─────────────────────────────
@@ -336,26 +380,38 @@ class Api:
         self._poll_thread.start()
 
     def _emit(self, name: str, payload: Any) -> None:
-        if self._window is None or self._emit_disabled:
-            return
-        js = (
-            "window.dispatchEvent(new CustomEvent('outwarp:"
-            + name
-            + "', {detail: " + json.dumps(payload) + "}))"
-        )
-        try:
-            self._window.evaluate_js(js)
-        except Exception as exc:
-            # Same fix as the client api: flip a sticky kill-switch so further
-            # emits no-op, and write to stderr (NOT log.exception) to avoid the
-            # MemoryLogHandler watcher picking it up, calling _emit("log", ...),
-            # failing again, and looping forever. We keep ``_window`` populated
-            # so the title-bar buttons and pick_owcfg_file's file dialog still
-            # work.
-            self._emit_disabled = True
-            sys.stderr.write(
-                f"outwarp_server.api: evaluate_js disabled (outwarp:{name}): {exc}\n"
+        # pywebview path — unchanged. Driven by ``self._window`` so the desktop
+        # GUI and its tests keep working without registering a sink.
+        if self._window is not None and not self._emit_disabled:
+            js = (
+                "window.dispatchEvent(new CustomEvent('outwarp:"
+                + name
+                + "', {detail: " + json.dumps(payload) + "}))"
             )
+            try:
+                self._window.evaluate_js(js)
+            except Exception as exc:
+                # Same fix as the client api: flip a sticky kill-switch so
+                # further emits no-op, and write to stderr (NOT log.exception)
+                # to avoid the MemoryLogHandler watcher picking it up, calling
+                # _emit("log", ...), failing again, and looping forever. We keep
+                # ``_window`` populated so the title-bar buttons and
+                # pick_owcfg_file's file dialog still work.
+                self._emit_disabled = True
+                sys.stderr.write(
+                    f"outwarp_server.api: evaluate_js disabled (outwarp:{name}): {exc}\n"
+                )
+
+        # Web path — fan out the same event to any registered sinks (SSE).
+        with self._sinks_lock:
+            sinks = list(self._sinks)
+        for sink in sinks:
+            try:
+                sink(name, payload)
+            except Exception as exc:
+                sys.stderr.write(
+                    f"outwarp_server.api: sink failed (outwarp:{name}): {exc}\n"
+                )
 
     # ── status ────────────────────────────────────────────────────────────────
 
@@ -373,7 +429,22 @@ class Api:
             "wg_listen_port": cfg.wg_listen_port,
             "cert_fingerprint_sha256": cfg.cert_fingerprint_sha256,
             "clients_count": len(cfg.clients),
+            **self._tls_info(cfg),
         }
+
+    def _tls_info(self, cfg: ServerConfig) -> dict[str, Any]:
+        """Cert expiry for the dashboard TLS card. Best-effort: a missing or
+        unreadable cert just omits the fields."""
+        try:
+            import datetime
+
+            from cryptography import x509
+            cert = x509.load_pem_x509_certificate(Path(cfg.cert_path).read_bytes())
+            exp = cert.not_valid_after_utc
+            days = (exp - datetime.datetime.now(datetime.UTC)).days
+            return {"tls_valid_until": exp.date().isoformat(), "tls_days_left": days}
+        except Exception:
+            return {}
 
     def get_deps(self) -> dict[str, str | None]:
         ws, wg = find_wstunnel(), find_wg()
@@ -444,6 +515,10 @@ class Api:
                 "detail": r.detail,
                 "remediation": r.remediation,
                 "remediation_command": r.remediation_command,
+                # The UI only offers "apply fix" when this is "auto" (a
+                # code-defined fix_callable exists) — never for free-text
+                # commands, which would be a remote-exec foot-gun.
+                "fix_kind": r.fix_kind,
             }
             for r in results
         ]
@@ -454,6 +529,76 @@ class Api:
             "ok": summary["fail"] == 0,
             "checks": checks,
             "summary": summary,
+        }
+
+    def apply_remediation(self, check_name: str) -> dict[str, Any]:
+        """Run the *code-defined* fix for one diagnostics check.
+
+        Security: this never executes a string. It re-runs diagnostics, finds
+        the check by name, and only invokes its ``fix_callable`` when
+        ``fix_kind == "auto"``. The web panel passes a check *name*, not a
+        command, so a stolen session can at most trigger the curated set of
+        remediations the doctor already vouches for. Every invocation is logged
+        for audit.
+        """
+        if self._manager is None:
+            return {"ok": False, "error": "server not configured"}
+
+        from outwarp_server.diagnostics import run_all
+
+        match = next((r for r in run_all(self._manager.config) if r.name == check_name), None)
+        if match is None:
+            return {"ok": False, "error": f"unknown check: {check_name}"}
+        if match.fix_kind != "auto" or match.fix_callable is None:
+            return {"ok": False, "error": "no automatic fix for this check"}
+        log.warning("apply_remediation: running auto-fix for check %r", check_name)
+        try:
+            match.fix_callable(self._manager.config)
+        except Exception as exc:
+            log.exception("apply_remediation failed for %r", check_name)
+            return {"ok": False, "error": str(exc)}
+        log.info("apply_remediation: auto-fix for %r completed", check_name)
+        return {"ok": True, "name": check_name}
+
+    def get_traffic_history(self, window: str = "24h") -> dict[str, Any]:
+        """Aggregate transfer history for the Traffic screen.
+
+        Wraps the SQLite snapshots the snapshot scheduler already persists
+        (traffic_history.py) — no new storage. Returns hourly rx/tx buckets,
+        totals, peak/avg rate and a per-client breakdown.
+        """
+        if self._manager is None:
+            return {"error": "server not configured"}
+        hours = {"1h": 1, "24h": 24, "7d": 168}.get(window, 24)
+        try:
+            if self._traffic_history is None:
+                from outwarp_server.traffic_history import TrafficHistory
+                self._traffic_history = TrafficHistory(config=self._manager.config)
+            hist = self._traffic_history
+            buckets = hist.hourly_buckets(hours=hours)
+            rx_buckets = [b[1] for b in buckets]
+            tx_buckets = [b[2] for b in buckets]
+            rx_total = sum(rx_buckets)
+            tx_total = sum(tx_buckets)
+            span = max(1, hours * 3600)
+            peak_hourly = max([*rx_buckets, *tx_buckets, 0])
+            talkers = hist.top_talkers(since_seconds=span, limit=20)
+        except Exception as exc:
+            log.exception("get_traffic_history failed")
+            return {"error": str(exc)}
+        per_client = [
+            {"name": t["name"], "rx": t["rx_delta"], "tx": t["tx_delta"]}
+            for t in talkers
+        ]
+        return {
+            "window": window,
+            "rx_total": rx_total,
+            "tx_total": tx_total,
+            "peak_bps": peak_hourly // 3600,
+            "avg_bps": (rx_total + tx_total) // span,
+            "rx_buckets": rx_buckets,
+            "tx_buckets": tx_buckets,
+            "per_client": per_client,
         }
 
     def _on_state_change(self, state: ServerState) -> None:
@@ -1070,6 +1215,9 @@ class Api:
         self._emit("log", entry)
 
     def _start_log_watcher(self) -> None:
+        if self._watcher_started:
+            return
+        self._watcher_started = True
         last_count = len(self._memory_handler.snapshot())
 
         def _loop() -> None:

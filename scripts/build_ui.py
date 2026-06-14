@@ -33,12 +33,15 @@ SERVER_UI = ROOT / "server" / "outwarp_server" / "ui"
 # (React hooks, STR, Btn/Pill/StatusDot atoms, design-canvas components).
 CLIENT_ORDER = ["brand.jsx", "shared.jsx", "var-a.jsx", "var-b.jsx", "app.jsx"]
 SERVER_ORDER = [
+    # Unified server dashboard (desktop pywebview + remote web panel). The
+    # transport shim must come first (app.jsx reads window.OW); the old
+    # srv-a/srv-b desktop GUI was replaced by this dash-* set.
+    "transport.js",
     "brand.jsx",
-    "shared.jsx",
-    "srv-data.jsx",
-    "confirm.jsx",
-    "srv-a.jsx",
-    "srv-b.jsx",
+    "dash-data.jsx",
+    "dash-atoms.jsx",
+    "dash-screens.jsx",
+    "dash-extras.jsx",
     "app.jsx",
 ]
 
