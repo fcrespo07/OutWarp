@@ -81,6 +81,41 @@ class NetworkConfig:
 
 
 @dataclass(frozen=True)
+class StrategyConfig:
+    """A server-provisioned extra rung for the connection fallback ladder.
+
+    Everything except ``id`` is optional and inherits from the primary server
+    config when left blank: an empty ``endpoint``/``port`` means "same as the
+    direct path". Populated by the server admin who knows what alternate fronts
+    exist (a CDN-fronted hostname, an open alt port, a proxy). The client always
+    generates its own default rungs on top of these — see
+    outwarp.fallback.build_ladder.
+    """
+
+    id: str
+    endpoint: str = ""
+    port: int = 0
+    scheme: str = "wss"  # wss | ws
+    sni_override: str = ""
+    host_header: str = ""
+    user_agent: str = ""
+    path_prefix: str = ""
+    proxy: str = ""
+    # pin | tolerate | none — how the outer-TLS fingerprint pin is enforced for
+    # this rung. A CDN front rotates its cert, so it uses "none" and relies on
+    # WireGuard key auth as the security boundary.
+    pin_mode: str = "pin"
+    force_hostile: bool = False
+    bypass_ips: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FallbackConfig:
+    enabled: bool = True
+    strategies: tuple[StrategyConfig, ...] = ()
+
+
+@dataclass(frozen=True)
 class ClientConfig:
     schema_version: int
     server: ServerConfig
@@ -90,6 +125,7 @@ class ClientConfig:
     routing: RoutingConfig
     reconnect: ReconnectConfig
     network: NetworkConfig = field(default_factory=NetworkConfig)
+    fallback: FallbackConfig = field(default_factory=FallbackConfig)
     # Human-readable label assigned by the server (outwarp-server add-client <name>).
     # Distinct from wireguard.tunnel_name, which is the OS network interface name.
     name: str = ""
@@ -226,6 +262,7 @@ def _parse(raw: dict[str, Any]) -> ClientConfig:
     routing = _parse_routing(_require(raw, "routing", "root"))
     reconnect = _parse_reconnect(raw.get("reconnect", {}))
     network = _parse_network(raw.get("network", {}))
+    fallback = _parse_fallback(raw.get("fallback", {}))
 
     meta = raw.get("meta", {})
     expires_at = str(meta.get("expires_at", "")) if isinstance(meta, dict) else ""
@@ -239,6 +276,7 @@ def _parse(raw: dict[str, Any]) -> ClientConfig:
         routing=routing,
         reconnect=reconnect,
         network=network,
+        fallback=fallback,
         name=str(raw.get("name", "")),
         expires_at=expires_at,
     )
@@ -344,6 +382,59 @@ def _parse_network(d: Any) -> NetworkConfig:
     return NetworkConfig(hostile_mode=mode)
 
 
+_PIN_MODES = ("pin", "tolerate", "none")
+_SCHEMES = ("wss", "ws")
+
+
+def _parse_fallback(d: Any) -> FallbackConfig:
+    if not isinstance(d, dict):
+        return FallbackConfig()
+    enabled = bool(d.get("enabled", True))
+    raw_list = d.get("strategies", [])
+    if not isinstance(raw_list, list):
+        raise ConfigError("fallback.strategies must be a list of strategy objects")
+    strategies: list[StrategyConfig] = []
+    seen_ids: set[str] = set()
+    for entry in raw_list:
+        if not isinstance(entry, dict):
+            raise ConfigError("each fallback.strategies entry must be an object")
+        sid = str(entry.get("id", "")).strip()
+        if not sid:
+            raise ConfigError("fallback strategy is missing a non-empty 'id'")
+        if sid in seen_ids:
+            raise ConfigError(f"duplicate fallback strategy id '{sid}'")
+        seen_ids.add(sid)
+        port = entry.get("port", 0)
+        if not isinstance(port, int) or not (port == 0 or 1 <= port <= 65535):
+            raise ConfigError(f"fallback strategy '{sid}' port must be 0 or 1-65535, got {port!r}")
+        scheme = str(entry.get("scheme", "wss")).strip().lower() or "wss"
+        if scheme not in _SCHEMES:
+            raise ConfigError(f"fallback strategy '{sid}' scheme must be one of {_SCHEMES}")
+        pin_mode = str(entry.get("pin_mode", "pin")).strip().lower() or "pin"
+        if pin_mode not in _PIN_MODES:
+            raise ConfigError(f"fallback strategy '{sid}' pin_mode must be one of {_PIN_MODES}")
+        bypass_raw = entry.get("bypass_ips", [])
+        if not isinstance(bypass_raw, list) or not all(isinstance(x, str) for x in bypass_raw):
+            raise ConfigError(f"fallback strategy '{sid}' bypass_ips must be a list of strings")
+        strategies.append(
+            StrategyConfig(
+                id=sid,
+                endpoint=str(entry.get("endpoint", "")),
+                port=port,
+                scheme=scheme,
+                sni_override=str(entry.get("sni_override", "")),
+                host_header=str(entry.get("host_header", "")),
+                user_agent=str(entry.get("user_agent", "")),
+                path_prefix=str(entry.get("path_prefix", "")),
+                proxy=str(entry.get("proxy", "")),
+                pin_mode=pin_mode,
+                force_hostile=bool(entry.get("force_hostile", False)),
+                bypass_ips=tuple(bypass_raw),
+            )
+        )
+    return FallbackConfig(enabled=enabled, strategies=tuple(strategies))
+
+
 def _parse_reconnect(d: Any) -> ReconnectConfig:
     if not isinstance(d, dict):
         return ReconnectConfig()
@@ -410,9 +501,46 @@ def _to_dict(cfg: ClientConfig) -> dict[str, Any]:
         d["server"]["fallback_ports"] = list(cfg.server.fallback_ports)
     if cfg.wireguard.preshared_key:
         d["wireguard"]["preshared_key"] = cfg.wireguard.preshared_key
+    if cfg.fallback.strategies or not cfg.fallback.enabled:
+        d["fallback"] = _fallback_to_dict(cfg.fallback)
     if cfg.expires_at:
         d["meta"] = {"expires_at": cfg.expires_at}
     return d
+
+
+def _fallback_to_dict(fb: FallbackConfig) -> dict[str, Any]:
+    out: dict[str, Any] = {"enabled": fb.enabled}
+    strategies: list[dict[str, Any]] = []
+    for s in fb.strategies:
+        entry: dict[str, Any] = {"id": s.id}
+        # Only emit fields that diverge from the inherit-from-primary defaults so
+        # a round-trip stays compact and human-readable.
+        if s.endpoint:
+            entry["endpoint"] = s.endpoint
+        if s.port:
+            entry["port"] = s.port
+        if s.scheme != "wss":
+            entry["scheme"] = s.scheme
+        if s.sni_override:
+            entry["sni_override"] = s.sni_override
+        if s.host_header:
+            entry["host_header"] = s.host_header
+        if s.user_agent:
+            entry["user_agent"] = s.user_agent
+        if s.path_prefix:
+            entry["path_prefix"] = s.path_prefix
+        if s.proxy:
+            entry["proxy"] = s.proxy
+        if s.pin_mode != "pin":
+            entry["pin_mode"] = s.pin_mode
+        if s.force_hostile:
+            entry["force_hostile"] = True
+        if s.bypass_ips:
+            entry["bypass_ips"] = list(s.bypass_ips)
+        strategies.append(entry)
+    if strategies:
+        out["strategies"] = strategies
+    return out
 
 
 # --- profile editing ---

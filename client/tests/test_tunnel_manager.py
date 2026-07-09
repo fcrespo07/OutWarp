@@ -39,6 +39,10 @@ class FakeTunnel:
         self.connect_errors: list[Exception | None] = []
         self.alive = True
         self.alive_until_event: Event | None = None
+        # Fallback-ladder plumbing the manager reads/writes; a fake tunnel never
+        # picks a real rung, so the sticky store stays untouched.
+        self.active_strategy_id = ""
+        self.preferred_strategy_id = ""
 
     def connect(self) -> None:
         self.connect_calls += 1
@@ -203,6 +207,8 @@ class _PhaseCallbackTunnel:
     def __init__(self):
         self.connect_calls = 0
         self.alive = True
+        self.active_strategy_id = ""
+        self.preferred_strategy_id = ""
         # Filled in by TunnelManager via the phase_callback kwarg of Tunnel().
         # We don't get one here — TunnelManager only injects it when it
         # constructs the Tunnel itself, so this fake plays the role of a

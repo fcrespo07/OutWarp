@@ -16,16 +16,27 @@ from threading import Event, Lock, Thread
 from platformdirs import user_data_dir
 
 from outwarp.config import ClientConfig
+from outwarp.fallback import (
+    ConnectionStrategy,
+    StickyStore,
+    all_bypass_ips,
+    build_ladder,
+    default_sticky_path,
+    network_signature,
+    reorder_for_sticky,
+    strategy_to_command,
+)
 from outwarp.network import (
     FingerprintMismatchError,
     HostileDetection,
     NetworkError,
     detect_hostile_network,
+    measure_latency_ms,
     tcp_probe,
     verify_tls_fingerprint,
 )
 from outwarp.platforms import Platform, get_platform
-from outwarp.wireguard import build_wg_conf
+from outwarp.wireguard import build_wg_conf, get_tunnel_stats
 
 _APP_NAME = "OutWarp"
 _ENV_OVERRIDE = "OUTWARP_WSTUNNEL"
@@ -97,6 +108,11 @@ def find_wstunnel() -> Path:
     )
 
 
+def _forward_spec(config: ClientConfig) -> str:
+    t = config.tunnel
+    return f"udp://127.0.0.1:{t.local_port}:{t.remote_host}:{t.remote_port}?timeout_sec=0"
+
+
 def build_wstunnel_command(
     config: ClientConfig,
     wstunnel_bin: Path,
@@ -104,45 +120,24 @@ def build_wstunnel_command(
     *,
     hostile: bool = False,
 ) -> list[str]:
-    t = config.tunnel
+    """Build the wstunnel argv for the plain direct rung.
+
+    Thin wrapper kept for callers/tests that want the canonical direct command;
+    the fallback ladder builds richer strategies via
+    outwarp.fallback.strategy_to_command. The default WSS port is omitted from
+    the URL (see ConnectionStrategy.url) because some DPI boxes treat an explicit
+    ":443" as a "this is a tunnel, not a browser" signal.
+    """
     s = config.server
-    wss_port = port if port is not None else s.port
-    forward = (
-        f"udp://127.0.0.1:{t.local_port}:{t.remote_host}:{t.remote_port}?timeout_sec=0"
+    strategy = ConnectionStrategy(
+        id="direct",
+        label="Direct",
+        endpoint=s.endpoint,
+        port=port if port is not None else s.port,
+        path_prefix=s.http_upgrade_path_prefix,
+        force_hostile=hostile,
     )
-    # Browsers never put ":443" in the Host header for wss://; some DPI boxes
-    # use that as a signal of "this isn't a browser, it's a tunnel" and drop the
-    # WS Upgrade. Omit the explicit port when it's the scheme default.
-    endpoint = f"wss://{s.endpoint}" if wss_port == 443 else f"wss://{s.endpoint}:{wss_port}"
-    # TLS cert verification is disabled by default in wstunnel v10+; fingerprint
-    # pinning via verify_tls_fingerprint() is the actual identity check.
-    cmd = [
-        str(wstunnel_bin),
-        "client",
-        # Pre-establish idle TCP+TLS+WS connections so a new WG flow doesn't pay
-        # the ~30-50 ms handshake cost on first packet.
-        "--connection-min-idle",
-        "3",
-        # Keep the WS half-open detection tight so corporate NATs don't quietly
-        # drop the connection after their idle timeout — wstunnel will see the
-        # missed pong and reconnect instead of letting WG packets vanish.
-        "--websocket-ping-frequency",
-        "25s",
-        "-L",
-        forward,
-        "--http-upgrade-path-prefix",
-        s.http_upgrade_path_prefix,
-    ]
-    if hostile:
-        # Hostile-network opt-in: bypass the system resolver (which may be
-        # hijacked or returning poisoned AAAA records on captive/edu networks)
-        # and force IPv4. Matches the flags the legacy WarpSocket script used.
-        cmd.extend([
-            "--dns-resolver", "dns://1.1.1.1",
-            "--dns-resolver-prefer-ipv4",
-        ])
-    cmd.append(endpoint)
-    return cmd
+    return strategy_to_command(strategy, wstunnel_bin, _forward_spec(config))
 
 
 class Tunnel:
@@ -153,6 +148,9 @@ class Tunnel:
         wstunnel_bin: Path | None = None,
         allow_tls_intercept: bool = False,
         phase_callback: Callable[[str], None] | None = None,
+        handshake_timeout: float = 12.0,
+        verify_ping_target: str = "1.1.1.1",
+        require_ping: bool = True,
     ) -> None:
         self._config = config
         self._platform = platform or get_platform()
@@ -160,6 +158,22 @@ class Tunnel:
         self._proc: subprocess.Popen[str] | None = None
         self._stdout_thread: Thread | None = None
         self._wg_installed = False
+        # Fallback-ladder tuning. A rung is accepted only when a fresh WG
+        # handshake appears within handshake_timeout AND (when require_ping) a
+        # ping reaches verify_ping_target *through* the tunnel — a live wstunnel
+        # process alone is not proof the WS upgrade actually passed.
+        self._handshake_timeout = handshake_timeout
+        self._verify_ping_target = verify_ping_target
+        self._require_ping = require_ping
+        # Set by TunnelManager from the sticky store: the rung that last worked
+        # on this network, tried first. Empty = start from the top of the ladder.
+        self.preferred_strategy_id = ""
+        # The rung that actually connected, or None. Read by the manager to
+        # persist stickiness and by the UI to show which front is in use.
+        self._active_strategy: ConnectionStrategy | None = None
+        # Optional per-rung progress hook: (label, index, total). Lets the UI
+        # show "Trying via proxy… (3/5)". No-op by default.
+        self.strategy_callback: Callable[[str, int, int], None] = lambda _l, _i, _t: None
         # When True, a pinned-fingerprint mismatch is logged and tolerated
         # instead of aborting the connection. Meant for networks that do active
         # TLS interception (corporate/school proxies): the WireGuard layer
@@ -194,118 +208,211 @@ class Tunnel:
         except Exception:
             log.debug("_drain_stdout: read loop exited unexpectedly", exc_info=True)
 
+    @property
+    def platform(self) -> Platform:
+        return self._platform
+
+    @property
+    def active_strategy(self) -> ConnectionStrategy | None:
+        """The rung that carried the current connection, or None."""
+        return self._active_strategy
+
+    @property
+    def active_strategy_id(self) -> str:
+        return self._active_strategy.id if self._active_strategy else ""
+
     def connect(self) -> None:
+        """Bring the tunnel up by walking the fallback ladder.
+
+        WireGuard is installed once (excluding every rung's endpoint from the
+        tunnel), then each strategy is tried until one produces a WG handshake
+        and a ping through the tunnel. Phases (resolve / tls / wg / ws) drive the
+        UI stepper; there is no separate "route" phase because bypass IPs are
+        excluded from AllowedIPs at config-build time, not added as host routes.
+        """
         s = self._config.server
-        # Phases (resolve / tls / wg / ws) match the actual blocking work the
-        # connect path does. There is no separate "route" phase: we exclude
-        # bypass IPs from the WG AllowedIPs at config-build time instead of
-        # adding host routes after the fact.
+        self._active_strategy = None
         self._phase_cb("resolve")
-        # Try the primary WSS port first, then any fallback ports. A network
-        # that blocks 443 may still let an alternate port through; the first
-        # reachable one wins and is used for the rest of the connect.
-        candidates = [s.port, *s.fallback_ports]
-        chosen_port: int | None = next(
-            (p for p in candidates if tcp_probe(s.endpoint, p)), None
-        )
-        if chosen_port is None:
-            ports = ", ".join(str(p) for p in candidates)
+
+        ladder = build_ladder(self._config)
+        if not self._config.fallback.enabled:
+            # Ladder disabled: keep only the single best rung so behaviour is a
+            # plain one-shot connect (still with handshake+ping verification).
+            ladder = ladder[:1]
+        ladder = reorder_for_sticky(ladder, self.preferred_strategy_id)
+        if not ladder:
+            raise TunnelError("No connection strategy available for this profile.")
+
+        # Informational only: the hostile heuristic still feeds the UI banner,
+        # but the ladder — not this probe — decides which transport actually runs.
+        if self._config.network.hostile_mode == "auto":
+            with contextlib.suppress(Exception):
+                self.last_hostile_detection = detect_hostile_network(s.endpoint)
+
+        # Pre-flight reachability: a direct WSS rung is only attemptable if its
+        # port answers a TCP connect. Proxy / plain-ws / CDN rungs can't be
+        # cheaply probed (the direct path may be exactly what's blocked), so they
+        # are always attemptable. If nothing is dialable, fail fast BEFORE
+        # touching WireGuard so the interface isn't churned pointlessly.
+        attemptable = [r for r in ladder if self._is_attemptable(r)]
+        if not attemptable:
+            ports = ", ".join(str(p) for p in dict.fromkeys(r.port for r in ladder))
             raise TunnelError(
                 f"Cannot reach {s.endpoint} on any configured port ({ports}). The "
                 "server may be down, the port(s) may not be open in the server "
                 "firewall, or your network may block outbound connections to them."
             )
-        if chosen_port != s.port:
-            log.info("primary port %d unreachable — using fallback port %d", s.port, chosen_port)
-
-        self._phase_cb("tls")
-        try:
-            verify_tls_fingerprint(
-                s.endpoint, chosen_port, self._config.tls.cert_fingerprint_sha256
-            )
-        except FingerprintMismatchError as exc:
-            if not self.allow_tls_intercept:
-                raise TunnelError(str(exc)) from exc
-            log.warning(
-                "TLS fingerprint mismatch ignored ('allow TLS-intercepting networks' "
-                "is on). This network is terminating the outer TLS connection (a "
-                "corporate/school inspection proxy); WireGuard still encrypts and "
-                "authenticates your traffic end-to-end. Details: %s",
-                exc,
-            )
-        except NetworkError as exc:
-            raise TunnelError(str(exc)) from exc
 
         try:
-            # Resolve hostile_mode BEFORE bringing the WG interface up. Order
-            # matters: install_wg_tunnel() captures 0.0.0.0/0 (minus the
-            # endpoint), so any DNS query made afterwards is routed through
-            # the tunnel — but wstunnel isn't running yet, so the query stalls
-            # for the full glibc DNS retry budget (~25 s). Running the probe
-            # here keeps it on the host's real resolver, where it costs
-            # <300 ms instead.
-            mode = self._config.network.hostile_mode
-            if mode == "on":
-                hostile = True
-            elif mode == "off":
-                hostile = False
-            else:  # "auto" — probe the network once per connect attempt
-                detection = detect_hostile_network(s.endpoint)
-                self.last_hostile_detection = detection
-                hostile = detection.hostile
-                if detection.hostile:
-                    log.warning(
-                        "Hostile-network heuristic triggered: %s — enabling "
-                        "wstunnel DNS bypass (1.1.1.1 + IPv4-only) for this session",
-                        detection.reason,
-                    )
-
+            self._phase_cb("tls")
             self._phase_cb("wg")
-            wg_conf = build_wg_conf(self._config)
+            extra_bypass = all_bypass_ips(self._config, ladder)
+            wg_conf = build_wg_conf(self._config, extra_bypass=extra_bypass)
             self._platform.install_wg_tunnel(self._config.wireguard.tunnel_name, wg_conf)
             self._wg_installed = True
 
-            self._phase_cb("ws")
-            cmd = build_wstunnel_command(
-                self._config, self._wstunnel_bin, port=chosen_port, hostile=hostile,
+            total = len(attemptable)
+            failures: list[str] = []
+            for idx, strat in enumerate(attemptable):
+                self.strategy_callback(strat.label, idx, total)
+                log.info(
+                    "Fallback ladder: trying rung %d/%d — %s (%s)",
+                    idx + 1, total, strat.label, strat.url,
+                )
+                ok, reason = self._try_strategy(strat)
+                if ok:
+                    self._active_strategy = strat
+                    self._phase_cb("ws")
+                    log.info("Connected via rung '%s' (%s)", strat.id, strat.url)
+                    return
+                failures.append(f"{strat.label}: {reason}")
+                self._stop_wstunnel()
+
+            raise TunnelError(
+                "All connection strategies failed:\n  " + "\n  ".join(failures)
             )
-            log.info("Starting wstunnel: %s", " ".join(cmd))
-            self._proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                # wstunnel emits UTF-8 on stdout. The default `text=True`
-                # uses the system locale encoding (CP1252 on Spanish-Windows,
-                # etc.), which mangles non-ASCII Rust error messages.
-                encoding="utf-8",
-                errors="replace",
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-            )
-            self._stdout_thread = Thread(
-                target=self._drain_stdout, daemon=True, name="wstunnel-stdout"
-            )
-            self._stdout_thread.start()
         except Exception:
             self.disconnect()
             raise
 
-    def disconnect(self) -> None:
-        if self._proc is not None:
+    def _is_attemptable(self, strat: ConnectionStrategy) -> bool:
+        if strat.proxy or strat.scheme != "wss":
+            return True
+        return tcp_probe(strat.endpoint, strat.port, timeout=4.0)
+
+    def _try_strategy(self, strat: ConnectionStrategy) -> tuple[bool, str]:
+        """Attempt one rung. Returns (success, human_reason_if_failed).
+
+        Leaves the wstunnel process running on success; the caller stops it
+        before moving to the next rung on failure. Reachability was already
+        vetted by the pre-flight in connect(); here we do the per-rung pin check
+        (direct WSS only) then start wstunnel and verify handshake + traffic.
+        """
+        direct_wss = strat.scheme == "wss" and not strat.proxy
+        if direct_wss and strat.pin_mode != "none":
+            ok, reason = self._check_pin(strat)
+            if not ok:
+                return False, reason
+
+        baseline = self._current_handshake()
+        try:
+            self._start_wstunnel(strat)
+        except Exception as exc:  # noqa: BLE001 — surface as a rung failure, keep laddering
+            return False, f"wstunnel failed to start: {exc}"
+
+        if not self._await_handshake(baseline):
+            return False, "no WireGuard handshake"
+        if self._require_ping and not self._await_ping():
+            return False, "handshake but no traffic through tunnel"
+        return True, ""
+
+    def _check_pin(self, strat: ConnectionStrategy) -> tuple[bool, str]:
+        try:
+            verify_tls_fingerprint(
+                strat.endpoint, strat.port, self._config.tls.cert_fingerprint_sha256
+            )
+            return True, ""
+        except FingerprintMismatchError as exc:
+            if strat.pin_mode == "tolerate" or self.allow_tls_intercept:
+                log.warning(
+                    "TLS fingerprint mismatch tolerated on rung '%s' (TLS-intercepting "
+                    "network); WireGuard still authenticates end-to-end. Details: %s",
+                    strat.id, exc,
+                )
+                return True, ""
+            return False, "TLS fingerprint mismatch"
+        except NetworkError as exc:
+            return False, f"TLS probe failed: {exc}"
+
+    def _current_handshake(self) -> int | None:
+        stats = get_tunnel_stats(self._config.wireguard.tunnel_name)
+        return stats.latest_handshake if stats else None
+
+    def _await_handshake(self, baseline: int | None) -> bool:
+        """Poll until a handshake strictly newer than `baseline` appears."""
+        deadline = time.monotonic() + self._handshake_timeout
+        while time.monotonic() < deadline:
+            if self._proc is not None and self._proc.poll() is not None:
+                return False  # wstunnel died — this rung is dead
+            hs = self._current_handshake()
+            if hs is not None and (baseline is None or hs > baseline):
+                return True
+            time.sleep(0.5)
+        return False
+
+    def _await_ping(self, attempts: int = 4) -> bool:
+        """Confirm packets actually traverse the tunnel to a public anycast IP."""
+        for _ in range(attempts):
+            if measure_latency_ms(self._verify_ping_target, timeout_ms=1500) is not None:
+                return True
+        return False
+
+    def _start_wstunnel(self, strat: ConnectionStrategy) -> None:
+        cmd = strategy_to_command(strat, self._wstunnel_bin, _forward_spec(self._config))
+        log.info("Starting wstunnel: %s", " ".join(cmd))
+        self._proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            # wstunnel emits UTF-8 on stdout. The default text=True uses the
+            # system locale encoding (CP1252 on Spanish-Windows, etc.), which
+            # mangles non-ASCII Rust error messages.
+            encoding="utf-8",
+            errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        self._stdout_thread = Thread(
+            target=self._drain_stdout, daemon=True, name="wstunnel-stdout"
+        )
+        self._stdout_thread.start()
+
+    def _stop_wstunnel(self) -> None:
+        """Terminate the wstunnel process but leave the WG interface installed.
+
+        Used between ladder rungs: WG is invariant across strategies, so only
+        the transport process is cycled.
+        """
+        if self._proc is None:
+            return
+        try:
+            self._proc.terminate()
             try:
-                self._proc.terminate()
-                try:
-                    self._proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self._proc.kill()
-                    self._proc.wait(timeout=5)
-            except Exception as exc:
-                log.warning("Error terminating wstunnel: %s", exc)
-            finally:
-                if self._stdout_thread is not None:
-                    self._stdout_thread.join(timeout=2)
-                    self._stdout_thread = None
+                self._proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+                self._proc.wait(timeout=5)
+        except Exception as exc:
+            log.warning("Error terminating wstunnel: %s", exc)
+        finally:
+            if self._stdout_thread is not None:
+                self._stdout_thread.join(timeout=2)
+                self._stdout_thread = None
             self._proc = None
+
+    def disconnect(self) -> None:
+        self._active_strategy = None
+        self._stop_wstunnel()
 
         if self._wg_installed:
             try:
@@ -339,6 +446,7 @@ class TunnelManager:
         poll_interval: float = 1.0,
         allow_tls_intercept: bool = False,
         auto_reconnect: bool = True,
+        sticky_store: StickyStore | None = None,
     ) -> None:
         self._config = config
         # Granular progress flag set by the Tunnel mid-connect ("resolve",
@@ -350,6 +458,11 @@ class TunnelManager:
             config,
             allow_tls_intercept=allow_tls_intercept,
             phase_callback=self._set_phase,
+        )
+        # Remembers which ladder rung last worked per network, so a repeat visit
+        # starts from the winner instead of re-walking the whole ladder.
+        self._sticky = sticky_store if sticky_store is not None else StickyStore(
+            default_sticky_path()
         )
         self._stability = stability_seconds
         self._poll = poll_interval
@@ -497,11 +610,24 @@ class TunnelManager:
             except Exception:
                 log.exception("State listener raised")
 
+    def _network_signature(self) -> str:
+        gateway = ""
+        try:
+            gateway = self._tunnel.platform.get_default_gateway()
+        except Exception:
+            gateway = ""
+        return network_signature(gateway)
+
     def _run(self) -> None:
         attempt = 0
         max_attempts = self._config.reconnect.max_attempts
         delays = self._config.reconnect.delays_seconds
         self._set_attempt(0)
+
+        # Seed the ladder with whatever rung last worked on this network so a
+        # repeat visit connects on the first attempt instead of re-walking it.
+        signature = self._network_signature()
+        self._tunnel.preferred_strategy_id = self._sticky.get(signature)
 
         while not self._stop_event.is_set():
             # Each attempt restarts the stepper from the beginning.
@@ -522,6 +648,13 @@ class TunnelManager:
                 if self._stop_event.wait(_pick_delay(delays, attempt)):
                     return
                 continue
+
+            # Persist the winning rung and prefer it for any reconnect in this
+            # session — a transient drop should retry what worked, not re-ladder.
+            won = self._tunnel.active_strategy_id
+            if won:
+                self._sticky.set(signature, won)
+                self._tunnel.preferred_strategy_id = won
 
             self._set_error(None)
             # Mark the stepper complete just before flipping to CONNECTED so

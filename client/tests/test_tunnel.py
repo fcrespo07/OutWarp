@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -14,7 +16,6 @@ from outwarp.config import (
     TunnelConfig,
     WireguardConfig,
 )
-from outwarp.network import NetworkError
 from outwarp.platforms.base import Platform, PlatformError
 from outwarp.tunnel import (
     _ANSI_ESCAPE_RE,
@@ -24,6 +25,15 @@ from outwarp.tunnel import (
     build_wstunnel_command,
     find_wstunnel,
 )
+
+
+@contextlib.contextmanager
+def _apply(patches):
+    """Enter a tuple of patch() context managers together."""
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        yield
 
 
 def _make_config() -> ClientConfig:
@@ -181,6 +191,31 @@ def test_build_wstunnel_command_default_omits_dns_flags():
 
 # --- Tunnel.connect / disconnect ---
 
+def _handshake_after_start():
+    """side_effect for get_tunnel_stats: None (baseline before wstunnel starts)
+    then a fresh handshake, so a rung passes the WG-handshake verification."""
+    from outwarp.wireguard import TunnelStats
+
+    seq: list = [None]
+    fresh = TunnelStats(rx_bytes=1, tx_bytes=1, latest_handshake=int(time.time()))
+
+    def _fn(_name):
+        return seq.pop(0) if seq else fresh
+
+    return _fn
+
+
+def _verified_connect_patches(popen):
+    """The set of patches that make the first attempted rung succeed end-to-end:
+    reachable, pin OK, wstunnel launches, WG handshakes, ping goes through."""
+    return (
+        patch("outwarp.tunnel.tcp_probe", return_value=True),
+        patch("outwarp.tunnel.verify_tls_fingerprint"),
+        patch("outwarp.tunnel.subprocess.Popen", return_value=popen),
+        patch("outwarp.tunnel.get_tunnel_stats", side_effect=_handshake_after_start()),
+        patch("outwarp.tunnel.measure_latency_ms", return_value=15),
+    )
+
 def test_connect_falls_back_to_alternate_port():
     from dataclasses import replace
     cfg = _make_config()
@@ -189,8 +224,9 @@ def test_connect_falls_back_to_alternate_port():
     fake_proc = MagicMock()
     fake_proc.poll.return_value = None
 
-    # Primary 443 is blocked; 8443 is reachable.
-    def probe(host, port):
+    # Primary 443 is blocked; 8443 is reachable. The ladder tries every 443
+    # rung (all fail the reachability pre-flight) then the alt-port rung.
+    def probe(host, port, timeout=5.0):
         return port == 8443
 
     captured: dict = {}
@@ -203,6 +239,8 @@ def test_connect_falls_back_to_alternate_port():
         patch("outwarp.tunnel.tcp_probe", side_effect=probe),
         patch("outwarp.tunnel.verify_tls_fingerprint") as vtf,
         patch("outwarp.tunnel.subprocess.Popen", side_effect=fake_popen),
+        patch("outwarp.tunnel.get_tunnel_stats", side_effect=_handshake_after_start()),
+        patch("outwarp.tunnel.measure_latency_ms", return_value=15),
     ):
         t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"))
         t.connect()
@@ -210,6 +248,7 @@ def test_connect_falls_back_to_alternate_port():
     # TLS verify and the wstunnel target both used the fallback port.
     assert vtf.call_args[0][1] == 8443
     assert captured["cmd"][-1] == "wss://203.0.113.42:8443"
+    assert t.active_strategy_id == "port-8443"
 
 
 def test_connect_fails_when_all_ports_unreachable():
@@ -218,7 +257,7 @@ def test_connect_fails_when_all_ports_unreachable():
     cfg = replace(cfg, server=replace(cfg.server, fallback_ports=[8443, 2083]))
     with patch("outwarp.tunnel.tcp_probe", return_value=False):
         t = Tunnel(cfg, platform=FakePlatform(), wstunnel_bin=Path("/fake/wstunnel"))
-        with pytest.raises(TunnelError, match="443, 8443, 2083"):
+        with pytest.raises(TunnelError, match="Cannot reach"):
             t.connect()
 
 
@@ -228,11 +267,7 @@ def test_connect_happy_path():
     fake_proc = MagicMock()
     fake_proc.poll.return_value = None
 
-    with (
-        patch("outwarp.tunnel.tcp_probe", return_value=True),
-        patch("outwarp.tunnel.verify_tls_fingerprint"),
-        patch("outwarp.tunnel.subprocess.Popen", return_value=fake_proc),
-    ):
+    with _apply(_verified_connect_patches(fake_proc)):
         t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"))
         t.connect()
 
@@ -243,6 +278,8 @@ def test_connect_happy_path():
     # before the OS routing table is consulted, so host routes don't take.
     assert plat.routes == []
     assert t._proc is fake_proc
+    # The first, cleanest rung (plain direct) wins on a friendly network.
+    assert t.active_strategy_id == "direct"
 
 
 def test_connect_reports_phases_in_order():
@@ -254,11 +291,7 @@ def test_connect_reports_phases_in_order():
     fake_proc.poll.return_value = None
     phases: list[str] = []
 
-    with (
-        patch("outwarp.tunnel.tcp_probe", return_value=True),
-        patch("outwarp.tunnel.verify_tls_fingerprint"),
-        patch("outwarp.tunnel.subprocess.Popen", return_value=fake_proc),
-    ):
+    with _apply(_verified_connect_patches(fake_proc)):
         t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"),
                    phase_callback=phases.append)
         t.connect()
@@ -275,14 +308,18 @@ def test_connect_phase_stops_at_resolve_when_endpoint_unreachable():
                    phase_callback=phases.append)
         with pytest.raises(TunnelError, match="Cannot reach"):
             t.connect()
+    # Pre-flight reachability fails before WG is ever installed.
     assert phases == ["resolve"]
+    assert plat.installed is False
 
 
-def test_connect_phase_stops_at_tls_on_fingerprint_mismatch():
+def test_connect_skips_rung_on_fingerprint_mismatch_and_exhausts_ladder():
     from outwarp.network import FingerprintMismatchError
     cfg = _make_config()
     plat = FakePlatform()
     phases: list[str] = []
+    # Every direct rung pins the same cert, so a persistent mismatch skips them
+    # all and the ladder exhausts — but only after WG is installed (phase 'wg').
     with (
         patch("outwarp.tunnel.tcp_probe", return_value=True),
         patch("outwarp.tunnel.verify_tls_fingerprint",
@@ -290,9 +327,10 @@ def test_connect_phase_stops_at_tls_on_fingerprint_mismatch():
     ):
         t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"),
                    phase_callback=phases.append)
-        with pytest.raises(TunnelError):
+        with pytest.raises(TunnelError, match="All connection strategies failed"):
             t.connect()
-    assert phases == ["resolve", "tls"]
+    assert phases == ["resolve", "tls", "wg"]
+    assert plat.installed is False  # rolled back on total failure
 
 
 def test_connect_aborts_when_endpoint_unreachable():
@@ -307,36 +345,88 @@ def test_connect_aborts_when_endpoint_unreachable():
     assert plat.routes == []
 
 
-def test_connect_aborts_on_fingerprint_mismatch():
+def test_connect_tolerates_fingerprint_mismatch_when_allowed():
+    """allow_tls_intercept lets a mismatched-pin rung proceed to verification —
+    WireGuard's key auth is the real boundary on a TLS-intercepting network."""
+    from outwarp.network import FingerprintMismatchError
     cfg = _make_config()
     plat = FakePlatform()
+    fake_proc = MagicMock()
+    fake_proc.poll.return_value = None
     with (
         patch("outwarp.tunnel.tcp_probe", return_value=True),
-        patch(
-            "outwarp.tunnel.verify_tls_fingerprint",
-            side_effect=NetworkError("fingerprint mismatch boom"),
-        ),
+        patch("outwarp.tunnel.verify_tls_fingerprint",
+              side_effect=FingerprintMismatchError("intercepted")),
+        patch("outwarp.tunnel.subprocess.Popen", return_value=fake_proc),
+        patch("outwarp.tunnel.get_tunnel_stats", side_effect=_handshake_after_start()),
+        patch("outwarp.tunnel.measure_latency_ms", return_value=15),
     ):
-        t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"))
-        with pytest.raises(TunnelError, match="fingerprint mismatch"):
-            t.connect()
-    assert plat.installed is False
-    assert plat.routes == []
+        t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"),
+                   allow_tls_intercept=True)
+        t.connect()
+    assert t.active_strategy_id == "direct"
 
 
-def test_connect_rolls_back_when_wstunnel_fails_to_launch():
+def test_connect_exhausts_ladder_when_wstunnel_fails_to_launch():
     cfg = _make_config()
     plat = FakePlatform()
     with (
         patch("outwarp.tunnel.tcp_probe", return_value=True),
         patch("outwarp.tunnel.verify_tls_fingerprint"),
         patch("outwarp.tunnel.subprocess.Popen", side_effect=OSError("exec failed")),
+        # Patching subprocess.Popen also affects the `wg show` call inside
+        # get_tunnel_stats (shared module), so stub it out explicitly.
+        patch("outwarp.tunnel.get_tunnel_stats", return_value=None),
     ):
         t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"))
-        with pytest.raises(OSError):
+        # A launch failure is a rung failure, not a hard error — the ladder
+        # tries the rest, then reports a combined failure.
+        with pytest.raises(TunnelError, match="All connection strategies failed"):
             t.connect()
     assert plat.installed is False
     assert plat.routes == []
+
+
+def test_connect_fails_when_handshake_never_completes():
+    """The core institute failure: wstunnel is up but no WG handshake (the WS
+    upgrade is 400ing). The rung must be rejected, not reported as connected."""
+    cfg = _make_config()
+    plat = FakePlatform()
+    fake_proc = MagicMock()
+    fake_proc.poll.return_value = None
+    with (
+        patch("outwarp.tunnel.tcp_probe", return_value=True),
+        patch("outwarp.tunnel.verify_tls_fingerprint"),
+        patch("outwarp.tunnel.subprocess.Popen", return_value=fake_proc),
+        patch("outwarp.tunnel.get_tunnel_stats", return_value=None),  # never handshakes
+        patch("outwarp.tunnel.measure_latency_ms", return_value=15),
+    ):
+        t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"),
+                   handshake_timeout=0.3)
+        with pytest.raises(TunnelError, match="All connection strategies failed"):
+            t.connect()
+    assert plat.installed is False
+
+
+def test_connect_fails_when_no_traffic_through_tunnel():
+    """Handshake completes but the ping through the tunnel never returns —
+    datapath is dead, so the rung is rejected."""
+    cfg = _make_config()
+    plat = FakePlatform()
+    fake_proc = MagicMock()
+    fake_proc.poll.return_value = None
+    with (
+        patch("outwarp.tunnel.tcp_probe", return_value=True),
+        patch("outwarp.tunnel.verify_tls_fingerprint"),
+        patch("outwarp.tunnel.subprocess.Popen", return_value=fake_proc),
+        patch("outwarp.tunnel.get_tunnel_stats", side_effect=_handshake_after_start()),
+        patch("outwarp.tunnel.measure_latency_ms", return_value=None),  # no reply
+    ):
+        t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"),
+                   handshake_timeout=1.0)
+        with pytest.raises(TunnelError, match="All connection strategies failed"):
+            t.connect()
+    assert plat.installed is False
 
 
 def test_disconnect_reverses_state():
@@ -345,17 +435,14 @@ def test_disconnect_reverses_state():
     fake_proc = MagicMock()
     fake_proc.poll.return_value = None
 
-    with (
-        patch("outwarp.tunnel.tcp_probe", return_value=True),
-        patch("outwarp.tunnel.verify_tls_fingerprint"),
-        patch("outwarp.tunnel.subprocess.Popen", return_value=fake_proc),
-    ):
+    with _apply(_verified_connect_patches(fake_proc)):
         t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"))
         t.connect()
         t.disconnect()
 
     assert plat.installed is False
     assert plat.routes == []
+    assert t.active_strategy_id == ""
     fake_proc.terminate.assert_called_once()
 
 
@@ -367,11 +454,7 @@ def test_disconnect_kills_process_if_terminate_times_out():
     import subprocess
     fake_proc.wait.side_effect = [subprocess.TimeoutExpired(cmd="wstunnel", timeout=5), None]
 
-    with (
-        patch("outwarp.tunnel.tcp_probe", return_value=True),
-        patch("outwarp.tunnel.verify_tls_fingerprint"),
-        patch("outwarp.tunnel.subprocess.Popen", return_value=fake_proc),
-    ):
+    with _apply(_verified_connect_patches(fake_proc)):
         t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"))
         t.connect()
         t.disconnect()
@@ -386,11 +469,7 @@ def test_disconnect_tolerates_platform_errors():
 
     fake_proc = MagicMock()
     fake_proc.poll.return_value = None
-    with (
-        patch("outwarp.tunnel.tcp_probe", return_value=True),
-        patch("outwarp.tunnel.verify_tls_fingerprint"),
-        patch("outwarp.tunnel.subprocess.Popen", return_value=fake_proc),
-    ):
+    with _apply(_verified_connect_patches(fake_proc)):
         t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"))
         t.connect()
 
@@ -413,11 +492,7 @@ def test_is_active_false_when_proc_died():
     fake_proc = MagicMock()
     fake_proc.poll.return_value = None
 
-    with (
-        patch("outwarp.tunnel.tcp_probe", return_value=True),
-        patch("outwarp.tunnel.verify_tls_fingerprint"),
-        patch("outwarp.tunnel.subprocess.Popen", return_value=fake_proc),
-    ):
+    with _apply(_verified_connect_patches(fake_proc)):
         t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"))
         t.connect()
 

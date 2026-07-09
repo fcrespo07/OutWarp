@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: minor bumps may carry user-visible changes).
 
+## [0.10.0] — 2026-07-09
+
+### Added
+- **Automatic connection fallback ladder** — instead of a single connect
+  attempt, the client now tries an ordered sequence of transport *strategies*
+  until one actually carries traffic, then sticks with it. This hardens OutWarp
+  on aggressive-DPI networks (captive/edu/corp Wi-Fi) where a single fixed
+  transport gets silently blocked. WireGuard is brought up once and only the
+  wstunnel front is cycled between rungs, so switching strategies is cheap.
+  - Default rungs, tried in order: **direct** → **direct + public-DNS/IPv4-only
+    flags** (`--dns-resolver dns://1.1.1.1 --dns-resolver-prefer-ipv4`, matching
+    the proven legacy behaviour) → **direct + browser `User-Agent`** → **via HTTP
+    proxy** (when one is configured in the environment) → **alternate WSS ports**
+    (`server.fallback_ports`) → **server-provisioned rungs** (CDN front with
+    `--tls-sni-override` + `Host` header, alternate cert-pin policy, etc.).
+  - **Honest success check**: a rung is only accepted when a WireGuard handshake
+    completes *and* a ping reaches the internet through the tunnel — a live
+    wstunnel process alone is no longer treated as "connected" (that was the
+    exact "connects but no traffic" failure on hostile networks).
+  - **Per-network memory**: the rung that worked is remembered per network
+    (SSID + gateway + resolver signature) and tried first next time, so a repeat
+    visit connects on the first attempt instead of re-walking the ladder.
+  - New optional `fallback` block in the `.owcfg` lets a server admin provision
+    extra rungs (e.g. a CDN-fronted hostname); the client always generates its
+    own default rungs on top, so existing profiles keep working unchanged.
+  - Per-rung TLS pin policy (`pin` / `tolerate` / `none`) so a CDN-fronted rung
+    whose cert rotates can rely on WireGuard key authentication instead of a
+    pinned fingerprint.
+
 ## [0.9.0] — 2026-06-14
 
 ### Added
