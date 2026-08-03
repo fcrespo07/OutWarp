@@ -77,74 +77,133 @@ def test_parser_has_config_dir_option() -> None:
 
 
 class TestAddClient:
+    """add-client defaults to enrolment: the server reserves the slot and mints a
+    one-time token, and the client generates its own keypair on import. The
+    legacy behaviour (private key generated here and embedded) is opt-in."""
+
+    @patch("outwarp_server.operations.add_peer_live")
+    @patch("outwarp_server.operations.generate_psk", return_value="cHNrdmFsdWU=")
+    def test_default_profile_carries_a_token_and_no_private_key(
+        self, _psk: MagicMock, mock_add: MagicMock, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        config_dir = _write_server_config(tmp_path)
+        assert main(["--config-dir", str(config_dir), "add-client", "laptop"]) == 0
+
+        owcfg = json.loads((tmp_path / "laptop.owcfg").read_text(encoding="utf-8"))
+        assert owcfg["schema_version"] == 3
+        assert "client_private_key" not in owcfg["wireguard"]
+        assert owcfg["enrollment"]["token"].startswith("ow_enroll_")
+        assert owcfg["enrollment"]["url"].startswith("https://")
+        # The PSK is still pre-shared through the profile; only the identity key
+        # is withheld.
+        assert owcfg["wireguard"]["preshared_key"] == "cHNrdmFsdWU="
+        # Nothing to admit to the interface until the client redeems.
+        mock_add.assert_not_called()
+
+    @patch("outwarp_server.operations.add_peer_live")
+    @patch("outwarp_server.operations.generate_psk", return_value="")
+    def test_default_profile_reserves_the_slot_without_a_public_key(
+        self, _psk: MagicMock, _add: MagicMock, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        config_dir = _write_server_config(tmp_path)
+        main(["--config-dir", str(config_dir), "add-client", "laptop"])
+
+        cfg = ServerConfig.load(config_dir / "server_config.json")
+        assert cfg.clients[0].name == "laptop"
+        assert cfg.clients[0].address == "10.0.0.2/32"
+        assert cfg.clients[0].public_key == ""
+
+    @patch("outwarp_server.operations.add_peer_live")
+    @patch("outwarp_server.operations.generate_psk", return_value="")
+    def test_enroll_ttl_is_configurable(
+        self, _psk: MagicMock, _add: MagicMock, tmp_path: Path, monkeypatch
+    ) -> None:
+        from outwarp_server import enrollment
+
+        monkeypatch.chdir(tmp_path)
+        config_dir = _write_server_config(tmp_path)
+        main(["--config-dir", str(config_dir), "add-client", "laptop", "--enroll-ttl", "1"])
+
+        outstanding = enrollment.pending(config_dir)
+        assert len(outstanding) == 1
+        lifetime = outstanding[0].expires_at - outstanding[0].created_at
+        assert lifetime == 60
+
     @patch("outwarp_server.operations.add_peer_live")
     @patch(
         "outwarp_server.operations.generate_wg_keypair",
         return_value=("client_priv", "client_pub"),
     )
-    def test_add_client_creates_warpcfg(
-        self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path
+    def test_embed_key_falls_back_to_the_legacy_profile(
+        self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path, monkeypatch
     ) -> None:
+        monkeypatch.chdir(tmp_path)
         config_dir = _write_server_config(tmp_path)
-        ret = main(["--config-dir", str(config_dir), "add-client", "laptop"])
+        ret = main([
+            "--config-dir", str(config_dir), "add-client", "laptop", "--embed-key",
+        ])
         assert ret == 0
 
-        warpcfg_path = Path.cwd() / "laptop.owcfg"
-        assert warpcfg_path.exists()
-        warpcfg = json.loads(warpcfg_path.read_text(encoding="utf-8"))
-        assert warpcfg["wireguard"]["client_private_key"] == "client_priv"
-        assert warpcfg["wireguard"]["client_address"] == "10.0.0.2/32"
-        warpcfg_path.unlink()  # cleanup
+        owcfg = json.loads((tmp_path / "laptop.owcfg").read_text(encoding="utf-8"))
+        assert owcfg["wireguard"]["client_private_key"] == "client_priv"
+        assert owcfg["wireguard"]["client_address"] == "10.0.0.2/32"
+        assert "enrollment" not in owcfg
+        # The peer is admitted immediately in this mode.
+        mock_add.assert_called_once()
+
+    @patch("outwarp_server.operations.generate_psk", return_value="cHNrdmFsdWU=")
+    @patch("outwarp_server.operations.add_peer_live")
+    @patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
+    def test_embed_key_hands_the_psk_to_wg(
+        self, _kg: MagicMock, mock_add: MagicMock, _psk: MagicMock, tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        config_dir = _write_server_config(tmp_path)
+        main(["--config-dir", str(config_dir), "add-client", "laptop", "--embed-key"])
+        owcfg = json.loads((tmp_path / "laptop.owcfg").read_text(encoding="utf-8"))
+        assert owcfg["wireguard"]["preshared_key"] == "cHNrdmFsdWU="
+        assert mock_add.call_args.kwargs.get("psk") == "cHNrdmFsdWU="
 
     @patch("outwarp_server.operations.add_peer_live")
     @patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
     def test_add_client_updates_server_config(
-        self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path
+        self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path, monkeypatch
     ) -> None:
+        monkeypatch.chdir(tmp_path)
         config_dir = _write_server_config(tmp_path)
         main(["--config-dir", str(config_dir), "add-client", "phone"])
         cfg = ServerConfig.load(config_dir / "server_config.json")
         assert len(cfg.clients) == 1
         assert cfg.clients[0].name == "phone"
-        (Path.cwd() / "phone.owcfg").unlink(missing_ok=True)
 
     @patch("outwarp_server.operations.add_peer_live")
     @patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
     def test_add_duplicate_client_fails(
-        self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path
+        self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path, monkeypatch
     ) -> None:
+        monkeypatch.chdir(tmp_path)
         clients = [{"name": "laptop", "public_key": "key", "address": "10.0.0.2/32"}]
         config_dir = _write_server_config(tmp_path, clients=clients)
         ret = main(["--config-dir", str(config_dir), "add-client", "laptop"])
         assert ret == 1
 
-    @patch("outwarp_server.operations.generate_psk", return_value="cHNrdmFsdWU=")
-    @patch("outwarp_server.operations.add_peer_live")
-    @patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
-    def test_add_client_writes_psk_into_owcfg(
-        self, _kg: MagicMock, mock_add: MagicMock, _psk: MagicMock, tmp_path: Path
-    ) -> None:
-        config_dir = _write_server_config(tmp_path)
-        main(["--config-dir", str(config_dir), "add-client", "laptop"])
-        warpcfg = json.loads((Path.cwd() / "laptop.owcfg").read_text(encoding="utf-8"))
-        assert warpcfg["wireguard"]["preshared_key"] == "cHNrdmFsdWU="
-        # The PSK is handed to wg via add_peer_live too.
-        assert mock_add.call_args.kwargs.get("psk") == "cHNrdmFsdWU="
-        (Path.cwd() / "laptop.owcfg").unlink(missing_ok=True)
-
     @patch("outwarp_server.operations.generate_psk", return_value="")
     @patch("outwarp_server.operations.add_peer_live")
     @patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
     def test_add_client_with_days_sets_expiry(
-        self, _kg: MagicMock, _add: MagicMock, _psk: MagicMock, tmp_path: Path
+        self, _kg: MagicMock, _add: MagicMock, _psk: MagicMock, tmp_path: Path,
+        monkeypatch,
     ) -> None:
+        monkeypatch.chdir(tmp_path)
         config_dir = _write_server_config(tmp_path)
         main(["--config-dir", str(config_dir), "add-client", "temp", "--days", "30"])
-        warpcfg = json.loads((Path.cwd() / "temp.owcfg").read_text(encoding="utf-8"))
-        assert "expires_at" in warpcfg["meta"]
+        owcfg = json.loads((tmp_path / "temp.owcfg").read_text(encoding="utf-8"))
+        assert "expires_at" in owcfg["meta"]
         cfg = ServerConfig.load(config_dir / "server_config.json")
-        assert cfg.clients[0].expires_at == warpcfg["meta"]["expires_at"]
-        (Path.cwd() / "temp.owcfg").unlink(missing_ok=True)
+        assert cfg.clients[0].expires_at == owcfg["meta"]["expires_at"]
 
 
 class TestPruneExpired:
@@ -586,3 +645,49 @@ def test_gui_subcommand_delegates_to_server_app_main() -> None:
         ret = main(["gui"])
     assert ret == 0
     mock_main.assert_called_once_with()
+
+
+class TestRenewCert:
+    def _configured(self, tmp_path: Path) -> tuple[Path, str, str]:
+        from outwarp_server.crypto import generate_tls_cert
+
+        cert_dir = tmp_path / "tls"
+        cert_path, key_path, fp, spki = generate_tls_cert("vpn.example.com", cert_dir)
+        config_dir = _write_server_config(
+            tmp_path,
+            endpoint="vpn.example.com",
+            cert_path=str(cert_path),
+            key_path=str(key_path),
+            cert_fingerprint_sha256=fp,
+            spki_sha256=spki,
+        )
+        return config_dir, fp, spki
+
+    def test_reuses_the_key_so_distributed_profiles_survive(self, tmp_path: Path) -> None:
+        config_dir, old_fp, old_spki = self._configured(tmp_path)
+        ret = main(["--config-dir", str(config_dir), "renew-cert"])
+        assert ret == 0
+        cfg = ServerConfig.load(config_dir / "server_config.json")
+        assert cfg.spki_sha256 == old_spki
+        assert cfg.cert_fingerprint_sha256 != old_fp
+
+    def test_new_key_flag_replaces_the_pin(self, tmp_path: Path) -> None:
+        config_dir, old_fp, old_spki = self._configured(tmp_path)
+        ret = main(["--config-dir", str(config_dir), "renew-cert", "--new-key"])
+        assert ret == 0
+        cfg = ServerConfig.load(config_dir / "server_config.json")
+        assert cfg.spki_sha256 != old_spki
+        assert cfg.cert_fingerprint_sha256 != old_fp
+
+    def test_new_key_flag_writes_back_to_the_configured_paths(self, tmp_path: Path) -> None:
+        # Regenerating into a different filename would leave the systemd unit
+        # pointing at the old certificate.
+        config_dir, _, _ = self._configured(tmp_path)
+        before = ServerConfig.load(config_dir / "server_config.json")
+        main(["--config-dir", str(config_dir), "renew-cert", "--new-key"])
+        after = ServerConfig.load(config_dir / "server_config.json")
+        assert (after.cert_path, after.key_path) == (before.cert_path, before.key_path)
+
+    def test_reports_a_missing_key_instead_of_crashing(self, tmp_path: Path) -> None:
+        config_dir = _write_server_config(tmp_path)  # cert/key paths don't exist
+        assert main(["--config-dir", str(config_dir), "renew-cert"]) == 1

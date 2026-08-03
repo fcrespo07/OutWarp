@@ -55,11 +55,22 @@ def test_ladder_default_rungs(monkeypatch):
     monkeypatch.delenv("HTTP_PROXY", raising=False)
     monkeypatch.delenv("ALL_PROXY", raising=False)
     ladder = build_ladder(_cfg())
-    assert [r.id for r in ladder] == ["direct", "direct-hostile", "direct-camouflage"]
-    # S0 is plain, S1 forces the public-DNS flags, S2 adds a browser UA.
+    assert [r.id for r in ladder] == ["direct", "direct-hostile"]
+    # S0 is plain, S1 forces the public-DNS flags.
     assert ladder[0].force_hostile is False
     assert ladder[1].force_hostile is True
-    assert ladder[2].user_agent
+
+
+def test_every_direct_rung_sends_a_browser_user_agent(monkeypatch):
+    """Camouflage used to be its own rung, which meant paying a whole failed
+    attempt for it and only reaching L7 filters on the third try."""
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("ALL_PROXY", raising=False)
+    cfg = _cfg(server=replace(_cfg().server, fallback_ports=[8443]))
+    ladder = build_ladder(cfg)
+    assert all(r.user_agent for r in ladder)
+    assert "direct-camouflage" not in [r.id for r in ladder]
 
 
 def test_ladder_hostile_on_drops_plain_direct(monkeypatch):
@@ -261,3 +272,62 @@ def test_config_fallback_rejects_bad_pin_mode(tmp_path):
     }
     with pytest.raises(ConfigError, match="pin_mode"):
         _parse(raw)
+
+
+# --- CA-mode rungs (schema v2 / ACME server branch) ---
+
+def test_ca_profile_marks_client_rungs_ca(monkeypatch):
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("ALL_PROXY", raising=False)
+    cfg = _cfg(
+        tls=TlsConfig(cert_fingerprint_sha256="", verify="ca"),
+        server=ServerConfig(
+            endpoint="wg.example.com", port=443,
+            http_upgrade_path_prefix="s3cret", fallback_ports=[8443],
+        ),
+    )
+    ladder = build_ladder(cfg)
+    assert {r.pin_mode for r in ladder} == {"ca"}
+
+
+def test_pin_profile_keeps_client_rungs_on_pin(monkeypatch):
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("ALL_PROXY", raising=False)
+    assert {r.pin_mode for r in build_ladder(_cfg())} == {"pin"}
+
+
+def test_provisioned_rung_keeps_its_own_trust_mode():
+    # A CDN front is a different server with a different certificate, so its
+    # pin_mode must not be overwritten by the profile's.
+    cfg = _cfg(
+        tls=TlsConfig(cert_fingerprint_sha256="", verify="ca"),
+        fallback=FallbackConfig(
+            strategies=(StrategyConfig(id="cdn", endpoint="cdn.example.net", pin_mode="none"),)
+        ),
+    )
+    cdn = next(r for r in build_ladder(cfg) if r.id == "cdn")
+    assert cdn.pin_mode == "none"
+
+
+def test_ca_rung_asks_wstunnel_to_verify():
+    strat = ConnectionStrategy(
+        id="direct", label="Direct", endpoint="wg.example.com", port=443,
+        path_prefix="s3cret", pin_mode="ca",
+    )
+    cmd = strategy_to_command(strat, Path("/usr/bin/wstunnel"), "udp://51820:10.0.0.1:51820")
+    assert "--tls-verify-certificate" in cmd
+
+
+@pytest.mark.parametrize("mode", ["pin", "tolerate", "none"])
+def test_non_ca_rungs_do_not_pass_the_verify_flag(mode):
+    # wstunnel's own verification is against the system CA store, which a
+    # self-signed server can never satisfy — passing it there would break
+    # every pinned profile.
+    strat = ConnectionStrategy(
+        id="direct", label="Direct", endpoint="wg.example.com", port=443,
+        path_prefix="s3cret", pin_mode=mode,
+    )
+    cmd = strategy_to_command(strat, Path("/usr/bin/wstunnel"), "udp://51820:10.0.0.1:51820")
+    assert "--tls-verify-certificate" not in cmd

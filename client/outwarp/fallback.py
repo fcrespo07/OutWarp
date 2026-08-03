@@ -15,10 +15,18 @@ Rung order (probability × cleanliness):
 
     S0 direct                      — current behaviour
     S1 direct + hostile DNS flags  — 1.1.1.1 + IPv4-only (poisoned DNS / broken v6)
-    S2 direct + browser User-Agent — cheap L7 camouflage
-    S3 via HTTP proxy              — only if a proxy is configured/detected
-    S4 alternate WSS ports         — from server.fallback_ports
-    S5.. server-provisioned        — CDN front, SNI override, no-pin, etc.
+    S2 via HTTP proxy              — only if a proxy is configured/detected
+    S3 alternate WSS ports         — from server.fallback_ports
+    S4.. server-provisioned        — CDN front, SNI override, no-pin, etc.
+
+Every client-generated rung sends a browser User-Agent. It used to be a rung of
+its own, which cost a full attempt — handshake timeout plus ping probes — for a
+header that only matters to a middlebox terminating TLS, and only ever on the
+third try. Sending it everywhere is free and gets it in front of the L7 filters
+that drop requests with no plausible UA on the first attempt instead of the
+third. It is camouflage against header rules, not against TLS fingerprinting:
+the ClientHello is still rustls', and no header can change that (see the uTLS
+note in ROADMAP.md).
 """
 
 from __future__ import annotations
@@ -63,7 +71,10 @@ class ConnectionStrategy:
     host_header: str = ""
     user_agent: str = ""
     proxy: str = ""
-    pin_mode: str = "pin"  # pin | tolerate | none
+    # pin | tolerate | none | ca. "ca" means this rung authenticates the server
+    # against the system trust store instead of a fingerprint, which is also the
+    # only mode wstunnel itself can enforce (--tls-verify-certificate).
+    pin_mode: str = "pin"
     # Extra IPs/CIDRs/hostnames this rung's endpoint needs excluded from the
     # tunnel (e.g. a CDN's anycast ranges). The endpoint itself is added by the
     # caller; this is for fronts that resolve to a different address than the URL.
@@ -107,6 +118,12 @@ def strategy_to_command(
         "--http-upgrade-path-prefix",
         strategy.path_prefix,
     ]
+    # wstunnel connects to any certificate at all unless told otherwise, so the
+    # out-of-band pin check in tunnel.py is the only gate on a "pin" rung. On a
+    # "ca" rung we can hand the check to wstunnel itself, which closes the gap
+    # between the connection we probed and the connection it actually opens.
+    if strategy.pin_mode == "ca":
+        cmd.append("--tls-verify-certificate")
     if strategy.force_hostile:
         cmd.extend(["--dns-resolver", "dns://1.1.1.1", "--dns-resolver-prefer-ipv4"])
     if strategy.sni_override:
@@ -148,9 +165,15 @@ def build_ladder(config: ClientConfig) -> list[ConnectionStrategy]:
     hostile_mode = config.network.hostile_mode
     rungs: list[ConnectionStrategy] = []
 
+    # The client-generated rungs all dial the profile's own endpoint, so they
+    # inherit the profile's TLS trust model. Server-provisioned rungs (S5..)
+    # carry their own, because a CDN front is a different server.
+    default_pin = "ca" if config.tls.verify == "ca" else "pin"
+
     def _direct(sid: str, label: str, **kw: Any) -> ConnectionStrategy:
         return ConnectionStrategy(
-            id=sid, label=label, endpoint=s.endpoint, port=s.port, path_prefix=prefix, **kw
+            id=sid, label=label, endpoint=s.endpoint, port=s.port, path_prefix=prefix,
+            pin_mode=default_pin, user_agent=DEFAULT_USER_AGENT, **kw
         )
 
     # S0 plain direct. Skipped when the user forced hostile mode on — no point
@@ -162,24 +185,15 @@ def build_ladder(config: ClientConfig) -> list[ConnectionStrategy]:
     # behaviour). When hostile_mode == "off" the user opted out of the DNS
     # bypass, so we still keep it as a *fallback* rung but it comes after S0.
     rungs.append(_direct("direct-hostile", "Direct (public DNS)", force_hostile=True))
-    # S2 direct + browser camouflage.
-    rungs.append(
-        _direct(
-            "direct-camouflage",
-            "Direct (browser headers)",
-            force_hostile=True,
-            user_agent=DEFAULT_USER_AGENT,
-        )
-    )
 
-    # S3 via HTTP proxy, only if one is configured in the environment.
+    # S2 via HTTP proxy, only if one is configured in the environment.
     proxy = _detect_system_proxy()
     if proxy:
         rungs.append(
             _direct("direct-proxy", "Via HTTP proxy", force_hostile=True, proxy=proxy)
         )
 
-    # S4 alternate WSS ports. Scheme stays wss; 80 is treated as ws only when a
+    # S3 alternate WSS ports. Scheme stays wss; 80 is treated as ws only when a
     # server explicitly provisions it (below), never guessed here.
     for alt in s.fallback_ports:
         rungs.append(
@@ -190,10 +204,12 @@ def build_ladder(config: ClientConfig) -> list[ConnectionStrategy]:
                 port=alt,
                 path_prefix=prefix,
                 force_hostile=True,
+                pin_mode=default_pin,
+                user_agent=DEFAULT_USER_AGENT,
             )
         )
 
-    # S5.. server-provisioned rungs (CDN front, SNI override, proxy, …).
+    # S4.. server-provisioned rungs (CDN front, SNI override, proxy, …).
     for sc in config.fallback.strategies:
         rungs.append(_resolve_provisioned(sc, config))
 
@@ -223,7 +239,9 @@ def _resolve_provisioned(sc: StrategyConfig, config: ClientConfig) -> Connection
         force_hostile=sc.force_hostile,
         sni_override=sc.sni_override,
         host_header=sc.host_header,
-        user_agent=sc.user_agent,
+        # Blank inherits, like endpoint/port/path_prefix — a provisioned rung
+        # that says nothing about headers should still look like a browser.
+        user_agent=sc.user_agent or DEFAULT_USER_AGENT,
         proxy=sc.proxy,
         pin_mode=sc.pin_mode,
         bypass_ips=tuple(sc.bypass_ips),

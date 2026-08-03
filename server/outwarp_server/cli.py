@@ -33,7 +33,8 @@ console = Console()
 # Anything not in this set runs without a root check (--version, --help).
 _PRIVILEGED_COMMANDS = frozenset({
     "setup", "add-client", "list-clients", "revoke-client", "rotate-client",
-    "prune-expired", "status", "restart", "uninstall", "doctor", "init", "serve", "tui",
+    "renew-cert", "prune-expired", "status", "restart", "uninstall", "doctor",
+    "init", "serve", "tui",
     "web", "admin-token",
 })
 # ``gui`` is intentionally NOT in the privileged set: the pywebview shell is
@@ -160,18 +161,21 @@ def _cmd_add_client(args: argparse.Namespace) -> int:
         console.print(f"[red]Error:[/red] {exc}")
         return 1
 
+    enroll = not args.embed_key
     try:
         result = operations.add_client(
             config,
             name,
             config_path=_resolve_config_path(args),
             expires_at=expires_at,
+            enroll=enroll,
+            enroll_ttl_seconds=max(1, args.enroll_ttl) * 60 if enroll else 0,
         )
     except ValueError as exc:
         console.print(f"[red]Error:[/red] {exc}")
         return 1
     except Exception as exc:
-        console.print(f"[red]Error generating WireGuard keys:[/red] {exc}")
+        console.print(f"[red]Error registering client:[/red] {exc}")
         return 1
 
     console.print(f"\n[green]Client '{name}' added successfully.[/green]")
@@ -181,10 +185,30 @@ def _cmd_add_client(args: argparse.Namespace) -> int:
     if expires_at:
         console.print(f"  Expires: [yellow]{expires_at}[/yellow]")
     console.print(f"  Config: [bold]{result.owcfg_path}[/bold]")
-    console.print(
-        "\nSend this .owcfg file to the client securely — "
-        "it contains the client's private key."
-    )
+
+    if enroll:
+        import datetime as _dt
+        deadline = _dt.datetime.fromtimestamp(
+            result.enrollment_expires_at, _dt.UTC
+        ).strftime("%H:%M UTC")
+        console.print(
+            f"\n[bold]This profile holds a one-time enrolment token, not a private "
+            f"key.[/bold] The client generates its own keypair on import and "
+            f"redeems the token; the server never sees it.\n"
+            f"  Valid until: [yellow]{deadline}[/yellow] "
+            f"({args.enroll_ttl} min from now)\n"
+            f"  Endpoint:    {result.config.enroll_url}\n\n"
+            f"Send it now — after that window the client must ask for a new one. "
+            f"If the client reports 'already redeemed', the file was intercepted: "
+            f"revoke and re-issue."
+        )
+    else:
+        console.print(
+            "\n[yellow]This profile embeds the client's private key[/yellow] "
+            "(--embed-key). Whoever holds the file is that client, permanently. "
+            "Send it over a channel you trust, and prefer the default enrolment "
+            "flow where you can."
+        )
     return 0
 
 
@@ -256,6 +280,15 @@ def _format_seconds_ago(seconds: int) -> str:
 _ONLINE_WINDOW_SECONDS = 180
 
 
+def _pending_enrollments(config_dir: Path) -> list:
+    from outwarp_server import enrollment
+    try:
+        return enrollment.pending(config_dir)
+    except Exception:
+        log.debug("Could not read the enrolment token store", exc_info=True)
+        return []
+
+
 def _cmd_list_clients(args: argparse.Namespace) -> int:
     import datetime
     import time
@@ -280,7 +313,24 @@ def _cmd_list_clients(args: argparse.Namespace) -> int:
     table.add_column("RX / TX")
     table.add_column("Expires")
 
+    pending_names = {
+        t.client_name for t in _pending_enrollments(_resolve_config_path(args).parent)
+    }
+
     for c in config.clients:
+        if not c.public_key:
+            # Slot reserved by add-client, not yet claimed by the client. Showing
+            # it as "unknown" would read as a broken peer rather than a normal
+            # waiting state.
+            state = (
+                "[cyan]awaiting enrolment[/cyan]" if c.name in pending_names
+                else "[red]enrolment expired[/red]"
+            )
+            table.add_row(
+                c.name, c.address, state, "[dim]—[/dim]", "[dim]—[/dim]", "[dim]—[/dim]",
+                c.expires_at or "[dim]never[/dim]",
+            )
+            continue
         live = live_peers.get(c.public_key)
         if live is None:
             # Peer not even known to running WG (interface down, or peer not synced)
@@ -371,6 +421,61 @@ def _cmd_rotate_client(args: argparse.Namespace) -> int:
         )
     console.print(
         "\n[bold]Send the new .owcfg to the client — the previous one is now invalid.[/bold]"
+    )
+    return 0
+
+
+def _cmd_renew_cert(args: argparse.Namespace) -> int:
+    """Reissue the self-signed TLS certificate before it expires.
+
+    The private key is reused unless --new-key is passed, which is what keeps
+    this non-breaking: clients pin the key (``tls.spki_sha256``), not the
+    certificate, so they never notice the swap. Profiles issued by an OutWarp
+    older than the key pin, or issued with --new-key, do have to be re-created.
+    """
+    from dataclasses import replace
+
+    from outwarp_server.crypto import CryptoError, generate_tls_cert, renew_tls_cert
+
+    config = _load_config(args)
+    cert_path, key_path = Path(config.cert_path), Path(config.key_path)
+
+    try:
+        if args.new_key:
+            _, _, fingerprint, spki = generate_tls_cert(
+                config.endpoint, cert_path.parent, cert_path.name, key_path.name
+            )
+        else:
+            fingerprint, spki = renew_tls_cert(cert_path, key_path, config.endpoint)
+    except (CryptoError, OSError) as exc:
+        console.print(f"[red]Error reissuing certificate:[/red] {exc}")
+        return 1
+
+    updated = replace(config, cert_fingerprint_sha256=fingerprint, spki_sha256=spki)
+    try:
+        updated.save(_resolve_config_path(args))
+    except OSError as exc:
+        console.print(f"[red]Error saving config:[/red] {exc}")
+        return 1
+
+    console.print("\n[green]TLS certificate reissued.[/green]")
+    console.print(f"  Fingerprint: {fingerprint[:23]}…")
+    console.print(f"  Key pin:     {spki[:23]}…")
+    if args.new_key:
+        console.print(
+            "\n[yellow]The private key was replaced, so every .owcfg already "
+            "distributed is now invalid.[/yellow] Re-issue them with "
+            "[bold]outwarp-server rotate-client <name>[/bold]."
+        )
+    else:
+        console.print(
+            "\nThe key was reused, so clients holding a profile with a key pin "
+            "keep working. Profiles issued before OutWarp 0.11 pin the "
+            "certificate instead and need re-issuing.",
+            style="dim",
+        )
+    console.print(
+        "\nRestart the transport to serve it: [bold]outwarp-server restart[/bold]"
     )
     return 0
 
@@ -519,6 +624,22 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     console.print()
     _step("Stopping & removing wstunnel service", platform.uninstall_wstunnel_service)
     _step("Bringing down WireGuard + removing config", platform.uninstall_wg_config)
+
+    def _rm_caddy_front() -> None:
+        # Only OutWarp's own conf.d file. The main Caddyfile and any other site
+        # on this box are not ours to touch.
+        from outwarp_server import caddy
+        if not caddy.CADDY_SITE_FILE.exists():
+            return
+        try:
+            caddy.remove()
+        except caddy.CaddyError as exc:
+            # _step only reports PlatformError/OSError; a failed cleanup here
+            # should degrade to a warning like every other step, not abort the
+            # uninstall halfway through.
+            raise PlatformError(str(exc)) from exc
+
+    _step("Removing Caddy front (if any)", _rm_caddy_front)
 
     def _rm_config_dir() -> None:
         import shutil
@@ -702,6 +823,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--days", type=int, default=None,
         help="Expire this client's config after N days (default: never)",
     )
+    p_add.add_argument(
+        "--enroll-ttl", type=int, default=15, metavar="MIN",
+        help="Minutes the enrolment token stays redeemable (default: 15)",
+    )
+    p_add.add_argument(
+        "--embed-key", action="store_true",
+        help="Legacy mode: generate the client's WireGuard private key here and "
+             "embed it in the .owcfg. The file then works with any client "
+             "version, but it is a permanent credential in transit and the "
+             "server keeps a copy of the key.",
+    )
 
     sub.add_parser("list-clients", help="List registered clients")
 
@@ -719,6 +851,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_prune.add_argument(
         "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+    )
+
+    p_renew = sub.add_parser(
+        "renew-cert",
+        help="Reissue the self-signed TLS certificate (reuses the key, so "
+             "clients keep validating)",
+    )
+    p_renew.add_argument(
+        "--new-key", action="store_true",
+        help="Also replace the private key — invalidates every distributed .owcfg",
     )
 
     sub.add_parser("status", help="Show server status")
@@ -997,7 +1139,10 @@ def _cmd_update(args: argparse.Namespace) -> int:
             console.print(f"[red]Download failed:[/red] {exc}")
             return 1
 
-        ok, detail = _upd.verify_wheel(wheel_path, wheel_name, info.get("checksums_url", ""))
+        ok, detail = _upd.verify_wheel(
+            wheel_path, wheel_name,
+            info.get("checksums_url", ""), info.get("signature_url", ""),
+        )
         if not ok:
             console.print(f"[red]Integrity check failed:[/red] {detail}")
             return 1
@@ -1037,6 +1182,7 @@ _COMMANDS: dict[str, callable] = {
     "list-clients": _cmd_list_clients,
     "revoke-client": _cmd_revoke_client,
     "rotate-client": _cmd_rotate_client,
+    "renew-cert": _cmd_renew_cert,
     "prune-expired": _cmd_prune_expired,
     "status": _cmd_status,
     "restart": _cmd_restart,

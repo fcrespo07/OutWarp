@@ -58,7 +58,7 @@ def run_init(config_dir: Path) -> int:
     log.info("Generating TLS certificate for %s...", endpoint)
     cert_dir = config_dir / "tls"
     try:
-        cert_path, key_path, fingerprint = generate_tls_cert(endpoint, cert_dir)
+        cert_path, key_path, fingerprint, spki = generate_tls_cert(endpoint, cert_dir)
     except Exception as exc:
         log.error("TLS cert generation failed: %s", exc)
         return 1
@@ -79,6 +79,7 @@ def run_init(config_dir: Path) -> int:
         cert_path=str(cert_path),
         key_path=str(key_path),
         cert_fingerprint_sha256=fingerprint,
+        spki_sha256=spki,
         wg_private_key=wg_priv,
         wg_public_key=wg_pub,
         subnet=subnet,

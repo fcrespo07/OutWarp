@@ -38,7 +38,7 @@ def _make_config():
 
 @pytest.fixture()
 def panel(tmp_path):
-    cert, key, _ = generate_tls_cert("localhost", tmp_path / "tls")
+    cert, key, _, _ = generate_tls_cert("localhost", tmp_path / "tls")
     token = generate_and_store_token(tmp_path)
     mgr = MagicMock()
     mgr.state = ServerState.STOPPED

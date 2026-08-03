@@ -197,3 +197,77 @@ class TestRunAll:
         with patch.object(diagnostics, "gather_checks", return_value=[ok, ok, ok]):
             results = run_all(cfg)
         assert [r.status for r in results] == [Status.PASS] * 3
+
+
+# ───────── transport branch (domain / Caddy) ─────────
+
+class TestCaddyFrontCheck:
+    def test_skipped_in_self_signed_mode(self, tmp_path: Path) -> None:
+        r = diagnostics.check_caddy_front(_make_config(tmp_path))
+        assert r.status is diagnostics.Status.SKIP
+
+    def test_fails_when_caddy_is_not_installed(self, tmp_path: Path) -> None:
+        from outwarp_server import caddy
+
+        cfg = _make_config(tmp_path, tls_mode="acme")
+        with patch.object(caddy, "find_caddy", return_value=None):
+            r = diagnostics.check_caddy_front(cfg)
+        assert r.status is diagnostics.Status.FAIL
+        assert r.fix_kind == "interactive"
+
+    def test_fails_when_the_site_config_is_missing(self, tmp_path: Path) -> None:
+        from outwarp_server import caddy
+
+        cfg = _make_config(tmp_path, tls_mode="acme")
+        with (
+            patch.object(caddy, "find_caddy", return_value=Path("/usr/bin/caddy")),
+            patch.object(caddy, "CADDY_SITE_FILE", tmp_path / "missing.caddyfile"),
+        ):
+            r = diagnostics.check_caddy_front(cfg)
+        assert r.status is diagnostics.Status.FAIL
+        assert "missing" in r.detail
+
+    def test_passes_when_the_config_validates(self, tmp_path: Path) -> None:
+        from outwarp_server import caddy
+
+        site = tmp_path / "outwarp.caddyfile"
+        site.write_text("x", encoding="utf-8")
+        cfg = _make_config(tmp_path, tls_mode="acme")
+        with (
+            patch.object(caddy, "find_caddy", return_value=Path("/usr/bin/caddy")),
+            patch.object(caddy, "CADDY_SITE_FILE", site),
+            patch.object(caddy, "validate", return_value=(True, "")),
+        ):
+            r = diagnostics.check_caddy_front(cfg)
+        assert r.status is diagnostics.Status.PASS
+
+
+class TestPublicCertificateCheck:
+    def test_skipped_in_self_signed_mode(self, tmp_path: Path) -> None:
+        r = diagnostics.check_public_certificate(_make_config(tmp_path))
+        assert r.status is diagnostics.Status.SKIP
+
+    def test_fails_on_an_untrusted_chain(self, tmp_path: Path) -> None:
+        import ssl
+
+        exc = ssl.SSLCertVerificationError("unable to get local issuer certificate")
+        exc.verify_message = "unable to get local issuer certificate"
+        ctx = MagicMock()
+        ctx.wrap_socket.side_effect = exc
+        cfg = _make_config(tmp_path, tls_mode="acme", endpoint="vpn.example.com")
+        with (
+            patch("ssl.create_default_context", return_value=ctx),
+            patch("outwarp_server.diagnostics.socket.create_connection",
+                  return_value=MagicMock()),
+        ):
+            r = diagnostics.check_public_certificate(cfg)
+        assert r.status is diagnostics.Status.FAIL
+
+    def test_only_warns_when_the_endpoint_is_unreachable(self, tmp_path: Path) -> None:
+        # Hairpin NAT routinely stops a server reaching its own public name;
+        # that is not evidence the certificate is broken.
+        cfg = _make_config(tmp_path, tls_mode="acme", endpoint="vpn.example.com")
+        with patch("outwarp_server.diagnostics.socket.create_connection",
+                   side_effect=OSError("no route")):
+            r = diagnostics.check_public_certificate(cfg)
+        assert r.status is diagnostics.Status.WARN

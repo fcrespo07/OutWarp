@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "outwarp-client"
-version = "0.10.0"
+version = "0.11.0"
 description = "Cliente de bandeja multiplataforma para tuneles WireGuard sobre WebSocket (wstunnel)"
 requires-python = ">=3.11"
 authors = [
@@ -100,6 +100,13 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "N", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# minisign.py transcribes the RFC 8032 §6 reference implementation, whose
+# single-letter uppercase names (P, Q, A, R, ...) are the notation the spec uses
+# for curve points. Renaming them to satisfy N806 would make the code
+# impossible to check line-by-line against the document it came from.
+"outwarp/minisign.py" = ["N803", "N806"]
 
 [tool.black]
 line-length = 100

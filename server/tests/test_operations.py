@@ -204,3 +204,54 @@ def test_restart_services_stops_after_wg_restart_failure(
     assert result.wstunnel_restarted is False
     assert any("boom" in e for e in result.errors)
     fake.restart_wstunnel_service.assert_not_called()
+
+
+# --- key-pin backfill for servers set up before spki_sha256 existed ---
+
+@patch("outwarp_server.operations.add_peer_live")
+@patch("outwarp_server.operations.generate_psk", return_value="")
+@patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
+def test_add_client_backfills_the_key_pin_from_the_certificate(
+    _kg: MagicMock, _psk: MagicMock, _add: MagicMock, tmp_path: Path,
+) -> None:
+    from outwarp_server.crypto import generate_tls_cert
+
+    cert_path, key_path, fp, spki = generate_tls_cert("vpn.example.com", tmp_path / "tls")
+    cfg_path = _write_server_config(
+        tmp_path, cert_path=str(cert_path), key_path=str(key_path),
+        cert_fingerprint_sha256=fp,  # note: no spki_sha256, as an old server has
+    )
+    config = ServerConfig.load(cfg_path)
+    assert config.spki_sha256 == ""
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    result = operations.add_client(
+        config, "laptop", config_path=cfg_path, output_dir=out_dir,
+    )
+
+    owcfg = json.loads(result.owcfg_path.read_text(encoding="utf-8"))
+    assert owcfg["tls"]["spki_sha256"] == spki
+    assert owcfg["schema_version"] == 2
+
+
+@patch("outwarp_server.operations.add_peer_live")
+@patch("outwarp_server.operations.generate_psk", return_value="")
+@patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
+def test_add_client_still_works_when_the_certificate_is_unreadable(
+    _kg: MagicMock, _psk: MagicMock, _add: MagicMock, tmp_path: Path,
+) -> None:
+    # Best-effort backfill: a server whose cert lives somewhere this process
+    # can't read must still be able to issue a (v1) profile.
+    cfg_path = _write_server_config(tmp_path)  # cert_path points at nothing
+    config = ServerConfig.load(cfg_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    result = operations.add_client(
+        config, "laptop", config_path=cfg_path, output_dir=out_dir,
+    )
+
+    owcfg = json.loads(result.owcfg_path.read_text(encoding="utf-8"))
+    assert owcfg["schema_version"] == 1
+    assert "spki_sha256" not in owcfg["tls"]

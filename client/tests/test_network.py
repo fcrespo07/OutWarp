@@ -198,3 +198,147 @@ def test_measure_latency_ms_returns_none_on_empty_host():
     with patch("outwarp.network.subprocess.run") as run:
         assert measure_latency_ms("") is None
         run.assert_not_called()
+
+
+# --- SPKI extraction / CA verification (schema v2 pinning) ---
+
+# Fixtures rather than generated certificates: the client deliberately has no
+# `cryptography` dependency, so there is nothing in its test environment that
+# could produce one. Both were issued offline with known SubjectPublicKeyInfo
+# digests, which is exactly what _spki_der has to reproduce.
+EC_CERT_PEM = """-----BEGIN CERTIFICATE-----
+MIIBQDCB56ADAgECAgRJlgLSMAoGCCqGSM49BAMCMBkxFzAVBgNVBAMMDmVjLmV4
+YW1wbGUuY29tMB4XDTI2MDEwMTAwMDAwMFoXDTI4MDQwNTAwMDAwMFowGTEXMBUG
+A1UEAwwOZWMuZXhhbXBsZS5jb20wWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQc
+30tRkf17i1jiZUzll7QD2xY4TaGZhZEzbcbPR1PPGtoFTBbnbIiAjbpBrjva4Cly
+wvQ7VtyvDPeNGlJaTp4kox0wGzAZBgNVHREEEjAQgg5lYy5leGFtcGxlLmNvbTAK
+BggqhkjOPQQDAgNIADBFAiEAzRJVmBdEdT07HEFZQDYVi9XW0blJ5MQQW433JsSS
+nb8CIBBNa6HX9nFUCCRSJkUpUUOrI4Ysxv4lkmylFNoFH7AI
+-----END CERTIFICATE-----"""
+EC_SPKI = (
+    "2E:DD:6C:C8:77:36:57:19:7B:94:90:44:99:36:67:73:"
+    "F7:DF:00:6E:B7:4E:0B:01:38:FE:91:D5:87:F0:58:B6"
+)
+
+# A 2048-bit RSA cert crosses the DER long-form length boundary that the EC one
+# never reaches, which is where a hand-rolled TLV walk goes wrong.
+RSA_CERT_PEM = """-----BEGIN CERTIFICATE-----
+MIIC0DCCAbigAwIBAgIESZYC0jANBgkqhkiG9w0BAQsFADAaMRgwFgYDVQQDDA9y
+c2EuZXhhbXBsZS5jb20wHhcNMjYwMTAxMDAwMDAwWhcNMjgwNDA1MDAwMDAwWjAa
+MRgwFgYDVQQDDA9yc2EuZXhhbXBsZS5jb20wggEiMA0GCSqGSIb3DQEBAQUAA4IB
+DwAwggEKAoIBAQCpzN69Uzy8hIrJP/+rbWrK6NDLPR6zu0JMx7IkeYvcUwl16hNB
++cVLKn8ENk6POZnuD1A2uFmnl6tZYAZPih3Xaz09BY0w+Udb6k+QLvpcHEmaR74i
+hrrH4R3QrZY1nSkdYUPq9q/kCyhDHif6rU+J1yyaSEiNr4pBb390inNS3wQUg6KJ
+rI3NZcUKLcq9fCpx06N7DgkWRbZ6ZAym+OOmeGJi52ptT8C6j2eoynT+P9iOVXCv
+PxLzZQXgol6+pC5OL7MuOwHG50l+h5RCoU6kHsDs9BlLoRFw+DCS4bERB3rS2Sae
+kGvfipGO3uyob5o4qg4ndfUS2nOPUbRy8YjbAgMBAAGjHjAcMBoGA1UdEQQTMBGC
+D3JzYS5leGFtcGxlLmNvbTANBgkqhkiG9w0BAQsFAAOCAQEAiI0r6o2mBEQbDVEh
+Q6Cmh8CkzQxQRlfynJVWaLm9lF40gElzsJpPt76r4qP/HGVrPFauip7UaivYDjkz
+lsLyA4uM4w/nsJ9dLnyGeUOXnRJxYj/ULm6JJ17DbMWwgoy5g5sN+BcBx3UwV0LR
+tVslAohutcv2mFdPCz/c4JHpQhv4yqW+mSm2h91EwU+GMgPk1ndLigEo4ZoMmI4k
+mMZRSkiE7w8+49EiPWG8+kZReKb8VvfduqXjqgZ+YcIpO+g2gKcIF/JzmYjT0Ttn
+zBGFIfj1DdXNLTupzRDqyVNY1J06cwEaGVxKNtTeKWwoGkiQWGOopbLHBRDuvy8M
+/AvaQA==
+-----END CERTIFICATE-----"""
+RSA_SPKI = (
+    "B3:C7:65:0B:37:EB:2B:FF:AB:21:95:B9:4A:C9:DA:69:"
+    "D5:DF:EA:B5:E2:37:7B:CA:BB:4A:29:A9:9F:37:98:60"
+)
+
+
+def _der(pem: str) -> bytes:
+    import base64
+    body = "".join(
+        line for line in pem.splitlines() if not line.startswith("-----")
+    )
+    return base64.b64decode(body)
+
+
+@pytest.mark.parametrize("pem,expected", [
+    (EC_CERT_PEM, EC_SPKI),
+    (RSA_CERT_PEM, RSA_SPKI),
+])
+def test_spki_fingerprint_matches_reference(pem, expected):
+    import hashlib
+
+    from outwarp.network import _spki_der
+    spki = _spki_der(_der(pem))
+    digest = hashlib.sha256(spki).digest()
+    assert ":".join(f"{b:02X}" for b in digest) == expected
+
+
+def test_spki_der_is_a_well_formed_sequence():
+    from outwarp.network import _spki_der
+    spki = _spki_der(_der(EC_CERT_PEM))
+    assert spki[0] == 0x30  # SEQUENCE, tag included as RFC 7469 requires
+    assert len(spki) == spki[1] + 2  # short-form length for a P-256 SPKI
+
+
+@pytest.mark.parametrize("bad", [b"", b"\x30", b"\x30\x82\xff\xff", b"not-der-at-all"])
+def test_spki_der_rejects_garbage(bad):
+    from outwarp.network import NetworkError, _spki_der
+    with pytest.raises(NetworkError):
+        _spki_der(bad)
+
+
+def test_verify_tls_spki_accepts_matching_pin():
+    from outwarp.network import verify_tls_spki
+    with patch("outwarp.network.get_tls_spki_fingerprint", return_value=EC_SPKI):
+        verify_tls_spki("wg.example.com", 443, EC_SPKI.lower())
+
+
+def test_verify_tls_spki_rejects_other_key():
+    from outwarp.network import FingerprintMismatchError, verify_tls_spki
+    with (
+        patch("outwarp.network.get_tls_spki_fingerprint", return_value=RSA_SPKI),
+        pytest.raises(FingerprintMismatchError, match="public-key pin mismatch"),
+    ):
+        verify_tls_spki("wg.example.com", 443, EC_SPKI)
+
+
+def test_verify_tls_ca_raises_not_trusted_on_verification_error():
+    import ssl
+
+    from outwarp.network import CertificateNotTrustedError, verify_tls_ca
+
+    exc = ssl.SSLCertVerificationError("self-signed certificate")
+    exc.verify_message = "self-signed certificate"
+    ctx = MagicMock()
+    ctx.wrap_socket.side_effect = exc
+    with (
+        patch("outwarp.network.ssl.create_default_context", return_value=ctx),
+        patch("outwarp.network.socket.create_connection", return_value=MagicMock()),
+        pytest.raises(CertificateNotTrustedError, match="not trusted"),
+    ):
+        verify_tls_ca("wg.example.com", 443)
+
+
+def test_verify_tls_ca_reports_plain_network_errors_separately():
+    from outwarp.network import CertificateNotTrustedError, NetworkError, verify_tls_ca
+
+    with (
+        patch("outwarp.network.socket.create_connection", side_effect=OSError("refused")),
+        pytest.raises(NetworkError) as excinfo,
+    ):
+        verify_tls_ca("wg.example.com", 443)
+    # An unreachable port must not be reported as an untrusted certificate —
+    # the ladder shows the two as different failures.
+    assert not isinstance(excinfo.value, CertificateNotTrustedError)
+
+
+def test_verify_tls_ca_passes_when_chain_validates():
+    from outwarp.network import verify_tls_ca
+
+    ctx = MagicMock()
+    with (
+        patch("outwarp.network.ssl.create_default_context", return_value=ctx),
+        patch("outwarp.network.socket.create_connection", return_value=MagicMock()),
+    ):
+        verify_tls_ca("wg.example.com", 443)
+    ctx.wrap_socket.assert_called_once()
+    # create_default_context() already means CERT_REQUIRED + hostname checking.
+    # Unlike the fingerprint path, this one must never relax either.
+    assert not any(
+        call[0] in ("check_hostname", "verify_mode")
+        for call in getattr(ctx, "method_calls", [])
+    )

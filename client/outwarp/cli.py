@@ -191,7 +191,11 @@ def _cmd_profile(args: argparse.Namespace) -> int:
         return 1
     _print(f"Name:                 {config.name or '(unnamed)'}")
     _print(f"Server endpoint:      {config.server.endpoint}:{config.server.port}")
-    _print(f"TLS fingerprint:      {config.tls.cert_fingerprint_sha256}")
+    if config.tls.verify == "ca":
+        _print("TLS trust:            system CA store (server has a real certificate)")
+    else:
+        label = "key pin" if config.tls.spki_sha256 else "cert pin"
+        _print(f"TLS {label}:         {config.tls.pin_value}")
     _print(f"WG tunnel name:       {config.wireguard.tunnel_name}")
     _print(f"WG client address:    {config.wireguard.client_address}")
     _print(f"WG MTU:               {config.wireguard.mtu}")
@@ -542,7 +546,10 @@ def _cmd_update(args: argparse.Namespace) -> int:
             _err(f"Download failed: {exc}")
             return 1
 
-        ok, detail = verify_download(wheel_path, wheel_name, info.get("checksums_url", ""))
+        ok, detail = verify_download(
+            wheel_path, wheel_name,
+            info.get("checksums_url", ""), info.get("signature_url", ""),
+        )
         if not ok:
             _err(f"Integrity check failed: {detail}")
             return 1

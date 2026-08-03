@@ -46,15 +46,7 @@ class WindowsServerPlatform(ServerPlatform):
     # On Windows, wstunnel runs as a subprocess owned by ServerManager.
     # These methods are intentional no-ops / read-only queries.
 
-    def install_wstunnel_service(
-        self,
-        port: int,
-        cert_path: Path,
-        key_path: Path,
-        upgrade_path: str,
-        wg_listen_port: int,
-        wstunnel_bin: Path,
-    ) -> None:
+    def install_wstunnel_service(self, exec_start: str) -> None:
         log.debug("install_wstunnel_service: no-op on Windows (ServerManager owns wstunnel)")
 
     def uninstall_wstunnel_service(self) -> None:

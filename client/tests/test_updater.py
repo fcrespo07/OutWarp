@@ -4,6 +4,8 @@ import json
 import urllib.error
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from outwarp import updater
 from outwarp.updater import (
     LINUX_UPDATE_COMMAND,
@@ -285,10 +287,15 @@ def test_verify_download_mismatch_is_rejected(tmp_path):
 
 def test_verify_download_no_checksum_passes(tmp_path):
     # Legacy releases that predate the manifest have an empty checksums_url:
-    # skip verification rather than refuse to update off them.
+    # a build with no release key skips verification rather than refuse to
+    # update off them. Once a key is compiled in this becomes fatal — see
+    # TestManifestSignature.test_verify_download_refuses_a_manifestless_release.
     p = tmp_path / "OutWarpSetup-0.3.0.exe"
     p.write_bytes(b"whatever")
-    with patch("outwarp.updater.fetch_checksums", return_value={}):
+    with (
+        patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""),
+        patch("outwarp.updater.fetch_checksums", return_value={}),
+    ):
         ok, _ = verify_download(p, "OutWarpSetup-0.3.0.exe", "")
     assert ok is True
 
@@ -365,3 +372,114 @@ def test_verify_download_asset_missing_from_manifest_is_rejected(tmp_path):
         )
     assert ok is False
     assert "not listed" in detail
+
+
+# --- release signature (authenticity, not just integrity) ---
+
+from tests.test_minisign import PUB_KEY, SIGNATURE, SIGNED_MESSAGE  # noqa: E402
+
+
+class TestManifestSignature:
+    """SHA256SUMS ships in the same release as the binary, so its hashes only
+    prove the download was not corrupted. These cover the step that proves who
+    published it."""
+
+    def test_this_build_requires_signatures(self) -> None:
+        # Guards the release key against being blanked by a careless edit:
+        # without it every update silently drops back to hash-only checking.
+        assert updater.signing_configured() is True
+
+    def test_a_build_without_a_key_still_accepts_unsigned_manifests(self) -> None:
+        # The fail-open path clients older than the key still take. It has to
+        # keep working until no such client is in circulation (see ROADMAP.md).
+        with patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""):
+            assert updater.signing_configured() is False
+            updater.verify_manifest_signature("anything", "")
+
+    def test_valid_signature_is_accepted(self) -> None:
+        with (
+            patch.object(updater, "_MINISIGN_PUBLIC_KEY", PUB_KEY),
+            patch.object(updater, "_fetch_text", return_value=SIGNATURE),
+        ):
+            updater.verify_manifest_signature(
+                SIGNED_MESSAGE.decode(), "https://example/SHA256SUMS.txt.minisig"
+            )
+
+    def test_tampered_manifest_is_rejected(self) -> None:
+        with (
+            patch.object(updater, "_MINISIGN_PUBLIC_KEY", PUB_KEY),
+            patch.object(updater, "_fetch_text", return_value=SIGNATURE),
+            pytest.raises(updater.SignatureError),
+        ):
+            updater.verify_manifest_signature(
+                "evil manifest", "https://example/SHA256SUMS.txt.minisig"
+            )
+
+    def test_missing_signature_asset_is_fatal_once_a_key_exists(self) -> None:
+        """Deleting the .minisig from a release must not be a way to skip the
+        check — that would make the whole mechanism opt-out for an attacker."""
+        with (
+            patch.object(updater, "_MINISIGN_PUBLIC_KEY", PUB_KEY),
+            pytest.raises(updater.SignatureError, match="does not publish"),
+        ):
+            updater.verify_manifest_signature(SIGNED_MESSAGE.decode(), "")
+
+    def test_unfetchable_signature_is_fatal(self) -> None:
+        import urllib.error
+
+        with (
+            patch.object(updater, "_MINISIGN_PUBLIC_KEY", PUB_KEY),
+            patch.object(updater, "_fetch_text",
+                         side_effect=urllib.error.URLError("dropped")),
+            pytest.raises(updater.SignatureError, match="could not fetch"),
+        ):
+            updater.verify_manifest_signature(
+                SIGNED_MESSAGE.decode(), "https://example/SHA256SUMS.txt.minisig"
+            )
+
+    def test_verify_download_reports_a_bad_signature(self, tmp_path) -> None:
+        payload = tmp_path / "OutWarpSetup.exe"
+        payload.write_bytes(b"installer")
+        digest = updater.sha256_file(payload)
+        manifest = f"{digest}  OutWarpSetup.exe\n"
+
+        with (
+            patch.object(updater, "_MINISIGN_PUBLIC_KEY", PUB_KEY),
+            patch.object(updater, "_fetch_text", side_effect=[manifest, SIGNATURE]),
+        ):
+            ok, detail = updater.verify_download(
+                payload, "OutWarpSetup.exe",
+                "https://example/SHA256SUMS.txt",
+                "https://example/SHA256SUMS.txt.minisig",
+            )
+        # The manifest hash is right but it was not signed over this content.
+        assert ok is False
+        assert "signature verification" in detail
+
+    def test_verify_download_refuses_a_manifestless_release_once_signing_is_on(
+        self, tmp_path
+    ) -> None:
+        payload = tmp_path / "OutWarpSetup.exe"
+        payload.write_bytes(b"installer")
+        with patch.object(updater, "_MINISIGN_PUBLIC_KEY", PUB_KEY):
+            ok, detail = updater.verify_download(payload, "OutWarpSetup.exe", "", "")
+        assert ok is False
+        assert "no SHA256SUMS" in detail
+
+    def test_signature_url_is_picked_up_from_the_release(self) -> None:
+        assets = [
+            {"name": "OutWarpSetup-Client-1.0.exe",
+             "browser_download_url": "https://e/x.exe", "size": 1},
+            {"name": "SHA256SUMS.txt", "browser_download_url": "https://e/sums"},
+            {"name": "SHA256SUMS.txt.minisig", "browser_download_url": "https://e/sig"},
+        ]
+        payload = json.dumps({"tag_name": "v9.0.0", "assets": assets}).encode()
+        with patch("outwarp.updater.urllib.request.urlopen") as urlopen:
+            resp = MagicMock()
+            resp.read.return_value = payload
+            resp.__enter__ = MagicMock(return_value=resp)
+            resp.__exit__ = MagicMock(return_value=None)
+            urlopen.return_value = resp
+            info = updater.check_for_update("0.1.0")
+        assert info["signature_url"] == "https://e/sig"
+        assert info["checksums_url"] == "https://e/sums"

@@ -27,6 +27,19 @@ _LATEST_API = f"https://api.github.com/repos/{_REPO}/releases/latest"
 _RELEASES_PAGE = f"https://github.com/{_REPO}/releases/latest"
 _USER_AGENT = "OutWarp-Updater"
 _CHECKSUMS_ASSET = "SHA256SUMS.txt"
+_SIGNATURE_ASSET = "SHA256SUMS.txt.minisig"
+
+# See the identical constant in client/outwarp/updater.py: the release-signing
+# public key (key ID 3E1FCD8BF652EC28) is compiled in and its private half lives
+# offline. Because it is set, an unsigned or wrongly-signed manifest is rejected.
+_MINISIGN_PUBLIC_KEY = (
+    "untrusted comment: minisign public key 3E1FCD8BF652EC28\n"
+    "RWQo7FL2i80fPrFtvv7gB5xJCqS/7KTSu+VkoLRdnaQyTnwXXuemHydR\n"
+)
+
+
+def signing_configured() -> bool:
+    return bool(_MINISIGN_PUBLIC_KEY.strip())
 _SERVER_WHEEL_RE = re.compile(r"^outwarp[_-]server-[0-9].*\.whl$", re.IGNORECASE)
 
 
@@ -76,11 +89,8 @@ def check_for_update(current: str, *, timeout: float = 5.0) -> dict[str, Any]:
             wheel = asset
             break
 
-    checksums_url = ""
-    for a in assets:
-        if str(a.get("name") or "").lower() == _CHECKSUMS_ASSET.lower():
-            checksums_url = str(a.get("browser_download_url") or "")
-            break
+    checksums_url = _asset_url(assets, _CHECKSUMS_ASSET)
+    signature_url = _asset_url(assets, _SIGNATURE_ASSET)
 
     wheel_url = str(wheel.get("browser_download_url") or "") if wheel else ""
     wheel_name = str(wheel.get("name") or "") if wheel else ""
@@ -94,6 +104,7 @@ def check_for_update(current: str, *, timeout: float = 5.0) -> dict[str, Any]:
         "wheel_name": wheel_name,
         "wheel_size": wheel_size,
         "checksums_url": checksums_url,
+        "signature_url": signature_url,
         "html_url": html_url,
     }
 
@@ -153,7 +164,44 @@ def _parse_checksums(text: str) -> dict[str, str]:
     return out
 
 
-def verify_wheel(path: Path, asset_name: str, checksums_url: str) -> tuple[bool, str]:
+def _asset_url(assets: list, name: str) -> str:
+    for a in assets:
+        if str(a.get("name") or "").lower() == name.lower():
+            return str(a.get("browser_download_url") or "")
+    return ""
+
+
+def _verify_manifest_signature(manifest: str, signature_url: str) -> None:
+    """Raise ValueError unless the manifest carries a valid release signature.
+
+    No-op while no key is compiled in. Once one is, a missing or unfetchable
+    signature is as fatal as a bad one: the check must not be defeatable by
+    deleting a file from the release.
+    """
+    if not signing_configured():
+        return
+    if not signature_url:
+        raise ValueError(
+            f"the release does not publish {_SIGNATURE_ASSET}; refusing to trust "
+            "an unsigned manifest"
+        )
+    try:
+        req = urllib.request.Request(signature_url, headers={"User-Agent": _USER_AGENT})
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
+            signature = resp.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        raise ValueError(f"could not fetch {_SIGNATURE_ASSET}: {exc}") from exc
+
+    from outwarp_server.minisign import MinisignError, verify
+    try:
+        verify(manifest.encode("utf-8"), signature, _MINISIGN_PUBLIC_KEY)
+    except MinisignError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def verify_wheel(
+    path: Path, asset_name: str, checksums_url: str, signature_url: str = ""
+) -> tuple[bool, str]:
     """Verify ``path`` against the release's published SHA256SUMS.
 
     Returns ``(ok, detail)``. Decisions:
@@ -170,14 +218,24 @@ def verify_wheel(path: Path, asset_name: str, checksums_url: str) -> tuple[bool,
     - Manifest fetched, asset listed, hash mismatches: ``ok=False``.
     """
     if not checksums_url:
+        if signing_configured():
+            return False, "the release publishes no SHA256SUMS to verify against"
         return True, "no SHA256SUMS published (skipping verification)"
     try:
         req = urllib.request.Request(checksums_url, headers={"User-Agent": _USER_AGENT})
         with urllib.request.urlopen(req, timeout=10.0) as resp:
-            sums = _parse_checksums(resp.read().decode("utf-8", "replace"))
+            text = resp.read().decode("utf-8", "replace")
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         log.warning("could not fetch checksums: %s", exc)
         return False, f"could not fetch SHA256SUMS: {exc}"
+
+    # Authenticate before parsing: the hashes are only worth reading once we
+    # know who wrote them.
+    try:
+        _verify_manifest_signature(text, signature_url)
+    except ValueError as exc:
+        return False, f"SHA256SUMS failed signature verification: {exc}"
+    sums = _parse_checksums(text)
 
     expected = sums.get(asset_name)
     if not expected:

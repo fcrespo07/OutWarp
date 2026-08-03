@@ -174,3 +174,55 @@ def test_warpcfg_compatible_with_client_schema(tmp_path: Path) -> None:
     client_cfg = ClientConfig.load(out)
     assert client_cfg.server.endpoint == "203.0.113.42"
     assert client_cfg.wireguard.client_private_key == "client_priv"
+
+
+# --- key pin (schema v2) ---
+
+SPKI = ":".join(["7F"] * 32)
+
+
+def test_owcfg_stays_v1_without_a_key_pin() -> None:
+    """A server set up before spki_sha256 existed keeps issuing v1 profiles, so
+    clients that predate the field are not locked out by an upgrade."""
+    cfg = build_owcfg(_make_server_config(), "laptop", "client_priv", "10.0.0.2/32")
+    assert cfg["schema_version"] == 1
+    assert "spki_sha256" not in cfg["tls"]
+
+
+def test_owcfg_carries_the_key_pin_and_bumps_the_schema() -> None:
+    from dataclasses import replace
+
+    server = replace(_make_server_config(), spki_sha256=SPKI)
+    cfg = build_owcfg(server, "laptop", "client_priv", "10.0.0.2/32")
+    # The bump is required, not cosmetic: a v1 client would ignore the field
+    # and keep pinning the certificate, which renew-cert then invalidates.
+    assert cfg["schema_version"] == 2
+    assert cfg["tls"]["spki_sha256"] == SPKI
+    assert cfg["tls"]["cert_fingerprint_sha256"] == server.cert_fingerprint_sha256
+
+
+# --- domain branch: CA validation instead of a pin ---
+
+def test_acme_profile_validates_the_chain_and_carries_no_pin() -> None:
+    """Behind Caddy the certificate renews every ~60 days. Pinning it would
+    break every distributed profile at the first renewal, so the profile asks
+    the client to validate against the system CA store instead."""
+    from dataclasses import replace
+
+    server = replace(_make_server_config(), tls_mode="acme", endpoint="vpn.example.com")
+    cfg = build_owcfg(server, "laptop", "client_priv", "10.0.0.2/32")
+
+    assert cfg["schema_version"] == 2
+    assert cfg["tls"] == {"verify": "ca"}
+    assert cfg["server"]["endpoint"] == "vpn.example.com"
+
+
+def test_acme_profile_ignores_a_stale_self_signed_pin() -> None:
+    # The internal self-signed cert still exists (the web panel uses it); it
+    # just has nothing to do with what the client will see on the wire.
+    from dataclasses import replace
+
+    server = replace(_make_server_config(), tls_mode="acme", spki_sha256=SPKI)
+    cfg = build_owcfg(server, "laptop", "client_priv", "10.0.0.2/32")
+    assert "spki_sha256" not in cfg["tls"]
+    assert "cert_fingerprint_sha256" not in cfg["tls"]

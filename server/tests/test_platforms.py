@@ -37,12 +37,10 @@ class TestLinuxPlatform:
     ) -> None:
         platform = LinuxServerPlatform()
         platform.install_wstunnel_service(
-            port=443,
-            cert_path=Path("/etc/outwarp/cert.pem"),
-            key_path=Path("/etc/outwarp/key.pem"),
-            upgrade_path="secret",
-            wg_listen_port=51820,
-            wstunnel_bin=Path("/usr/local/bin/wstunnel"),
+            "/usr/local/bin/wstunnel server --restrict-to 127.0.0.1:51820 "
+            "--tls-certificate /etc/outwarp/cert.pem "
+            "--tls-private-key /etc/outwarp/key.pem "
+            "--restrict-http-upgrade-path-prefix secret wss://0.0.0.0:443"
         )
         mock_path.write_text.assert_called_once()
         unit_text = mock_path.write_text.call_args[0][0]
@@ -84,14 +82,7 @@ class TestLinuxPlatform:
         with patch("outwarp_server.platforms.linux._SERVICE_PATH"), \
                 patch("outwarp_server.platforms.linux.os.chmod"), \
                 pytest.raises(PlatformError, match="Failed to enable"):
-            LinuxServerPlatform().install_wstunnel_service(
-                port=443,
-                cert_path=Path("/x"),
-                key_path=Path("/y"),
-                upgrade_path="s",
-                wg_listen_port=51820,
-                wstunnel_bin=Path("/usr/bin/wstunnel"),
-            )
+            LinuxServerPlatform().install_wstunnel_service("/usr/bin/wstunnel server")
 
 
     @patch("outwarp_server.platforms.linux._SYSCTL_DROP_IN")
@@ -170,7 +161,7 @@ class TestStubPlatforms:
 
         p = WindowsServerPlatform()
         # install/uninstall are no-ops on Windows (ServerManager owns wstunnel)
-        p.install_wstunnel_service(443, Path("/c"), Path("/k"), "x", 51820, Path("/b"))
+        p.install_wstunnel_service("/b server")
         p.uninstall_wstunnel_service()
 
         # is_wstunnel_running checks via tasklist; mock subprocess so it works off-platform

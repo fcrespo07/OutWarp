@@ -135,6 +135,11 @@ def build_server_wg_conf_windows(config: ServerConfig) -> str:
     ]
 
     for client in config.clients:
+        # A client awaiting enrolment holds a reserved name, IP and PSK but no
+        # public key yet. Emitting a [Peer] without one produces a config
+        # wg-quick refuses outright, taking the whole interface down with it.
+        if not client.public_key:
+            continue
         lines.append("")
         lines.append("[Peer]")
         lines.append(f"# {client.name}")
@@ -175,6 +180,11 @@ def build_server_wg_conf(config: ServerConfig) -> str:
     ]
 
     for client in config.clients:
+        # A client awaiting enrolment holds a reserved name, IP and PSK but no
+        # public key yet. Emitting a [Peer] without one produces a config
+        # wg-quick refuses outright, taking the whole interface down with it.
+        if not client.public_key:
+            continue
         lines.append("")
         lines.append("[Peer]")
         lines.append(f"# {client.name}")

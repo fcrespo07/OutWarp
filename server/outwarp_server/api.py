@@ -38,7 +38,7 @@ from outwarp_server.config import (
     default_config_dir,
     default_config_path,
 )
-from outwarp_server.crypto import generate_tls_cert, generate_wg_keypair
+from outwarp_server.crypto import generate_tls_cert, generate_wg_keypair, renew_tls_cert
 from outwarp_server.logs import MemoryLogHandler
 from outwarp_server.platforms import get_server_platform
 from outwarp_server.server_manager import ServerManager, ServerState
@@ -887,7 +887,9 @@ class Api:
         try:
             import secrets
             upgrade_path = secrets.token_urlsafe(32)
-            cert_path, key_path, fingerprint = generate_tls_cert(endpoint, cfg_dir / "tls")
+            cert_path, key_path, fingerprint, spki = generate_tls_cert(
+                endpoint, cfg_dir / "tls"
+            )
             wg_priv, wg_pub = generate_wg_keypair(Path(wg_bin) if wg_bin else None)
         except Exception as exc:
             log.exception("setup: crypto generation failed")
@@ -907,6 +909,7 @@ class Api:
             cert_path=str(cert_path),
             key_path=str(key_path),
             cert_fingerprint_sha256=fingerprint,
+            spki_sha256=spki,
             wg_private_key=wg_priv,
             wg_public_key=wg_pub,
             subnet=subnet,
@@ -977,13 +980,11 @@ class Api:
                         # Rewrite the unit so ExecStart points at the new port,
                         # then explicitly restart — `enable --now` does NOT
                         # apply a new ExecStart to an already-running service.
+                        from outwarp_server.server_manager import (
+                            build_wstunnel_command,
+                        )
                         platform.install_wstunnel_service(
-                            port=cfg.port,
-                            cert_path=Path(cfg.cert_path),
-                            key_path=Path(cfg.key_path),
-                            upgrade_path=cfg.http_upgrade_path_prefix,
-                            wg_listen_port=cfg.wg_listen_port,
-                            wstunnel_bin=Path(wstunnel_bin),
+                            " ".join(build_wstunnel_command(cfg, Path(wstunnel_bin)))
                         )
                 platform.restart_wstunnel_service()
         except Exception:
@@ -1078,18 +1079,29 @@ class Api:
         })
         return {"ok": True}
 
-    def rotate_tls_cert(self) -> dict[str, Any]:
-        """Regenerate the self-signed TLS certificate and restart wstunnel.
+    def rotate_tls_cert(self, keep_key: bool = False) -> dict[str, Any]:
+        """Reissue the self-signed TLS certificate and restart wstunnel.
 
-        Every .owcfg already distributed pins the OLD fingerprint and will
-        stop validating until clients re-import the new one. UI must warn.
+        With ``keep_key`` the existing private key is reused, so the public-key
+        pin (``tls.spki_sha256``) is unchanged and clients issued a v2 .owcfg
+        keep connecting straight through the swap. Without it the key is
+        replaced too, which is what you want after a suspected compromise and
+        which invalidates every .owcfg already distributed. Either way, profiles
+        old enough to pin the certificate rather than the key must be re-issued;
+        the caller is responsible for saying so.
         """
         if self._manager is None:
             return {"ok": False, "error": "server not configured"}
         cfg = self._manager.config
         try:
             cert_dir = Path(cfg.cert_path).parent
-            cert_path, key_path, fingerprint = generate_tls_cert(cfg.endpoint, cert_dir)
+            if keep_key:
+                cert_path, key_path = Path(cfg.cert_path), Path(cfg.key_path)
+                fingerprint, spki = renew_tls_cert(cert_path, key_path, cfg.endpoint)
+            else:
+                cert_path, key_path, fingerprint, spki = generate_tls_cert(
+                    cfg.endpoint, cert_dir
+                )
         except Exception as exc:
             log.exception("rotate_tls_cert: cert generation failed")
             return {"ok": False, "error": str(exc)}
@@ -1100,6 +1112,7 @@ class Api:
             cert_path=str(cert_path),
             key_path=str(key_path),
             cert_fingerprint_sha256=fingerprint,
+            spki_sha256=spki,
         )
         try:
             from outwarp_server.config import default_config_path as _path
@@ -1120,7 +1133,7 @@ class Api:
             "config_present": True,
             "cert_fingerprint_sha256": fingerprint,
         })
-        return {"ok": True, "fingerprint": fingerprint}
+        return {"ok": True, "fingerprint": fingerprint, "spki": spki, "keep_key": keep_key}
 
     def probe_external_port(self) -> dict[str, Any]:
         """Probe whether the configured WSS port is reachable from the public internet.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import time
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -560,3 +561,92 @@ def test_wstunnel_noise_re_keeps_interesting_lines_at_info():
     ]
     for line in keep:
         assert not _WSTUNNEL_NOISE_RE.search(line), line
+
+
+# --- _check_pin: which trust check runs for which rung ---
+
+def _strategy(**kw):
+    from outwarp.fallback import ConnectionStrategy
+    base = dict(
+        id="direct", label="Direct", endpoint="203.0.113.42", port=443,
+        path_prefix="s3cret",
+    )
+    return ConnectionStrategy(**{**base, **kw})
+
+
+class TestCheckPin:
+    def _tunnel(self, cfg, **kw):
+        return Tunnel(cfg, platform=MagicMock(), wstunnel_bin=Path("/fake/wstunnel"), **kw)
+
+    def test_ca_rung_validates_the_chain_not_the_fingerprint(self):
+        cfg = replace(_make_config(), tls=TlsConfig(cert_fingerprint_sha256="", verify="ca"))
+        t = self._tunnel(cfg)
+        with (
+            patch("outwarp.tunnel.verify_tls_ca") as ca,
+            patch("outwarp.tunnel.verify_tls_fingerprint") as fp,
+        ):
+            ok, reason = t._check_pin(_strategy(pin_mode="ca"))
+        assert (ok, reason) == (True, "")
+        ca.assert_called_once()
+        fp.assert_not_called()
+
+    def test_ca_rung_fails_closed_on_untrusted_chain(self):
+        from outwarp.network import CertificateNotTrustedError
+
+        t = self._tunnel(_make_config())
+        with patch("outwarp.tunnel.verify_tls_ca",
+                   side_effect=CertificateNotTrustedError("self-signed")):
+            ok, reason = t._check_pin(_strategy(pin_mode="ca"))
+        assert ok is False
+        assert "not trusted" in reason
+
+    def test_allow_tls_intercept_does_not_soften_ca_mode(self):
+        """wstunnel enforces --tls-verify-certificate itself on a CA rung, so
+        waving the check through here would only trade a clear error for a
+        silent timeout a minute later."""
+        from outwarp.network import CertificateNotTrustedError
+
+        t = self._tunnel(_make_config(), allow_tls_intercept=True)
+        with patch("outwarp.tunnel.verify_tls_ca",
+                   side_effect=CertificateNotTrustedError("intercepted")):
+            ok, _ = t._check_pin(_strategy(pin_mode="ca"))
+        assert ok is False
+
+    def test_pin_rung_prefers_the_key_pin_when_the_profile_has_one(self):
+        cfg = replace(
+            _make_config(),
+            tls=TlsConfig(cert_fingerprint_sha256="A" * 95, spki_sha256="B" * 95),
+        )
+        t = self._tunnel(cfg)
+        with (
+            patch("outwarp.tunnel.verify_tls_spki") as spki,
+            patch("outwarp.tunnel.verify_tls_fingerprint") as fp,
+        ):
+            ok, _ = t._check_pin(_strategy())
+        assert ok is True
+        spki.assert_called_once_with("203.0.113.42", 443, "B" * 95)
+        fp.assert_not_called()
+
+    def test_pin_rung_falls_back_to_the_cert_pin_for_v1_profiles(self):
+        t = self._tunnel(_make_config())
+        with (
+            patch("outwarp.tunnel.verify_tls_spki") as spki,
+            patch("outwarp.tunnel.verify_tls_fingerprint") as fp,
+        ):
+            ok, _ = t._check_pin(_strategy())
+        assert ok is True
+        fp.assert_called_once_with("203.0.113.42", 443, "A" * 95)
+        spki.assert_not_called()
+
+    def test_key_pin_mismatch_is_still_tolerable_when_the_user_opted_in(self):
+        from outwarp.network import FingerprintMismatchError
+
+        cfg = replace(
+            _make_config(),
+            tls=TlsConfig(cert_fingerprint_sha256="A" * 95, spki_sha256="B" * 95),
+        )
+        t = self._tunnel(cfg, allow_tls_intercept=True)
+        with patch("outwarp.tunnel.verify_tls_spki",
+                   side_effect=FingerprintMismatchError("mismatch")):
+            ok, _ = t._check_pin(_strategy())
+        assert ok is True

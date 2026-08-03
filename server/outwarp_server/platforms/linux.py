@@ -29,12 +29,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart={wstunnel_bin} server \
---restrict-to 127.0.0.1:{wg_listen_port} \
---tls-certificate {cert_path} \
---tls-private-key {key_path} \
---restrict-http-upgrade-path-prefix {upgrade_path} \
-wss://0.0.0.0:{port}
+ExecStart={exec_start}
 Restart=always
 RestartSec=5
 
@@ -49,23 +44,8 @@ def _run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess[str]
 
 
 class LinuxServerPlatform(ServerPlatform):
-    def install_wstunnel_service(
-        self,
-        port: int,
-        cert_path: Path,
-        key_path: Path,
-        upgrade_path: str,
-        wg_listen_port: int,
-        wstunnel_bin: Path,
-    ) -> None:
-        unit = _UNIT_TEMPLATE.format(
-            wstunnel_bin=wstunnel_bin,
-            cert_path=cert_path,
-            key_path=key_path,
-            upgrade_path=upgrade_path,
-            wg_listen_port=wg_listen_port,
-            port=port,
-        )
+    def install_wstunnel_service(self, exec_start: str) -> None:
+        unit = _UNIT_TEMPLATE.format(exec_start=exec_start)
         try:
             _SERVICE_PATH.write_text(unit, encoding="utf-8")
             os.chmod(_SERVICE_PATH, 0o644)

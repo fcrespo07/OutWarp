@@ -162,3 +162,37 @@ def test_client_psk_and_expiry_roundtrip(tmp_path: Path) -> None:
     raw = json.loads(dest.read_text(encoding="utf-8"))
     assert "psk" not in raw["clients"][1]
     assert "expires_at" not in raw["clients"][1]
+
+
+# --- transport branch fields ---
+
+def test_tls_mode_defaults_to_self_signed(tmp_path: Path) -> None:
+    cfg = ServerConfig.load(_write(tmp_path, dict(VALID)))
+    assert cfg.tls_mode == "self-signed"
+    assert cfg.behind_reverse_proxy is False
+    assert cfg.internal_ws_port == 8080
+
+
+def test_acme_mode_round_trips(tmp_path: Path) -> None:
+    raw = {**dict(VALID), "tls_mode": "acme", "internal_ws_port": 9090,
+           "acme_email": "me@example.com"}
+    path = _write(tmp_path, raw)
+    cfg = ServerConfig.load(path)
+    assert cfg.behind_reverse_proxy is True
+
+    cfg.save(path)
+    again = ServerConfig.load(path)
+    assert (again.tls_mode, again.internal_ws_port, again.acme_email) == (
+        "acme", 9090, "me@example.com",
+    )
+
+
+def test_rejects_unknown_tls_mode(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="tls_mode"):
+        ServerConfig.load(_write(tmp_path, {**dict(VALID), "tls_mode": "letsencrypt"}))
+
+
+@pytest.mark.parametrize("bad", [0, 70000, "8080", None])
+def test_rejects_bad_internal_ws_port(tmp_path: Path, bad: object) -> None:
+    with pytest.raises(ConfigError, match="internal_ws_port"):
+        ServerConfig.load(_write(tmp_path, {**dict(VALID), "internal_ws_port": bad}))

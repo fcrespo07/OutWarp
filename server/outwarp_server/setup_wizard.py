@@ -19,6 +19,7 @@ from outwarp_server.config import ServerConfig
 from outwarp_server.crypto import generate_tls_cert, generate_wg_keypair
 from outwarp_server.platforms import PlatformError, get_server_platform
 from outwarp_server.platforms.base import PrerequisiteStatus
+from outwarp_server.server_manager import build_wstunnel_command
 from outwarp_server.wireguard import build_server_wg_conf
 
 log = logging.getLogger(__name__)
@@ -117,22 +118,61 @@ def run_setup(config_dir: Path) -> int:
         return 1
     console.print("  [green]✓[/green] NAT prerequisites available")
 
-    # Detect public IP
-    console.print("\n[bold]Detecting public IP...[/bold]")
-    detected_ip = _detect_public_ip()
-    if detected_ip:
-        console.print(f"  Detected: [cyan]{detected_ip}[/cyan]")
-        endpoint = Prompt.ask("Server endpoint (IP or domain)", default=detected_ip)
+    # Transport branch. This is the decision that determines whether the server
+    # survives a network that inspects TLS, so it comes before anything else.
+    console.print(
+        Panel(
+            "[bold]How should the server present itself on the public port?[/bold]\n\n"
+            "[cyan]1. I have a domain[/cyan] (recommended)\n"
+            "   Caddy holds port 443 with a real Let's Encrypt certificate and serves an\n"
+            "   ordinary web page; the tunnel lives on a secret path behind it. Clients\n"
+            "   validate the certificate normally. This is the only option that works on\n"
+            "   networks that inspect TLS — corporate Wi-Fi, schools, hotel captive portals.\n\n"
+            "[cyan]2. No domain[/cyan]\n"
+            "   wstunnel holds the port with a self-signed certificate and clients pin it.\n"
+            "   Nothing to buy or configure, and it is enough where the only obstacle is\n"
+            "   blocked UDP — but the certificate is recognisably not a real one, so a\n"
+            "   network that inspects TLS can single it out.",
+            border_style="cyan",
+            title="Transport",
+        )
+    )
+    use_domain = Confirm.ask("Do you have a domain pointing at this server?", default=False)
+    tls_mode = "acme" if use_domain else "self-signed"
+
+    if use_domain:
+        endpoint = Prompt.ask("Domain name (e.g. vpn.example.com)")
+        while not endpoint.strip() or "/" in endpoint:
+            console.print("[red]Enter a bare hostname, without scheme or path[/red]")
+            endpoint = Prompt.ask("Domain name (e.g. vpn.example.com)")
+        endpoint = endpoint.strip()
+        acme_email = Prompt.ask(
+            "Email for Let's Encrypt expiry notices (optional)", default=""
+        ).strip()
     else:
-        console.print("  [yellow]Could not auto-detect[/yellow]")
-        endpoint = Prompt.ask("Server endpoint (IP or domain)")
+        console.print("\n[bold]Detecting public IP...[/bold]")
+        detected_ip = _detect_public_ip()
+        if detected_ip:
+            console.print(f"  Detected: [cyan]{detected_ip}[/cyan]")
+            endpoint = Prompt.ask("Server endpoint (IP or domain)", default=detected_ip)
+        else:
+            console.print("  [yellow]Could not auto-detect[/yellow]")
+            endpoint = Prompt.ask("Server endpoint (IP or domain)")
+        acme_email = ""
 
     # Ports
     console.print("\n[bold]Network configuration[/bold]")
-    port = IntPrompt.ask("wstunnel WSS port", default=443)
+    port_label = "Public HTTPS port (Caddy)" if use_domain else "wstunnel WSS port"
+    port = IntPrompt.ask(port_label, default=443)
     while not (1 <= port <= 65535):
         console.print("[red]Invalid port[/red]")
-        port = IntPrompt.ask("wstunnel WSS port", default=443)
+        port = IntPrompt.ask(port_label, default=443)
+
+    internal_ws_port = 8080
+    if use_domain:
+        internal_ws_port = IntPrompt.ask(
+            "Loopback port for wstunnel behind Caddy", default=8080
+        )
 
     wg_listen_port = IntPrompt.ask("WireGuard listen port (loopback only)", default=51820)
 
@@ -147,9 +187,15 @@ def run_setup(config_dir: Path) -> int:
     upgrade_path = secrets.token_urlsafe(32)
     console.print("  [green]✓[/green] HTTP upgrade path prefix")
 
+    # Generated in both branches: the web admin panel serves HTTPS from this
+    # certificate regardless of who holds the public port, and it is what a
+    # later switch back to the self-signed branch would need.
     cert_dir = config_dir / "tls"
-    cert_path, key_path, fingerprint = generate_tls_cert(endpoint, cert_dir)
-    console.print(f"  [green]✓[/green] TLS cert ({fingerprint[:23]}...)")
+    cert_path, key_path, fingerprint, spki = generate_tls_cert(endpoint, cert_dir)
+    if use_domain:
+        console.print("  [green]✓[/green] TLS cert (internal use — Caddy serves the public one)")
+    else:
+        console.print(f"  [green]✓[/green] TLS cert ({fingerprint[:23]}...)")
 
     wg_priv, wg_pub = generate_wg_keypair(wg_bin)
     console.print("  [green]✓[/green] WireGuard server keypair")
@@ -163,6 +209,10 @@ def run_setup(config_dir: Path) -> int:
         cert_path=str(cert_path),
         key_path=str(key_path),
         cert_fingerprint_sha256=fingerprint,
+        spki_sha256=spki,
+        tls_mode=tls_mode,
+        internal_ws_port=internal_ws_port,
+        acme_email=acme_email,
         wg_private_key=wg_priv,
         wg_public_key=wg_pub,
         subnet=subnet,
@@ -201,21 +251,21 @@ def run_setup(config_dir: Path) -> int:
 
     try:
         platform.install_wstunnel_service(
-            port=port,
-            cert_path=cert_path,
-            key_path=key_path,
-            upgrade_path=upgrade_path,
-            wg_listen_port=wg_listen_port,
-            wstunnel_bin=wstunnel_bin,
+            " ".join(build_wstunnel_command(config, wstunnel_bin))
         )
         console.print("  [green]✓[/green] wstunnel service enabled")
     except PlatformError as exc:
         console.print(f"  [red]✗[/red] wstunnel: {exc}")
         return 1
 
-    # Connectivity probe (localhost only)
+    if use_domain:
+        _configure_caddy(config)
+
+    # Connectivity probe (localhost only). In the domain branch wstunnel is on
+    # loopback and Caddy owns the public port, so probe the one wstunnel holds.
     console.print("\n[bold]Running connectivity probe...[/bold]")
-    probe_ok = _probe_localhost(port)
+    probe_port = internal_ws_port if use_domain else port
+    probe_ok = _probe_localhost(probe_port)
     if probe_ok:
         console.print("  [green]✓[/green] wstunnel is listening on the configured port")
     else:
@@ -225,20 +275,62 @@ def run_setup(config_dir: Path) -> int:
         )
 
     # Final summary
+    transport = (
+        f"Transport: [cyan]Caddy on {port} → wstunnel on 127.0.0.1:{internal_ws_port}[/cyan]\n"
+        if use_domain
+        else f"Transport: [cyan]wstunnel on {port} (self-signed, pinned)[/cyan]\n"
+    )
+    dns_step = (
+        f"  1. Point {endpoint} at this server's public IP and make sure "
+        f"port {port}/tcp is reachable — Caddy needs it to obtain the certificate.\n"
+        if use_domain
+        else f"  1. Make sure port {port}/tcp is open in your firewall and router.\n"
+    )
     console.print(
         Panel.fit(
             f"[bold green]Setup complete![/bold green]\n\n"
             f"Endpoint:  [cyan]{endpoint}:{port}[/cyan]\n"
+            f"{transport}"
             f"WireGuard: [cyan]{server_address} (port {wg_listen_port})[/cyan]\n"
             f"Subnet:    [cyan]{subnet}[/cyan]\n\n"
             f"[bold]Next steps:[/bold]\n"
-            f"  1. Make sure port {port}/tcp is open in your firewall and router.\n"
+            f"{dns_step}"
             f"  2. Run [bold]outwarp-server add-client <name>[/bold] to register clients.\n"
             f"  3. Send the generated .owcfg files to each client.",
             border_style="green",
         )
     )
     return 0
+
+
+def _configure_caddy(config: ServerConfig) -> None:
+    """Write the Caddy front for the domain branch and reload it."""
+    from outwarp_server import caddy
+
+    console.print("\n[bold]Configuring the Caddy front...[/bold]")
+    if caddy.find_caddy() is None:
+        console.print(
+            "  [yellow]⚠[/yellow]  caddy is not installed. Writing the configuration "
+            "anyway; install Caddy and reload it to finish:\n"
+            f"     {caddy.install_hint()}"
+        )
+    try:
+        warnings = caddy.apply(
+            config.endpoint,
+            config.http_upgrade_path_prefix,
+            internal_ws_port=config.internal_ws_port,
+            acme_email=config.acme_email,
+            enroll_port=config.enroll_port,
+        )
+    except caddy.CaddyError as exc:
+        console.print(f"  [red]✗[/red] Caddy: {exc}")
+        return
+    console.print(f"  [green]✓[/green] Decoy site at {caddy.DEFAULT_DECOY_DIR}")
+    console.print(f"  [green]✓[/green] Site config at {caddy.CADDY_SITE_FILE}")
+    for w in warnings:
+        console.print(f"  [yellow]⚠[/yellow]  {w}")
+    if not warnings:
+        console.print("  [green]✓[/green] Caddy reloaded")
 
 
 def _configure_ufw_if_active(wss_port: int) -> None:

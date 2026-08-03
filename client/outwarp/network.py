@@ -23,6 +23,14 @@ class FingerprintMismatchError(NetworkError):
     encryption is still the real security boundary."""
 
 
+class CertificateNotTrustedError(NetworkError):
+    """A CA-mode endpoint's chain did not validate against the system trust store.
+
+    Kept apart from FingerprintMismatchError because the remediation differs: a
+    CA-mode profile has no pinned fingerprint to re-import, and the usual cause
+    is a TLS-intercepting middlebox whose root isn't installed locally."""
+
+
 def tcp_probe(host: str, port: int, timeout: float = 5.0) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -32,6 +40,51 @@ def tcp_probe(host: str, port: int, timeout: float = 5.0) -> bool:
 
 
 def get_tls_fingerprint(host: str, port: int, timeout: float = 5.0) -> str:
+    return _colon_hex(hashlib.sha256(_peer_cert_der(host, port, timeout)).digest())
+
+
+def get_tls_spki_fingerprint(host: str, port: int, timeout: float = 5.0) -> str:
+    """SHA-256 over the peer's DER SubjectPublicKeyInfo, colon-hex uppercase.
+
+    Pinning the key rather than the whole certificate (RFC 7469's model) is what
+    lets the server reissue its certificate — a shorter, less anomalous validity
+    period, or a rebuild — without invalidating every .owcfg already handed out,
+    as long as the key is reused.
+    """
+    der = _peer_cert_der(host, port, timeout)
+    return _colon_hex(hashlib.sha256(_spki_der(der)).digest())
+
+
+def verify_tls_ca(host: str, port: int, timeout: float = 5.0) -> None:
+    """Validate the peer's chain and hostname against the system trust store.
+
+    Mirrors, out of band, what wstunnel does in-band once it is passed
+    --tls-verify-certificate. Running it first turns an untrusted chain into a
+    readable ladder reason instead of an opaque "wstunnel started but no
+    handshake" a minute later.
+    """
+    ctx = ssl.create_default_context()
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            ctx.wrap_socket(sock, server_hostname=host).close()
+    except ssl.SSLCertVerificationError as exc:
+        raise CertificateNotTrustedError(
+            f"TLS certificate for {host}:{port} is not trusted: {exc.verify_message or exc}.\n"
+            "This profile authenticates the server against the system CA store. "
+            "The usual causes are a network that intercepts TLS with its own root, "
+            "an expired server certificate, or a clock that is badly out of sync."
+        ) from exc
+    except OSError as exc:
+        raise NetworkError(
+            f"Could not establish TLS connection to {host}:{port}: {exc}"
+        ) from exc
+
+
+def _colon_hex(digest: bytes) -> str:
+    return ":".join(f"{b:02X}" for b in digest)
+
+
+def _peer_cert_der(host: str, port: int, timeout: float) -> bytes:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
@@ -45,8 +98,59 @@ def get_tls_fingerprint(host: str, port: int, timeout: float = 5.0) -> str:
         ) from exc
     if not der:
         raise NetworkError(f"Server at {host}:{port} did not present a TLS certificate")
-    digest = hashlib.sha256(der).hexdigest().upper()
-    return ":".join(digest[i:i + 2] for i in range(0, len(digest), 2))
+    return der
+
+
+def _der_tlv(buf: bytes, off: int) -> tuple[int, int, int]:
+    """Read one DER tag-length-value at `off`. Returns (tag, value_start, next_off).
+
+    Only the forms X.509 actually uses are handled: low-tag-number tags and
+    definite lengths. Anything else is a malformed certificate as far as we're
+    concerned.
+    """
+    try:
+        tag = buf[off]
+        length = buf[off + 1]
+        pos = off + 2
+        if length & 0x80:
+            n = length & 0x7F
+            if n == 0 or n > 4:
+                raise NetworkError("Unsupported DER length encoding in certificate")
+            length = int.from_bytes(buf[pos:pos + n], "big")
+            pos += n
+        end = pos + length
+        if end > len(buf):
+            raise NetworkError("Truncated DER structure in certificate")
+    except IndexError as exc:
+        raise NetworkError("Truncated DER structure in certificate") from exc
+    return tag, pos, end
+
+
+def _spki_der(cert_der: bytes) -> bytes:
+    """Extract the DER SubjectPublicKeyInfo (tag included) from an X.509 cert.
+
+    Hand-rolled because the client deliberately has no `cryptography` dependency
+    — it would pull a compiled wheel into every PyInstaller bundle for this one
+    field. The walk is positional, which DER makes unambiguous:
+    Certificate → tbsCertificate → [0] version?, serial, sigAlg, issuer,
+    validity, subject, subjectPublicKeyInfo.
+    """
+    _, cert_body, _ = _der_tlv(cert_der, 0)
+    tag, tbs_body, _ = _der_tlv(cert_der, cert_body)
+    if tag != 0x30:
+        raise NetworkError("Certificate does not start with a tbsCertificate SEQUENCE")
+
+    off = tbs_body
+    tag, _, nxt = _der_tlv(cert_der, off)
+    if tag == 0xA0:  # [0] EXPLICIT version — absent in v1 certs
+        off = nxt
+    for _ in range(5):  # serial, signature, issuer, validity, subject
+        _, _, off = _der_tlv(cert_der, off)
+
+    tag, _, end = _der_tlv(cert_der, off)
+    if tag != 0x30:
+        raise NetworkError("Could not locate SubjectPublicKeyInfo in certificate")
+    return cert_der[off:end]
 
 
 # Matches both English ("time=12.3 ms", "time<1ms") and Spanish-Windows
@@ -212,4 +316,23 @@ def verify_tls_fingerprint(host: str, port: int, expected: str, timeout: float =
             f"  Got:      {actual}\n"
             "The server certificate has changed (possible MITM, server reinstall, "
             "or wrong .owcfg). Re-import a fresh .owcfg from the server admin."
+        )
+
+
+def verify_tls_spki(host: str, port: int, expected: str, timeout: float = 5.0) -> None:
+    """Key-level counterpart of verify_tls_fingerprint.
+
+    A mismatch here is strictly stronger evidence of a different server than a
+    certificate mismatch is: reissuing a certificate is routine, swapping the
+    key underneath it is not.
+    """
+    actual = get_tls_spki_fingerprint(host, port, timeout)
+    if actual.upper() != expected.upper():
+        raise FingerprintMismatchError(
+            f"TLS public-key pin mismatch for {host}:{port}.\n"
+            f"  Expected: {expected.upper()}\n"
+            f"  Got:      {actual}\n"
+            "The server is presenting a different key than the one this profile "
+            "was issued for (possible MITM, server reinstall, or wrong .owcfg). "
+            "Re-import a fresh .owcfg from the server admin."
         )

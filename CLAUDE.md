@@ -275,7 +275,56 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 ## Estado actual
 
-**Versión actual: `0.8.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz). Resumen de 0.8.0 (Linux UX + TUI feature pass + fixes de code review): notificaciones de escritorio vía `notify-send` (`outwarp/notify.py`, cableado en GUI/TUI/daemon), launcher `.desktop` + icono + completions bash/zsh instalados por `install.sh`, toggles de servicio systemd + linger en el settings modal de la TUI, `outwarp-cli doctor` + DoctorScreen del cliente (`outwarp/diagnostics.py`: wstunnel/pin/wg/helper/sudoers/kmod/systemd/notify-send), `outwarp-server rotate-client` (CLI + TUI con QR), filtros del log screen (`/` búsqueda, `e`/`w` nivel, `p` pausa), auto-scan de `.owcfg` en el import modal, sparklines rx/tx, hints de error + log inline en FailedScreen, columna expires + prune (`P`) en la tabla de clientes del servidor, copy endpoint (`c`). Seguridad: `add_client()` valida el nombre antes de construir el path del `.owcfg` (path traversal vía `../`). Resumen de 0.7.1: el `install.sh` de Linux instala la versión de wstunnel **pinneada** (antes bajaba la última de GitHub y aceptaba en silencio cualquier binario preexistente del PATH → un cliente derivó a 10.5.5 contra un servidor 10.5.2; el formato del WS upgrade cambió entre versiones → HTTP 400 y túnel sin tráfico, "conecta" pero solo sube). Versión centralizada en `installer/wstunnel-version.txt` (la leen `fetch_bundled_binaries.py` y el workflow de Docker; `install.sh` y `server/Dockerfile` la replican), con `server/tests/test_wstunnel_version_pin.py` como guardia anti-drift. Resumen de 0.7.0 (hardening tras auditoría de código + UX + CI del instalador Windows):
+**Versión actual: `0.11.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
+
+### Cambios en 0.11.0 (arquitectura de seguridad)
+
+Tres fallos corregidos, en el orden en que importan:
+
+1. **Rama con dominio para el transporte del servidor.** `setup` bifurca: con
+   dominio, **Caddy** ocupa el 443 con cert Let's Encrypt y sitio señuelo, y el
+   túnel vive en el path secreto detrás; wstunnel pasa a `ws://127.0.0.1:8080`.
+   OutWarp genera y recarga la config de Caddy de forma **aditiva** — es dueño de
+   `/etc/caddy/conf.d/outwarp.caddyfile` y nunca reescribe un Caddyfile ajeno.
+   Módulo `server/outwarp_server/caddy.py`; campos nuevos en `ServerConfig`:
+   `tls_mode` (`self-signed` | `acme`), `internal_ws_port`, `acme_email`,
+   `enroll_port`.
+   - El autofirmado sigue siendo válido donde el único obstáculo es UDP
+     bloqueado, pero **no** contra DPI que inspecciona TLS (caso WIFI_EDU).
+2. **`tls.verify` (`pin` | `ca`) en el `.owcfg` (schema v2).** En modo `ca` el
+   cliente valida cadena contra el almacén del sistema **y pasa
+   `--tls-verify-certificate` a wstunnel** — antes el pin se comprobaba en una
+   conexión aparte mientras wstunnel aceptaba cualquier certificado (el pin era
+   advisory). Añadido también `tls.spki_sha256`: pin de **clave pública**, que
+   sobrevive a reemitir el cert → nuevo `outwarp-server renew-cert` (reusa la
+   clave; `--new-key` la reemplaza e invalida todo). El extractor SPKI del
+   cliente es un walk DER a mano (`network._spki_der`) porque el cliente no
+   depende de `cryptography`.
+3. **Enrolamiento: el servidor ya no genera claves privadas de cliente.**
+   `add-client` reserva el slot y emite un **token de un solo uso (15 min)**;
+   el cliente genera su par localmente (`outwarp/keygen.py` vía `wg genkey`) y
+   canjea el token enviando solo la pública (`outwarp/enroll.py` →
+   `POST /enroll`). Listener en `enroll_server.py` (loopback + Caddy en la rama
+   acme; HTTPS público en `enroll_port` en la autofirmada). Store de tokens con
+   scrypt en `enrollment.py`, reusando `web_auth.hash_secret` + `RateLimiter`.
+   `.owcfg` v3 sin `client_private_key`. `--embed-key` mantiene el formato viejo.
+4. **Firma de releases (minisign)** en ambos updaters. `client/outwarp/minisign.py`
+   implementa Ed25519 a mano (RFC 8032 §6, solo verificación) para no meter
+   `cryptography` en el bundle; el del servidor usa `cryptography`. La pubkey va
+   **compilada**, la privada **offline, nunca en un secret de CI**. Proceso en
+   `docs/RELEASE_SIGNING.md`. **Inerte hasta que se genere la clave**
+   (`_MINISIGN_PUBLIC_KEY = ""`).
+5. **Escalera**: el rung S2 `direct-camouflage` desaparece; el User-Agent de
+   navegador va ahora en **todos** los rungs directos (ahorra ~20 s y llega a los
+   filtros L7 al primer intento). Nuevo orden: S0 direct → S1 DNS público →
+   S2 proxy → S3 puertos alternativos → S4.. provisionados.
+6. **Cert autofirmado endurecido**: basicConstraints, keyUsage, EKU serverAuth,
+   SKI/AKI, y validez 3650 → 825 días.
+7. `build_wstunnel_command()` es ahora la **única** definición de la invocación de
+   wstunnel (proceso + unit systemd la renderizan de ahí; antes estaban
+   duplicadas y podían divergir).
+
+Resumen de 0.8.0 (Linux UX + TUI feature pass + fixes de code review): notificaciones de escritorio vía `notify-send` (`outwarp/notify.py`, cableado en GUI/TUI/daemon), launcher `.desktop` + icono + completions bash/zsh instalados por `install.sh`, toggles de servicio systemd + linger en el settings modal de la TUI, `outwarp-cli doctor` + DoctorScreen del cliente (`outwarp/diagnostics.py`: wstunnel/pin/wg/helper/sudoers/kmod/systemd/notify-send), `outwarp-server rotate-client` (CLI + TUI con QR), filtros del log screen (`/` búsqueda, `e`/`w` nivel, `p` pausa), auto-scan de `.owcfg` en el import modal, sparklines rx/tx, hints de error + log inline en FailedScreen, columna expires + prune (`P`) en la tabla de clientes del servidor, copy endpoint (`c`). Seguridad: `add_client()` valida el nombre antes de construir el path del `.owcfg` (path traversal vía `../`). Resumen de 0.7.1: el `install.sh` de Linux instala la versión de wstunnel **pinneada** (antes bajaba la última de GitHub y aceptaba en silencio cualquier binario preexistente del PATH → un cliente derivó a 10.5.5 contra un servidor 10.5.2; el formato del WS upgrade cambió entre versiones → HTTP 400 y túnel sin tráfico, "conecta" pero solo sube). Versión centralizada en `installer/wstunnel-version.txt` (la leen `fetch_bundled_binaries.py` y el workflow de Docker; `install.sh` y `server/Dockerfile` la replican), con `server/tests/test_wstunnel_version_pin.py` como guardia anti-drift. Resumen de 0.7.0 (hardening tras auditoría de código + UX + CI del instalador Windows):
 - **Seguridad de secretos**: `ClientConfig.save()` (y `config.original.json`) ahora escriben atómicamente a 0o600 (`_atomic_write_secret`) — antes `config.json` con la clave privada WG quedaba a la umask (world-readable en Linux). La WG conf del servidor (linux/kubernetes/windows) pasa por el mismo helper (sin ventana 0o644→chmod). Txn ID de la sonda DNS de `detect_hostile_network()` ahora aleatorio (`secrets`), no fijo.
 - **TUI responsiva**: el dashboard del cliente corre `StatsSampler.sample()` (subprocess `wg`/`ping`) en executor en vez de bloquear el event loop; `disconnect`/`reconnect`/`quit` ya no congelan la TUI mientras `mgr.stop()` hace join. Indicador de estado del túnel visible en `StatusCard` (antes el dashboard era idéntico conectado vs desconectado). Stepper de conexión con 5º paso "ready" como la GUI.
 - **Robustez**: validación de `reconnect.max_attempts`/`delays_seconds` en el parser (un `max_attempts=0` ya no provoca fallo instantáneo silencioso). `top_talkers()` usa `LAG()`+clamp (no `MAX-MIN`) para no inflar tras un reset de contador. Race de `_replace_manager` cerrado con `TunnelManager.remove_listener()`. Stats/latency loops hacen join al pararse. Lock en `_last_failure_message` del servidor.

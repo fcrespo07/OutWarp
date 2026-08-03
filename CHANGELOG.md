@@ -6,6 +6,95 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: minor bumps may carry user-visible changes).
 
+## [0.11.0] — 2026-08-03
+
+Three fixes to the security architecture, in the order they matter.
+
+### Added
+- **A domain branch for the server transport.** `outwarp-server setup` now asks
+  whether you have a domain. If you do, Caddy holds port 443 with a real Let's
+  Encrypt certificate and serves an ordinary web page, and the tunnel lives on a
+  secret path behind it; wstunnel moves to a loopback listener. OutWarp writes
+  and reloads the Caddy configuration itself, additively — it owns
+  `/etc/caddy/conf.d/outwarp.caddyfile` and never rewrites a Caddyfile it did
+  not write, so a box already serving other sites keeps working.
+
+  This is the branch that survives a network inspecting TLS. The self-signed
+  certificate is fine where the only obstacle is blocked UDP, but it has no
+  chain to validate and is recognisable from the handshake alone — which is
+  exactly the "corporate Wi-Fi, captive portals" case OutWarp exists for.
+
+- **`tls.verify` in the profile format.** A profile behind a real certificate
+  validates the chain against the system CA store instead of pinning, which is
+  the only thing that survives a Let's Encrypt renewal — and it lets the client
+  pass `--tls-verify-certificate` to wstunnel, so for the first time the
+  transport is authenticated **in-band**. Until now the pin was checked on a
+  separate probe connection while wstunnel itself connected to any certificate
+  at all.
+
+- **Public-key pinning (`tls.spki_sha256`).** The self-signed branch now pins the
+  server's key rather than its certificate, so the certificate can be reissued
+  without invalidating profiles already distributed. New
+  `outwarp-server renew-cert` does exactly that (`--new-key` to replace the key
+  too, which does invalidate everything).
+
+- **Client enrolment — the server no longer generates client private keys.**
+  `add-client` reserves the slot and mints a **single-use token valid for 15
+  minutes**; the client generates its own WireGuard keypair on import and posts
+  only the public half. A `.owcfg` stops being a permanent credential in transit,
+  a server compromise no longer yields every client's identity, and an
+  intercepted profile is *detectable* — the legitimate client's enrolment then
+  fails with "already redeemed" instead of quietly succeeding for both.
+  `--embed-key` keeps the old behaviour for clients too old to enrol.
+  `--enroll-ttl` adjusts the window.
+
+- **Signed update manifests (minisign).** `SHA256SUMS.txt` proves a download
+  arrived intact, not who published it — it ships in the same GitHub release as
+  the binary. Both updaters now verify a minisign signature over the manifest
+  against a public key compiled into the client, and treat a missing signature
+  exactly like a bad one. The private key is kept offline, never in a CI secret:
+  a key CI can reach is a key an attacker who owns CI can reach. Process in
+  `docs/RELEASE_SIGNING.md`.
+
+  **0.11.0 is the first signed release** — key ID `3E1FCD8BF652EC28`, public
+  half committed as `outwarp-release.pub`. Clients from this version on refuse
+  an unsigned manifest; older ones have no key to check against and keep
+  accepting one, which is why the fail-open path stays until they are out of
+  circulation. Verify a download by hand with
+  `minisign -V -p outwarp-release.pub -m SHA256SUMS.txt`.
+
+- **New doctor checks**: the Caddy front's configuration validates, and the
+  public endpoint actually serves a certificate the world will trust.
+
+### Changed
+- **The self-signed certificate looks like a certificate.** It now carries
+  basicConstraints, keyUsage, extKeyUsage serverAuth and subject/authority key
+  identifiers, and its validity dropped from 3650 days to 825. A CN-only,
+  extension-free, decade-long certificate was a single-rule giveaway to anything
+  parsing the handshake.
+- **The browser `User-Agent` moved from its own ladder rung to every direct
+  rung.** As a rung it cost a full failed attempt — handshake timeout plus ping
+  probes, roughly 20 seconds — for a header that only reaches an L7 filter on the
+  third try. Sending it everywhere is free and gets it in front of those filters
+  immediately. It is camouflage against header rules, not against TLS
+  fingerprinting; the ClientHello is still rustls'.
+- The wstunnel server invocation is now defined in one place and rendered into
+  both the foreground process and the systemd unit, which previously duplicated
+  it and could drift.
+- `revoke-client` also kills any outstanding enrolment token for that client.
+- `list-clients` shows clients awaiting enrolment as such instead of "unknown".
+
+### Fixed
+- Profiles are only written after enrolment succeeds, so a failed import leaves
+  the previous profile intact rather than a half-written one with no key.
+- `wg0.conf` skips peers with no public key, so a reserved-but-not-yet-enrolled
+  client cannot take the interface down.
+
+### Migration
+Existing installations keep working: v1/v2 profiles still import and connect,
+and servers that predate the key pin keep issuing v1 profiles. To move to the
+domain branch, re-run `outwarp-server setup` and re-issue client profiles.
+
 ## [0.10.0] — 2026-07-09
 
 ### Added

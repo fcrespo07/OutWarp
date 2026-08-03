@@ -38,15 +38,13 @@ class ServerPlatform(ABC):
     """Abstract interface for server-side service management."""
 
     @abstractmethod
-    def install_wstunnel_service(
-        self,
-        port: int,
-        cert_path: Path,
-        key_path: Path,
-        upgrade_path: str,
-        wg_listen_port: int,
-        wstunnel_bin: Path,
-    ) -> None:
+    def install_wstunnel_service(self, exec_start: str) -> None:
+        """Register wstunnel as an OS service running `exec_start`.
+
+        The caller renders the argv with
+        ``server_manager.build_wstunnel_command`` so the service and the
+        foreground process can never disagree about how wstunnel is invoked.
+        """
         ...
 
     @abstractmethod

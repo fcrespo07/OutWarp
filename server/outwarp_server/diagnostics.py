@@ -128,6 +128,90 @@ def check_tls_cert_files(config: ServerConfig) -> CheckResult:
     )
 
 
+def check_caddy_front(config: ServerConfig) -> CheckResult:
+    """In the domain branch, Caddy is the thing holding the public port."""
+    from outwarp_server import caddy
+
+    name = "Caddy front"
+    if not config.behind_reverse_proxy:
+        return CheckResult(
+            name=name, status=Status.SKIP, detail="server is in self-signed mode"
+        )
+
+    if caddy.find_caddy() is None:
+        return CheckResult(
+            name=name,
+            status=Status.FAIL,
+            detail="caddy is not installed, so nothing is terminating TLS on the public port",
+            remediation=f"Install Caddy: {caddy.install_hint()}",
+            remediation_command=caddy.install_hint(),
+            fix_kind="interactive",
+        )
+    if not caddy.CADDY_SITE_FILE.exists():
+        return CheckResult(
+            name=name,
+            status=Status.FAIL,
+            detail=f"{caddy.CADDY_SITE_FILE} is missing",
+            remediation="Re-run `outwarp-server setup` to regenerate the Caddy front.",
+            remediation_command="outwarp-server setup",
+        )
+    ok, detail = caddy.validate()
+    if not ok:
+        return CheckResult(
+            name=name,
+            status=Status.FAIL,
+            detail=f"`caddy validate` rejected the configuration: {detail}",
+            remediation="Fix the reported error, then: systemctl reload caddy",
+            remediation_command="systemctl reload caddy",
+        )
+    return CheckResult(name=name, status=Status.PASS, detail=str(caddy.CADDY_SITE_FILE))
+
+
+def check_public_certificate(config: ServerConfig) -> CheckResult:
+    """Does the endpoint actually serve a certificate the world will trust?
+
+    This is the check that tells the admin whether the domain branch delivered
+    what it promises. Clients issued a CA-mode profile validate the chain the
+    same way, so a failure here is a failure for every one of them.
+    """
+    import ssl
+
+    name = "Public certificate trusted"
+    if not config.behind_reverse_proxy:
+        return CheckResult(
+            name=name, status=Status.SKIP, detail="self-signed mode pins instead"
+        )
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection((config.endpoint, config.port), timeout=6) as sock:
+            ctx.wrap_socket(sock, server_hostname=config.endpoint).close()
+    except ssl.SSLCertVerificationError as exc:
+        return CheckResult(
+            name=name,
+            status=Status.FAIL,
+            detail=f"{config.endpoint}:{config.port} — {exc.verify_message or exc}",
+            remediation=(
+                "Caddy could not obtain a certificate. Check that the domain's DNS "
+                f"points here and that port {config.port}/tcp is reachable from the "
+                "internet, then: journalctl -u caddy -e"
+            ),
+            remediation_command="journalctl -u caddy -e",
+        )
+    except OSError as exc:
+        return CheckResult(
+            name=name,
+            status=Status.WARN,
+            detail=f"Could not reach {config.endpoint}:{config.port} — {exc}",
+            remediation=(
+                "The certificate could not be checked because the endpoint was "
+                "unreachable from the server itself; this is often just hairpin NAT."
+            ),
+        )
+    return CheckResult(
+        name=name, status=Status.PASS, detail=f"{config.endpoint}:{config.port}"
+    )
+
+
 def check_egress(config: ServerConfig) -> CheckResult:
     try:
         with socket.create_connection(("1.1.1.1", 443), timeout=3):
@@ -674,7 +758,13 @@ def check_linux_systemd(config: ServerConfig) -> CheckResult:
 
 
 def check_linux_listen_443(config: ServerConfig) -> CheckResult:
-    """Something must be listening on the public WSS port (default 443)."""
+    """Something must be listening on the public WSS port (default 443).
+
+    Which service that is depends on the branch: wstunnel in the self-signed
+    one, Caddy in the domain one. Naming the wrong service in the remediation
+    would send the admin to restart something that was never meant to hold the
+    port.
+    """
     proc = _run_linux(["ss", "-tlnp", f"sport = :{config.port}"])
     out = proc.stdout
     listening = any(f":{config.port}" in line for line in out.splitlines()[1:])
@@ -684,14 +774,55 @@ def check_linux_listen_443(config: ServerConfig) -> CheckResult:
             status=Status.PASS,
             detail=out.splitlines()[1] if len(out.splitlines()) > 1 else "listening",
         )
+    service = "caddy" if config.behind_reverse_proxy else "wstunnel-outwarp.service"
     return CheckResult(
         name=f"Listening on TCP/{config.port}",
         status=Status.FAIL,
         detail=f"Nothing bound to TCP/{config.port}.",
         remediation=(
-            f"Start the OutWarp wstunnel service: systemctl start wstunnel-outwarp.service. "
+            f"Start the service that owns the public port: systemctl start {service}. "
             f"Also confirm no other service already claims port {config.port}."
         ),
+        remediation_command=f"systemctl start {service}",
+        fix_kind="auto",
+        fix_callable=lambda _c: subprocess.run(
+            ["systemctl", "start", service],
+            check=True, capture_output=True, text=True,
+        ),
+    )
+
+
+def check_linux_listen_internal_ws(config: ServerConfig) -> CheckResult:
+    """In the domain branch wstunnel moves to a loopback plain-WS listener."""
+    name = "wstunnel on loopback"
+    if not config.behind_reverse_proxy:
+        return CheckResult(
+            name=name, status=Status.SKIP, detail="wstunnel holds the public port directly"
+        )
+    port = config.internal_ws_port
+    proc = _run_linux(["ss", "-tlnp", f"sport = :{port}"])
+    lines = proc.stdout.splitlines()[1:]
+    if any(f":{port}" in line for line in lines):
+        # Binding 0.0.0.0 here would expose the un-TLS'd listener to the network
+        # and let anyone who knows the path skip the front entirely.
+        exposed = any("0.0.0.0" in line or "*:" in line for line in lines)
+        if exposed:
+            return CheckResult(
+                name=name,
+                status=Status.WARN,
+                detail=f"TCP/{port} is bound on all interfaces, not just loopback",
+                remediation=(
+                    "The plain-WebSocket listener should only be reachable from Caddy. "
+                    "Re-run `outwarp-server restart` to rewrite the unit."
+                ),
+                remediation_command="outwarp-server restart",
+            )
+        return CheckResult(name=name, status=Status.PASS, detail=f"127.0.0.1:{port}")
+    return CheckResult(
+        name=name,
+        status=Status.FAIL,
+        detail=f"Nothing bound to TCP/{port} — Caddy has nothing to proxy to.",
+        remediation="systemctl start wstunnel-outwarp.service",
         remediation_command="systemctl start wstunnel-outwarp.service",
         fix_kind="auto",
         fix_callable=lambda _c: subprocess.run(
@@ -937,6 +1068,8 @@ def gather_checks() -> list[Check]:
         Check("config", "Config", check_config_loadable),
         Check("clients", "Config", check_clients_registered),
         Check("tls", "Config", check_tls_cert_files),
+        Check("caddy", "Transport", check_caddy_front),
+        Check("public_cert", "Transport", check_public_certificate),
         Check("egress", "Network", check_egress),
     ]
     if sys.platform == "win32":
@@ -958,6 +1091,7 @@ def gather_checks() -> list[Check]:
             Check("linux_kmod", "WireGuard", check_linux_kmod),
             Check("linux_systemd", "Services", check_linux_systemd),
             Check("linux_listen_443", "wstunnel", check_linux_listen_443),
+            Check("linux_listen_internal_ws", "wstunnel", check_linux_listen_internal_ws),
             Check("linux_listen_wg", "wstunnel", check_linux_listen_wg),
             Check("linux_ip_forward", "Network", check_linux_ip_forward),
             Check("linux_nat_masquerade", "NAT", check_linux_nat_masquerade),

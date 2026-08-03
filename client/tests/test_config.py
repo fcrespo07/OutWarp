@@ -314,3 +314,89 @@ def test_apply_profile_patch_accepts_hostnames_in_bypass(tmp_path):
 def test_apply_profile_patch_rejects_bad_input(tmp_path, patch, match):
     with pytest.raises(ConfigError, match=match):
         apply_profile_patch(_cfg(tmp_path), patch)
+
+
+# --- tls.verify / tls.spki_sha256 (schema v2) ---
+
+SPKI_FP = ":".join(["12"] * 32)
+
+
+def test_tls_defaults_to_pin_mode(tmp_path):
+    cfg = ClientConfig.load(write_cfg(tmp_path, VALID))
+    assert cfg.tls.verify == "pin"
+    assert cfg.tls.spki_sha256 == ""
+    assert cfg.tls.pin_value == VALID["tls"]["cert_fingerprint_sha256"]
+
+
+def test_tls_ca_mode_needs_no_fingerprint(tmp_path):
+    data = {**VALID, "schema_version": 2, "tls": {"verify": "ca"}}
+    cfg = ClientConfig.load(write_cfg(tmp_path, data))
+    assert cfg.tls.verify == "ca"
+    assert cfg.tls.cert_fingerprint_sha256 == ""
+
+
+def test_tls_pin_mode_still_requires_a_pin(tmp_path):
+    data = {**VALID, "tls": {}}
+    with pytest.raises(ConfigError, match="cert_fingerprint_sha256 or spki_sha256"):
+        ClientConfig.load(write_cfg(tmp_path, data))
+
+
+def test_tls_spki_alone_satisfies_pin_mode(tmp_path):
+    data = {**VALID, "schema_version": 2, "tls": {"spki_sha256": SPKI_FP}}
+    cfg = ClientConfig.load(write_cfg(tmp_path, data))
+    assert cfg.tls.pin_value == SPKI_FP
+
+
+def test_tls_spki_wins_over_cert_fingerprint(tmp_path):
+    # Both present is the normal v2 shape: the key pin is the durable one, so
+    # it is what the tunnel must actually check.
+    data = {**VALID, "schema_version": 2,
+            "tls": {**VALID["tls"], "spki_sha256": SPKI_FP}}
+    cfg = ClientConfig.load(write_cfg(tmp_path, data))
+    assert cfg.tls.pin_value == SPKI_FP
+
+
+@pytest.mark.parametrize("bad", ["tolerate", "none", "CA-ish", ""])
+def test_tls_rejects_unknown_verify_mode(tmp_path, bad):
+    data = {**VALID, "tls": {**VALID["tls"], "verify": bad}}
+    with pytest.raises(ConfigError, match="tls.verify"):
+        ClientConfig.load(write_cfg(tmp_path, data))
+
+
+def test_tls_rejects_malformed_spki(tmp_path):
+    data = {**VALID, "tls": {**VALID["tls"], "spki_sha256": "not-a-fingerprint"}}
+    with pytest.raises(ConfigError, match="spki_sha256"):
+        ClientConfig.load(write_cfg(tmp_path, data))
+
+
+def test_v1_profile_still_loads_under_v2_client(tmp_path):
+    # Servers without a key pin keep issuing v1; those profiles must never
+    # start failing just because the client learned a newer schema.
+    cfg = ClientConfig.load(write_cfg(tmp_path, VALID))
+    assert cfg.schema_version == 1
+
+
+def test_future_schema_version_is_rejected(tmp_path):
+    data = {**VALID, "schema_version": 99}
+    with pytest.raises(ConfigError, match="Unsupported schema_version 99"):
+        ClientConfig.load(write_cfg(tmp_path, data))
+
+
+def test_v2_tls_round_trips_through_save(tmp_path):
+    data = {**VALID, "schema_version": 2,
+            "tls": {**VALID["tls"], "verify": "ca", "spki_sha256": SPKI_FP}}
+    cfg = ClientConfig.load(write_cfg(tmp_path, data))
+    dest = tmp_path / "saved.json"
+    cfg.save(dest)
+    again = ClientConfig.load(dest)
+    assert again.tls == cfg.tls
+    assert again.schema_version == 2
+
+
+def test_v1_profile_round_trip_omits_v2_tls_keys(tmp_path):
+    cfg = ClientConfig.load(write_cfg(tmp_path, VALID))
+    dest = tmp_path / "saved.json"
+    cfg.save(dest)
+    saved = json.loads(dest.read_text(encoding="utf-8"))
+    assert "verify" not in saved["tls"]
+    assert "spki_sha256" not in saved["tls"]

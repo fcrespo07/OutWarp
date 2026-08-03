@@ -46,7 +46,47 @@ class ServerConfig:
     subnet: str
     server_address: str
     wg_listen_port: int
+    # SHA-256 of the TLS certificate's DER SubjectPublicKeyInfo. Clients pin this
+    # in preference to cert_fingerprint_sha256 because it survives `renew-cert`.
+    # Empty on configs written before the field existed; add-client/rotate-client
+    # backfill it from the certificate on disk the next time they run.
+    spki_sha256: str = ""
+    # "self-signed": wstunnel holds the public port with its own certificate and
+    # clients pin it. "acme": Caddy holds the port with a real Let's Encrypt
+    # certificate and proxies the secret path to wstunnel on
+    # 127.0.0.1:internal_ws_port; clients validate against the system CA store
+    # instead of pinning. The second is the only branch that survives a network
+    # inspecting TLS, and the only one where wstunnel itself verifies anything.
+    tls_mode: str = "self-signed"
+    internal_ws_port: int = 8080
+    acme_email: str = ""
+    # Port the enrolment listener binds. Behind Caddy it is loopback-only and
+    # published on the public port under the secret path prefix; in the
+    # self-signed branch it is a public HTTPS port of its own, using the same
+    # certificate (and therefore the same pin) as the transport.
+    enroll_port: int = 8444
     clients: list[ClientEntry] = field(default_factory=list)
+
+    @property
+    def behind_reverse_proxy(self) -> bool:
+        return self.tls_mode == "acme"
+
+    @property
+    def enroll_path(self) -> str:
+        """Public path of the enrolment endpoint in the Caddy-fronted branch.
+
+        Derived from the same secret prefix as the transport so the endpoint is
+        no more discoverable than the tunnel itself.
+        """
+        return f"/{self.http_upgrade_path_prefix.strip('/')}-enroll"
+
+    @property
+    def enroll_url(self) -> str:
+        """Where a client posts its public key to redeem an enrolment token."""
+        if self.behind_reverse_proxy:
+            host = self.endpoint if self.port == 443 else f"{self.endpoint}:{self.port}"
+            return f"https://{host}{self.enroll_path}"
+        return f"https://{self.endpoint}:{self.enroll_port}/enroll"
 
     @classmethod
     def load(cls, path: Path) -> ServerConfig:
@@ -109,6 +149,25 @@ def _parse(raw: dict[str, Any]) -> ServerConfig:
             f"wg_listen_port must be an integer between 1 and 65535, got {wg_listen_port!r}"
         )
 
+    tls_mode = str(raw.get("tls_mode", "self-signed"))
+    if tls_mode not in ("self-signed", "acme"):
+        raise ConfigError(
+            f"tls_mode must be 'self-signed' or 'acme', got {tls_mode!r}"
+        )
+
+    internal_ws_port = raw.get("internal_ws_port", 8080)
+    if not isinstance(internal_ws_port, int) or not (1 <= internal_ws_port <= 65535):
+        raise ConfigError(
+            f"internal_ws_port must be an integer between 1 and 65535, "
+            f"got {internal_ws_port!r}"
+        )
+
+    enroll_port = raw.get("enroll_port", 8444)
+    if not isinstance(enroll_port, int) or not (1 <= enroll_port <= 65535):
+        raise ConfigError(
+            f"enroll_port must be an integer between 1 and 65535, got {enroll_port!r}"
+        )
+
     clients_raw = raw.get("clients", [])
     if not isinstance(clients_raw, list):
         raise ConfigError("clients must be a list")
@@ -131,6 +190,11 @@ def _parse(raw: dict[str, Any]) -> ServerConfig:
         cert_path=str(_require(raw, "cert_path", "root")),
         key_path=str(_require(raw, "key_path", "root")),
         cert_fingerprint_sha256=str(_require(raw, "cert_fingerprint_sha256", "root")),
+        spki_sha256=str(raw.get("spki_sha256", "")),
+        tls_mode=tls_mode,
+        internal_ws_port=internal_ws_port,
+        acme_email=str(raw.get("acme_email", "")),
+        enroll_port=enroll_port,
         wg_private_key=str(_require(raw, "wg_private_key", "root")),
         wg_public_key=str(_require(raw, "wg_public_key", "root")),
         subnet=str(_require(raw, "subnet", "root")),
@@ -149,6 +213,11 @@ def _to_dict(cfg: ServerConfig) -> dict[str, Any]:
         "cert_path": cfg.cert_path,
         "key_path": cfg.key_path,
         "cert_fingerprint_sha256": cfg.cert_fingerprint_sha256,
+        "spki_sha256": cfg.spki_sha256,
+        "tls_mode": cfg.tls_mode,
+        "internal_ws_port": cfg.internal_ws_port,
+        "acme_email": cfg.acme_email,
+        "enroll_port": cfg.enroll_port,
         "wg_private_key": cfg.wg_private_key,
         "wg_public_key": cfg.wg_public_key,
         "subnet": cfg.subnet,

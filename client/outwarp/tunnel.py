@@ -27,13 +27,16 @@ from outwarp.fallback import (
     strategy_to_command,
 )
 from outwarp.network import (
+    CertificateNotTrustedError,
     FingerprintMismatchError,
     HostileDetection,
     NetworkError,
     detect_hostile_network,
     measure_latency_ms,
     tcp_probe,
+    verify_tls_ca,
     verify_tls_fingerprint,
+    verify_tls_spki,
 )
 from outwarp.platforms import Platform, get_platform
 from outwarp.wireguard import build_wg_conf, get_tunnel_stats
@@ -231,6 +234,15 @@ class Tunnel:
         excluded from AllowedIPs at config-build time, not added as host routes.
         """
         s = self._config.server
+        if not self._config.wireguard.client_private_key:
+            # Only reachable if enrolment was interrupted or the saved profile
+            # was hand-edited; without a key wg-quick would fail with something
+            # far less informative.
+            raise TunnelError(
+                "This profile has no WireGuard key yet — enrolment did not "
+                "complete. Import the .owcfg again to retry; if its token has "
+                "expired, ask the server admin for a new profile."
+            )
         self._active_strategy = None
         self._phase_cb("resolve")
 
@@ -327,10 +339,28 @@ class Tunnel:
         return True, ""
 
     def _check_pin(self, strat: ConnectionStrategy) -> tuple[bool, str]:
+        tls = self._config.tls
+        if strat.pin_mode == "ca":
+            # Deliberately not tolerated by allow_tls_intercept: wstunnel gets
+            # --tls-verify-certificate on this rung and would refuse the
+            # connection anyway, so waving it through here would only swap a
+            # precise error for a mute timeout.
+            try:
+                verify_tls_ca(strat.endpoint, strat.port)
+                return True, ""
+            except CertificateNotTrustedError as exc:
+                log.warning("CA verification failed on rung '%s': %s", strat.id, exc)
+                return False, "TLS certificate not trusted"
+            except NetworkError as exc:
+                return False, f"TLS probe failed: {exc}"
+
         try:
-            verify_tls_fingerprint(
-                strat.endpoint, strat.port, self._config.tls.cert_fingerprint_sha256
-            )
+            if tls.spki_sha256:
+                verify_tls_spki(strat.endpoint, strat.port, tls.spki_sha256)
+            else:
+                verify_tls_fingerprint(
+                    strat.endpoint, strat.port, tls.cert_fingerprint_sha256
+                )
             return True, ""
         except FingerprintMismatchError as exc:
             if strat.pin_mode == "tolerate" or self.allow_tls_intercept:

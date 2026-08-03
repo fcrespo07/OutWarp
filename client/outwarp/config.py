@@ -13,8 +13,14 @@ from typing import Any
 from platformdirs import user_config_dir
 
 _APP_NAME = "OutWarp"
-_SCHEMA_VERSION = 1
+# v2 added tls.verify / tls.spki_sha256 (the ACME + Caddy server branch).
+# v3 replaced wireguard.client_private_key with an enrolment token: the client
+# generates its own keypair and registers the public half. Older profiles stay
+# valid forever — the parser accepts anything up to this number, so a server can
+# keep issuing v1/v2 .owcfg files that older clients also read.
+_SCHEMA_VERSION = 3
 _FINGERPRINT_RE = re.compile(r"^([0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}$")
+_TLS_VERIFY_MODES = ("pin", "ca")
 
 
 class ConfigError(ValueError):
@@ -35,7 +41,27 @@ class ServerConfig:
 
 @dataclass(frozen=True)
 class TlsConfig:
+    """How the client authenticates the outer TLS layer of the transport.
+
+    ``verify == "pin"`` (the default, and everything issued before v2) trusts one
+    specific server: the self-signed certificate it was handed at enrolment, and
+    nothing else. ``verify == "ca"`` is for a server sitting behind a real
+    certificate — the chain is validated against the system trust store instead,
+    which is the only mode that survives a Let's Encrypt renewal and the only one
+    wstunnel can also enforce in-band (``--tls-verify-certificate``).
+
+    In pin mode ``spki_sha256`` takes precedence when present: pinning the public
+    key instead of the whole certificate lets the server reissue without
+    invalidating every .owcfg already distributed.
+    """
+
     cert_fingerprint_sha256: str
+    verify: str = "pin"
+    spki_sha256: str = ""
+
+    @property
+    def pin_value(self) -> str:
+        return self.spki_sha256 or self.cert_fingerprint_sha256
 
 
 @dataclass(frozen=True)
@@ -46,9 +72,25 @@ class TunnelConfig:
 
 
 @dataclass(frozen=True)
+class EnrollmentConfig:
+    """Present on a v3 profile until the token has been redeemed.
+
+    ``token`` is single-use and short-lived; it is cleared once enrolment
+    succeeds, so a saved profile never keeps a spent credential. Its presence
+    alongside an empty ``wireguard.client_private_key`` is what tells the import
+    path there is a key to generate first.
+    """
+
+    token: str = ""
+    url: str = ""
+
+
+@dataclass(frozen=True)
 class WireguardConfig:
     tunnel_name: str
     client_address: str
+    # Empty on a freshly-issued v3 profile: the client fills it in from a locally
+    # generated key during enrolment, and it never travels anywhere.
     client_private_key: str
     server_public_key: str
     dns: list[str] = field(default_factory=lambda: ["1.1.1.1"])
@@ -126,6 +168,7 @@ class ClientConfig:
     reconnect: ReconnectConfig
     network: NetworkConfig = field(default_factory=NetworkConfig)
     fallback: FallbackConfig = field(default_factory=FallbackConfig)
+    enrollment: EnrollmentConfig = field(default_factory=EnrollmentConfig)
     # Human-readable label assigned by the server (outwarp-server add-client <name>).
     # Distinct from wireguard.tunnel_name, which is the OS network interface name.
     name: str = ""
@@ -192,20 +235,38 @@ def original_config_path(config_path: Path | None = None) -> Path:
     return base.with_name("config.original.json")
 
 
-def import_owcfg(warpcfg_path: Path, dest: Path | None = None) -> ClientConfig:
-    config = ClientConfig.load(warpcfg_path)
+def import_owcfg(
+    warpcfg_path: Path, dest: Path | None = None, *, enroll: bool = True
+) -> ClientConfig:
+    return _finish_import(ClientConfig.load(warpcfg_path), dest, enroll)
+
+
+def import_owcfg_text(
+    text: str, dest: Path | None = None, *, enroll: bool = True
+) -> ClientConfig:
+    """Like import_owcfg but from an in-memory string (GUI bridge path)."""
+    return _finish_import(ClientConfig.loads(text), dest, enroll)
+
+
+def _finish_import(config: ClientConfig, dest: Path | None, enroll: bool) -> ClientConfig:
+    """Redeem an enrolment token if the profile has one, then persist.
+
+    Enrolment lives behind the import functions rather than in each caller (GUI
+    bridge, CLI, TUI modal) so no import path can accidentally skip it and write
+    out a profile with no private key. ``enroll=False`` is for tests and for
+    inspecting a profile without touching the network.
+
+    The import is a network call in this case, which is why the module-level
+    imports stay clean: outwarp.enroll depends on this module.
+    """
     target = dest or default_config_path()
+    if enroll:
+        from outwarp.enroll import enroll as _redeem
+        from outwarp.enroll import needs_enrollment
+        if needs_enrollment(config):
+            config = _redeem(config)
     config.save(target)
     # Snapshot the untouched import so profile editing can always be undone.
-    config.save(original_config_path(target))
-    return config
-
-
-def import_owcfg_text(text: str, dest: Path | None = None) -> ClientConfig:
-    """Like import_owcfg but from an in-memory string (GUI bridge path)."""
-    config = ClientConfig.loads(text)
-    target = dest or default_config_path()
-    config.save(target)
     config.save(original_config_path(target))
     return config
 
@@ -249,16 +310,21 @@ def _parse(raw: dict[str, Any]) -> ClientConfig:
             f"Config must be a JSON object, got {type(raw).__name__}"
         )
     version = raw.get("schema_version", 1)
-    if version != _SCHEMA_VERSION:
+    if not isinstance(version, int) or version < 1:
+        raise ConfigError(f"schema_version must be a positive integer, got {version!r}")
+    if version > _SCHEMA_VERSION:
         raise ConfigError(
-            f"Unsupported schema_version {version!r} (expected {_SCHEMA_VERSION}). "
-            "Update OutWarp client to a newer version."
+            f"Unsupported schema_version {version} (this client understands up to "
+            f"{_SCHEMA_VERSION}). Update OutWarp client to a newer version."
         )
 
+    enrollment = _parse_enrollment(raw.get("enrollment", {}))
     server = _parse_server(_require(raw, "server", "root"))
     tls = _parse_tls(_require(raw, "tls", "root"))
     tunnel = _parse_tunnel(_require(raw, "tunnel", "root"))
-    wireguard = _parse_wireguard(_require(raw, "wireguard", "root"))
+    wireguard = _parse_wireguard(
+        _require(raw, "wireguard", "root"), enrolling=bool(enrollment.token)
+    )
     routing = _parse_routing(_require(raw, "routing", "root"))
     reconnect = _parse_reconnect(raw.get("reconnect", {}))
     network = _parse_network(raw.get("network", {}))
@@ -277,9 +343,22 @@ def _parse(raw: dict[str, Any]) -> ClientConfig:
         reconnect=reconnect,
         network=network,
         fallback=fallback,
+        enrollment=enrollment,
         name=str(raw.get("name", "")),
         expires_at=expires_at,
     )
+
+
+def _parse_enrollment(d: Any) -> EnrollmentConfig:
+    if not isinstance(d, dict):
+        raise ConfigError("Section 'enrollment' must be an object")
+    token = str(d.get("token", ""))
+    url = str(d.get("url", ""))
+    if token and not url:
+        raise ConfigError("enrollment.token is set but enrollment.url is missing")
+    if url and not url.startswith(("https://", "http://")):
+        raise ConfigError(f"enrollment.url must be an http(s) URL, got {url!r}")
+    return EnrollmentConfig(token=token, url=url)
 
 
 def _parse_server(d: Any) -> ServerConfig:
@@ -310,13 +389,33 @@ def _parse_server(d: Any) -> ServerConfig:
 def _parse_tls(d: Any) -> TlsConfig:
     if not isinstance(d, dict):
         raise ConfigError("Section 'tls' must be an object")
-    fp = str(_require(d, "cert_fingerprint_sha256", "tls"))
-    if not _FINGERPRINT_RE.match(fp):
+    verify = str(d.get("verify", "pin")).strip().lower()
+    if verify not in _TLS_VERIFY_MODES:
+        raise ConfigError(
+            f"tls.verify must be one of {', '.join(_TLS_VERIFY_MODES)}, got {verify!r}"
+        )
+
+    spki = str(d.get("spki_sha256", ""))
+    if spki and not _FINGERPRINT_RE.match(spki):
+        raise ConfigError(
+            f"tls.spki_sha256 must be a colon-separated SHA-256 hex string "
+            f"(e.g. 'AB:CD:...'), got {spki!r}"
+        )
+
+    # A CA-mode profile has no pin to carry, so the fingerprint stops being
+    # required — but if one is present it still has to be well-formed rather
+    # than silently ignored.
+    fp = str(d["cert_fingerprint_sha256"]) if "cert_fingerprint_sha256" in d else ""
+    if verify == "pin" and not fp and not spki:
+        raise ConfigError(
+            "tls needs cert_fingerprint_sha256 or spki_sha256 when verify is 'pin'"
+        )
+    if fp and not _FINGERPRINT_RE.match(fp):
         raise ConfigError(
             f"tls.cert_fingerprint_sha256 must be a colon-separated SHA-256 hex string "
             f"(e.g. 'AB:CD:...'), got {fp!r}"
         )
-    return TlsConfig(cert_fingerprint_sha256=fp)
+    return TlsConfig(cert_fingerprint_sha256=fp, verify=verify, spki_sha256=spki)
 
 
 def _parse_tunnel(d: Any) -> TunnelConfig:
@@ -335,7 +434,7 @@ def _parse_tunnel(d: Any) -> TunnelConfig:
     )
 
 
-def _parse_wireguard(d: Any) -> WireguardConfig:
+def _parse_wireguard(d: Any, *, enrolling: bool = False) -> WireguardConfig:
     if not isinstance(d, dict):
         raise ConfigError("Section 'wireguard' must be an object")
     mtu_raw = d.get("mtu", 1380)
@@ -345,10 +444,18 @@ def _parse_wireguard(d: Any) -> WireguardConfig:
         raise ConfigError(f"wireguard.mtu must be an integer, got {mtu_raw!r}") from exc
     if not (576 <= mtu <= 1500):
         raise ConfigError(f"wireguard.mtu must be between 576 and 1500, got {mtu}")
+    # A profile still awaiting enrolment has no private key yet — that is the
+    # entire point of it. Once redeemed it is saved back with one, and then the
+    # normal requirement applies again.
+    private_key = (
+        str(d.get("client_private_key", ""))
+        if enrolling
+        else str(_require(d, "client_private_key", "wireguard"))
+    )
     return WireguardConfig(
         tunnel_name=str(_require(d, "tunnel_name", "wireguard")),
         client_address=str(_require(d, "client_address", "wireguard")),
-        client_private_key=str(_require(d, "client_private_key", "wireguard")),
+        client_private_key=private_key,
         server_public_key=str(_require(d, "server_public_key", "wireguard")),
         dns=list(d.get("dns", ["1.1.1.1"])),
         mtu=mtu,
@@ -481,6 +588,9 @@ def _to_dict(cfg: ClientConfig) -> dict[str, Any]:
         "wireguard": {
             "tunnel_name": cfg.wireguard.tunnel_name,
             "client_address": cfg.wireguard.client_address,
+            # Written even when empty: a profile saved mid-enrolment has to
+            # round-trip back into the same "no key yet" state, not become an
+            # invalid one.
             "client_private_key": cfg.wireguard.client_private_key,
             "server_public_key": cfg.wireguard.server_public_key,
             "dns": cfg.wireguard.dns,
@@ -497,12 +607,20 @@ def _to_dict(cfg: ClientConfig) -> dict[str, Any]:
             "hostile_mode": cfg.network.hostile_mode,
         },
     }
+    # Emitted only when they diverge from the v1 defaults, so a round-tripped v1
+    # profile stays byte-identical to what the server issued.
+    if cfg.tls.verify != "pin":
+        d["tls"]["verify"] = cfg.tls.verify
+    if cfg.tls.spki_sha256:
+        d["tls"]["spki_sha256"] = cfg.tls.spki_sha256
     if cfg.server.fallback_ports:
         d["server"]["fallback_ports"] = list(cfg.server.fallback_ports)
     if cfg.wireguard.preshared_key:
         d["wireguard"]["preshared_key"] = cfg.wireguard.preshared_key
     if cfg.fallback.strategies or not cfg.fallback.enabled:
         d["fallback"] = _fallback_to_dict(cfg.fallback)
+    if cfg.enrollment.token or cfg.enrollment.url:
+        d["enrollment"] = {"token": cfg.enrollment.token, "url": cfg.enrollment.url}
     if cfg.expires_at:
         d["meta"] = {"expires_at": cfg.expires_at}
     return d

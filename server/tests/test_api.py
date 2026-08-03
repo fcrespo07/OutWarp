@@ -261,7 +261,7 @@ def test_run_setup_happy_path(tmp_path):
         patch("outwarp_server.api.default_config_dir", return_value=tmp_path),
         patch("outwarp_server.api.default_config_path", return_value=tmp_path / "server.json"),
         patch("outwarp_server.api.generate_tls_cert",
-              return_value=(tmp_path / "c.pem", tmp_path / "k.pem", "FP:FP:FP")),
+              return_value=(tmp_path / "c.pem", tmp_path / "k.pem", "FP:FP:FP", "SPKI:FP")),
         patch("outwarp_server.api.generate_wg_keypair", return_value=("priv", "pub")),
         patch("outwarp_server.api.find_wstunnel", return_value=Path("/usr/bin/wstunnel")),
         patch("outwarp_server.api.find_wg", return_value=Path("/usr/bin/wg")),
@@ -583,7 +583,7 @@ def test_rotate_tls_cert_happy_path(tmp_path):
     fake_save = MagicMock()
     with (
         patch("outwarp_server.api.generate_tls_cert",
-              return_value=(tmp_path / "c.pem", tmp_path / "k.pem", "NEW:FP:FP")),
+              return_value=(tmp_path / "c.pem", tmp_path / "k.pem", "NEW:FP:FP", "NEW:SPKI")),
         patch("outwarp_server.api.default_config_path", return_value=tmp_path / "srv.json"),
         patch.object(ServerConfig, "save", fake_save),
     ):
@@ -724,7 +724,7 @@ def test_rotate_tls_cert_restarts_systemd_when_running(tmp_path):
 
     with (
         patch("outwarp_server.api.generate_tls_cert",
-              return_value=(tmp_path / "c.pem", tmp_path / "k.pem", "ROTATED:FP")),
+              return_value=(tmp_path / "c.pem", tmp_path / "k.pem", "ROTATED:FP", "ROTATED:SPKI")),
         patch("outwarp_server.api.default_config_path", return_value=tmp_path / "srv.json"),
         patch.object(ServerConfig, "save"),
         patch("outwarp_server.api.get_server_platform", return_value=fake_platform),
@@ -751,7 +751,7 @@ def test_run_setup_emits_progress_and_done_events(tmp_path):
         patch("outwarp_server.api.default_config_dir", return_value=tmp_path),
         patch("outwarp_server.api.default_config_path", return_value=tmp_path / "srv.json"),
         patch("outwarp_server.api.generate_tls_cert",
-              return_value=(tmp_path / "c.pem", tmp_path / "k.pem", "FP:FP")),
+              return_value=(tmp_path / "c.pem", tmp_path / "k.pem", "FP:FP", "SPKI")),
         patch("outwarp_server.api.generate_wg_keypair", return_value=("priv", "pub")),
         patch("outwarp_server.api.find_wstunnel", return_value=Path("/usr/bin/wstunnel")),
         patch("outwarp_server.api.find_wg", return_value=Path("/usr/bin/wg")),

@@ -75,3 +75,79 @@ class TestRunSetup:
         (tmp_path / "server_config.json").write_text("{}", encoding="utf-8")
         ret = run_setup(tmp_path)
         assert ret == 0
+
+
+class TestTransportBranch:
+    """The wizard's domain question decides everything downstream: which
+    process holds the public port, what wstunnel is told to bind, and whether
+    the profiles it later issues pin a certificate or validate a chain."""
+
+    def _run(self, tmp_path: Path, *, use_domain: bool, prompts: list[str]):
+        from outwarp_server.platforms.base import PrerequisiteResult, PrerequisiteStatus
+
+        platform = MagicMock()
+        platform.check_prerequisites.return_value = PrerequisiteResult(
+            status=PrerequisiteStatus.OK, detail="", remediation=""
+        )
+        platform.is_wg_active.return_value = False
+
+        with (
+            patch("outwarp_server.setup_wizard._check_root", return_value=True),
+            patch("outwarp_server.setup_wizard._find_wstunnel",
+                  return_value=Path("/usr/local/bin/wstunnel")),
+            patch("outwarp_server.setup_wizard._find_wg", return_value=Path("/usr/bin/wg")),
+            patch("outwarp_server.setup_wizard.get_server_platform", return_value=platform),
+            patch("outwarp_server.setup_wizard.generate_wg_keypair",
+                  return_value=("priv", "pub")),
+            patch("outwarp_server.setup_wizard.Confirm.ask", return_value=use_domain),
+            patch("outwarp_server.setup_wizard.Prompt.ask", side_effect=prompts),
+            patch("outwarp_server.setup_wizard.IntPrompt.ask",
+                  side_effect=lambda _p, default=0: default),
+            patch("outwarp_server.setup_wizard._configure_ufw_if_active"),
+            patch("outwarp_server.setup_wizard._enable_ip_forwarding"),
+            patch("outwarp_server.setup_wizard._probe_localhost", return_value=True),
+            patch("outwarp_server.setup_wizard._configure_caddy") as caddy_,
+        ):
+            ret = run_setup(tmp_path)
+        return ret, platform, caddy_
+
+    def test_domain_branch_configures_caddy_and_moves_wstunnel_to_loopback(
+        self, tmp_path: Path
+    ) -> None:
+        from outwarp_server.config import ServerConfig
+
+        ret, platform, caddy_ = self._run(
+            tmp_path, use_domain=True,
+            prompts=["vpn.example.com", "", "10.0.0.0/24", "10.0.0.1/24"],
+        )
+        assert ret == 0
+        caddy_.assert_called_once()
+
+        cfg = ServerConfig.load(tmp_path / "server_config.json")
+        assert cfg.tls_mode == "acme"
+        assert cfg.endpoint == "vpn.example.com"
+
+        exec_start = platform.install_wstunnel_service.call_args[0][0]
+        assert "ws://127.0.0.1:8080" in exec_start
+        assert "--tls-certificate" not in exec_start
+
+    def test_no_domain_branch_keeps_wstunnel_on_the_public_port(
+        self, tmp_path: Path
+    ) -> None:
+        from outwarp_server.config import ServerConfig
+
+        with patch("outwarp_server.setup_wizard._detect_public_ip",
+                   return_value="203.0.113.42"):
+            ret, platform, caddy_ = self._run(
+                tmp_path, use_domain=False,
+                prompts=["203.0.113.42", "10.0.0.0/24", "10.0.0.1/24"],
+            )
+        assert ret == 0
+        caddy_.assert_not_called()
+
+        cfg = ServerConfig.load(tmp_path / "server_config.json")
+        assert cfg.tls_mode == "self-signed"
+
+        exec_start = platform.install_wstunnel_service.call_args[0][0]
+        assert "wss://0.0.0.0:443" in exec_start
+        assert "--tls-certificate" in exec_start

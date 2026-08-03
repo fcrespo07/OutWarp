@@ -108,7 +108,8 @@ def test_list_profiles_returns_active_only():
     mgr.config.name = ""  # falls back to tunnel_name as the display name
     mgr.config.server.endpoint = "1.2.3.4"
     mgr.config.server.port = 443
-    mgr.config.tls.cert_fingerprint_sha256 = "AB:CD"
+    mgr.config.tls.pin_value = "AB:CD"
+    mgr.config.tls.verify = "pin"
     mgr.config.wireguard.tunnel_name = "WG"
     mgr.config.wireguard.client_address = "10.0.0.2/32"
     mgr.config.wireguard.dns = ["1.1.1.1"]
@@ -892,7 +893,10 @@ def test_run_update_downloads_launches_and_quits(_mock_check, mock_dl):
     api._emit = MagicMock()
     api._launch_installer = MagicMock(return_value=True)
     api._quit_for_update = MagicMock()
-    api._run_update()
+    # This test is about the apply path; verification has its own coverage in
+    # test_updater.py and would otherwise reject the fake release outright.
+    with patch("outwarp.api.updater.verify_download", return_value=(True, "ok")):
+        api._run_update()
     mock_dl.assert_called_once()
     api._launch_installer.assert_called_once()
     api._quit_for_update.assert_called_once()
@@ -914,7 +918,10 @@ def test_run_update_does_not_quit_if_installer_launch_fails(_mock_check, _mock_d
     api._emit = MagicMock()
     api._launch_installer = MagicMock(return_value=False)
     api._quit_for_update = MagicMock()
-    api._run_update()
+    # Verification is stubbed out so the assertion is about the launch failure
+    # and not about the fake release having no signature.
+    with patch("outwarp.api.updater.verify_download", return_value=(True, "ok")):
+        api._run_update()
     api._quit_for_update.assert_not_called()
     phases = [c.args[1]["phase"] for c in api._emit.call_args_list]
     assert phases[-1] == "error"

@@ -96,10 +96,12 @@ After running the server installer, the following commands are available:
 
 | Command | Description |
 |---|---|
-| `outwarp-server setup` | Interactive setup wizard |
-| `outwarp-server add-client <name>` | Generate a `.owcfg` file for a new client |
+| `outwarp-server setup` | Interactive setup wizard — asks whether you have a domain and configures the transport accordingly |
+| `outwarp-server add-client <name>` | Issue a `.owcfg` for a new client (one-time enrolment token; add `--embed-key` for the legacy format) |
 | `outwarp-server list-clients` | List registered clients with their live status (online/offline, last handshake, transfer) |
-| `outwarp-server revoke-client <name>` | Remove a client |
+| `outwarp-server revoke-client <name>` | Remove a client and kill any outstanding enrolment token |
+| `outwarp-server rotate-client <name>` | Re-issue a client's keys, keeping its IP and expiry |
+| `outwarp-server renew-cert` | Reissue the self-signed TLS certificate, reusing the key so clients keep validating |
 | `outwarp-server prune-expired` | Drop clients past their `expires_at` date |
 | `outwarp-server status` | Show service status |
 | `outwarp-server restart` | Regenerate config and fully restart wg-quick + wstunnel |
@@ -111,9 +113,47 @@ After running the server installer, the following commands are available:
 
 ## How it works
 
-1. The **server** wizard installs wstunnel as a systemd service, generates WireGuard keys and a self-signed TLS certificate, and detects its public IP.
-2. For each client, `add-client` generates a `.owcfg` file containing everything needed to connect (keys, endpoint, certificate fingerprint, routing rules).
-3. The **client** imports the `.owcfg` file, sets up the WireGuard interface, adds a static route to bypass the tunnel for wstunnel traffic, and maintains the connection with automatic reconnection and exponential backoff.
+1. The **server** wizard installs wstunnel as a systemd service, generates WireGuard keys, and configures the public port according to which transport branch you chose (below).
+2. For each client, `add-client` writes a `.owcfg` containing everything needed to connect — endpoint, server public key, routing rules, and a one-time enrolment token.
+3. The **client** imports the `.owcfg`, **generates its own WireGuard keypair locally**, and redeems the token to register the public half. Its private key never leaves the machine and the server never sees it.
+4. The client then brings up the WireGuard interface, excludes the server's address from the tunnel so wstunnel traffic does not loop, and maintains the connection with automatic reconnection and exponential backoff.
+
+### Two transport branches
+
+The setup wizard asks one question that decides how the server presents itself on
+its public port. Pick based on the networks your clients need to work from.
+
+| | **With a domain** (recommended) | **No domain** |
+|---|---|---|
+| Port 443 held by | Caddy, with a Let's Encrypt certificate | wstunnel, with a self-signed certificate |
+| What a visitor sees at `/` | An ordinary web page | A wstunnel error |
+| Client authenticates the server by | Validating the chain against the system CA store — wstunnel enforces it in-band too | Pinning the certificate's public key |
+| Works on a network that inspects TLS | **Yes** | No — a self-signed certificate is trivially spotted |
+| Needs | A domain pointing at the server | Nothing |
+| Extra open port for enrolment | No (published on 443 under the secret path) | Yes (default 8444/tcp) |
+
+The self-signed branch is enough where the only obstacle is blocked UDP — hotel
+Wi-Fi, CGNAT, a firewall that allows 443/tcp. It is *not* enough against a
+network that inspects the TLS handshake, because no self-signed certificate has a
+chain to validate. That is what the domain branch is for.
+
+Both branches carry the same WireGuard tunnel with the same end-to-end
+encryption; the difference is only in how much the transport blends in.
+
+### Client profiles are not permanent credentials
+
+A `.owcfg` used to contain the client's WireGuard private key, which made the
+file a complete, permanent credential for as long as it existed — including
+while it sat in a chat app or an inbox. It now carries a **single-use enrolment
+token valid for 15 minutes** instead. Consequences worth knowing:
+
+- Send the file promptly. After the window, ask the admin for a new one.
+- The client needs WireGuard tools installed at import time, because it generates
+  its own key there.
+- If the client reports *"this token was already redeemed"*, the file was
+  intercepted. Revoke the client and issue a new profile.
+- `--embed-key` restores the old behaviour for clients too old to enrol. It is
+  supported, but the file is then a permanent credential again.
 
 ---
 
@@ -125,6 +165,8 @@ After running the server installer, the following commands are available:
 | WireGuard | Installed automatically by the installer |
 | wstunnel | Downloaded automatically by the installer |
 | A VPS or server with a public port open (default: 443) | Required for the server role |
+| Caddy | Only for the domain branch; the wizard writes its configuration and tells you how to install it |
+| A domain name | Optional, but the only way to work on networks that inspect TLS |
 
 ---
 

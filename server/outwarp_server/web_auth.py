@@ -41,16 +41,38 @@ def _token_path(config_dir: Path) -> Path:
     return config_dir / "admin_token.json"
 
 
-def _hash_token(token: str, salt: bytes) -> bytes:
+def hash_secret(
+    secret: str,
+    salt: bytes,
+    *,
+    n: int = _SCRYPT_N,
+    r: int = _SCRYPT_R,
+    p: int = _SCRYPT_P,
+    dklen: int = _SCRYPT_DKLEN,
+) -> bytes:
+    """scrypt with this module's cost parameters.
+
+    Shared with :mod:`outwarp_server.enrollment`, which stores one-time tokens
+    the same way, so both live-token stores agree on cost and neither has to
+    keep its own copy of the parameters.
+    """
     return hashlib.scrypt(
-        token.encode("utf-8"),
+        secret.encode("utf-8"),
         salt=salt,
-        n=_SCRYPT_N,
-        r=_SCRYPT_R,
-        p=_SCRYPT_P,
-        dklen=_SCRYPT_DKLEN,
-        maxmem=128 * _SCRYPT_N * _SCRYPT_R * 2,
+        n=n,
+        r=r,
+        p=p,
+        dklen=dklen,
+        maxmem=128 * n * r * 2,
     )
+
+
+def scrypt_params() -> dict[str, int]:
+    return {"n": _SCRYPT_N, "r": _SCRYPT_R, "p": _SCRYPT_P, "dklen": _SCRYPT_DKLEN}
+
+
+def _hash_token(token: str, salt: bytes) -> bytes:
+    return hash_secret(token, salt)
 
 
 def token_is_set(config_dir: Path) -> bool:

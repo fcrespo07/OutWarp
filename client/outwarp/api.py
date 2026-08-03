@@ -113,7 +113,10 @@ def _profile_from_config(cfg: ClientConfig) -> dict[str, Any]:
         "id": wg.tunnel_name or cfg.server.endpoint,
         "name": cfg.name or wg.tunnel_name or cfg.server.endpoint,
         "endpoint": f"{cfg.server.endpoint}:{cfg.server.port}",
-        "fingerprint": cfg.tls.cert_fingerprint_sha256,
+        # For a CA-mode profile there is no pin to show; the UI renders the
+        # trust model from tls_verify instead of an empty field.
+        "fingerprint": cfg.tls.pin_value,
+        "tls_verify": cfg.tls.verify,
         "client_address": wg.client_address,
         "dns": list(wg.dns),
         "mtu": wg.mtu,
@@ -946,7 +949,10 @@ class Api:
         self._emit("update", {"phase": "verifying", "latest": latest})
         try:
             ok, detail = updater.verify_download(
-                dest, info.get("asset_name") or "", info.get("checksums_url") or ""
+                dest,
+                info.get("asset_name") or "",
+                info.get("checksums_url") or "",
+                info.get("signature_url") or "",
             )
         except Exception as exc:
             log.exception("update checksum verification crashed")

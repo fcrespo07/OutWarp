@@ -21,9 +21,7 @@ class KubernetesServerPlatform(LinuxServerPlatform):
 
     # ── wstunnel: managed by ServerManager as a subprocess ───────────────────
 
-    def install_wstunnel_service(  # noqa: ANN001
-        self, port, cert_path, key_path, upgrade_path, wg_listen_port, wstunnel_bin,
-    ) -> None:
+    def install_wstunnel_service(self, exec_start: str) -> None:
         pass
 
     def uninstall_wstunnel_service(self) -> None:

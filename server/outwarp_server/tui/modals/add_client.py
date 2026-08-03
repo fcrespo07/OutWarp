@@ -68,7 +68,7 @@ class AddClientModal(ModalScreen[operations.AddClientResult | None]):
             return
         try:
             self._result = operations.add_client(
-                self.app.config, name, config_path=self.app.config_path,
+                self.app.config, name, config_path=self.app.config_path, enroll=True,
             )
         except ValueError as exc:
             self.query_one("#result", Static).update(f"[{BAD}]{exc}[/]")
@@ -80,11 +80,24 @@ class AddClientModal(ModalScreen[operations.AddClientResult | None]):
         self.app.reload_config()
         result = self._result
         short_fp = result.owcfg_sha256.replace(":", "")[:10].lower()
+        if result.enrollment_expires_at:
+            import datetime as _dt
+            deadline = _dt.datetime.fromtimestamp(
+                result.enrollment_expires_at, _dt.UTC
+            ).strftime("%H:%M UTC")
+            status = (
+                f"  one-time enrolment token, valid until [{WARN}]{deadline}[/]\n"
+                f"  no private key in this file — the client makes its own"
+            )
+        else:
+            status = (
+                f"  hot-added to wireguard: "
+                f"{f'[{OK}]yes[/]' if result.hot_added else f'[{WARN}]no[/]'}"
+            )
         msg = (
             f"[{OK}]✓[/]  {result.owcfg_path.name}  sha256 {short_fp}…\n"
             f"  written to {result.owcfg_path}\n"
-            f"  hot-added to wireguard: "
-            f"{f'[{OK}]yes[/]' if result.hot_added else f'[{WARN}]no[/]'}\n"
+            f"{status}\n"
             f"[{DIM}]Press Q to view as QR, or Esc to close.[/]"
         )
         self.query_one("#result", Static).update(msg)

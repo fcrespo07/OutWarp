@@ -13,7 +13,6 @@ from pathlib import Path
 from outwarp_server.binaries import find_wg
 from outwarp_server.config import ClientEntry, ServerConfig, default_config_path
 from outwarp_server.crypto import generate_psk, generate_wg_keypair
-from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
 from outwarp_server.owcfg import build_owcfg, write_owcfg
 from outwarp_server.platforms import PlatformError, get_server_platform
 from outwarp_server.wireguard import (
@@ -66,25 +65,51 @@ class ServerState(Enum):
     ERROR = "error"
 
 
-def _build_wstunnel_command(config: ServerConfig, wstunnel_bin: Path) -> list[str]:
-    # NOTE: ``http_upgrade_path_prefix`` ends up in /proc/<pid>/cmdline (world-
-    # readable on most Linux setups). That's intentional: this prefix is a
-    # *path obfuscation* gate, not an authentication secret. The real auth is
-    # the TLS-fingerprint pin (client refuses any mismatched cert) plus
-    # WireGuard's own keypair-based handshake (server only accepts peers that
-    # ``add-client`` registered). A local attacker who scrapes the prefix from
-    # cmdline still needs a registered WG keypair before they can do anything
-    # past the wstunnel front-door — by design, leaking it does not break the
-    # security model.
-    return [
+def build_wstunnel_command(config: ServerConfig, wstunnel_bin: Path) -> list[str]:
+    """The one place the wstunnel server invocation is defined.
+
+    Both the foreground subprocess and the systemd unit's ExecStart render from
+    this, because when they were written separately they drifted.
+
+    In the "acme" branch wstunnel drops TLS entirely and binds loopback: Caddy
+    owns the public port and the certificate, and is the only thing that ever
+    connects here. Binding 127.0.0.1 rather than 0.0.0.0 matters — otherwise the
+    plain-WebSocket listener would be reachable from the network directly,
+    bypassing the front.
+
+    NOTE: ``http_upgrade_path_prefix`` ends up in /proc/<pid>/cmdline (world-
+    readable on most Linux setups). That's intentional: this prefix is a
+    *path obfuscation* gate, not an authentication secret. The real auth is
+    the TLS-fingerprint pin (client refuses any mismatched cert) plus
+    WireGuard's own keypair-based handshake (server only accepts peers that
+    ``add-client`` registered). A local attacker who scrapes the prefix from
+    cmdline still needs a registered WG keypair before they can do anything
+    past the wstunnel front-door — by design, leaking it does not break the
+    security model.
+    """
+    cmd = [
         str(wstunnel_bin),
         "server",
         "--restrict-to", f"127.0.0.1:{config.wg_listen_port}",
-        "--tls-certificate", config.cert_path,
-        "--tls-private-key", config.key_path,
-        "--restrict-http-upgrade-path-prefix", config.http_upgrade_path_prefix,
-        f"wss://0.0.0.0:{config.port}",
     ]
+    if config.behind_reverse_proxy:
+        cmd += [
+            "--restrict-http-upgrade-path-prefix", config.http_upgrade_path_prefix,
+            f"ws://127.0.0.1:{config.internal_ws_port}",
+        ]
+    else:
+        cmd += [
+            "--tls-certificate", config.cert_path,
+            "--tls-private-key", config.key_path,
+            "--restrict-http-upgrade-path-prefix", config.http_upgrade_path_prefix,
+            f"wss://0.0.0.0:{config.port}",
+        ]
+    return cmd
+
+
+# Kept so existing internal callers and tests that reach for the private name
+# keep working; the public one is what new code should use.
+_build_wstunnel_command = build_wstunnel_command
 
 
 def _get_wg_conf(config: ServerConfig) -> str:
@@ -106,6 +131,7 @@ class ServerManager:
         # Traffic-history scheduler lives for the duration of the run; the TUI
         # dashboard reads its DB to render the 24h sparkline + top talkers.
         self._traffic_scheduler = None
+        self._enroll_server = None
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -140,6 +166,14 @@ class ServerManager:
                 log.exception("Error stopping traffic scheduler")
             self._traffic_scheduler = None
 
+        if self._enroll_server is not None:
+            try:
+                self._enroll_server.shutdown()
+                self._enroll_server.server_close()
+            except Exception:
+                log.exception("Error stopping enrolment listener")
+            self._enroll_server = None
+
         proc = self._wstunnel
         if proc is not None:
             self._wstunnel = None
@@ -168,59 +202,30 @@ class ServerManager:
         self.start()
 
     def add_client(self, name: str, *, expires_at: str = "") -> Path:
-        """Generate a new client, update server config, return path to .owcfg.
+        """Register a new client and return the path to its .owcfg.
 
+        Delegates to :func:`outwarp_server.operations.add_client` so the GUI,
+        the TUI and the CLI all take exactly one path through key handling —
+        this used to be a second implementation, and it is the kind of
+        duplication that quietly diverges.
+
+        Enrolment mode: the profile carries a one-time token instead of a
+        private key, and the peer is admitted when the client redeems it.
         `expires_at` is an optional ISO date (YYYY-MM-DD); the client refuses an
         expired profile and `prune_expired` can revoke it server-side.
         """
-        name = validate_client_name(name)
-        config = self._config
+        from outwarp_server import operations
 
-        for c in config.clients:
-            if c.name == name:
-                raise ValueError(f"Client '{name}' already exists")
-
-        wg_bin = find_wg()
-        private_key, public_key = generate_wg_keypair(Path(wg_bin) if wg_bin else None)
-        try:
-            psk = generate_psk(Path(wg_bin) if wg_bin else None)
-        except Exception as exc:
-            log.warning("Could not generate preshared key (continuing without one): %s", exc)
-            psk = ""
-
-        allocated = [c.address for c in config.clients]
-        try:
-            client_address = next_available_ip(config.subnet, config.server_address, allocated)
-        except PoolExhaustedError as exc:
-            raise ValueError(str(exc)) from exc
-
-        try:
-            add_peer_live(public_key, client_address, psk=psk)
-        except Exception as exc:
-            log.warning("Could not hot-add peer (WireGuard may not be running): %s", exc)
-
-        new_client = ClientEntry(
-            name=name, public_key=public_key, address=client_address,
-            psk=psk, expires_at=expires_at,
+        result = operations.add_client(
+            self._config,
+            name,
+            config_path=default_config_path(),
+            expires_at=expires_at,
+            enroll=True,
         )
-        updated = replace(config, clients=[*config.clients, new_client])
-        updated.save(default_config_path())
-        self._config = updated
-
-        # Persist updated WG config (hot-reload or full restart)
-        try:
-            get_server_platform().install_wg_config(_get_wg_conf(updated))
-        except PlatformError as exc:
-            log.warning("Could not persist WG config: %s", exc)
-
-        warpcfg = build_owcfg(
-            config, name, private_key, client_address,
-            preshared_key=psk, expires_at=expires_at,
-        )
-        warpcfg_path = Path.cwd() / f"{name}.owcfg"
-        write_owcfg(warpcfg, warpcfg_path)
-        log.info("Client '%s' added — .owcfg at %s", name, warpcfg_path)
-        return warpcfg_path
+        self._config = result.config
+        log.info("Client '%s' added — .owcfg at %s", name, result.owcfg_path)
+        return result.owcfg_path
 
     def prune_expired(self, *, today: str = "") -> list[str]:
         """Revoke every client whose expires_at is strictly before `today`
@@ -422,9 +427,43 @@ class ServerManager:
             except Exception:
                 log.exception("Could not start traffic-history scheduler")
 
+            self._start_enroll_listener()
+
         except Exception:
             log.exception("Unexpected error starting server")
             self._set_state(ServerState.ERROR)
+
+    def _start_enroll_listener(self) -> None:
+        """Bring up the token-redemption endpoint alongside the transport.
+
+        Failing to bind is logged and swallowed: a tunnel that works for every
+        already-enrolled client is far better than refusing to start because new
+        ones cannot be admitted right now.
+        """
+        try:
+            from outwarp_server import enroll_server
+            self._enroll_server = enroll_server.serve(
+                self._config, default_config_path(), on_enrolled=self._on_enrolled,
+            )
+        except Exception:
+            log.exception(
+                "Could not start the enrolment listener on port %s — clients holding "
+                "an enrolment profile will not be able to complete import",
+                self._config.enroll_port,
+            )
+            self._enroll_server = None
+
+    def _on_enrolled(self, name: str) -> None:
+        """Refresh the in-memory config after a client enrolled out-of-band.
+
+        The listener writes the new peer straight to disk, so without this the
+        manager's copy would keep reporting the client as pending.
+        """
+        del name
+        try:
+            self._config = ServerConfig.load(default_config_path())
+        except Exception:
+            log.exception("Could not reload config after enrolment")
 
     def _read_output(self, proc: subprocess.Popen) -> None:
         try:

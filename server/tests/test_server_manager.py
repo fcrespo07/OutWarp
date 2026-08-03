@@ -92,3 +92,38 @@ def test_validate_client_name_rejects_unsafe_names(name):
 def test_validate_client_name_rejects_non_string():
     with pytest.raises(ValueError):
         validate_client_name(None)  # type: ignore[arg-type]
+
+
+# --- transport branch: what wstunnel is actually told to do ---
+
+class TestWstunnelCommandBranches:
+    def _cmd(self, **overrides):
+        from dataclasses import replace
+
+        from outwarp_server.server_manager import build_wstunnel_command
+
+        return build_wstunnel_command(
+            replace(_config([]), **overrides), Path("/usr/bin/wstunnel")
+        )
+
+    def test_self_signed_holds_the_public_port_with_its_own_cert(self) -> None:
+        cmd = self._cmd()
+        assert "wss://0.0.0.0:443" in cmd
+        assert "--tls-certificate" in cmd
+        assert "--tls-private-key" in cmd
+
+    def test_acme_drops_tls_and_binds_loopback(self) -> None:
+        """Caddy owns the certificate and the public port in this branch; the
+        listener must not be reachable from the network, or anyone knowing the
+        path could skip the front entirely."""
+        cmd = self._cmd(tls_mode="acme", internal_ws_port=8080)
+        assert "ws://127.0.0.1:8080" in cmd
+        assert "0.0.0.0" not in " ".join(cmd)
+        assert "--tls-certificate" not in cmd
+        assert "--tls-private-key" not in cmd
+
+    def test_both_branches_keep_the_path_gate_and_the_wg_restriction(self) -> None:
+        for cmd in (self._cmd(), self._cmd(tls_mode="acme")):
+            assert "--restrict-http-upgrade-path-prefix" in cmd
+            assert "--restrict-to" in cmd
+            assert cmd[cmd.index("--restrict-to") + 1] == "127.0.0.1:51820"

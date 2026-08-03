@@ -58,10 +58,13 @@ currently `es`/`en`. Adding a language is a full key translation per file.
 
 ## Planned — server side
 
-### Let's Encrypt + dynamic DNS branch
-The wizard defaults to a self-signed cert + fingerprint pinning (no domain
-needed). A real-domain branch (ACME + DDNS) is sketched in `CLAUDE.md` but needs
-a domain to validate end-to-end, so it's deferred.
+### Dynamic DNS in the domain branch
+The ACME branch shipped in 0.11.0: with a domain, Caddy fronts port 443 with a
+real certificate and OutWarp generates and reloads its configuration. What is
+still missing is the dynamic-DNS half — a server on a residential connection has
+to keep its A record pointing at a changing IP by itself. Deferred because every
+DDNS provider has a different API and the branch is fully usable today for
+anyone with a static IP or an existing DDNS client.
 
 ### Server auto-update
 The client auto-updates; the server (a system service) does not. Auto-applying a
@@ -73,8 +76,38 @@ and the GUI). An opt-in `/metrics` text endpoint would let Grafana scrape them.
 Deferred because it adds a listening socket = extra attack surface to design
 carefully (bind address, auth).
 
+## Planned — security follow-ups
+
+### Retire the unsigned-manifest fallback
+`verify_download` still accepts a release that publishes no `SHA256SUMS.txt`, so
+a client can update off releases that predate the manifest. Once the release key
+is configured (see `docs/RELEASE_SIGNING.md`) and no meaningfully-used version
+predates the first signed release, that branch should become fail-closed
+unconditionally in both updaters.
+
+### uTLS / ClientHello mimicry
+The domain branch fixes what the certificate looks like, and the browser
+`User-Agent` covers L7 header rules, but the TLS fingerprint itself is still
+rustls' — a JA3/JA4 that matches no browser. Fixing it means replacing the
+transport, since wstunnel does not do ClientHello mimicry. That is a rewrite of
+a layer, not an increment, so it is deliberately not scheduled. Note that the
+`--tls-ech-enable` flag wstunnel already exposes would hide the SNI when the
+front supports ECH, which is a cheaper partial step worth evaluating first.
+
+### Signature verification in `install.sh`
+The Linux bootstrap checks the wheel against `SHA256SUMS.txt` but not its
+signature — it would need `minisign` present before OutWarp is installed. Low
+priority: that path is `curl … | sudo bash`, so it already extends full trust to
+GitHub. The in-app updaters, which run unattended, do verify.
+
 ## Distribution — needs external resources
 
+- **Release signing (minisign).** ✅ Done in 0.11.0 — key ID
+  `3E1FCD8BF652EC28`, public half committed as `outwarp-release.pub` and
+  compiled into both updaters. Every release from 0.11.0 on must ship a
+  `SHA256SUMS.txt.minisig`; see `docs/RELEASE_SIGNING.md` for the per-release
+  step. This is *not* a substitute for the Authenticode certificate below —
+  it authenticates the update channel, not the installer SmartScreen sees.
 - **Code signing (a real certificate).** The build hook exists; an OV/EV
   Authenticode cert (paid, identity-verified) is needed to actually kill the
   SmartScreen/UAC warning. Tracked in the pre-1.0 checklist in `CLAUDE.md`.

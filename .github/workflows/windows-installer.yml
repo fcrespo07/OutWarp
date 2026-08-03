@@ -95,6 +95,19 @@ jobs:
           $exes = Get-ChildItem installer/windows/output/OutWarpSetup-*.exe
           if (-not $exes) { throw "no OutWarpSetup-*.exe produced" }
           gh release upload $tag $exes.FullName installer/windows/output/SHA256SUMS.txt --clobber
+          # The manifest just changed, so any signature already attached to this
+          # release now covers the old content. Drop it rather than leave a stale
+          # one that would fail verification in a confusing way.
+          gh release delete-asset $tag SHA256SUMS.txt.minisig --yes 2>$null
+          $global:LASTEXITCODE = 0
+
+      - name: Remind the maintainer to sign the manifest
+        shell: pwsh
+        run: |
+          # Signing happens on the maintainer's machine, never here: a key CI
+          # could reach would be a key an attacker who owns CI could reach, and
+          # the signature would prove nothing. See docs/RELEASE_SIGNING.md.
+          Write-Host "::notice::SHA256SUMS.txt is final. Sign it locally and upload SHA256SUMS.txt.minisig — see docs/RELEASE_SIGNING.md"
 
       - name: Upload installers as workflow artifacts (debugging)
         uses: actions/upload-artifact@v4
