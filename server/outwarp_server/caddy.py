@@ -89,6 +89,10 @@ def build_site_config(
     ``enroll_port`` publishes the enrolment endpoint on the same public port
     under a sibling of the secret path, so admitting new clients costs no extra
     open port in this branch.
+
+    Paths are emitted POSIX-style regardless of the host: a Caddyfile is not a
+    Windows path context, and str(Path) would turn the decoy directory into
+    backslashes there.
     """
     if not domain:
         raise CaddyError("A domain is required to build the Caddy site config")
@@ -117,7 +121,7 @@ def build_site_config(
 \t}}
 \treverse_proxy @outwarp 127.0.0.1:{internal_ws_port}
 {enroll_block}
-\troot * {decoy_dir}
+\troot * {decoy_dir.as_posix()}
 \tfile_server
 }}
 """

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from outwarp_server.setup_wizard import _detect_public_ip, _probe_localhost, run_setup
 
@@ -111,6 +114,10 @@ class TestTransportBranch:
             ret = run_setup(tmp_path)
         return ret, platform, caddy_
 
+    @pytest.mark.skipif(
+        sys.platform != "linux",
+        reason="the domain branch is Linux-only (Caddy under systemd)",
+    )
     def test_domain_branch_configures_caddy_and_moves_wstunnel_to_loopback(
         self, tmp_path: Path
     ) -> None:
@@ -151,3 +158,21 @@ class TestTransportBranch:
         exec_start = platform.install_wstunnel_service.call_args[0][0]
         assert "wss://0.0.0.0:443" in exec_start
         assert "--tls-certificate" in exec_start
+
+
+def test_domain_branch_is_not_offered_off_linux(tmp_path: Path) -> None:
+    """Everything the Caddy front writes lives at POSIX paths; on Windows the
+    question would only produce a config nothing reads."""
+    from outwarp_server import setup_wizard
+
+    # Stops at the missing-wstunnel check, which is well before the domain
+    # question — the point is that the question is never asked at all.
+    with (
+        patch.object(setup_wizard.sys, "platform", "win32"),
+        patch("outwarp_server.setup_wizard._check_root", return_value=True),
+        patch("outwarp_server.setup_wizard._find_wstunnel", return_value=None),
+        patch("outwarp_server.setup_wizard.Confirm.ask") as confirm,
+    ):
+        setup_wizard.run_setup(tmp_path)
+    # Bailed at the missing-wstunnel check, well before the domain question.
+    assert not any("domain" in str(c).lower() for c in confirm.call_args_list)

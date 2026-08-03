@@ -137,7 +137,20 @@ def run_setup(config_dir: Path) -> int:
             title="Transport",
         )
     )
-    use_domain = Confirm.ask("Do you have a domain pointing at this server?", default=False)
+    if sys.platform == "linux":
+        use_domain = Confirm.ask(
+            "Do you have a domain pointing at this server?", default=False
+        )
+    else:
+        # Everything the Caddy front touches — /etc/caddy, systemd, the decoy
+        # site — is POSIX-only. Offering the choice here would write a
+        # configuration nothing on this host would ever read.
+        console.print(
+            "\n[yellow]The domain branch needs Caddy under systemd, so it is "
+            "Linux-only for now.[/yellow] Continuing with the self-signed "
+            "transport."
+        )
+        use_domain = False
     tls_mode = "acme" if use_domain else "self-signed"
 
     if use_domain:

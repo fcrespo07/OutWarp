@@ -285,8 +285,13 @@ class TestImportRunsEnrollment:
         from outwarp.config import import_owcfg_text
 
         dest = tmp_path / "config.json"
-        with patch("outwarp.enroll.urllib.request.urlopen") as urlopen:
+        # Asserted on keygen rather than urlopen: patching
+        # outwarp.enroll.urllib.request.urlopen replaces the *global* urlopen,
+        # so a stray call from any other test's background thread would fail
+        # this. Key generation is unambiguously part of enrolment and nothing
+        # else touches it.
+        with patch("outwarp.enroll.generate_keypair") as keygen:
             cfg = import_owcfg_text(self._v3_owcfg(), dest, enroll=False)
-        urlopen.assert_not_called()
+        keygen.assert_not_called()
         assert cfg.enrollment.token == "ow_enroll_abc"
         assert cfg.wireguard.client_private_key == ""
