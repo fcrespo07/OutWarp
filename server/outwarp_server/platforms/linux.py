@@ -120,7 +120,11 @@ class LinuxServerPlatform(ServerPlatform):
     def is_wg_active(self, interface: str = "wg0") -> bool:
         return Path(f"/sys/class/net/{interface}").exists()
 
-    def restart_wg(self, interface: str = "wg0") -> None:
+    def restart_wg(self, interface: str = "wg0", subnet: str | None = None) -> None:
+        # `subnet` is unused here: wg-quick's PostUp/PostDown are symmetric by
+        # construction (see wireguard.py), so a plain restart already
+        # reapplies the NAT/forwarding rules the config embeds — unlike
+        # Windows, which has no such hooks (FIX-07).
         unit = f"wg-quick@{interface}.service"
         try:
             _run(["systemctl", "restart", unit])

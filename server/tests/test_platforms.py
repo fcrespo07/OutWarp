@@ -298,3 +298,44 @@ class TestWindowsCreateNatRaises:
             # Should not raise, should not attempt New-NetNat (only one _ps call)
             self._platform()._create_nat("10.0.0.0/24")
         assert mock_ps.call_count == 1
+
+
+class TestWindowsRestartWg:
+    """FIX-07 regression: restart_wg() = uninstall_wg_config() (which always
+    tears the NAT down via _remove_nat) + install_wg_config() (which never
+    recreates it — only prepare_system() does, and restart_wg() never called
+    that). Every restart left the server looking healthy — wstunnel up, WG
+    handshakes completing — with silently no return traffic for clients."""
+
+    def _platform(self, tmp_path: Path):
+        from outwarp_server.platforms.windows import WindowsServerPlatform
+
+        p = WindowsServerPlatform()
+        conf_path = tmp_path / f"{p.wg_interface_name()}.conf"
+        conf_path.write_text("[Interface]\n", encoding="utf-8")
+        p.wg_config_dir = lambda: tmp_path  # type: ignore[method-assign]
+        return p
+
+    def test_recreates_nat_after_a_restart(self, tmp_path: Path) -> None:
+        p = self._platform(tmp_path)
+        calls: list[str] = []
+        with (
+            patch.object(p, "uninstall_wg_config", side_effect=lambda i: calls.append("down")),
+            patch.object(p, "install_wg_config", side_effect=lambda t, i: calls.append("up")),
+            patch.object(p, "_create_nat", side_effect=lambda s: calls.append(f"nat:{s}")),
+        ):
+            p.restart_wg(subnet="10.9.0.0/24")
+        assert calls == ["down", "up", "nat:10.9.0.0/24"]
+
+    def test_refuses_to_restart_without_a_subnet(self, tmp_path: Path) -> None:
+        """No silent NAT loss on a caller that forgot to pass one — fail
+        loudly and say exactly why, same as _create_nat's own failure mode."""
+        p = self._platform(tmp_path)
+        with (
+            patch.object(p, "uninstall_wg_config"),
+            patch.object(p, "install_wg_config"),
+            patch.object(p, "_create_nat") as create_nat,
+            pytest.raises(PlatformError, match="no subnet"),
+        ):
+            p.restart_wg()
+        create_nat.assert_not_called()

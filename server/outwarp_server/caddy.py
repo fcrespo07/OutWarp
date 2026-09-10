@@ -21,11 +21,28 @@ appends if missing — servers that already run Caddy for other sites keep worki
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+# RFC 1123 hostname: 1-63-char labels (alnum + hyphen, no leading/trailing
+# hyphen) joined by dots, 253 chars total. FIX-13a: `domain` and `acme_email`
+# used to be interpolated raw into the Caddyfile text below — a value with
+# `{`, `}`, a space or a newline breaks the block's syntax or injects a
+# sibling directive. Only reachable today from setup_wizard.py (a local
+# operator with root), so the practical blast radius is an admin's own typo,
+# but validating at the point the string gets built is free and matches how
+# every other config surface in this project treats untrusted-shaped input.
+_HOSTNAME_RE = re.compile(
+    r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+)
+# Not full RFC 5322 — just enough to keep the Caddyfile `email` directive
+# well-formed and reject anything that could break out of the line.
+_EMAIL_RE = re.compile(r"^[^\s{}\"']+@[^\s{}\"']+\.[^\s{}\"']+$")
 
 CADDYFILE_MAIN = Path("/etc/caddy/Caddyfile")
 CADDY_CONF_D = Path("/etc/caddy/conf.d")
@@ -96,8 +113,12 @@ def build_site_config(
     """
     if not domain:
         raise CaddyError("A domain is required to build the Caddy site config")
+    if not _HOSTNAME_RE.match(domain):
+        raise CaddyError(f"'{domain}' is not a valid hostname")
     if not upgrade_path:
         raise CaddyError("The http upgrade path prefix is required")
+    if acme_email and not _EMAIL_RE.match(acme_email):
+        raise CaddyError(f"'{acme_email}' is not a valid email address")
 
     header = ""
     if acme_email:

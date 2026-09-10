@@ -10,6 +10,22 @@ import pytest
 from outwarp_server.cli import build_parser, main
 from outwarp_server.config import ServerConfig
 
+# Fake but valid-shaped (44-char base64) WireGuard keys — the parser now
+# rejects anything else (FIX-01).
+_LAPTOP_PUB = "gXQJloeiZiH04s3XzAOz2s7bP7liJVsar9Azyr6DFTA="
+_PHONE_PUB = "sQJTdkyLIz+zdULiNAHHtFDlpvl1HztaAU9vZ+i8mZ0="
+
+
+@pytest.fixture(autouse=True)
+def _skip_root_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test in this module runs main() as the invoking (non-root) user.
+
+    FIX-09: --config-dir no longer implies this on its own (a container's
+    real, root-run deployment passes it too); TestRequireRoot below unsets
+    this to exercise the actual gate.
+    """
+    monkeypatch.setenv("OUTWARP_TEST_MODE", "1")
+
 
 def _write_server_config(tmp_path: Path, **overrides: object) -> Path:
     defaults = {
@@ -50,8 +66,13 @@ def test_no_command_raises() -> None:
 
 
 class TestRequireRoot:
-    def test_require_root_called_for_privileged_command(self) -> None:
-        # When --config-dir is omitted, main() should invoke _require_root.
+    """These tests exercise the real gate, so each one starts by undoing the
+    module's autouse OUTWARP_TEST_MODE fixture."""
+
+    def test_require_root_called_for_privileged_command(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("OUTWARP_TEST_MODE", raising=False)
         # We patch _require_root to assert it's called and to short-circuit
         # before the real handler tries to read /etc paths.
         with patch("outwarp_server.cli._require_root") as mock_req:
@@ -60,8 +81,35 @@ class TestRequireRoot:
                 main(["status"])
             mock_req.assert_called_once_with("status")
 
-    def test_require_root_skipped_with_config_dir(self, tmp_path: Path) -> None:
-        # Tests pass --config-dir and should NOT trip the root check.
+    def test_require_root_still_enforced_with_config_dir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """FIX-09: --config-dir alone must NOT bypass the root check — a
+        container's real deployment passes it too (README: `docker run -v
+        outwarp-data:/data`), and that container still runs as root."""
+        monkeypatch.delenv("OUTWARP_TEST_MODE", raising=False)
+        config_dir = _write_server_config(tmp_path)
+        with patch("outwarp_server.cli._require_root") as mock_req:
+            mock_req.side_effect = SystemExit(1)
+            with pytest.raises(SystemExit):
+                main(["--config-dir", str(config_dir), "status"])
+            mock_req.assert_called_once_with("status")
+
+    def test_admin_token_rotate_still_requires_root_with_config_dir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The exact FIX-09 acceptance scenario: `admin-token --rotate
+        --config-dir ...` without root and without OUTWARP_TEST_MODE must
+        fail, not silently rotate the panel's admin token."""
+        monkeypatch.delenv("OUTWARP_TEST_MODE", raising=False)
+        monkeypatch.setattr("os.geteuid", lambda: 1000, raising=False)
+        with pytest.raises(SystemExit):
+            main(["--config-dir", str(tmp_path), "admin-token", "--rotate"])
+
+    def test_require_root_skipped_under_test_mode(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("OUTWARP_TEST_MODE", "1")
         config_dir = _write_server_config(tmp_path)
         with patch("outwarp_server.cli._require_root") as mock_req:
             with patch("outwarp_server.platforms.get_server_platform") as mock_platform:
@@ -185,7 +233,11 @@ class TestAddClient:
         self, mock_keygen: MagicMock, mock_add: MagicMock, tmp_path: Path, monkeypatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        clients = [{"name": "laptop", "public_key": "key", "address": "10.0.0.2/32"}]
+        clients = [{
+            "name": "laptop",
+            "public_key": "vn4n9d0JyfC8GQOt0YuK61s+3+kDkxCZ3a087Q5WSAo=",
+            "address": "10.0.0.2/32",
+        }]
         config_dir = _write_server_config(tmp_path, clients=clients)
         ret = main(["--config-dir", str(config_dir), "add-client", "laptop"])
         assert ret == 1
@@ -213,18 +265,25 @@ class TestPruneExpired:
         self, mock_remove: MagicMock, _plat: MagicMock, tmp_path: Path
     ) -> None:
         clients = [
-            {"name": "old", "public_key": "k1", "address": "10.0.0.2/32",
-             "expires_at": "2000-01-01"},
-            {"name": "live", "public_key": "k2", "address": "10.0.0.3/32",
-             "expires_at": "2999-01-01"},
-            {"name": "forever", "public_key": "k3", "address": "10.0.0.4/32"},
+            {
+                "name": "old", "address": "10.0.0.2/32", "expires_at": "2000-01-01",
+                "public_key": "arnx6499M4j0+dWG9m6Z/VQIDfLERvDlhmiwnAihbdA=",
+            },
+            {
+                "name": "live", "address": "10.0.0.3/32", "expires_at": "2999-01-01",
+                "public_key": "AV9+a8Wur0g3JAieklLME7UJUaa2lBJSJ2XP9NeAMG4=",
+            },
+            {
+                "name": "forever", "address": "10.0.0.4/32",
+                "public_key": "L1BSyf0VsZoYxYTQE2NWgZhhPww06EQJ73k4cJoVnsI=",
+            },
         ]
         config_dir = _write_server_config(tmp_path, clients=clients)
         ret = main(["--config-dir", str(config_dir), "prune-expired", "--yes"])
         assert ret == 0
         cfg = ServerConfig.load(config_dir / "server_config.json")
         assert {c.name for c in cfg.clients} == {"live", "forever"}
-        mock_remove.assert_called_once_with("k1")
+        mock_remove.assert_called_once_with("arnx6499M4j0+dWG9m6Z/VQIDfLERvDlhmiwnAihbdA=")
 
     def test_prune_nothing_to_do(self, tmp_path: Path) -> None:
         config_dir = _write_server_config(tmp_path)
@@ -256,8 +315,8 @@ class TestListClients:
     @patch("outwarp_server.cli.get_live_peers", return_value={})
     def test_list_with_clients(self, _mock_live: MagicMock, tmp_path: Path) -> None:
         clients = [
-            {"name": "laptop", "public_key": "key1", "address": "10.0.0.2/32"},
-            {"name": "phone", "public_key": "key2", "address": "10.0.0.3/32"},
+            {"name": "laptop", "public_key": _LAPTOP_PUB, "address": "10.0.0.2/32"},
+            {"name": "phone", "public_key": _PHONE_PUB, "address": "10.0.0.3/32"},
         ]
         config_dir = _write_server_config(tmp_path, clients=clients)
         ret = main(["--config-dir", str(config_dir), "list-clients"])
@@ -271,11 +330,11 @@ class TestListClients:
 
         from outwarp_server.wireguard import LivePeer
 
-        clients = [{"name": "laptop", "public_key": "key1", "address": "10.0.0.2/32"}]
+        clients = [{"name": "laptop", "public_key": _LAPTOP_PUB, "address": "10.0.0.2/32"}]
         config_dir = _write_server_config(tmp_path, clients=clients)
         mock_live.return_value = {
-            "key1": LivePeer(
-                public_key="key1",
+            _LAPTOP_PUB: LivePeer(
+                public_key=_LAPTOP_PUB,
                 endpoint="192.168.1.50:54321",
                 allowed_ips="10.0.0.2/32",
                 latest_handshake=int(time.time()) - 30,  # 30s ago = online
@@ -297,11 +356,11 @@ class TestListClients:
 
         from outwarp_server.wireguard import LivePeer
 
-        clients = [{"name": "laptop", "public_key": "key1", "address": "10.0.0.2/32"}]
+        clients = [{"name": "laptop", "public_key": _LAPTOP_PUB, "address": "10.0.0.2/32"}]
         config_dir = _write_server_config(tmp_path, clients=clients)
         mock_live.return_value = {
-            "key1": LivePeer(
-                public_key="key1",
+            _LAPTOP_PUB: LivePeer(
+                public_key=_LAPTOP_PUB,
                 endpoint="192.168.1.50:54321",
                 allowed_ips="10.0.0.2/32",
                 latest_handshake=int(time.time()) - 600,  # 10 min ago = offline
@@ -317,7 +376,7 @@ class TestListClients:
     def test_list_shows_unknown_when_wg_down(
         self, _mock_live: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        clients = [{"name": "laptop", "public_key": "key1", "address": "10.0.0.2/32"}]
+        clients = [{"name": "laptop", "public_key": _LAPTOP_PUB, "address": "10.0.0.2/32"}]
         config_dir = _write_server_config(tmp_path, clients=clients)
         ret = main(["--config-dir", str(config_dir), "list-clients"])
         assert ret == 0
@@ -528,7 +587,7 @@ class TestUninstall:
 class TestRevokeClient:
     @patch("outwarp_server.operations.remove_peer_live")
     def test_revoke_removes_client(self, mock_remove: MagicMock, tmp_path: Path) -> None:
-        clients = [{"name": "laptop", "public_key": "key1", "address": "10.0.0.2/32"}]
+        clients = [{"name": "laptop", "public_key": _LAPTOP_PUB, "address": "10.0.0.2/32"}]
         config_dir = _write_server_config(tmp_path, clients=clients)
         ret = main(["--config-dir", str(config_dir), "revoke-client", "laptop"])
         assert ret == 0

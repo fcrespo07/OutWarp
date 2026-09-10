@@ -6,8 +6,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
 from outwarp_server import operations
+from outwarp_server.config import validate_client_name
 from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
-from outwarp_server.server_manager import validate_client_name
 from outwarp_server.tui.tokens import BAD, DIM, OK, WARN
 
 

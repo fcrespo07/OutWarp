@@ -67,7 +67,9 @@ class KubernetesServerPlatform(LinuxServerPlatform):
 
         log.info("WireGuard interface %s is up", interface)
 
-    def restart_wg(self, interface: str = "wg0") -> None:
+    def restart_wg(self, interface: str = "wg0", subnet: str | None = None) -> None:
+        # `subnet` is unused: same reasoning as LinuxServerPlatform — wg-quick's
+        # PostUp/PostDown are symmetric (FIX-07 only affects Windows).
         _run(["wg-quick", "down", interface], check=False)
         try:
             _run(["wg-quick", "up", interface])

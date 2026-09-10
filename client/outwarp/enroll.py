@@ -65,7 +65,9 @@ def enroll(config: ClientConfig) -> ClientConfig:
         raise EnrollError(str(exc)) from exc
 
     _verify_endpoint(config, url)
-    payload = _post(url, {"token": config.enrollment.token, "client_public_key": public_key})
+    payload = _post(
+        url, {"token": config.enrollment.token, "client_public_key": public_key}, config
+    )
 
     # The server is authoritative for the address it reserved; trust its answer
     # over the copy baked into the file in case the pool shifted.
@@ -122,7 +124,7 @@ def _verify_endpoint(config: ClientConfig, url: str) -> None:
         raise EnrollError(f"Could not reach the enrolment endpoint {host}:{port}: {exc}") from exc
 
 
-def _post(url: str, body: dict) -> dict:
+def _post(url: str, body: dict, config: ClientConfig) -> dict:
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -130,14 +132,18 @@ def _post(url: str, body: dict) -> dict:
         method="POST",
         headers={"Content-Type": "application/json", "User-Agent": _USER_AGENT},
     )
-    # A pinned (self-signed) endpoint cannot satisfy the default context, and the
-    # pin check above is what actually authenticated it. For a CA-mode profile
-    # the default context does the verifying, so it is left in place.
     ctx = None
     if url.startswith("https://"):
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        if config.tls.verify != "ca":
+            # A pinned (self-signed) endpoint cannot satisfy the default
+            # context, so relax it here — but only once _verify_endpoint above
+            # has actually authenticated the host against the profile's pin.
+            # In "ca" mode the default context above is left intact: it is the
+            # only thing standing between this POST (token + client public
+            # key) and a MITM, since _verify_endpoint does no pin check there.
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
 
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT, context=ctx) as resp:

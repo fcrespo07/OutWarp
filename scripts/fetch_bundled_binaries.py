@@ -86,7 +86,7 @@ def fetch_wstunnel(version: str, *, force: bool) -> None:
             members = [m for m in tf.getmembers() if m.name.endswith("wstunnel.exe")]
             if not members:
                 raise SystemExit(f"wstunnel.exe not found inside {tarball}")
-            tf.extract(members[0], path=tmp_path)
+            tf.extract(members[0], path=tmp_path, filter="data")
             extracted = tmp_path / members[0].name
         out_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(extracted, out_path)

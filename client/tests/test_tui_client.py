@@ -26,7 +26,8 @@ def _write_owcfg(tmp_path: Path) -> Path:
                    "remote_port": 51820},
         "wireguard": {
             "tunnel_name": "OutWarp", "client_address": "10.13.13.5/32",
-            "client_private_key": "priv", "server_public_key": "pub",
+            "client_private_key": "xif9YhWWYeCAt6e0GjpNuu9W1952Cagg/0weOOzPL6c=",
+            "server_public_key": "RFUpPmm7W7VHTyjKsHdpR5DV/QICx9UXub9dIMAYZsE=",
             "dns": ["1.1.1.1"], "mtu": 1380,
         },
         "routing": {"bypass_ips": ["203.0.113.42"]},

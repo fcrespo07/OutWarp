@@ -21,6 +21,13 @@ _APP_NAME = "OutWarp"
 _SCHEMA_VERSION = 3
 _FINGERPRINT_RE = re.compile(r"^([0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}$")
 _TLS_VERIFY_MODES = ("pin", "ca")
+# A WireGuard base64 key/PSK is always 44 chars, the last one from a fixed
+# small alphabet (the encoded value's top 2 bits are always zero). Mirrors
+# server/outwarp_server/enroll_server.py:_WG_KEY_RE — keep the two in sync.
+_WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$")
+# Linux interface names are capped at IFNAMSIZ-1 = 15 bytes; wg-quick fails
+# outright above that, so this also doubles as an early, clear error.
+_TUNNEL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,15}$")
 
 
 class ConfigError(ValueError):
@@ -238,14 +245,36 @@ def original_config_path(config_path: Path | None = None) -> Path:
 def import_owcfg(
     warpcfg_path: Path, dest: Path | None = None, *, enroll: bool = True
 ) -> ClientConfig:
-    return _finish_import(ClientConfig.load(warpcfg_path), dest, enroll)
+    try:
+        text = warpcfg_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ConfigError(f"Config file not found: {warpcfg_path}") from exc
+    return import_owcfg_text(text, dest, enroll=enroll)
 
 
 def import_owcfg_text(
     text: str, dest: Path | None = None, *, enroll: bool = True
 ) -> ClientConfig:
-    """Like import_owcfg but from an in-memory string (GUI bridge path)."""
-    return _finish_import(ClientConfig.loads(text), dest, enroll)
+    """Like import_owcfg but from an in-memory string (GUI bridge path).
+
+    Verifies the profile's embedded signature (CONCEPTO-C prop.2) before
+    parsing it into a ClientConfig — the raw dict is what the signature was
+    computed over, so verification has to happen here rather than after
+    _parse() has normalised it into the dataclass schema (defaults filled in,
+    fields reordered) and lost byte-for-byte fidelity with what was signed.
+    """
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"Not valid JSON: {exc}") from exc
+
+    from outwarp import profile_trust
+    try:
+        profile_trust.verify_and_pin(raw)
+    except profile_trust.ProfileTrustError as exc:
+        raise ConfigError(str(exc)) from exc
+
+    return _finish_import(_parse(raw), dest, enroll)
 
 
 def _finish_import(config: ClientConfig, dest: Path | None, enroll: bool) -> ClientConfig:
@@ -452,14 +481,40 @@ def _parse_wireguard(d: Any, *, enrolling: bool = False) -> WireguardConfig:
         if enrolling
         else str(_require(d, "client_private_key", "wireguard"))
     )
+    if private_key and not _WG_KEY_RE.match(private_key):
+        raise ConfigError("wireguard.client_private_key is not a valid WireGuard key")
+
+    server_public_key = str(_require(d, "server_public_key", "wireguard"))
+    if not _WG_KEY_RE.match(server_public_key):
+        raise ConfigError("wireguard.server_public_key is not a valid WireGuard key")
+
+    preshared_key = str(d.get("preshared_key", ""))
+    if preshared_key and not _WG_KEY_RE.match(preshared_key):
+        raise ConfigError("wireguard.preshared_key is not a valid WireGuard key")
+
+    tunnel_name = str(_require(d, "tunnel_name", "wireguard"))
+    if not _TUNNEL_NAME_RE.match(tunnel_name):
+        raise ConfigError(
+            "wireguard.tunnel_name must be 1-15 characters of letters, digits, "
+            f"'_' or '-', got {tunnel_name!r}"
+        )
+
+    client_address = str(_require(d, "client_address", "wireguard"))
+    try:
+        ipaddress.ip_interface(client_address)
+    except ValueError as exc:
+        raise ConfigError(
+            f"wireguard.client_address is not a valid IP/prefix: {client_address!r}"
+        ) from exc
+
     return WireguardConfig(
-        tunnel_name=str(_require(d, "tunnel_name", "wireguard")),
-        client_address=str(_require(d, "client_address", "wireguard")),
+        tunnel_name=tunnel_name,
+        client_address=client_address,
         client_private_key=private_key,
-        server_public_key=str(_require(d, "server_public_key", "wireguard")),
-        dns=list(d.get("dns", ["1.1.1.1"])),
+        server_public_key=server_public_key,
+        dns=_parse_ip_list(d.get("dns", ["1.1.1.1"]), "wireguard.dns", allow_cidr=False),
         mtu=mtu,
-        preshared_key=str(d.get("preshared_key", "")),
+        preshared_key=preshared_key,
     )
 
 
@@ -467,9 +522,7 @@ def _parse_routing(d: Any) -> RoutingConfig:
     if not isinstance(d, dict):
         raise ConfigError("Section 'routing' must be an object")
     bypass = _require(d, "bypass_ips", "routing")
-    if not isinstance(bypass, list) or not all(isinstance(ip, str) for ip in bypass):
-        raise ConfigError("routing.bypass_ips must be a list of IP strings")
-    return RoutingConfig(bypass_ips=bypass)
+    return RoutingConfig(bypass_ips=_parse_endpoint_list(bypass, "routing.bypass_ips"))
 
 
 _HOSTILE_MODES = ("auto", "on", "off")

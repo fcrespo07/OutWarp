@@ -20,7 +20,6 @@ from outwarp.config import (
 from outwarp.fallback import (
     ConnectionStrategy,
     StickyStore,
-    all_bypass_ips,
     build_ladder,
     network_signature,
     reorder_for_sticky,
@@ -39,8 +38,8 @@ def _cfg(**overrides) -> ClientConfig:
         wireguard=WireguardConfig(
             tunnel_name="OutWarp",
             client_address="10.0.0.42/32",
-            client_private_key="priv",
-            server_public_key="pub",
+            client_private_key="xif9YhWWYeCAt6e0GjpNuu9W1952Cagg/0weOOzPL6c=",
+            server_public_key="RFUpPmm7W7VHTyjKsHdpR5DV/QICx9UXub9dIMAYZsE=",
         ),
         routing=RoutingConfig(bypass_ips=["203.0.113.42"]),
         reconnect=ReconnectConfig(),
@@ -176,7 +175,9 @@ def test_command_ws_scheme_omits_default_80():
     assert cmd[-1] == "ws://h.example"
 
 
-# --- reorder_for_sticky / all_bypass_ips ---
+# --- reorder_for_sticky ---
+# escape_set() (formerly all_bypass_ips) moved to outwarp.routing / test_routing.py
+# as part of CONCEPTO-B — see OutWarp-fix-plan.md.
 
 def test_reorder_for_sticky_moves_match_to_front():
     ladder = [_strat(id="a"), _strat(id="b"), _strat(id="c")]
@@ -187,24 +188,6 @@ def test_reorder_for_sticky_moves_match_to_front():
 def test_reorder_for_sticky_empty_is_noop():
     ladder = [_strat(id="a"), _strat(id="b")]
     assert [r.id for r in reorder_for_sticky(ladder, "")] == ["a", "b"]
-
-
-def test_all_bypass_ips_unions_everything(monkeypatch):
-    monkeypatch.delenv("HTTPS_PROXY", raising=False)
-    cfg = _cfg(
-        fallback=FallbackConfig(
-            strategies=(
-                StrategyConfig(id="cdn", endpoint="front.example.com", bypass_ips=("1.2.3.0/24",)),
-            )
-        )
-    )
-    ladder = build_ladder(cfg)
-    ips = all_bypass_ips(cfg, ladder)
-    assert "203.0.113.42" in ips          # routing bypass
-    assert "wg.example.com" in ips        # primary endpoint
-    assert "front.example.com" in ips     # provisioned rung endpoint
-    assert "1.2.3.0/24" in ips            # provisioned rung bypass
-    assert len(ips) == len(set(ips))      # de-duplicated
 
 
 # --- StickyStore / network_signature ---
@@ -264,8 +247,8 @@ def test_config_fallback_rejects_bad_pin_mode(tmp_path):
         "wireguard": {
             "tunnel_name": "OutWarp",
             "client_address": "10.0.0.42/32",
-            "client_private_key": "k",
-            "server_public_key": "k",
+            "client_private_key": "xif9YhWWYeCAt6e0GjpNuu9W1952Cagg/0weOOzPL6c=",
+            "server_public_key": "RFUpPmm7W7VHTyjKsHdpR5DV/QICx9UXub9dIMAYZsE=",
         },
         "routing": {"bypass_ips": []},
         "fallback": {"strategies": [{"id": "x", "pin_mode": "bogus"}]},
@@ -324,7 +307,11 @@ def test_ca_rung_asks_wstunnel_to_verify():
 def test_non_ca_rungs_do_not_pass_the_verify_flag(mode):
     # wstunnel's own verification is against the system CA store, which a
     # self-signed server can never satisfy — passing it there would break
-    # every pinned profile.
+    # every pinned profile. Evolved form of KNOWN_BUGS.md B-017 ("wstunnel
+    # dies <1s, cert verification against the system CA store rejects the
+    # wizard's self-signed cert"): identity for a pinned profile comes from
+    # verify_tls_fingerprint()/_spki, run before wstunnel ever starts, so
+    # wstunnel doing its own CA check here on top would just re-break B-017.
     strat = ConnectionStrategy(
         id="direct", label="Direct", endpoint="wg.example.com", port=443,
         path_prefix="s3cret", pin_mode=mode,

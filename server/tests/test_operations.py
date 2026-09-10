@@ -34,7 +34,10 @@ def _write_server_config(tmp_path: Path, **overrides: object) -> Path:
 
 @patch("outwarp_server.operations.add_peer_live")
 @patch("outwarp_server.operations.generate_psk", return_value="")
-@patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub"))
+@patch(
+    "outwarp_server.operations.generate_wg_keypair",
+    return_value=("priv", "vn4n9d0JyfC8GQOt0YuK61s+3+kDkxCZ3a087Q5WSAo="),
+)
 def test_add_client_writes_owcfg_and_updates_config(
     _kg: MagicMock, _psk: MagicMock, mock_add: MagicMock, tmp_path: Path,
 ) -> None:
@@ -82,7 +85,11 @@ def test_add_client_rejects_duplicate(
 ) -> None:
     cfg_path = _write_server_config(
         tmp_path,
-        clients=[{"name": "laptop", "public_key": "k", "address": "10.0.0.2/32"}],
+        clients=[{
+            "name": "laptop",
+            "public_key": "vn4n9d0JyfC8GQOt0YuK61s+3+kDkxCZ3a087Q5WSAo=",
+            "address": "10.0.0.2/32",
+        }],
     )
     config = ServerConfig.load(cfg_path)
     with pytest.raises(ValueError, match="already exists"):
@@ -97,7 +104,11 @@ def test_revoke_client_removes_from_config(
 ) -> None:
     cfg_path = _write_server_config(
         tmp_path,
-        clients=[{"name": "laptop", "public_key": "k1", "address": "10.0.0.2/32"}],
+        clients=[{
+            "name": "laptop",
+            "public_key": "arnx6499M4j0+dWG9m6Z/VQIDfLERvDlhmiwnAihbdA=",
+            "address": "10.0.0.2/32",
+        }],
     )
     config = ServerConfig.load(cfg_path)
     result = operations.revoke_client(config, "laptop", config_path=cfg_path)
@@ -105,7 +116,7 @@ def test_revoke_client_removes_from_config(
     assert result.hot_removed is True
     saved = ServerConfig.load(cfg_path)
     assert saved.clients == []
-    mock_remove.assert_called_once_with("k1")
+    mock_remove.assert_called_once_with("arnx6499M4j0+dWG9m6Z/VQIDfLERvDlhmiwnAihbdA=")
 
 
 def test_revoke_unknown_raises(tmp_path: Path) -> None:
@@ -133,15 +144,23 @@ def test_restart_services_returns_all_three_true_on_success(
 
 @patch("outwarp_server.operations.add_peer_live")
 @patch("outwarp_server.operations.remove_peer_live")
-@patch("outwarp_server.operations.generate_psk", return_value="newpsk")
-@patch("outwarp_server.operations.generate_wg_keypair", return_value=("new_priv", "new_pub"))
+@patch(
+    "outwarp_server.operations.generate_psk",
+    return_value="rY2vuEB4VDipfXtL8xlnizgU9eBsI2tQfKw7L4xLFIw=",
+)
+@patch(
+    "outwarp_server.operations.generate_wg_keypair",
+    return_value=("new_priv", "eY7+WjKbAd6NrjDOJb7LaSSd8WQHl0BszTY9yzKoGyA="),
+)
 def test_rotate_client_replaces_keypair_and_rewrites_owcfg(
     _kg: MagicMock, _psk: MagicMock, mock_remove: MagicMock,
     mock_add: MagicMock, tmp_path: Path,
 ) -> None:
+    old_pub = "yYzBcQWtwdHBN0USGevIH8L0z9WaUDItBX1ZLZMkYpk="
+    new_pub = "eY7+WjKbAd6NrjDOJb7LaSSd8WQHl0BszTY9yzKoGyA="
     cfg_path = _write_server_config(
         tmp_path,
-        clients=[{"name": "laptop", "public_key": "old_pub", "address": "10.0.0.2/32"}],
+        clients=[{"name": "laptop", "public_key": old_pub, "address": "10.0.0.2/32"}],
     )
     config = ServerConfig.load(cfg_path)
     out_dir = tmp_path / "out"
@@ -149,15 +168,15 @@ def test_rotate_client_replaces_keypair_and_rewrites_owcfg(
 
     result = operations.rotate_client(config, "laptop", config_path=cfg_path, output_dir=out_dir)
 
-    assert result.client.public_key == "new_pub"
+    assert result.client.public_key == new_pub
     assert result.client.address == "10.0.0.2/32"  # preserved
     assert result.owcfg_path == out_dir / "laptop.owcfg"
     assert result.owcfg_path.exists()
 
     saved = ServerConfig.load(cfg_path)
-    assert saved.clients[0].public_key == "new_pub"
+    assert saved.clients[0].public_key == new_pub
 
-    mock_remove.assert_called_once_with("old_pub")
+    mock_remove.assert_called_once_with(old_pub)
     mock_add.assert_called_once()
 
 
@@ -255,3 +274,52 @@ def test_add_client_still_works_when_the_certificate_is_unreadable(
     owcfg = json.loads(result.owcfg_path.read_text(encoding="utf-8"))
     assert owcfg["schema_version"] == 1
     assert "spki_sha256" not in owcfg["tls"]
+
+
+@patch("outwarp_server.operations.add_peer_live")
+@patch("outwarp_server.operations.generate_psk", return_value="")
+@patch(
+    "outwarp_server.operations.generate_wg_keypair",
+    return_value=(
+        "xif9YhWWYeCAt6e0GjpNuu9W1952Cagg/0weOOzPL6c=",
+        "vn4n9d0JyfC8GQOt0YuK61s+3+kDkxCZ3a087Q5WSAo=",
+    ),
+)
+def test_add_client_produces_a_signed_owcfg_the_real_client_accepts(
+    _kg: MagicMock, _psk: MagicMock, _add: MagicMock, tmp_path: Path,
+) -> None:
+    """CONCEPTO-C prop.2 end-to-end: add_client lazily generates this server's
+    signing key, embeds a signature in the .owcfg it writes, and a real
+    client (not a mock of one) accepts and pins it on import."""
+    try:
+        from outwarp.config import import_owcfg
+    except ImportError:
+        pytest.skip("Client package not installed in this environment")
+
+    cfg_path = _write_server_config(
+        tmp_path,
+        # A valid-shaped WG key: the client validates server_public_key
+        # (FIX-01), so the fixture's usual placeholder "srv_pub" would fail
+        # for a reason unrelated to what this test is checking.
+        wg_public_key="RFUpPmm7W7VHTyjKsHdpR5DV/QICx9UXub9dIMAYZsE=",
+    )
+    config = ServerConfig.load(cfg_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    result = operations.add_client(
+        config, "laptop", config_path=cfg_path, output_dir=out_dir,
+    )
+
+    owcfg = json.loads(result.owcfg_path.read_text(encoding="utf-8"))
+    assert "signing" in owcfg
+    # The signing key was persisted, not just used in memory.
+    assert ServerConfig.load(cfg_path).owcfg_signing_private_key
+
+    known_servers = tmp_path / "known_servers.json"
+    with patch("outwarp.profile_trust.known_servers_path", return_value=known_servers):
+        client_cfg = import_owcfg(result.owcfg_path, dest=tmp_path / "config.json", enroll=False)
+
+    assert client_cfg.server.endpoint == "203.0.113.42"
+    pinned = json.loads(known_servers.read_text(encoding="utf-8"))
+    assert pinned["203.0.113.42"] == owcfg["signing"]["public_key"]

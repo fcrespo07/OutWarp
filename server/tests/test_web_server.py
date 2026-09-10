@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import socket
 import ssl
 import threading
 import time
@@ -174,3 +175,53 @@ def test_sse_receives_event(panel):
     conn.close()
     assert b"event: outwarp:log" in received.get("buf", b"")
     assert b"hello over sse" in received["buf"]
+
+
+# --- FIX-10: no socket-level protection against a slow/stalled connection ---
+
+def test_handler_has_a_bounded_socket_timeout():
+    # Regression pin, not a timing test — the real coverage is the two below.
+    assert web_server._PanelHandler.timeout == 30
+
+
+def test_connection_that_never_sends_a_request_is_closed(panel, monkeypatch):
+    """A connection that completes the TLS handshake but then sends nothing
+    used to park a worker thread on this ThreadingHTTPServer forever —
+    daemon_threads=True and no cap on concurrent threads makes a handful of
+    these a trivial pre-auth slowloris DoS, all before `_authed()` ever runs."""
+    monkeypatch.setattr(web_server._PanelHandler, "timeout", 0.3)
+    httpd, _, _ = panel
+    port = httpd.server_address[1]
+
+    ctx = ssl._create_unverified_context()
+    raw = socket.create_connection(("127.0.0.1", port), timeout=5)
+    tls = ctx.wrap_socket(raw, server_hostname="127.0.0.1")
+    try:
+        tls.settimeout(5)
+        # Send nothing. The server's own per-connection timeout (patched
+        # small above) must close this on its own, well inside our 5s
+        # client-side patience.
+        assert tls.recv(1) == b""  # EOF: the server closed the connection
+    finally:
+        tls.close()
+
+
+def test_sse_connection_closes_after_too_many_idle_heartbeats(panel, monkeypatch):
+    """FIX-10: a half-open TCP peer (crashed without FIN/RST) can keep
+    accepting writes into the OS send buffer forever without ever raising —
+    the socket timeout alone doesn't catch that. The idle-ping counter bounds
+    an SSE connection's lifetime even when writes keep silently succeeding."""
+    monkeypatch.setattr(web_server._PanelHandler, "sse_heartbeat_interval", 0.05)
+    monkeypatch.setattr(web_server._PanelHandler, "sse_max_idle_pings", 2)
+    httpd, _, token = panel
+    cookie = _login(httpd, token)
+    conn = _conn(httpd)
+    conn.request("GET", "/events", headers={"Cookie": cookie})
+    resp = conn.getresponse()
+    assert resp.status == 200
+
+    # No events are emitted — every cycle is an idle ping, so the handler
+    # must close on its own after sse_max_idle_pings of them.
+    data = resp.read()  # blocks until the server closes the connection
+    conn.close()
+    assert data.count(b": ping\n\n") <= 3  # connected + a couple pings, then close

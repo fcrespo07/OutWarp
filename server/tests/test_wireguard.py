@@ -45,6 +45,10 @@ class TestBuildServerWgConf:
         assert "ListenPort = 51820" in conf
 
     def test_table_off(self) -> None:
+        # KNOWN_BUGS.md B-012: wg-quick's default Table=auto rewrites the
+        # kernel routing table on `wg0 up`, which broke the *server's own*
+        # default route on NetworkManager / VirtualBox NAT setups (Linux
+        # Mint). Routing must stay iptables-only.
         conf = build_server_wg_conf(_make_config())
         assert "Table = off" in conf
 
@@ -55,12 +59,19 @@ class TestBuildServerWgConf:
         assert "MTU = 1380" in conf
 
     def test_forward_rules_use_insert_not_append(self) -> None:
+        # KNOWN_BUGS.md B-012: `-A FORWARD` appends after ufw's default DROP
+        # policy, silently blocking client forwarding even with ip_forward on.
         conf = build_server_wg_conf(_make_config())
         assert "iptables -I FORWARD" in conf
         assert "iptables -A FORWARD" not in conf
 
-    def test_postup_includes_masquerade(self) -> None:
+    def test_postup_enables_ip_forward_and_masquerade(self) -> None:
+        # KNOWN_BUGS.md B-005: WG handshake + ping to the server worked, but
+        # clients had no internet — missing ip_forward and NAT MASQUERADE.
+        # Both ingredients (plus the -I FORWARD rules above) must be present
+        # for any WireGuard server acting as a gateway.
         conf = build_server_wg_conf(_make_config())
+        assert "net.ipv4.ip_forward=1" in conf
         assert "MASQUERADE" in conf
         assert "10.0.0.0/24" in conf
 
@@ -105,6 +116,21 @@ class TestAddPeerLive:
             mock_run.side_effect = subprocess.CalledProcessError(1, "wg", stderr="fail")
             with pytest.raises(WireGuardError, match="Failed to add peer"):
                 add_peer_live("pubkey", "10.0.0.5/32")
+
+    def test_timeout_raises_wireguard_error(self) -> None:
+        """FIX-11: called from enroll_server.py while holding enroll_lock — a
+        `wg` that hangs with no timeout would hold that lock forever, locking
+        every future enrolment out until the service is restarted."""
+        with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired("wg", 5)
+            with pytest.raises(WireGuardError, match="Timed out"):
+                add_peer_live("pubkey", "10.0.0.5/32")
+
+    def test_calls_wg_set_with_a_timeout(self) -> None:
+        with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            add_peer_live("pubkey123", "10.0.0.5/32")
+        assert mock_run.call_args.kwargs.get("timeout") == 5
 
     def test_psk_passed_via_tempfile(self) -> None:
         with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
@@ -174,3 +200,16 @@ class TestRemovePeerLive:
             mock_run.side_effect = subprocess.CalledProcessError(1, "wg", stderr="fail")
             with pytest.raises(WireGuardError, match="Failed to remove peer"):
                 remove_peer_live("pubkey")
+
+    def test_timeout_raises_wireguard_error(self) -> None:
+        """FIX-11 — see TestAddPeerLive's matching test for the enroll_lock risk."""
+        with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired("wg", 5)
+            with pytest.raises(WireGuardError, match="Timed out"):
+                remove_peer_live("pubkey")
+
+    def test_calls_wg_set_with_a_timeout(self) -> None:
+        with patch("outwarp_server.wireguard.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            remove_peer_live("pubkey123")
+        assert mock_run.call_args.kwargs.get("timeout") == 5

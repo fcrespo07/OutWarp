@@ -33,8 +33,8 @@ _VALID_OWCFG = {
     "wireguard": {
         "tunnel_name": "OutWarp",
         "client_address": "10.0.0.42/32",
-        "client_private_key": "dGVzdGtleQ==",
-        "server_public_key": "c2VydmVya2V5",
+        "client_private_key": "xif9YhWWYeCAt6e0GjpNuu9W1952Cagg/0weOOzPL6c=",
+        "server_public_key": "RFUpPmm7W7VHTyjKsHdpR5DV/QICx9UXub9dIMAYZsE=",
         "dns": ["1.1.1.1"],
     },
     "routing": {"bypass_ips": ["203.0.113.42"]},

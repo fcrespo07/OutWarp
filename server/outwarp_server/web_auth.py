@@ -23,6 +23,7 @@ import secrets
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from outwarp_server.config import _atomic_write_secret
 
@@ -173,6 +174,33 @@ class SessionStore:
             dead = [s for s, exp in self._sessions.items() if exp < now]
             for s in dead:
                 del self._sessions[s]
+
+
+def client_ip(headers: Any, direct_ip: str, *, behind_reverse_proxy: bool) -> str:
+    """The address to rate-limit/log a request by.
+
+    A direct connection is identified by its TCP peer address. Behind a
+    reverse proxy (Caddy, in the transport's "acme" branch — see FIX-08 in
+    OutWarp-fix-plan.md) the listener binds loopback and every real client
+    shares that one address, so a naive rate limiter keyed on `direct_ip`
+    collapses into a single shared bucket: a handful of failures from ANY
+    client locks everyone else out too. Caddy's `reverse_proxy` appends the
+    real client to `X-Forwarded-For`, so behind a proxy that header's *last*
+    entry is authoritative instead — earlier entries are whatever the client
+    itself claimed and are not trustworthy.
+
+    Only call this with `behind_reverse_proxy=True` when the listener
+    actually binds loopback behind our own Caddyfile — nothing untrusted can
+    reach it directly to forge the header. The self-signed branch binds
+    publicly instead, where `behind_reverse_proxy` is always False and
+    `direct_ip` (the real TCP peer) is used as-is.
+    """
+    if behind_reverse_proxy:
+        forwarded = headers.get("X-Forwarded-For", "") or ""
+        hops = [h.strip() for h in forwarded.split(",") if h.strip()]
+        if hops:
+            return hops[-1]
+    return direct_ip or "?"
 
 
 class RateLimiter:

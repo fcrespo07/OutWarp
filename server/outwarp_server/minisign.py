@@ -127,3 +127,82 @@ def _last_base64_line(text: str) -> str | None:
         if line and not line.startswith(("untrusted comment:", "trusted comment:")):
             return line
     return None
+
+
+# ── signing (server-only: owcfg profile signing, CONCEPTO-C prop.2) ─────────
+#
+# This half has no counterpart in the client's outwarp/minisign.py, and no
+# relation to the project's release-signing key in docs/RELEASE_SIGNING.md
+# ("the signing key does not go into a GitHub secret" is a rule for that key
+# specifically — a one-of-a-kind key an offline maintainer machine holds to
+# vouch for OutWarp releases). This is a *different* keypair: every
+# self-hosted OutWarp server generates its own, to vouch for the .owcfg
+# profiles it issues to its own clients. It is generated and held by the
+# running server process — the release key's offline constraint does not
+# apply to it, and could not: nothing else could sign on a headless VPS's own
+# behalf. It only protects a .owcfg against tampering *after* the server
+# signed it (email, USB, a shared drive) — see build_owcfg's docstring for
+# what it does not protect against.
+
+
+def generate_keypair() -> tuple[bytes, bytes, bytes]:
+    """Generate a fresh Ed25519 keypair + random 8-byte key_id.
+
+    Returns (key_id, private_key_32_bytes, public_key_32_bytes) — the raw key
+    material, not yet in minisign's on-disk container format.
+    """
+    import secrets
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding,
+        NoEncryption,
+        PrivateFormat,
+        PublicFormat,
+    )
+
+    private = Ed25519PrivateKey.generate()
+    private_bytes = private.private_bytes(
+        encoding=Encoding.Raw, format=PrivateFormat.Raw, encryption_algorithm=NoEncryption(),
+    )
+    public_bytes = private.public_key().public_bytes(
+        encoding=Encoding.Raw, format=PublicFormat.Raw,
+    )
+    return secrets.token_bytes(8), private_bytes, public_bytes
+
+
+def format_public_key(key_id: bytes, public_key: bytes) -> str:
+    """Render a public key in minisign's two-line text format (parseable by
+    both this module's and the client's ``parse_public_key``).
+
+    The container's algorithm tag is always ``Ed`` here regardless of which
+    variant later signs with this key — verified against real minisign 0.12's
+    own -G output, which does the same. Only the *signature* blob's tag
+    varies between legacy and prehashed (see ``sign``).
+    """
+    blob = _ALG_LEGACY + key_id + public_key
+    b64 = base64.b64encode(blob).decode("ascii")
+    return f"untrusted comment: OutWarp .owcfg signing key {key_id.hex().upper()}\n{b64}\n"
+
+
+def sign(
+    message: bytes, key_id: bytes, private_key: bytes, *, trusted_comment: str,
+) -> str:
+    """Produce a minisign signature text for `message`, verifiable by this
+    module's / the client's ``verify()`` against the matching public key.
+
+    Prehashed (BLAKE2b-512) variant, matching what current ``minisign -S``
+    produces — the same one release signatures use.
+    """
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    signer = Ed25519PrivateKey.from_private_bytes(private_key)
+    raw_sig = signer.sign(hashlib.blake2b(message).digest())
+    sig_blob = _ALG_PREHASHED + key_id + raw_sig
+    global_sig = signer.sign(raw_sig + trusted_comment.encode("utf-8"))
+    return (
+        "untrusted comment: signature\n"
+        f"{base64.b64encode(sig_blob).decode('ascii')}\n"
+        f"trusted comment: {trusted_comment}\n"
+        f"{base64.b64encode(global_sig).decode('ascii')}\n"
+    )

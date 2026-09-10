@@ -253,7 +253,7 @@ def run_setup(config_dir: Path) -> int:
         was_active = platform.is_wg_active()
         platform.install_wg_config(wg_conf)
         if was_active:
-            platform.restart_wg()
+            platform.restart_wg(subnet=config.subnet)
         console.print("  [green]✓[/green] WireGuard interface up")
     except PlatformError as exc:
         console.print(f"  [red]✗[/red] WireGuard: {exc}")

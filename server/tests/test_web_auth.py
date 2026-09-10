@@ -8,6 +8,7 @@ import pytest
 from outwarp_server.web_auth import (
     RateLimiter,
     SessionStore,
+    client_ip,
     generate_and_store_token,
     token_is_set,
     verify_token,
@@ -49,6 +50,24 @@ def test_rate_limiter_locks_out_after_threshold():
     assert rl.retry_after(ip) > 0
     # A different IP is unaffected.
     assert rl.retry_after("5.6.7.8") == 0
+
+
+# --- FIX-08: X-Forwarded-For only trusted behind our own Caddy front ---
+
+def test_client_ip_uses_direct_address_when_not_behind_proxy():
+    headers = {"X-Forwarded-For": "203.0.113.9"}  # attacker-supplied, must be ignored
+    assert client_ip(headers, "10.0.0.5", behind_reverse_proxy=False) == "10.0.0.5"
+
+
+def test_client_ip_uses_last_hop_behind_proxy():
+    # Caddy appends the real peer as the *last* entry; anything earlier came
+    # from the client itself and is not trustworthy.
+    headers = {"X-Forwarded-For": "9.9.9.9, 203.0.113.9"}
+    assert client_ip(headers, "127.0.0.1", behind_reverse_proxy=True) == "203.0.113.9"
+
+
+def test_client_ip_falls_back_to_direct_when_header_missing_behind_proxy():
+    assert client_ip({}, "127.0.0.1", behind_reverse_proxy=True) == "127.0.0.1"
 
 
 def test_rate_limiter_reset_clears_lockout():

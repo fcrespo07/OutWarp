@@ -77,10 +77,10 @@ def running(tmp_path, monkeypatch):
         httpd.server_close()
 
 
-def _post(url: str, payload: dict) -> tuple[int, dict]:
+def _post(url: str, payload: dict, headers: dict | None = None) -> tuple[int, dict]:
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode(), method="POST",
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **(headers or {})},
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -187,6 +187,30 @@ def test_repeated_failures_are_rate_limited(running) -> None:
         for i in range(8)
     ]
     assert 429 in codes, f"expected a lockout after repeated bad tokens, got {codes}"
+
+
+def test_rate_limit_buckets_by_x_forwarded_for_behind_proxy(running) -> None:
+    """FIX-08: the fixture's config is tls_mode='acme' (behind_reverse_proxy),
+    the loopback-only branch a real Caddy front terminates for. Before this
+    fix every request shared the TCP peer's address (127.0.0.1, whoever
+    connects when Caddy is the proxy) as its rate-limit key regardless of who
+    the real client was — five bad attempts from ANY client locked enrolment
+    out for every client behind the same Caddy instance."""
+    _, _, url = running
+
+    def attempt(spoofed_ip: str) -> int:
+        return _post(
+            url,
+            {"token": "ow_enroll_bad", "client_public_key": CLIENT_PUB},
+            headers={"X-Forwarded-For": spoofed_ip},
+        )[0]
+
+    codes_a = [attempt("9.9.9.1") for _ in range(6)]
+    assert 429 in codes_a, f"expected client A to get locked out, got {codes_a}"
+
+    # A different client (different X-Forwarded-For) behind the same Caddy
+    # instance must not be caught in the same bucket.
+    assert attempt("9.9.9.2") != 429
 
 
 def test_oversized_body_is_rejected(running) -> None:

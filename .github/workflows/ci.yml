@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# All three jobs only read code and run tests/lint/build locally — none of
+# them push, release, or touch packages — so the default GITHUB_TOKEN (which
+# a PR from a fork also gets) is capped to read-only rather than inheriting
+# whatever broader default the repo/org has configured.
+permissions:
+  contents: read
+
 # Cancel an in-flight run when a new commit lands on the same ref. Saves CI
 # minutes on rapid push cycles (style fixups, force-pushes from rebase).
 concurrency:

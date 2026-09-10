@@ -28,7 +28,7 @@ from typing import Any
 
 from outwarp_server import enrollment, operations
 from outwarp_server.config import ServerConfig
-from outwarp_server.web_auth import RateLimiter
+from outwarp_server.web_auth import RateLimiter, client_ip
 
 log = logging.getLogger(__name__)
 
@@ -49,11 +49,17 @@ class _EnrollServer(ThreadingHTTPServer):
         config_path: Path,
         rate_limiter: RateLimiter,
         on_enrolled: Any = None,
+        *,
+        behind_reverse_proxy: bool = False,
     ) -> None:
         super().__init__(address, _EnrollHandler)
         self.config_path = config_path
         self.rate_limiter = rate_limiter
         self.on_enrolled = on_enrolled
+        # FIX-08: only True when this listener binds loopback behind our own
+        # Caddyfile — see web_auth.client_ip's docstring for why that's the
+        # condition that makes X-Forwarded-For trustworthy here.
+        self.behind_reverse_proxy = behind_reverse_proxy
         # Redeem-then-register must not interleave: two clients enrolling at the
         # same moment would otherwise read the same config and one write would
         # lose the other's peer.
@@ -72,7 +78,10 @@ class _EnrollHandler(BaseHTTPRequestHandler):
         log.debug("enroll: " + fmt, *args)
 
     def _client_ip(self) -> str:
-        return self.client_address[0] if self.client_address else "?"
+        direct = self.client_address[0] if self.client_address else ""
+        return client_ip(
+            self.headers, direct, behind_reverse_proxy=self.ctx.behind_reverse_proxy
+        )
 
     def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -203,7 +212,8 @@ def serve(
     """
     host = "127.0.0.1" if config.behind_reverse_proxy else "0.0.0.0"  # noqa: S104
     httpd = _EnrollServer(
-        (host, config.enroll_port), config_path, RateLimiter(), on_enrolled
+        (host, config.enroll_port), config_path, RateLimiter(), on_enrolled,
+        behind_reverse_proxy=config.behind_reverse_proxy,
     )
 
     if not config.behind_reverse_proxy:

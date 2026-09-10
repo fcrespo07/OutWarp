@@ -40,9 +40,11 @@ from outwarp.config import (
     import_owcfg_text,
     original_config_path,
 )
+from outwarp.fallback import build_ladder
 from outwarp.integrity import IntegrityIssue, likely_av_quarantine
 from outwarp.logs import MemoryLogHandler
 from outwarp.platforms import PlatformError, get_platform
+from outwarp.routing import escape_set
 from outwarp.settings import load_settings as _load_settings_at
 from outwarp.settings import save_settings as _save_settings_at
 from outwarp.tunnel import TunnelManager, TunnelState
@@ -501,12 +503,15 @@ class Api:
             return
         try:
             if state in (TunnelState.RECONNECTING, TunnelState.FAILED):
-                allowlist = list(self._manager.config.routing.bypass_ips)
+                config = self._manager.config
+                allowlist = escape_set(config, build_ladder(config))
                 if not allowlist:
-                    log.warning(
-                        "kill_switch: no bypass_ips in profile — refusing to "
-                        "engage (would lock the user out with no recovery path)"
+                    msg = (
+                        "kill switch NOT engaged — no bypass addresses in profile "
+                        "(would lock the user out with no recovery path)"
                     )
+                    log.warning("kill_switch: %s", msg)
+                    self._record_log("error", msg)
                     return
                 get_platform().engage_kill_switch(allowlist)
                 self._record_log("warn", "kill switch engaged — outbound traffic blocked")
@@ -1127,11 +1132,21 @@ class Api:
                                 TunnelState.RECONNECTING, TunnelState.FAILED,
                             )
                         ):
-                            allowlist = list(
-                                self._manager.config.routing.bypass_ips
-                            )
+                            config = self._manager.config
+                            allowlist = escape_set(config, build_ladder(config))
                             if allowlist:
                                 plat.engage_kill_switch(allowlist)
+                                self._record_log(
+                                    "warn", "kill switch engaged — outbound traffic blocked"
+                                )
+                            else:
+                                msg = (
+                                    "kill switch NOT engaged — no bypass addresses "
+                                    "in profile (would lock the user out with no "
+                                    "recovery path)"
+                                )
+                                log.warning("kill_switch: %s", msg)
+                                self._record_log("error", msg)
                     else:
                         # Always release on disable — even if we never engaged
                         # — to recover from any stale rule.

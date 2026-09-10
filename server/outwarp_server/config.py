@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import json
 import os
+import re
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -15,6 +17,38 @@ _SCHEMA_VERSION = 1
 
 class ConfigError(ValueError):
     pass
+
+
+# A client name doubles as a config identifier and the <name>.owcfg filename
+# written to the cwd. Without this an unsanitised name like '../x' or 'a/b'
+# would escape the directory or fail mid-write. Allow a conservative charset
+# only; reject path separators, traversal and control characters. Lives here
+# (not server_manager.py) so _parse() below can enforce it too without a
+# circular import — server_manager imports ClientEntry/ServerConfig from here.
+_CLIENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,63}$")
+
+# A WireGuard base64 key/PSK is always 44 chars, the last one from a fixed
+# small alphabet. Mirrors enroll_server.py:_WG_KEY_RE — keep the two in sync.
+_WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$")
+
+_EXPIRES_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def validate_client_name(name: str) -> str:
+    """Return the stripped name if it is a safe identifier, else raise ValueError."""
+    if not isinstance(name, str):
+        raise ValueError("Client name must be text")
+    cleaned = name.strip()
+    if not cleaned:
+        raise ValueError("Client name is required")
+    if cleaned in (".", ".."):
+        raise ValueError("Invalid client name")
+    if not _CLIENT_NAME_RE.match(cleaned):
+        raise ValueError(
+            "Client name may only contain letters, digits, spaces, '.', '_' and "
+            "'-' (1-64 characters, not starting with a separator)"
+        )
+    return cleaned
 
 
 @dataclass(frozen=True)
@@ -65,6 +99,15 @@ class ServerConfig:
     # self-signed branch it is a public HTTPS port of its own, using the same
     # certificate (and therefore the same pin) as the transport.
     enroll_port: int = 8444
+    # This server's own minisign keypair, used to sign every .owcfg it issues
+    # (CONCEPTO-C prop.2 — see build_owcfg's docstring). Unrelated to the
+    # project-wide release-signing key in docs/RELEASE_SIGNING.md: each
+    # self-hosted server has its own, generated lazily by add-client /
+    # rotate-client the first time either runs after an upgrade (same pattern
+    # as spki_sha256 above). Empty on configs from before the field existed.
+    owcfg_signing_key_id: str = ""       # hex, 8 bytes
+    owcfg_signing_private_key: str = ""  # base64, 32 raw bytes
+    owcfg_signing_public_key: str = ""   # minisign two-line public-key text
     clients: list[ClientEntry] = field(default_factory=list)
 
     @property
@@ -123,6 +166,52 @@ def default_config_path() -> Path:
     return default_config_dir() / "server_config.json"
 
 
+@contextlib.contextmanager
+def locked_config(path: Path):
+    """Hold an exclusive, cross-process OS lock scoped to one server_config.json.
+
+    FIX-04 bridge patch. `add_client`/`revoke_client`/`rotate_client`
+    (operations.py) read-modify-write `clients` with no lock at all: two
+    processes racing (the always-running daemon's web panel, and a separate
+    `outwarp-server add-client` invocation) can both read the same client
+    list, both allocate the same pool IP, and have the second save silently
+    clobber the first's new peer. `ServerManager._lock` (a plain
+    `threading.Lock`) already serializes same-process callers; this closes the
+    cross-process gap the same way. Callers must reload the config from
+    `path` *inside* this context — the whole point is to mutate the freshest
+    on-disk state, not a snapshot taken before the lock was acquired.
+
+    This is a stopgap, not a transaction: it serializes writers around a
+    whole-file read-modify-write, it does not model `clients` as anything
+    richer than "whatever list was last saved". CONCEPTO-A (a client registry
+    in its own SQLite table, à la traffic_history.py) is the real fix.
+
+    A sidecar `.server_config.json.lock` file is locked rather than the real
+    config file, so a plain `open()`/read of it elsewhere is never blocked.
+    """
+    lock_path = path.parent / f".{path.name}.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        if sys.platform == "win32":
+            import msvcrt
+            with contextlib.suppress(OSError):
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 # --- internal helpers ---
 
 
@@ -168,19 +257,24 @@ def _parse(raw: dict[str, Any]) -> ServerConfig:
             f"enroll_port must be an integer between 1 and 65535, got {enroll_port!r}"
         )
 
+    subnet = str(_require(raw, "subnet", "root"))
+    try:
+        ipaddress.ip_network(subnet, strict=False)
+    except ValueError as exc:
+        raise ConfigError(f"subnet is not a valid network: {subnet!r}") from exc
+
+    server_address = str(_require(raw, "server_address", "root"))
+    try:
+        ipaddress.ip_interface(server_address)
+    except ValueError as exc:
+        raise ConfigError(
+            f"server_address is not a valid IP/prefix: {server_address!r}"
+        ) from exc
+
     clients_raw = raw.get("clients", [])
     if not isinstance(clients_raw, list):
         raise ConfigError("clients must be a list")
-    clients = [
-        ClientEntry(
-            name=str(_require(c, "name", "clients[]")),
-            public_key=str(_require(c, "public_key", "clients[]")),
-            address=str(_require(c, "address", "clients[]")),
-            psk=str(c.get("psk", "")),
-            expires_at=str(c.get("expires_at", "")),
-        )
-        for c in clients_raw
-    ]
+    clients = [_parse_client_entry(c) for c in clients_raw]
 
     return ServerConfig(
         schema_version=version,
@@ -197,10 +291,59 @@ def _parse(raw: dict[str, Any]) -> ServerConfig:
         enroll_port=enroll_port,
         wg_private_key=str(_require(raw, "wg_private_key", "root")),
         wg_public_key=str(_require(raw, "wg_public_key", "root")),
-        subnet=str(_require(raw, "subnet", "root")),
-        server_address=str(_require(raw, "server_address", "root")),
+        subnet=subnet,
+        server_address=server_address,
         wg_listen_port=wg_listen_port,
+        owcfg_signing_key_id=_parse_owcfg_signing_key_id(raw),
+        owcfg_signing_private_key=str(raw.get("owcfg_signing_private_key", "")),
+        owcfg_signing_public_key=str(raw.get("owcfg_signing_public_key", "")),
         clients=clients,
+    )
+
+
+_HEX8_RE = re.compile(r"^[0-9a-fA-F]{16}$")
+
+
+def _parse_owcfg_signing_key_id(raw: dict[str, Any]) -> str:
+    key_id = str(raw.get("owcfg_signing_key_id", ""))
+    if key_id and not _HEX8_RE.match(key_id):
+        raise ConfigError(f"owcfg_signing_key_id must be 16 hex chars, got {key_id!r}")
+    return key_id
+
+
+def _parse_client_entry(c: Any) -> ClientEntry:
+    try:
+        name = validate_client_name(str(_require(c, "name", "clients[]")))
+    except ValueError as exc:
+        raise ConfigError(f"clients[]: {exc}") from exc
+
+    # A client awaiting enrolment is stored with public_key == "" until it
+    # redeems its token (see wireguard.py:build_server_wg_conf, which skips
+    # peers without one) — empty is a valid, meaningful state, not garbage.
+    public_key = str(_require(c, "public_key", "clients[]"))
+    if public_key and not _WG_KEY_RE.match(public_key):
+        raise ConfigError(f"clients[{name!r}].public_key is not a valid WireGuard key")
+
+    address = str(_require(c, "address", "clients[]"))
+    try:
+        ipaddress.ip_interface(address)
+    except ValueError as exc:
+        raise ConfigError(
+            f"clients[{name!r}].address is not a valid IP/prefix: {address!r}"
+        ) from exc
+
+    psk = str(c.get("psk", ""))
+    if psk and not _WG_KEY_RE.match(psk):
+        raise ConfigError(f"clients[{name!r}].psk is not a valid WireGuard key")
+
+    expires_at = str(c.get("expires_at", ""))
+    if expires_at and not _EXPIRES_AT_RE.match(expires_at):
+        raise ConfigError(
+            f"clients[{name!r}].expires_at must be YYYY-MM-DD, got {expires_at!r}"
+        )
+
+    return ClientEntry(
+        name=name, public_key=public_key, address=address, psk=psk, expires_at=expires_at
     )
 
 
@@ -223,6 +366,9 @@ def _to_dict(cfg: ServerConfig) -> dict[str, Any]:
         "subnet": cfg.subnet,
         "server_address": cfg.server_address,
         "wg_listen_port": cfg.wg_listen_port,
+        "owcfg_signing_key_id": cfg.owcfg_signing_key_id,
+        "owcfg_signing_private_key": cfg.owcfg_signing_private_key,
+        "owcfg_signing_public_key": cfg.owcfg_signing_public_key,
         "clients": [
             {
                 "name": c.name,

@@ -225,9 +225,15 @@ def add_peer_live(
             with os.fdopen(fd, "w") as fh:
                 fh.write(psk)
             cmd += ["preshared-key", str(psk_file)]
-        subprocess.run(cmd, check=True, capture_output=True, text=True, **extra)
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=5, **extra)
     except subprocess.CalledProcessError as exc:
         raise WireGuardError(f"Failed to add peer: {exc.stderr.strip()}") from exc
+    except subprocess.TimeoutExpired as exc:
+        # Called from enroll_server.py under enroll_lock (FIX-11): a hung `wg`
+        # with no timeout would hold that lock forever, and no client could
+        # enrol again short of restarting the service. Converting to
+        # WireGuardError lets the caller's `finally` release the lock instead.
+        raise WireGuardError(f"Timed out adding peer (wg did not respond): {exc}") from exc
     finally:
         if psk_file is not None:
             psk_file.unlink(missing_ok=True)
@@ -250,8 +256,12 @@ def remove_peer_live(
             check=True,
             capture_output=True,
             text=True,
+            timeout=5,
             **extra,
         )
     except subprocess.CalledProcessError as exc:
         raise WireGuardError(f"Failed to remove peer: {exc.stderr.strip()}") from exc
+    except subprocess.TimeoutExpired as exc:
+        # See add_peer_live's matching comment (FIX-11) — same enroll_lock risk.
+        raise WireGuardError(f"Timed out removing peer (wg did not respond): {exc}") from exc
     log.info("Removed peer %s", public_key[:16] + "...")

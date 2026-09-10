@@ -45,6 +45,33 @@ class TestSiteConfig:
         with pytest.raises(caddy.CaddyError):
             caddy.build_site_config(domain, prefix)
 
+    # --- FIX-13a: domain/acme_email used to be interpolated raw ---
+
+    @pytest.mark.parametrize("domain", [
+        "vpn.example.com {\n\trespond /secret 200\n}\nevil.example.com",
+        "vpn.example.com\nimport /etc/passwd",
+        "vpn example.com",
+        "vpn.example.com{extra}",
+        "-leading-hyphen.example.com",
+    ])
+    def test_rejects_domain_that_would_break_the_block_syntax(self, domain: str) -> None:
+        with pytest.raises(caddy.CaddyError, match="hostname"):
+            caddy.build_site_config(domain, "p")
+
+    def test_accepts_ordinary_hostnames(self) -> None:
+        # Sanity check the validator isn't so strict it rejects real domains.
+        for domain in ("vpn.example.com", "a.b.example.co.uk", "example.com"):
+            caddy.build_site_config(domain, "p")  # must not raise
+
+    @pytest.mark.parametrize("email", [
+        "me@example.com}\n}\nevil.example.com {\n\trespond 200",
+        "me @example.com",
+        "not-an-email",
+    ])
+    def test_rejects_acme_email_that_would_break_the_header_block(self, email: str) -> None:
+        with pytest.raises(caddy.CaddyError, match="email"):
+            caddy.build_site_config("vpn.example.com", "p", acme_email=email)
+
 
 class TestDecoySite:
     def test_writes_a_placeholder_page(self, tmp_path: Path) -> None:

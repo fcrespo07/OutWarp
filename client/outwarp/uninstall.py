@@ -168,19 +168,51 @@ def _desktop_shortcut() -> Path | None:
 # ---------------------------------------------------------------------------
 
 def _kill_running() -> None:
-    """Best-effort: terminate any outwarp process before deleting files."""
+    """Best-effort: terminate any *other* running OutWarp client process
+    before deleting files.
+
+    Must not match this uninstall command's own argv. `pkill -f` only
+    excludes the `pkill` child process's own PID — never its caller's — so a
+    naive `pkill -f outwarp` matches this very `outwarp-cli uninstall`
+    process (its argv is literally `.../outwarp-cli uninstall`) and kills it
+    with no SIGTERM handler installed on this path, before a single byte of
+    config, a shim, the sudoers rule or the venv gets removed (FIX-06a). Same
+    story on Windows: `outwarp.exe` predates the 0.5.0 single-entry-point
+    consolidation (project.scripts only ships `outwarp-cli` now) and no
+    longer names anything running, so the old taskkill call was a silent
+    no-op rather than self-destructive — fixed here too since it's the same
+    "what actually names a live client process" bug.
+    """
     try:
         if sys.platform == "win32":
             import subprocess
             subprocess.run(
-                ["taskkill", "/F", "/IM", "outwarp.exe"],
+                ["taskkill", "/F", "/IM", "outwarp-cli.exe"],
                 capture_output=True,
             )
         else:
             import subprocess
-            subprocess.run(["pkill", "-f", "outwarp"], capture_output=True)
+            subprocess.run(
+                ["pkill", "-f", r"outwarp-cli (gui|connect|tui|daemon)\b"],
+                capture_output=True,
+            )
     except Exception:
         pass
+
+
+def _tunnel_name_from_config() -> str | None:
+    """Best-effort: the WireGuard tunnel name of whatever profile is imported.
+
+    Needed to tear the tunnel down by name before it's deleted alongside the
+    rest of the config directory. Anything short of a clean load (no profile
+    ever imported, corrupt file, etc.) just means there is nothing to tear
+    down — not a reason to fail the uninstall.
+    """
+    try:
+        from outwarp.config import ClientConfig, default_config_path
+        return ClientConfig.load(default_config_path()).wireguard.tunnel_name
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +308,23 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(f"warning: {exc}")
             warnings.append(f"{label}: {exc}")
+
+    # Release the kill switch and tear down the WireGuard tunnel *before*
+    # touching any process or file. This must not depend on a live OutWarp
+    # process cooperating on its own way out (that's what api.py's shutdown()
+    # does, but a killed/crashed process never runs it) — uninstalling with
+    # the kill switch engaged used to leave the firewall rule live after
+    # every trace of the tool that could disable it was gone, offline with no
+    # way back (FIX-06b).
+    from outwarp.platforms import get_platform
+    plat = get_platform()
+    step("Releasing kill switch", plat.release_kill_switch)
+    tunnel_name = _tunnel_name_from_config()
+    if tunnel_name:
+        step(
+            f"Tearing down WireGuard tunnel '{tunnel_name}'",
+            lambda: plat.uninstall_wg_tunnel(tunnel_name),
+        )
 
     _kill_running()
 

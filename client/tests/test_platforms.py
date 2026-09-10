@@ -125,6 +125,38 @@ def test_uninstall_wg_tunnel_deletes_conf_file(tmp_path, monkeypatch):
     assert not conf.exists()
 
 
+def test_uninstall_wg_tunnel_waits_for_service_gone_before_deleting_conf(tmp_path, monkeypatch):
+    """B-016 (KNOWN_BUGS.md) regression: /uninstalltunnelservice is async — the
+    SCM keeps stopping the service in the background after the command
+    returns. Deleting the .conf (and, upstream in tunnel.py, clearing the
+    bypass route) before the adapter actually stops left the next connection
+    attempt's tcp_probe failing against routing state that had already
+    changed while traffic still flowed through the old adapter."""
+    p = WindowsPlatform()
+    monkeypatch.setattr(p, "_conf_dir", tmp_path)
+    monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
+    (tmp_path / "wireguard.exe").write_text("fake")
+    monkeypatch.setattr("outwarp.platforms.windows.time.sleep", lambda _s: None)
+    conf = tmp_path / "MyTunnel.conf"
+    conf.write_text("[Interface]")
+
+    # /uninstalltunnelservice, then three "still stopping" polls, then gone.
+    responses = [
+        _mock_run(0),
+        _mock_run(0, stdout="STATE : 3 STOP_PENDING"),
+        _mock_run(0, stdout="STATE : 3 STOP_PENDING"),
+        _mock_run(0, stdout="STATE : 3 STOP_PENDING"),
+        _mock_run(1060, stderr="service not found"),
+    ]
+    with patch("subprocess.run", side_effect=responses) as mock_run:
+        p.uninstall_wg_tunnel("MyTunnel")
+
+    assert not conf.exists()
+    # It actually polled several times rather than deleting on the first check.
+    sc_query_calls = [c for c in mock_run.call_args_list if list(c.args[0][:2]) == ["sc", "query"]]
+    assert len(sc_query_calls) >= 3
+
+
 # --- WindowsPlatform: tunnel status ---
 
 def test_is_wg_tunnel_active_true_when_running():

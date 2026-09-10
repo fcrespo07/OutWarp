@@ -147,6 +147,19 @@ class _PanelServer(ThreadingHTTPServer):
 class _PanelHandler(BaseHTTPRequestHandler):
     server_version = "OutWarpPanel"
     protocol_version = "HTTP/1.1"
+    # FIX-10: without this, a connection that never finishes sending its
+    # request headers (or sends none at all) parks a worker thread forever —
+    # `_PanelServer` is a ThreadingHTTPServer with daemon_threads=True and no
+    # cap on concurrent threads, so a handful of such connections held open is
+    # a trivial pre-auth slowloris DoS. `socket.settimeout()` is applied to
+    # the connection before `_authed()` (or any routing) ever runs.
+    timeout = 30
+
+    # SSE heartbeat cadence and how many consecutive idle ones to tolerate
+    # before forcing a reconnect (see _handle_events). Class attributes so
+    # tests can shrink them instead of waiting out the real values.
+    sse_heartbeat_interval = 15.0
+    sse_max_idle_pings = 4
 
     # ── plumbing ──────────────────────────────────────────────────────────────
 
@@ -333,16 +346,36 @@ class _PanelHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         q = self.ctx.broker.subscribe()
+        # A half-open TCP connection (client crashed/vanished without a clean
+        # FIN/RST — laptop closed lid, NAT dropped the mapping, etc.) can keep
+        # accepting writes into the OS send buffer indefinitely without ever
+        # raising: `timeout` (above) only bounds a write that actually blocks,
+        # and tiny SSE pings rarely fill that buffer. Bound the connection's
+        # own lifetime on top, by forcing a clean close after this many
+        # consecutive idle heartbeats — the browser's EventSource reconnects
+        # automatically, so this just reclaims the thread periodically instead
+        # of parking it forever on a peer that may no longer exist.
+        idle_pings = 0
         try:
             self.wfile.write(b": connected\n\n")
             self.wfile.flush()
             while True:
                 try:
-                    name, payload = q.get(timeout=15.0)
+                    name, payload = q.get(timeout=self.sse_heartbeat_interval)
                 except queue.Empty:
+                    idle_pings += 1
+                    if idle_pings > self.sse_max_idle_pings:
+                        # protocol_version is HTTP/1.1 (persistent by
+                        # default): without this, handle_one_request() would
+                        # sit on this same socket waiting for a *new* request
+                        # line instead of actually closing it, so the browser
+                        # never sees the drop and never reconnects.
+                        self.close_connection = True
+                        break
                     self.wfile.write(b": ping\n\n")
                     self.wfile.flush()
                     continue
+                idle_pings = 0
                 chunk = (
                     f"event: outwarp:{name}\n"
                     f"data: {json.dumps(payload)}\n\n"

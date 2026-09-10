@@ -780,21 +780,16 @@ class Api:
         if self._manager is None:
             return {"ok": False, "error": "server not configured"}
         try:
-            owcfg_path, new_public = self._manager.rotate_client_keys(name)
+            owcfg_bytes, new_public = self._manager.rotate_client_keys(name)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:
             log.exception("rotate_client_keys failed")
             return {"ok": False, "error": str(exc)}
-        try:
-            owcfg_bytes = owcfg_path.read_bytes()
-        except OSError as exc:
-            return {"ok": False, "error": f"could not read generated owcfg: {exc}"}
         self._emit("clients", self.list_clients())
         return {
             "ok": True,
             "name": name,
-            "path": str(owcfg_path),
             "public_key": new_public,
             "owcfg_base64": base64.b64encode(owcfg_bytes).decode("ascii"),
         }
@@ -1065,7 +1060,7 @@ class Api:
             platform = get_server_platform()
             try:
                 if wg_port_changed and platform.is_wg_active():
-                    platform.restart_wg()
+                    platform.restart_wg(subnet=new_cfg.subnet)
                 else:
                     from outwarp_server.server_manager import _get_wg_conf
                     platform.install_wg_config(_get_wg_conf(new_cfg))

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from outwarp.config import ClientConfig
+from outwarp.routing import escape_set
 
 log = logging.getLogger(__name__)
 
@@ -214,19 +215,19 @@ def _dns_lines_for(wg) -> str:
 def build_wg_conf(config: ClientConfig, extra_bypass: list[str] | None = None) -> str:
     wg = config.wireguard
     tunnel = config.tunnel
-    # Always exclude the server endpoint itself from the tunnel. If it stayed
-    # inside AllowedIPs, wstunnel's own connection to the server would be routed
-    # back through the tunnel → loop, the WG handshake never completes. Resolved
-    # at connect time (see _resolve_bypass_networks) so a domain endpoint works
-    # too. Belt-and-suspenders on top of the server-provided bypass_ips.
+    # escape_set() always excludes the server endpoint itself, on top of the
+    # server-provided bypass_ips — if it stayed inside AllowedIPs, wstunnel's
+    # own connection to the server would be routed back through the tunnel →
+    # loop, the WG handshake never completes. Resolved at connect time (see
+    # _resolve_bypass_networks) so a domain endpoint works too.
     #
     # `extra_bypass` carries the union of every alternate front the fallback
-    # ladder might dial (CDN anycast, a proxy, alt-port hosts). Excluding them
-    # all up front means switching rungs never needs a live route change — WG is
-    # installed once and only the wstunnel process is relaunched per rung.
-    bypass = list(config.routing.bypass_ips)
-    if config.server.endpoint:
-        bypass.append(config.server.endpoint)
+    # ladder might dial (CDN anycast, a proxy, alt-port hosts) — normally
+    # already escape_set()'s own output (see tunnel.py), added here again in
+    # case a caller built it differently. Excluding them all up front means
+    # switching rungs never needs a live route change — WG is installed once
+    # and only the wstunnel process is relaunched per rung.
+    bypass = escape_set(config, [])
     if extra_bypass:
         bypass.extend(extra_bypass)
     allowed_ips = _allowed_ips_excluding(bypass) if bypass else "0.0.0.0/0"

@@ -1208,8 +1208,11 @@ def main(argv: list[str] | None = None) -> int:
     if handler is None:
         parser.print_help()
         return 1
-    # Skip the root check when --config-dir points to a writable location
-    # (used by tests). Real installations always use the default /etc path.
-    if args.command in _PRIVILEGED_COMMANDS and not args.config_dir:
+    # Skip the root check only under the test harness. --config-dir does NOT
+    # imply this: a container deployment passes it routinely to point at a
+    # mounted /data (see README's `docker run -v outwarp-data:/data`), and
+    # that must still be root inside the container — the flag says where the
+    # privileged commands read/write, not who's allowed to run them.
+    if args.command in _PRIVILEGED_COMMANDS and os.environ.get("OUTWARP_TEST_MODE") != "1":
         _require_root(args.command)
     return handler(args)

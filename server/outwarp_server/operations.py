@@ -8,13 +8,14 @@ formatting.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import logging
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from outwarp_server.config import ClientEntry, ServerConfig
+from outwarp_server.config import ClientEntry, ServerConfig, locked_config, validate_client_name
 from outwarp_server.crypto import generate_psk, generate_wg_keypair
 from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
 from outwarp_server.owcfg import build_owcfg, write_owcfg
@@ -98,6 +99,30 @@ def _ensure_spki(config: ServerConfig) -> ServerConfig:
     return replace(config, spki_sha256=spki)
 
 
+def _ensure_owcfg_signing_key(config: ServerConfig) -> ServerConfig:
+    """Generate this server's .owcfg-signing keypair the first time it's needed.
+
+    Same backfill pattern as _ensure_spki: servers set up before this field
+    existed get one lazily, on the next add-client/rotate-client, rather than
+    needing a migration step. Best-effort — a keygen failure just means this
+    profile ships unsigned, same as any pre-existing server.
+    """
+    if config.owcfg_signing_private_key:
+        return config
+    from outwarp_server import minisign
+    try:
+        key_id, private_key, public_key = minisign.generate_keypair()
+    except Exception as exc:
+        log.warning("Could not generate the .owcfg signing key: %s", exc)
+        return config
+    return replace(
+        config,
+        owcfg_signing_key_id=key_id.hex(),
+        owcfg_signing_private_key=base64.b64encode(private_key).decode("ascii"),
+        owcfg_signing_public_key=minisign.format_public_key(key_id, public_key),
+    )
+
+
 def add_client(
     config: ServerConfig,
     name: str,
@@ -123,64 +148,68 @@ def add_client(
     prevents path traversal via a crafted name (e.g. '../evil') when the name
     is used to build the .owcfg filename.
     """
-    # Late import avoids a module-level circular dependency (server_manager
-    # imports from operations via CLI/TUI, not directly, but being careful).
-    from outwarp_server.server_manager import validate_client_name
     name = validate_client_name(name)
 
-    for c in config.clients:
-        if c.name == name:
-            raise ValueError(f"Client '{name}' already exists.")
+    with locked_config(config_path):
+        # Reload the freshest on-disk state now that the lock is held — the
+        # `config` argument may be a snapshot taken before another process's
+        # add/revoke/rotate committed (see locked_config's docstring).
+        config = ServerConfig.load(config_path)
 
-    config = _ensure_spki(config)
+        for c in config.clients:
+            if c.name == name:
+                raise ValueError(f"Client '{name}' already exists.")
 
-    client_private_key = ""
-    client_public_key = ""
-    if not enroll:
-        client_private_key, client_public_key = generate_wg_keypair()
-    try:
-        psk = generate_psk()
-    except Exception as exc:
-        log.warning("Could not generate preshared key (continuing without one): %s", exc)
-        psk = ""
+        config = _ensure_spki(config)
+        config = _ensure_owcfg_signing_key(config)
 
-    allocated = [c.address for c in config.clients]
-    try:
-        client_address = next_available_ip(
-            config.subnet, config.server_address, allocated
-        )
-    except PoolExhaustedError as exc:
-        raise ValueError(str(exc)) from exc
-
-    # Nothing to add to the interface yet in enrolment mode — there is no public
-    # key until the client redeems its token.
-    hot_added = not enroll
-    if not enroll:
+        client_private_key = ""
+        client_public_key = ""
+        if not enroll:
+            client_private_key, client_public_key = generate_wg_keypair()
         try:
-            add_peer_live(client_public_key, client_address, psk=psk)
+            psk = generate_psk()
         except Exception as exc:
-            log.warning("Could not hot-add peer (WireGuard may not be running): %s", exc)
-            hot_added = False
+            log.warning("Could not generate preshared key (continuing without one): %s", exc)
+            psk = ""
 
-    enrollment_token = ""
-    enrollment_expires_at = 0
-    if enroll:
-        from outwarp_server import enrollment
-        ttl = enroll_ttl_seconds or enrollment.DEFAULT_TTL_SECONDS
-        enrollment_token = enrollment.issue(
-            config_path.parent, name, ttl_seconds=ttl
+        allocated = [c.address for c in config.clients]
+        try:
+            client_address = next_available_ip(
+                config.subnet, config.server_address, allocated
+            )
+        except PoolExhaustedError as exc:
+            raise ValueError(str(exc)) from exc
+
+        # Nothing to add to the interface yet in enrolment mode — there is no
+        # public key until the client redeems its token.
+        hot_added = not enroll
+        if not enroll:
+            try:
+                add_peer_live(client_public_key, client_address, psk=psk)
+            except Exception as exc:
+                log.warning("Could not hot-add peer (WireGuard may not be running): %s", exc)
+                hot_added = False
+
+        enrollment_token = ""
+        enrollment_expires_at = 0
+        if enroll:
+            from outwarp_server import enrollment
+            ttl = enroll_ttl_seconds or enrollment.DEFAULT_TTL_SECONDS
+            enrollment_token = enrollment.issue(
+                config_path.parent, name, ttl_seconds=ttl
+            )
+            enrollment_expires_at = int(time.time()) + ttl
+
+        new_client = ClientEntry(
+            name=name,
+            public_key=client_public_key,
+            address=client_address,
+            psk=psk,
+            expires_at=expires_at,
         )
-        enrollment_expires_at = int(time.time()) + ttl
-
-    new_client = ClientEntry(
-        name=name,
-        public_key=client_public_key,
-        address=client_address,
-        psk=psk,
-        expires_at=expires_at,
-    )
-    updated = replace(config, clients=[*config.clients, new_client])
-    updated.save(config_path)
+        updated = replace(config, clients=[*config.clients, new_client])
+        updated.save(config_path)
 
     wg_persist_warning = _persist_wg_config(updated)
 
@@ -279,26 +308,28 @@ def revoke_client(
 
     Raises KeyError if the name is unknown.
     """
-    target = next((c for c in config.clients if c.name == name), None)
-    if target is None:
-        raise KeyError(f"Client '{name}' not found.")
+    with locked_config(config_path):
+        config = ServerConfig.load(config_path)
+        target = next((c for c in config.clients if c.name == name), None)
+        if target is None:
+            raise KeyError(f"Client '{name}' not found.")
 
-    # Revoking must also kill any token still outstanding for this name,
-    # otherwise the slot comes back the moment someone redeems it.
-    from outwarp_server import enrollment
-    enrollment.revoke(config_path.parent, name)
+        # Revoking must also kill any token still outstanding for this name,
+        # otherwise the slot comes back the moment someone redeems it.
+        from outwarp_server import enrollment
+        enrollment.revoke(config_path.parent, name)
 
-    # A client that never enrolled has no peer on the interface to remove.
-    hot_removed = True
-    if target.public_key:
-        try:
-            remove_peer_live(target.public_key)
-        except Exception as exc:
-            log.warning("Could not hot-remove peer (WireGuard may not be running): %s", exc)
-            hot_removed = False
+        # A client that never enrolled has no peer on the interface to remove.
+        hot_removed = True
+        if target.public_key:
+            try:
+                remove_peer_live(target.public_key)
+            except Exception as exc:
+                log.warning("Could not hot-remove peer (WireGuard may not be running): %s", exc)
+                hot_removed = False
 
-    updated = replace(config, clients=[c for c in config.clients if c.name != name])
-    updated.save(config_path)
+        updated = replace(config, clients=[c for c in config.clients if c.name != name])
+        updated.save(config_path)
 
     wg_persist_warning: str | None = None
     from outwarp_server.platforms import PlatformError, get_server_platform
@@ -332,42 +363,46 @@ def rotate_client(
 
     Raises ValueError if the client is not found.
     """
-    from outwarp_server.server_manager import validate_client_name
     name = validate_client_name(name)
 
-    target = next((c for c in config.clients if c.name == name), None)
-    if target is None:
-        raise ValueError(f"Client '{name}' not found.")
+    with locked_config(config_path):
+        config = ServerConfig.load(config_path)
+        target = next((c for c in config.clients if c.name == name), None)
+        if target is None:
+            raise ValueError(f"Client '{name}' not found.")
 
-    config = _ensure_spki(config)
-    new_private, new_public = generate_wg_keypair()
-    try:
-        new_psk = generate_psk()
-    except Exception as exc:
-        log.warning("Could not generate preshared key on rotate (continuing without one): %s", exc)
-        new_psk = ""
+        config = _ensure_spki(config)
+        config = _ensure_owcfg_signing_key(config)
+        new_private, new_public = generate_wg_keypair()
+        try:
+            new_psk = generate_psk()
+        except Exception as exc:
+            log.warning(
+                "Could not generate preshared key on rotate (continuing without one): %s", exc
+            )
+            new_psk = ""
 
-    hot_rotated = True
-    try:
-        remove_peer_live(target.public_key)
-    except Exception as exc:
-        log.warning("Could not hot-remove old peer (WireGuard may not be running): %s", exc)
-        hot_rotated = False
-    try:
-        add_peer_live(new_public, target.address, psk=new_psk)
-    except Exception as exc:
-        log.warning("Could not hot-add rotated peer (WireGuard may not be running): %s", exc)
-        hot_rotated = False
+        hot_rotated = True
+        try:
+            remove_peer_live(target.public_key)
+        except Exception as exc:
+            log.warning("Could not hot-remove old peer (WireGuard may not be running): %s", exc)
+            hot_rotated = False
+        try:
+            add_peer_live(new_public, target.address, psk=new_psk)
+        except Exception as exc:
+            log.warning("Could not hot-add rotated peer (WireGuard may not be running): %s", exc)
+            hot_rotated = False
 
-    updated_clients = [
-        ClientEntry(
-            name=c.name, public_key=new_public, address=c.address,
-            psk=new_psk, expires_at=c.expires_at,
-        ) if c.name == name else c
-        for c in config.clients
-    ]
-    updated = replace(config, clients=updated_clients)
-    updated.save(config_path)
+        updated_clients = [
+            ClientEntry(
+                name=c.name, public_key=new_public, address=c.address,
+                psk=new_psk, expires_at=c.expires_at,
+            ) if c.name == name else c
+            for c in config.clients
+        ]
+        updated = replace(config, clients=updated_clients)
+        updated.save(config_path)
 
     wg_persist_warning: str | None = None
     from outwarp_server.platforms import PlatformError, get_server_platform
@@ -425,7 +460,7 @@ def restart_services(config: ServerConfig) -> RestartResult:
         return RestartResult(wg_conf_written, wg_restarted, wstunnel_restarted, errors)
 
     try:
-        platform.restart_wg()
+        platform.restart_wg(subnet=config.subnet)
         wg_restarted = True
     except PlatformError as exc:
         errors.append(f"WireGuard restart: {exc}")

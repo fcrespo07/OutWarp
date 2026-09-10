@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,17 @@ def build_owcfg(
     import and redeems the token to register the public half. That is the shape
     that keeps client private keys off the server and out of the delivery
     channel — see :mod:`outwarp_server.enrollment`.
+
+    When `server_config` has a signing key (CONCEPTO-C prop.2), the whole dict
+    is embedded with a ``"signing"`` block before it's returned — see
+    ``_sign_owcfg``. This only protects the profile against tampering *between*
+    the server signing it and the client importing it (an email attachment
+    edited in place, a USB stick, a shared drive) by someone who has the file
+    but not the server's private signing key. It does **not** protect the
+    first delivery from a full man-in-the-middle who can substitute both the
+    profile and a freshly-generated key of their own — that gap is TOFU by
+    construction and closes only on the client's *next* import from the same
+    server (outwarp.profile_trust pins the key it saw first).
     """
     wireguard: dict[str, Any] = {
         "tunnel_name": "OutWarp",
@@ -91,7 +103,28 @@ def build_owcfg(
         }
     if expires_at:
         owcfg["meta"] = {"expires_at": expires_at}
+    if server_config.owcfg_signing_private_key:
+        owcfg["signing"] = _sign_owcfg(server_config, owcfg)
     return owcfg
+
+
+def _canonical_json(payload: dict[str, Any]) -> bytes:
+    """Deterministic serialization the client reproduces byte-for-byte to
+    verify the signature — sorted keys, no incidental whitespace."""
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _sign_owcfg(server_config: ServerConfig, owcfg: dict[str, Any]) -> dict[str, str]:
+    from outwarp_server import minisign
+
+    payload = _canonical_json(owcfg)  # "signing" isn't in owcfg yet at this point
+    key_id = bytes.fromhex(server_config.owcfg_signing_key_id)
+    private_key = base64.b64decode(server_config.owcfg_signing_private_key)
+    signature = minisign.sign(
+        payload, key_id, private_key,
+        trusted_comment=f"OutWarp profile for {owcfg.get('name') or 'client'}",
+    )
+    return {"public_key": server_config.owcfg_signing_public_key, "signature": signature}
 
 
 def write_owcfg(warpcfg: dict[str, Any], path: Path) -> None:

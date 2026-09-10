@@ -1,50 +1,20 @@
 from __future__ import annotations
 
 import logging
-import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from collections.abc import Callable
-from dataclasses import replace
 from enum import Enum
 from pathlib import Path
 
-from outwarp_server.binaries import find_wg
-from outwarp_server.config import ClientEntry, ServerConfig, default_config_path
-from outwarp_server.crypto import generate_psk, generate_wg_keypair
-from outwarp_server.owcfg import build_owcfg, write_owcfg
+from outwarp_server.config import ServerConfig, default_config_path
 from outwarp_server.platforms import PlatformError, get_server_platform
-from outwarp_server.wireguard import (
-    add_peer_live,
-    build_server_wg_conf,
-    remove_peer_live,
-)
+from outwarp_server.wireguard import build_server_wg_conf
 
 log = logging.getLogger(__name__)
-
-# A client name doubles as a config identifier and the <name>.owcfg filename
-# written to the cwd. Without this an unsanitised name like '../x' or 'a/b'
-# would escape the directory or fail mid-write. Allow a conservative charset
-# only; reject path separators, traversal and control characters.
-_CLIENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,63}$")
-
-
-def validate_client_name(name: str) -> str:
-    """Return the stripped name if it is a safe identifier, else raise ValueError."""
-    if not isinstance(name, str):
-        raise ValueError("Client name must be text")
-    cleaned = name.strip()
-    if not cleaned:
-        raise ValueError("Client name is required")
-    if cleaned in (".", ".."):
-        raise ValueError("Invalid client name")
-    if not _CLIENT_NAME_RE.match(cleaned):
-        raise ValueError(
-            "Client name may only contain letters, digits, spaces, '.', '_' and "
-            "'-' (1-64 characters, not starting with a separator)"
-        )
-    return cleaned
 
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 _MONITOR_INTERVAL = 5.0
@@ -216,14 +186,15 @@ class ServerManager:
         """
         from outwarp_server import operations
 
-        result = operations.add_client(
-            self._config,
-            name,
-            config_path=default_config_path(),
-            expires_at=expires_at,
-            enroll=True,
-        )
-        self._config = result.config
+        with self._lock:
+            result = operations.add_client(
+                self._config,
+                name,
+                config_path=default_config_path(),
+                expires_at=expires_at,
+                enroll=True,
+            )
+            self._config = result.config
         log.info("Client '%s' added — .owcfg at %s", name, result.owcfg_path)
         return result.owcfg_path
 
@@ -242,82 +213,60 @@ class ServerManager:
             self.revoke_client(name)
         return expired
 
-    def rotate_client_keys(self, name: str) -> tuple[Path, str]:
+    def rotate_client_keys(self, name: str) -> tuple[bytes, str]:
         """Generate a new WG keypair for an existing client and rewrite its .owcfg.
 
-        The old public key is removed from the peer list; the new one is added.
-        Returns (path_to_new_owcfg, new_public_key). The previous .owcfg becomes
-        invalid as soon as this returns — the new file must reach the client.
+        Delegates to :func:`outwarp_server.operations.rotate_client` — the
+        same path `add_client` takes — instead of duplicating key handling.
+        The .owcfg is written to a private temp directory that is deleted
+        before this returns: ServerManager runs as a long-lived daemon, so
+        `Path.cwd()` is whatever directory systemd or the container started it
+        in, not somewhere a client's rotated private key should sit
+        indefinitely (it used to, unread and undeleted, until the next
+        `rotate-client`). Returns (owcfg_bytes, new_public_key); since no file
+        survives the call, the caller gets the content directly.
         """
-        config = self._config
-        target = next((c for c in config.clients if c.name == name), None)
-        if target is None:
-            raise ValueError(f"Client '{name}' not found")
+        from outwarp_server import operations
 
-        wg_bin = find_wg()
-        new_private, new_public = generate_wg_keypair(Path(wg_bin) if wg_bin else None)
+        tmp_dir = Path(tempfile.mkdtemp(prefix="outwarp-rotate-"))
         try:
-            new_psk = generate_psk(Path(wg_bin) if wg_bin else None)
-        except Exception as exc:
-            log.warning("Could not generate preshared key on rotate: %s", exc)
-            new_psk = ""
+            with self._lock:
+                result = operations.rotate_client(
+                    self._config, name, config_path=default_config_path(), output_dir=tmp_dir,
+                )
+                self._config = result.config
+            owcfg_bytes = result.owcfg_path.read_bytes()
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
-        try:
-            remove_peer_live(target.public_key)
-        except Exception as exc:
-            log.warning("Could not hot-remove old peer: %s", exc)
-        try:
-            add_peer_live(new_public, target.address, psk=new_psk)
-        except Exception as exc:
-            log.warning("Could not hot-add rotated peer: %s", exc)
-
-        updated_clients = [
-            ClientEntry(
-                name=c.name, public_key=new_public, address=c.address,
-                psk=new_psk, expires_at=c.expires_at,
-            )
-            if c.name == name else c
-            for c in config.clients
-        ]
-        updated = replace(config, clients=updated_clients)
-        updated.save(default_config_path())
-        self._config = updated
-
-        try:
-            get_server_platform().install_wg_config(_get_wg_conf(updated))
-        except PlatformError as exc:
-            log.warning("Could not persist WG config: %s", exc)
-
-        warpcfg = build_owcfg(
-            updated, name, new_private, target.address,
-            preshared_key=new_psk, expires_at=target.expires_at,
-        )
-        warpcfg_path = Path.cwd() / f"{name}.owcfg"
-        write_owcfg(warpcfg, warpcfg_path)
-        log.info("Client '%s' keys rotated — new .owcfg at %s", name, warpcfg_path)
-        return warpcfg_path, new_public
+        if result.wg_persist_warning:
+            log.warning("Could not persist WG config: %s", result.wg_persist_warning)
+        log.info("Client '%s' keys rotated", name)
+        return owcfg_bytes, result.client.public_key
 
     def revoke_client(self, name: str) -> None:
-        config = self._config
+        """Remove a client from the running interface and persist the new config.
 
-        target = next((c for c in config.clients if c.name == name), None)
-        if target is None:
-            raise ValueError(f"Client '{name}' not found")
+        Delegates to :func:`outwarp_server.operations.revoke_client` — the
+        same path `add_client`/`rotate_client_keys` take — instead of
+        duplicating key handling. This used to reimplement the read-modify-
+        write itself, which also meant it (unlike the CLI's `revoke-client`)
+        forgot to invalidate any enrolment token still outstanding for the
+        name, letting a revoked slot come back the moment someone redeemed it.
+        """
+        from outwarp_server import operations
 
-        try:
-            remove_peer_live(target.public_key)
-        except Exception as exc:
-            log.warning("Could not hot-remove peer: %s", exc)
+        with self._lock:
+            try:
+                result = operations.revoke_client(
+                    self._config, name, config_path=default_config_path(),
+                )
+            except KeyError as exc:
+                raise ValueError(f"Client '{name}' not found") from exc
+            self._config = result.config
 
-        updated = replace(config, clients=[c for c in config.clients if c.name != name])
-        updated.save(default_config_path())
-        self._config = updated
-
-        try:
-            get_server_platform().install_wg_config(_get_wg_conf(updated))
-        except PlatformError as exc:
-            log.warning("Could not persist WG config: %s", exc)
-
+        if result.wg_persist_warning:
+            log.warning("Could not persist WG config: %s", result.wg_persist_warning)
         log.info("Client '%s' revoked", name)
 
     # ── Internal ──────────────────────────────────────────────────────────────

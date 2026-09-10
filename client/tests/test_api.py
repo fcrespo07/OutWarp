@@ -25,8 +25,8 @@ _VALID_OWCFG = {
     "wireguard": {
         "tunnel_name": "OutWarp",
         "client_address": "10.0.0.42/32",
-        "client_private_key": "dGVzdGtleQ==",
-        "server_public_key": "c2VydmVya2V5",
+        "client_private_key": "xif9YhWWYeCAt6e0GjpNuu9W1952Cagg/0weOOzPL6c=",
+        "server_public_key": "RFUpPmm7W7VHTyjKsHdpR5DV/QICx9UXub9dIMAYZsE=",
         "dns": ["1.1.1.1"],
     },
     "routing": {"bypass_ips": ["203.0.113.42"]},
@@ -399,7 +399,10 @@ def test_kill_switch_engages_on_failed_when_enabled(tmp_path):
     ):
         api, _ = _make_api(mgr)
         api._on_state_change(TunnelState.FAILED)
-    fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42"])
+    # escape_set() always adds the server endpoint on top of routing.bypass_ips
+    # (FIX-03): omitting it here is exactly the bug that let the kill switch
+    # block the client's own path back to the server.
+    fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42", "1.2.3.4"])
     fake_plat.release_kill_switch.assert_not_called()
 
 
@@ -416,7 +419,7 @@ def test_kill_switch_engages_on_reconnecting_too(tmp_path):
     ):
         api, _ = _make_api(mgr)
         api._on_state_change(TunnelState.RECONNECTING)
-    fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42"])
+    fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42", "1.2.3.4"])
 
 
 def test_kill_switch_releases_on_connected(tmp_path):
@@ -464,11 +467,15 @@ def test_kill_switch_disabled_does_not_engage(tmp_path):
 
 
 def test_kill_switch_refuses_to_engage_without_bypass_ips(tmp_path):
-    """A profile without bypass_ips would mean the user has no recovery path
-    once we engage. Refuse and log instead of locking them out."""
+    """An escape set empty on every front (no routing.bypass_ips, no server
+    endpoint, no ladder rung) would mean the user has no recovery path once we
+    engage. Refuse and log instead of locking them out — this can only happen
+    on a badly hand-edited profile, since server.endpoint is normally a
+    required field, but the guard must hold regardless."""
     fake_plat = MagicMock()
     (tmp_path / "settings.json").write_text(json.dumps({"kill_switch": True}))
     mgr = _mgr_with_bypass(TunnelState.CONNECTED, [])
+    mgr.config.server.endpoint = ""
     with (
         patch("outwarp.api.default_config_path",
               return_value=tmp_path / "config.json"),
@@ -508,7 +515,7 @@ def test_set_kill_switch_on_engages_now_if_tunnel_is_down(tmp_path):
         api, _ = _make_api(mgr)
         r = api.set_settings({"kill_switch": True})
     assert r["ok"] is True
-    fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42"])
+    fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42", "1.2.3.4"])
 
 
 def test_set_kill_switch_on_no_op_if_tunnel_is_connected(tmp_path):

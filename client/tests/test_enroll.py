@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 import urllib.error
 from dataclasses import replace
 from io import BytesIO
@@ -142,6 +143,52 @@ class TestEnroll:
         spki.assert_called_once_with("vpn.example.com", 8444, SPKI_FP)
         fp.assert_not_called()
 
+    def test_ca_mode_posts_with_a_verifying_tls_context(self) -> None:
+        """FIX-02 regression: the enrolment POST used to disable certificate
+        verification for *every* https URL, `tls.verify` be damned — so the
+        token + client public key travelled unauthenticated in "ca" mode, the
+        one where the server is fronted by a real CA-issued cert. The context
+        actually handed to urlopen must stay at ssl.create_default_context()'s
+        secure defaults in that mode."""
+        cfg = _cfg(tls=TlsConfig(cert_fingerprint_sha256="", verify="ca"))
+        captured: dict = {}
+
+        def _urlopen(req, context=None, **_kw):
+            captured["context"] = context
+            return _response({"ok": True})
+
+        with (
+            patch("outwarp.enroll.generate_keypair", return_value=("PRIV", "PUB")),
+            patch("outwarp.enroll.urllib.request.urlopen", side_effect=_urlopen),
+        ):
+            enroll(cfg)
+
+        ctx = captured["context"]
+        assert ctx is not None
+        assert ctx.check_hostname is True
+        assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+    def test_pin_mode_posts_with_a_relaxed_tls_context(self) -> None:
+        """The relaxation is only safe here because _verify_endpoint already
+        authenticated the host against the profile's own pin beforehand."""
+        captured: dict = {}
+
+        def _urlopen(req, context=None, **_kw):
+            captured["context"] = context
+            return _response({"ok": True})
+
+        with (
+            patch("outwarp.enroll.generate_keypair", return_value=("PRIV", "PUB")),
+            patch("outwarp.enroll.verify_tls_fingerprint"),
+            patch("outwarp.enroll.urllib.request.urlopen", side_effect=_urlopen),
+        ):
+            enroll(_cfg())
+
+        ctx = captured["context"]
+        assert ctx is not None
+        assert ctx.check_hostname is False
+        assert ctx.verify_mode == ssl.CERT_NONE
+
     def test_ca_profile_leaves_verification_to_urlopen(self) -> None:
         cfg = _cfg(tls=TlsConfig(cert_fingerprint_sha256="", verify="ca"))
         with (
@@ -238,7 +285,7 @@ class TestImportRunsEnrollment:
             "wireguard": {
                 "tunnel_name": "OutWarp",
                 "client_address": "10.0.0.2/32",
-                "server_public_key": "srv_pub",
+                "server_public_key": "RFUpPmm7W7VHTyjKsHdpR5DV/QICx9UXub9dIMAYZsE=",
             },
             "routing": {"bypass_ips": ["vpn.example.com"]},
             "reconnect": {"max_attempts": 5, "delays_seconds": [5]},

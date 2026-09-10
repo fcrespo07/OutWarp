@@ -30,7 +30,11 @@ VALID: dict = {
     "server_address": "10.0.0.1/24",
     "wg_listen_port": 51820,
     "clients": [
-        {"name": "laptop", "public_key": "bGFwdG9wa2V5", "address": "10.0.0.2/32"},
+        {
+            "name": "laptop",
+            "public_key": "vn4n9d0JyfC8GQOt0YuK61s+3+kDkxCZ3a087Q5WSAo=",
+            "address": "10.0.0.2/32",
+        },
     ],
 }
 
@@ -76,6 +80,63 @@ def test_save_is_0600(tmp_path: Path) -> None:
     finally:
         os.umask(old_umask)
     assert dest.stat().st_mode & 0o777 == 0o600
+
+
+# --- FIX-01: server_config.json is semi-trusted (client names come from CLI
+# operators, client fields come from add-client/rotate-client output) but is
+# validated the same way a .owcfg is — nothing destined for wg0.conf may reach
+# it unvalidated. ---
+
+def test_rejects_client_name_with_conf_injection(tmp_path: Path) -> None:
+    data = {
+        **VALID,
+        "clients": [{
+            "name": "laptop\n[Peer]\nPublicKey = AAAA",
+            "public_key": "vn4n9d0JyfC8GQOt0YuK61s+3+kDkxCZ3a087Q5WSAo=",
+            "address": "10.0.0.2/32",
+        }],
+    }
+    with pytest.raises(ConfigError, match="name"):
+        ServerConfig.load(_write(tmp_path, data))
+
+
+def test_rejects_client_address_with_conf_injection(tmp_path: Path) -> None:
+    data = {
+        **VALID,
+        "clients": [{
+            "name": "laptop",
+            "public_key": "vn4n9d0JyfC8GQOt0YuK61s+3+kDkxCZ3a087Q5WSAo=",
+            "address": "10.0.0.2/32\nPostUp = touch /tmp/pwned",
+        }],
+    }
+    with pytest.raises(ConfigError, match="address"):
+        ServerConfig.load(_write(tmp_path, data))
+
+
+def test_rejects_malformed_client_public_key(tmp_path: Path) -> None:
+    data = {
+        **VALID,
+        "clients": [
+            {"name": "laptop", "public_key": "not-a-real-key", "address": "10.0.0.2/32"},
+        ],
+    }
+    with pytest.raises(ConfigError, match="public_key"):
+        ServerConfig.load(_write(tmp_path, data))
+
+
+def test_client_with_no_public_key_is_valid_pending_enrolment(tmp_path: Path) -> None:
+    data = {
+        **VALID,
+        "clients": [{"name": "laptop", "public_key": "", "address": "10.0.0.2/32"}],
+    }
+    cfg = ServerConfig.load(_write(tmp_path, data))
+    assert cfg.clients[0].public_key == ""
+
+
+def test_rejects_subnet_with_injection(tmp_path: Path) -> None:
+    data = {**VALID, "subnet": "10.0.0.0/24; rm -rf /"}
+    with pytest.raises(ConfigError, match="subnet"):
+        ServerConfig.load(_write(tmp_path, data))
 
 
 def test_empty_clients_list(tmp_path: Path) -> None:
@@ -141,14 +202,18 @@ def test_client_psk_and_expiry_roundtrip(tmp_path: Path) -> None:
         **VALID,
         "clients": [
             {
-                "name": "laptop", "public_key": "k", "address": "10.0.0.2/32",
-                "psk": "cHNrMDAw", "expires_at": "2030-01-01",
+                "name": "laptop", "public_key": "vn4n9d0JyfC8GQOt0YuK61s+3+kDkxCZ3a087Q5WSAo=",
+                "address": "10.0.0.2/32",
+                "psk": "rY2vuEB4VDipfXtL8xlnizgU9eBsI2tQfKw7L4xLFIw=", "expires_at": "2030-01-01",
             },
-            {"name": "old", "public_key": "k2", "address": "10.0.0.3/32"},
+            {
+                "name": "old", "public_key": "AV9+a8Wur0g3JAieklLME7UJUaa2lBJSJ2XP9NeAMG4=",
+                "address": "10.0.0.3/32",
+            },
         ],
     }
     cfg = ServerConfig.load(_write(tmp_path, data))
-    assert cfg.clients[0].psk == "cHNrMDAw"
+    assert cfg.clients[0].psk == "rY2vuEB4VDipfXtL8xlnizgU9eBsI2tQfKw7L4xLFIw="
     assert cfg.clients[0].expires_at == "2030-01-01"
     # A client without psk/expiry parses with empty defaults.
     assert cfg.clients[1].psk == ""

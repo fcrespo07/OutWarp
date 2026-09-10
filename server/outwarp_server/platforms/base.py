@@ -72,11 +72,19 @@ class ServerPlatform(ABC):
         ...
 
     @abstractmethod
-    def restart_wg(self, interface: str = "wg0") -> None:
+    def restart_wg(self, interface: str = "wg0", subnet: str | None = None) -> None:
         """Bring the WireGuard interface fully down and up again.
 
         Required when PostUp/PostDown rules in the config have changed —
         `wg syncconf` does a hot reload but doesn't re-run those scripts.
+
+        `subnet` only matters on Windows: WireGuard for Windows has no
+        PostUp/PostDown, so `prepare_system()`'s NAT is torn down and
+        recreated by hand around the restart (FIX-07) rather than living
+        inside the WG lifecycle the way Linux's PostUp/PostDown do. Callers
+        that have a `ServerConfig` in scope should always pass `config.subnet`
+        — omitting it is only safe on platforms where WG owns its own
+        networking symmetrically.
         """
         ...
 
@@ -99,10 +107,13 @@ class ServerPlatform(ABC):
         return "wg0"
 
     def prepare_system(self, subnet: str, wss_port: int) -> None:  # noqa: B027
-        """One-time OS-level setup: IP forwarding, NAT, firewall rules.
+        """OS-level setup: IP forwarding, NAT, firewall rules.
 
-        Called once after first-run setup wizard completes.
-        The default implementation is a no-op (Linux uses PostUp hooks).
+        Idempotent and called on every server start (ServerManager._do_start),
+        not just once after the setup wizard — Windows' NAT in particular does
+        not survive a `restart_wg()` on its own (see FIX-07) and has to be
+        reconciled here every time. The default implementation is a no-op
+        (Linux uses PostUp hooks instead, which are symmetric by construction).
         """
 
     def check_prerequisites(self) -> PrerequisiteResult:

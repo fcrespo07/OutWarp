@@ -90,7 +90,11 @@ class WindowsServerPlatform(ServerPlatform):
         log.info("WireGuard server interface '%s' installed and running", interface)
 
     def reload_wg(self, interface: str = _WG_INTERFACE) -> None:
-        # WireGuard for Windows does not ship wg-quick or wg strip; do a full restart.
+        # WireGuard for Windows does not ship wg-quick or wg strip; do a full
+        # restart. Currently unreachable — nothing in this codebase calls
+        # reload_wg() on Windows — but note restart_wg() now requires a
+        # subnet (FIX-07) and this can't supply one; a future caller needs
+        # this method's own signature extended the same way first.
         self.restart_wg(interface)
 
     def is_wg_active(self, interface: str = _WG_INTERFACE) -> bool:
@@ -105,13 +109,26 @@ class WindowsServerPlatform(ServerPlatform):
         conf_path = self.wg_config_dir() / f"{interface}.conf"
         conf_path.unlink(missing_ok=True)
 
-    def restart_wg(self, interface: str = _WG_INTERFACE) -> None:
+    def restart_wg(self, interface: str = _WG_INTERFACE, subnet: str | None = None) -> None:
         conf_path = self.wg_config_dir() / f"{interface}.conf"
         if not conf_path.exists():
             raise PlatformError(f"WireGuard config not found: {conf_path}")
         conf_text = conf_path.read_text(encoding="utf-8")
+        # uninstall_wg_config() unconditionally tears the NAT down
+        # (_remove_nat); install_wg_config() never recreates it — only
+        # prepare_system() does, and nothing here calls that. Before this fix
+        # every restart_wg() left clients completing the WG handshake with no
+        # return traffic: the exact silent-NAT-loss failure this file's own
+        # `_create_nat` comment already warns about (FIX-07).
         self.uninstall_wg_config(interface)
         self.install_wg_config(conf_text, interface)
+        if subnet is None:
+            raise PlatformError(
+                "restart_wg: no subnet given — cannot recreate the NAT this "
+                "call just tore down. This is a caller bug, not a transient "
+                "failure: pass config.subnet."
+            )
+        self._create_nat(subnet)
 
     def wg_config_dir(self) -> Path:
         return _WG_DIR

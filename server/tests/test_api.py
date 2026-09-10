@@ -469,9 +469,7 @@ def test_get_client_happy_path():
 
 def test_rotate_client_keys_happy_path(tmp_path):
     mgr = _make_mgr()
-    written = tmp_path / "alice.owcfg"
-    written.write_bytes(b"new-owcfg")
-    mgr.rotate_client_keys.return_value = (written, "NEW_PUB")
+    mgr.rotate_client_keys.return_value = (b"new-owcfg", "NEW_PUB")
 
     api, _ = _make_api(mgr)
     fake_window = MagicMock()
@@ -495,9 +493,7 @@ def test_rotate_client_keys_unknown_name():
 
 def test_regenerate_owcfg_delegates_to_rotate(tmp_path):
     mgr = _make_mgr()
-    written = tmp_path / "alice.owcfg"
-    written.write_bytes(b"regen")
-    mgr.rotate_client_keys.return_value = (written, "PUB2")
+    mgr.rotate_client_keys.return_value = (b"regen", "PUB2")
     api, _ = _make_api(mgr)
     with patch("outwarp_server.api.get_live_peers", return_value={}):
         r = api.regenerate_owcfg("alice")

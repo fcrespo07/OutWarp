@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from outwarp_server.config import ClientEntry, ServerConfig
-from outwarp_server.server_manager import ServerManager, validate_client_name
+from outwarp_server.config import ClientEntry, ServerConfig, validate_client_name
+from outwarp_server.server_manager import ServerManager
 
 
 def _config(clients: list[ClientEntry]) -> ServerConfig:
@@ -27,16 +27,25 @@ def _config(clients: list[ClientEntry]) -> ServerConfig:
     )
 
 
+_PUB1 = "arnx6499M4j0+dWG9m6Z/VQIDfLERvDlhmiwnAihbdA="
+_PUB2 = "AV9+a8Wur0g3JAieklLME7UJUaa2lBJSJ2XP9NeAMG4="
+_PUB3 = "L1BSyf0VsZoYxYTQE2NWgZhhPww06EQJ73k4cJoVnsI="
+
+
 class TestPruneExpired:
     def test_revokes_only_past_dated_clients(self, tmp_path: Path) -> None:
         clients = [
-            ClientEntry("old", "k1", "10.0.0.2/32", expires_at="2000-01-01"),
-            ClientEntry("live", "k2", "10.0.0.3/32", expires_at="2999-01-01"),
-            ClientEntry("forever", "k3", "10.0.0.4/32"),
+            ClientEntry("old", _PUB1, "10.0.0.2/32", expires_at="2000-01-01"),
+            ClientEntry("live", _PUB2, "10.0.0.3/32", expires_at="2999-01-01"),
+            ClientEntry("forever", _PUB3, "10.0.0.4/32"),
         ]
-        mgr = ServerManager(_config(clients))
-        with patch("outwarp_server.server_manager.remove_peer_live"), \
-             patch("outwarp_server.server_manager.get_server_platform"), \
+        cfg = _config(clients)
+        mgr = ServerManager(cfg)
+        # revoke_client now delegates to operations.revoke_client, which
+        # reloads fresh from config_path under its file lock (FIX-04).
+        cfg.save(tmp_path / "server_config.json")
+        with patch("outwarp_server.operations.remove_peer_live"), \
+             patch("outwarp_server.platforms.get_server_platform"), \
              patch(
                  "outwarp_server.server_manager.default_config_path",
                  return_value=tmp_path / "server_config.json",
@@ -46,7 +55,7 @@ class TestPruneExpired:
         assert {c.name for c in mgr.config.clients} == {"live", "forever"}
 
     def test_noop_when_nothing_expired(self, tmp_path: Path) -> None:
-        clients = [ClientEntry("forever", "k", "10.0.0.2/32")]
+        clients = [ClientEntry("forever", _PUB1, "10.0.0.2/32")]
         mgr = ServerManager(_config(clients))
         with patch("outwarp_server.server_manager.default_config_path",
                    return_value=tmp_path / "server_config.json"):
@@ -92,6 +101,120 @@ def test_validate_client_name_rejects_unsafe_names(name):
 def test_validate_client_name_rejects_non_string():
     with pytest.raises(ValueError):
         validate_client_name(None)  # type: ignore[arg-type]
+
+
+class TestRotateClientKeys:
+    """FIX-05 regression: rotate_client_keys used to write the client's fresh
+    private key to Path.cwd() — whatever directory the daemon happened to
+    start in — and nothing ever deleted it. It now delegates to
+    operations.rotate_client with a private temp dir removed before return."""
+
+    def test_no_owcfg_survives_outside_the_temp_dir(self, tmp_path: Path) -> None:
+        old_pub = "yYzBcQWtwdHBN0USGevIH8L0z9WaUDItBX1ZLZMkYpk="
+        clients = [ClientEntry("laptop", old_pub, "10.0.0.2/32")]
+        cfg = _config(clients)
+        mgr = ServerManager(cfg)
+        # FIX-04: operations.rotate_client reloads fresh from config_path under
+        # its file lock, so the on-disk file must exist for this to find it.
+        cfg.save(tmp_path / "server_config.json")
+
+        captured: dict = {}
+        real_mkdtemp = __import__("tempfile").mkdtemp
+
+        def _spy_mkdtemp(*args, **kwargs):
+            d = real_mkdtemp(*args, dir=tmp_path, **kwargs)
+            captured["dir"] = Path(d)
+            return d
+
+        with (
+            patch("outwarp_server.server_manager.tempfile.mkdtemp", side_effect=_spy_mkdtemp),
+            patch(
+                "outwarp_server.operations.generate_wg_keypair",
+                return_value=("new_priv", "new_pub"),
+            ),
+            patch("outwarp_server.operations.generate_psk", return_value=""),
+            patch("outwarp_server.operations.add_peer_live"),
+            patch("outwarp_server.operations.remove_peer_live"),
+            patch("outwarp_server.platforms.get_server_platform"),
+            patch(
+                "outwarp_server.server_manager.default_config_path",
+                return_value=tmp_path / "server_config.json",
+            ),
+        ):
+            owcfg_bytes, new_public = mgr.rotate_client_keys("laptop")
+
+        assert new_public == "new_pub"
+        assert b'"client_private_key": "new_priv"' in owcfg_bytes
+        # The temp dir rotate_client used to write into is gone...
+        assert not captured["dir"].exists()
+        # ...and nothing else was left behind in tmp_path either.
+        assert list(tmp_path.glob("*.owcfg")) == []
+
+
+class TestConcurrentAddClient:
+    """FIX-04 regression: add_client used to read-modify-write self._config
+    with no lock at all. Two near-simultaneous calls (e.g. two browser tabs
+    both hitting the panel's /api/add_client) could both read the same client
+    list, both allocate the same pool IP via next_available_ip, and have the
+    second save silently clobber the first's new peer — the first client
+    would work live (its peer was hot-added) but vanish from the persisted
+    config, resurfacing as a mystery on the next restart.
+
+    ServerManager._lock (a threading.Lock, held for the whole operation) now
+    serializes same-process callers; operations.py's locked_config() closes
+    the same gap across processes (not exercised here — that needs real
+    multiprocessing, see config.py's docstring for the reasoning)."""
+
+    def test_n_concurrent_add_client_calls_yield_n_distinct_ips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import threading
+
+        # ServerManager.add_client doesn't pass output_dir, so
+        # operations.add_client falls back to Path.cwd() for the .owcfg it
+        # writes — without this, the 8 files land in the real repo checkout
+        # instead of tmp_path.
+        monkeypatch.chdir(tmp_path)
+
+        n = 8
+        cfg = _config([])
+        mgr = ServerManager(cfg)
+        config_path = tmp_path / "server_config.json"
+        cfg.save(config_path)
+
+        errors: list[BaseException] = []
+
+        def _add(i: int) -> None:
+            try:
+                mgr.add_client(f"client-{i}")
+            except BaseException as exc:  # noqa: BLE001 — surfaced by the assert below
+                errors.append(exc)
+
+        with (
+            patch("outwarp_server.operations.generate_psk", return_value=""),
+            patch("outwarp_server.platforms.get_server_platform"),
+            patch(
+                "outwarp_server.server_manager.default_config_path",
+                return_value=config_path,
+            ),
+        ):
+            threads = [threading.Thread(target=_add, args=(i,)) for i in range(n)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        assert errors == []
+        # In-memory view (mgr._config, updated under the lock on every call)...
+        names = {c.name for c in mgr.config.clients}
+        ips = [c.address for c in mgr.config.clients]
+        assert names == {f"client-{i}" for i in range(n)}
+        assert len(ips) == len(set(ips)) == n
+
+        # ...matches what actually landed on disk — no lost update.
+        persisted = ServerConfig.load(config_path)
+        assert {c.name for c in persisted.clients} == names
+        assert len(persisted.clients) == n
 
 
 # --- transport branch: what wstunnel is actually told to do ---

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import sys
 from pathlib import Path
@@ -141,6 +142,15 @@ def test_build_owcfg_includes_expiry_when_given() -> None:
     assert cfg["meta"]["expires_at"] == "2030-01-01"
 
 
+# Real-shaped fake keys (44-char base64, valid WireGuard key encoding) — the
+# client's parser validates wireguard.* fields (FIX-01), so these two
+# cross-package round-trip tests need values that actually pass, unlike the
+# rest of this file's placeholders which never reach that parser.
+_CLIENT_PRIV = "xif9YhWWYeCAt6e0GjpNuu9W1952Cagg/0weOOzPL6c="
+_SERVER_PUB = "RFUpPmm7W7VHTyjKsHdpR5DV/QICx9UXub9dIMAYZsE="
+_PSK = "rY2vuEB4VDipfXtL8xlnizgU9eBsI2tQfKw7L4xLFIw="
+
+
 def test_psk_and_expiry_roundtrip_to_client(tmp_path: Path) -> None:
     try:
         from outwarp.config import ClientConfig
@@ -148,14 +158,17 @@ def test_psk_and_expiry_roundtrip_to_client(tmp_path: Path) -> None:
         import pytest
         pytest.skip("Client package not installed in this environment")
 
+    from dataclasses import replace
+
+    server_config = replace(_make_server_config(), wg_public_key=_SERVER_PUB)
     cfg = build_owcfg(
-        _make_server_config(), "laptop", "client_priv", "10.0.0.2/32",
-        preshared_key="cHNrMDAw", expires_at="2030-01-01",
+        server_config, "laptop", _CLIENT_PRIV, "10.0.0.2/32",
+        preshared_key=_PSK, expires_at="2030-01-01",
     )
     out = tmp_path / "laptop.owcfg"
     write_owcfg(cfg, out)
     client_cfg = ClientConfig.load(out)
-    assert client_cfg.wireguard.preshared_key == "cHNrMDAw"
+    assert client_cfg.wireguard.preshared_key == _PSK
     assert client_cfg.expires_at == "2030-01-01"
 
 
@@ -168,12 +181,15 @@ def test_warpcfg_compatible_with_client_schema(tmp_path: Path) -> None:
         import pytest
         pytest.skip("Client package not installed in this environment")
 
-    cfg = build_owcfg(_make_server_config(), "laptop", "client_priv", "10.0.0.2/32")
+    from dataclasses import replace
+
+    server_config = replace(_make_server_config(), wg_public_key=_SERVER_PUB)
+    cfg = build_owcfg(server_config, "laptop", _CLIENT_PRIV, "10.0.0.2/32")
     out = tmp_path / "laptop.owcfg"
     write_owcfg(cfg, out)
     client_cfg = ClientConfig.load(out)
     assert client_cfg.server.endpoint == "203.0.113.42"
-    assert client_cfg.wireguard.client_private_key == "client_priv"
+    assert client_cfg.wireguard.client_private_key == _CLIENT_PRIV
 
 
 # --- key pin (schema v2) ---
@@ -226,3 +242,80 @@ def test_acme_profile_ignores_a_stale_self_signed_pin() -> None:
     cfg = build_owcfg(server, "laptop", "client_priv", "10.0.0.2/32")
     assert "spki_sha256" not in cfg["tls"]
     assert "cert_fingerprint_sha256" not in cfg["tls"]
+
+
+# --- .owcfg signing (CONCEPTO-C prop.2) ---
+
+class TestOwcfgSigning:
+    def _signed_server_config(self):
+        from dataclasses import replace
+
+        from outwarp_server import minisign
+
+        key_id, private_key, public_key = minisign.generate_keypair()
+        return replace(
+            _make_server_config(),
+            owcfg_signing_key_id=key_id.hex(),
+            owcfg_signing_private_key=base64.b64encode(private_key).decode(),
+            owcfg_signing_public_key=minisign.format_public_key(key_id, public_key),
+        )
+
+    def test_unsigned_when_server_has_no_signing_key(self) -> None:
+        cfg = build_owcfg(_make_server_config(), "laptop", "client_priv", "10.0.0.2/32")
+        assert "signing" not in cfg
+
+    def test_signed_profile_verifies_against_its_own_embedded_key(self) -> None:
+        from outwarp_server import minisign
+        from outwarp_server.owcfg import _canonical_json
+
+        server = self._signed_server_config()
+        cfg = build_owcfg(server, "laptop", "client_priv", "10.0.0.2/32")
+
+        assert "signing" in cfg
+        signing = cfg.pop("signing")
+        minisign.verify(_canonical_json(cfg), signing["signature"], signing["public_key"])
+
+    def test_tampered_field_breaks_the_signature(self) -> None:
+        from outwarp_server import minisign
+        from outwarp_server.owcfg import _canonical_json
+
+        server = self._signed_server_config()
+        cfg = build_owcfg(server, "laptop", "client_priv", "10.0.0.2/32")
+        signing = cfg.pop("signing")
+
+        cfg["server"]["endpoint"] = "evil.attacker.example"  # tampered post-signing
+        with pytest.raises(minisign.MinisignError):
+            minisign.verify(_canonical_json(cfg), signing["signature"], signing["public_key"])
+
+    def test_signature_binds_to_the_client_name(self) -> None:
+        """A signature valid for 'laptop' must not verify for a re-labelled
+        copy of the same profile content — the trusted comment binds the name."""
+        from outwarp_server import minisign
+        from outwarp_server.owcfg import _canonical_json
+
+        server = self._signed_server_config()
+        cfg = build_owcfg(server, "laptop", "client_priv", "10.0.0.2/32")
+        signing = cfg.pop("signing")
+
+        cfg["name"] = "phone"
+        with pytest.raises(minisign.MinisignError):
+            minisign.verify(_canonical_json(cfg), signing["signature"], signing["public_key"])
+
+
+class TestEnsureOwcfgSigningKey:
+    def test_generates_a_key_when_missing(self) -> None:
+        from outwarp_server.operations import _ensure_owcfg_signing_key
+
+        updated = _ensure_owcfg_signing_key(_make_server_config())
+        assert updated.owcfg_signing_key_id
+        assert updated.owcfg_signing_private_key
+        assert updated.owcfg_signing_public_key.startswith("untrusted comment:")
+
+    def test_does_not_regenerate_an_existing_key(self) -> None:
+        from dataclasses import replace
+
+        from outwarp_server.operations import _ensure_owcfg_signing_key
+
+        server = replace(_make_server_config(), owcfg_signing_private_key="existing-key-material")
+        updated = _ensure_owcfg_signing_key(server)
+        assert updated is server

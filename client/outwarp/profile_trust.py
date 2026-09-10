@@ -1,0 +1,116 @@
+"""Trust-on-first-use verification of a server's .owcfg signature.
+
+CONCEPTO-C prop.2 (OutWarp-fix-plan.md): a .owcfg travels to its recipient by
+email, USB, or messaging — channels this project has no control over. Every
+self-hosted OutWarp server signs the profiles it issues with its own Ed25519
+keypair (generated server-side in outwarp_server/minisign.py's signing half;
+verified here with this package's existing hand-rolled outwarp.minisign
+verifier — nothing about verification changes, only what happens with the
+result). This module decides what to do with that signature once checked.
+
+Threat model, and its limits:
+  - Someone with read/write access to the .owcfg in transit (a shared drive,
+    an email still sitting in an inbox, a lost USB stick) but *not* the
+    server's private signing key can no longer tamper with it undetected.
+  - A full man-in-the-middle who substitutes the *entire* profile — content,
+    embedded public key, and a freshly forged signature of their own — on its
+    very first delivery is not caught here. That is the same trust-on-first-
+    use gap an SSH host key fingerprint has the first time you connect: this
+    module closes it from the *second* profile onward for the same server, by
+    remembering the key it saw first and flagging a mismatch later.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+from platformdirs import user_config_dir
+
+from outwarp import minisign
+
+log = logging.getLogger(__name__)
+
+_APP_NAME = "OutWarp"
+
+
+class ProfileTrustError(ValueError):
+    """A .owcfg carries a "signing" block that does not verify."""
+
+
+def known_servers_path() -> Path:
+    return Path(user_config_dir(_APP_NAME)) / "known_servers.json"
+
+
+def canonical_json(payload: dict[str, Any]) -> bytes:
+    """Deterministic serialization matching outwarp_server.owcfg._canonical_json —
+    the two must agree byte-for-byte or every signature would fail to verify."""
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _load_known_servers(path: Path) -> dict[str, str]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _pin(path: Path, endpoint: str, public_key_text: str) -> None:
+    known = _load_known_servers(path)
+    known[endpoint] = public_key_text
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(OSError):
+        path.write_text(json.dumps(known, indent=2), encoding="utf-8")
+
+
+def verify_and_pin(raw: Any, *, path: Path | None = None) -> None:
+    """Verify `raw`'s embedded "signing" block, if any, and TOFU-pin the key.
+
+    Raises ProfileTrustError only when a signature is *present but invalid* —
+    a profile from a server with no signing key configured yet (or an older
+    OutWarp version) is accepted with a warning, the same fail-open shape the
+    release updater already uses for "no manifest published". A key that
+    differs from one already pinned for this server's endpoint is also only a
+    warning: refusing outright would brick a legitimate admin-initiated key
+    rotation with no recovery path in this first cut, and the profile's own
+    signature already verified against the key *it* claims — see the module
+    docstring for exactly what that does and doesn't prove.
+    """
+    if not isinstance(raw, dict):
+        return
+    signing = raw.get("signing")
+    if not signing:
+        log.warning("Profile has no signing block — cannot verify who issued it.")
+        return
+    if not isinstance(signing, dict):
+        raise ProfileTrustError("'signing' must be an object")
+    public_key = str(signing.get("public_key", ""))
+    signature = str(signing.get("signature", ""))
+    if not public_key or not signature:
+        raise ProfileTrustError("'signing' is missing public_key or signature")
+
+    payload = canonical_json({k: v for k, v in raw.items() if k != "signing"})
+    try:
+        minisign.verify(payload, signature, public_key)
+    except minisign.MinisignError as exc:
+        raise ProfileTrustError(f"Profile signature is invalid: {exc}") from exc
+
+    endpoint = str((raw.get("server") or {}).get("endpoint", ""))
+    if not endpoint:
+        return
+    store = path or known_servers_path()
+    known = _load_known_servers(store)
+    previous = known.get(endpoint)
+    if previous is None:
+        _pin(store, endpoint, public_key)
+    elif previous != public_key:
+        log.warning(
+            "Profile for %s is signed with a different key than the one "
+            "last seen for this server — confirm with the server admin that "
+            "the signing key was intentionally rotated before trusting it.",
+            endpoint,
+        )
