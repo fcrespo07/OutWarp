@@ -6,6 +6,102 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: minor bumps may carry user-visible changes).
 
+## [0.12.0] — 2026-09-10
+
+A full security audit (13 findings across three severity groups) plus five of
+its six proposed architecture refactors.
+
+### Security
+- **`.owcfg` profiles are now signed by the issuing server.** Every
+  self-hosted server signs each profile it issues with its own Ed25519 key
+  (minisign format, embedded in the profile itself); the client verifies on
+  import and pins the server's key on first use — the same trust-on-first-use
+  model an SSH host key fingerprint uses. A profile tampered with in transit
+  (it travels by email, USB, messaging — channels this project doesn't
+  control) now fails to import instead of silently connecting through
+  whatever it was changed to. A server predating this feature just gets a
+  warning, matching the release updater's existing fail-open precedent.
+- **Every field of a `.owcfg` / `server_config.json` now has an explicit
+  validation decision.** Previously only WireGuard keys, a handful of IPs and
+  a few enums were checked; free-text fields — the server endpoint, the
+  wstunnel upgrade-path prefix, and the fallback ladder's SNI override, Host
+  header, User-Agent and proxy — reached a subprocess argument or HTTP header
+  with nothing more than a bare string conversion. They're now checked for
+  hostname/IP shape, or rejected outright if they carry an embedded control
+  character (closing a header/argument-injection class, not just tightening
+  hygiene).
+- **The kill switch now actually works outside the desktop GUI.** It was
+  wired only into the pywebview bridge — the Linux TUI and `outwarp-cli
+  daemon` (the process systemd's `ExecStart=` actually runs) never engaged or
+  released it at all. It's now owned by `TunnelManager` itself, so every
+  surface gets it for free, and a rule left over from a crash is released on
+  every startup rather than only the GUI's.
+- **The kill switch allowlist was missing the server's own endpoint and every
+  fallback-ladder rung.** Engaging it with an incomplete allowlist could trap
+  a client unable to reconnect or even reach the server to fix it — the
+  allowlist and the WireGuard tunnel's own bypass routes now come from the
+  same single function.
+- **`add-client` / `revoke-client` / `rotate-client` can no longer race.** Two
+  near-simultaneous calls used to be able to read the same client list,
+  allocate the same pool IP, and have the second silently clobber the first's
+  new peer. The client registry moved off the server's main JSON config into
+  its own SQLite table with real write-locked transactions — the race is
+  closed by construction now, not by hoping every caller remembers to hold a
+  lock.
+- The unattended Windows install script (`install-from-release.ps1`) verifies
+  the downloaded installer's SHA256 against the release manifest before
+  running it — it previously elevated and ran whatever it downloaded with no
+  integrity check at all.
+- The admin panel gained a per-connection socket timeout and an SSE
+  idle-heartbeat limit, closing a pre-authentication slow-loris-style denial
+  of service where a client could hold a thread open indefinitely.
+- The enrolment rate limiter now reads the last hop of `X-Forwarded-For` when
+  the server is behind the Caddy front, instead of rate-limiting every client
+  behind the proxy as if they shared one IP — previously five failed
+  enrolments from any one client locked out everyone else.
+- `rotate-client` no longer leaves the freshly rotated private key sitting in
+  whatever directory the daemon happened to start in, unread and undeleted.
+- `outwarp-cli uninstall` no longer kills its own process before it finishes
+  — its `pkill` pattern matched its own argv, so it used to die mid-cleanup
+  without touching the config, shortcuts, sudoers rule or venv.
+- `outwarp-cli connect --config-dir` can no longer be used to bypass the
+  root/Administrator check outside test mode.
+
+### Added
+- **Revoking a client now keeps its history.** Instead of deleting the row
+  outright, a revoked client is marked as such — "never enrolled" and
+  "enrolled, then revoked" are distinguishable again, and the freed IP is
+  still immediately reusable.
+- **Expiry is now enforced by the server, not the client.** A client whose
+  `expires_at` has passed is excluded from every WireGuard config the server
+  regenerates, and pruned automatically on every server startup. Previously
+  the only enforcement was the `prune-expired` command (which someone had to
+  remember to run) and the client's own refusal to import an expired profile
+  — i.e. the party losing access enforced its own expiry.
+- The server's platform layer (Windows / Linux / Kubernetes) now exposes one
+  idempotent `reconcile()` instead of requiring every caller to sequence NAT
+  setup, IP forwarding and the WireGuard install/restart in the right order
+  by hand — the exact class of mistake that let the Windows NAT rule silently
+  disappear on a restart.
+- Regression tests extracted from `KNOWN_BUGS.md`'s resolved-bug prose (the
+  NAT/forwarding invariants, a service-teardown race, and a TLS-verify-flag
+  check) so they survive a refactor instead of only living in a comment.
+
+### Fixed
+- **Windows**: the domain/Caddy setup question is now asked on Linux only —
+  offering it on Windows produced a Caddy configuration nothing on the host
+  could read (`/etc/caddy/conf.d` doesn't exist there).
+- **Linux**: the client's WireGuard config no longer lives in
+  `/etc/wireguard`, where other WireGuard-aware VPN managers (e.g.
+  omarchy-vpn) scan, adopt, and tear down anything they find — including
+  OutWarp's own active tunnel.
+
+### Migration
+No breaking changes for existing installs. Profiles and server configs from
+every prior version keep working; the client registry migrates automatically
+from `server_config.json` into its own SQLite table the first time a 0.12.0
+server loads it.
+
 ## [0.11.0] — 2026-08-03
 
 Three fixes to the security architecture, in the order they matter.

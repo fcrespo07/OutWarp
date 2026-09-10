@@ -275,7 +275,89 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 ## Estado actual
 
-**Versión actual: `0.11.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
+**Versión actual: `0.12.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
+
+### Cambios en 0.12.0 (auditoría de seguridad completa + refactors de arquitectura)
+
+`OutWarp-fix-plan.md` (auditoría sobre `70b2214`, 13 hallazgos en 3 grupos de
+severidad + 6 propuestas CONCEPTO-*) resuelto casi entero — todo salvo
+CONCEPTO-A/D en su forma "sacarlo todo a SQLite" completa (sí se hizo, ver
+abajo) y CONCEPTO-E's client-side kill-switch UI toggle en la TUI (el dato ya
+se respeta, falta el row del modal).
+
+- **FIX-01 a FIX-13**: validación de todo campo de `.owcfg`/`server_config.json`
+  antes de que llegue a un `.conf`, comando `iptables` o filename;
+  `enroll.py` deja de desactivar TLS verify incondicionalmente; `rotate-client`
+  ya no deja la clave privada en `Path.cwd()`; `--config-dir` ya no salta el
+  check de root fuera de `OUTWARP_TEST_MODE`; kill switch allowlist completo
+  (ver CONCEPTO-B abajo); lock cross-proceso en add/revoke/rotate-client
+  (superado después por CONCEPTO-A); `uninstall` ya no se mata a sí mismo;
+  NAT de Windows se recrea tras `restart_wg()`; timeout en `add/remove_peer_live`;
+  rate limiter de enrolment lee `X-Forwarded-For` tras Caddy; timeout +
+  idle-heartbeat en el panel SSE (slowloris); `install-from-release.ps1`
+  verifica SHA256 antes de ejecutar; varios menores (Caddyfile injection,
+  `tarfile filter="data"`, `GITHUB_TOKEN` scoping).
+- **CONCEPTO-B — un solo dueño de "qué escapa del túnel".**
+  `client/outwarp/routing.py::escape_set(config, ladder)` es ahora la única
+  función que calcula ese conjunto; la usan `build_wg_conf`, la escalera de
+  fallback y las dos rutas del kill switch (antes cada una lo recalculaba
+  distinto y el kill switch olvidaba el endpoint del servidor).
+- **CONCEPTO-C prop.2 — firma de `.owcfg` con minisign.**
+  `server/outwarp_server/minisign.py` ganó la mitad de firma (Ed25519,
+  formato minisign real — cross-verificado contra el binario `minisign` 0.12,
+  que encontró un bug real: el contenedor de clave pública siempre lleva el
+  tag `Ed`, nunca `ED`, aunque la firma sea prehashed). La firma va embebida
+  en el propio `.owcfg` (no un `.minisig` aparte) bajo `signing.{public_key,
+  signature}`. `client/outwarp/profile_trust.py` (nuevo) verifica al importar
+  y hace **pinning TOFU** de la clave del servidor por endpoint en
+  `known_servers.json` — perfil sin firma solo avisa (mismo fail-open que el
+  updater de releases); firma inválida aborta el import; clave distinta a la
+  pinned avisa pero no bloquea (rotación de clave admin-iniciada).
+- **CONCEPTO-C prop.1 — declarar la frontera de confianza.** Regla explícita
+  en la cabecera de `_parse()` (ambos `config.py`): el `.owcfg` es hostil,
+  `server_config.json` semi-confiable pero se valida igual. Cierra los campos
+  que quedaban con `str(...)` sin check: `server.endpoint`, `tunnel.remote_host`,
+  `http_upgrade_path_prefix` (hostname/IP + charset), y los campos libres de
+  cada rung de fallback (`sni_override`/`host_header`/`user_agent`/`proxy`,
+  rechazan caracteres de control — viajan como argv/cabecera HTTP a wstunnel).
+  `caddy.py` importa `_HOSTNAME_RE`/`_EMAIL_RE` desde `config.py` en vez de
+  mantener su propia copia.
+- **CONCEPTO-D — ciclo de vida real de `ClientEntry`.** Nuevos campos `state`
+  (`active`/`revoked`) y `enrolled_at`. Revocar ya no borra la fila (soft
+  delete) — "nunca se enroló" y "se enroló y se revocó" vuelven a ser
+  distinguibles. La expiración la aplica el servidor: `wireguard.py` excluye
+  peers caducados de cada `wg0.conf` regenerado, y `ServerManager._do_start()`
+  poda expirados en cada arranque — antes solo lo aplicaba `prune-expired` (a
+  mano) o el propio cliente al que se le caducaba el acceso.
+- **CONCEPTO-A — registro de clientes a SQLite.** Nuevo
+  `server/outwarp_server/client_store.py` (modelado en `traffic_history.py`):
+  tabla `clients` en `clients.sqlite`, junto a `server_config.json`.
+  `transaction()` abre con `BEGIN IMMEDIATE` — toma el lock de escritura antes
+  del primer `SELECT`, cerrando la carrera de FIX-04 **por construcción**, no
+  por serialización con flock. `ServerConfig.load()` migra el array JSON una
+  vez y repuebla `.clients` desde SQLite en cada load — los 9 sitios que leían
+  `config.clients` (`cli.py`, `wireguard.py`, `api.py`, `server_manager.py`...)
+  no cambiaron.
+- **CONCEPTO-E — dueño del estado de red del sistema.**
+  `ServerPlatform.reconcile()` (concreto en `platforms/base.py`) sustituye la
+  secuencia manual `prepare_system()`/`install_wg_config()`/`restart_wg()` —
+  siempre prepara NAT/forwarding antes de instalar o reiniciar. En el cliente,
+  el kill switch se extrajo a `client/outwarp/killswitch.py` y lo dispara
+  `TunnelManager._set_state` directamente (propiedad `kill_switch_enabled`,
+  igual patrón que `allow_tls_intercept`) — antes solo vivía en `api.py` (el
+  bridge pywebview), así que el TUI y `outwarp-cli daemon` (el target real de
+  systemd) nunca lo activaban ni liberaban.
+- **CONCEPTO-F** — tests de regresión extraídos de `KNOWN_BUGS.md` (B-005,
+  B-012, B-016, B-017) para que las invariantes sobrevivan a un refactor.
+- Windows: la pregunta del wizard sobre dominio/Caddy ahora es solo Linux —
+  ofrecerla en Windows generaba una config de Caddy que nada en el host podía
+  leer (`/etc/caddy` no existe ahí).
+- Linux: el `.conf` de WireGuard del cliente ya no vive en `/etc/wireguard`
+  (ahora `/etc/wireguard-outwarp`) — otros gestores de WireGuard como
+  omarchy-vpn escanean ese directorio y adoptan/tumban cualquier túnel que
+  encuentren, incluido el de OutWarp.
+
+Cliente: 575 tests. Servidor: 501 tests. `ruff` limpio en ambos paquetes.
 
 ### Cambios en 0.11.0 (arquitectura de seguridad)
 
