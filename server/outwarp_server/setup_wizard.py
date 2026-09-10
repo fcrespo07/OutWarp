@@ -247,13 +247,15 @@ def run_setup(config_dir: Path) -> int:
 
     try:
         wg_conf = build_server_wg_conf(config)
-        # If the interface was already up (re-running setup), install_wg_config does
-        # a hot reload via wg syncconf which doesn't re-run PostUp. Force a full
-        # restart so the iptables/forwarding rules are guaranteed to be applied.
+        # If the interface was already up (re-running setup), a hot reload via
+        # wg syncconf doesn't re-run PostUp — force a full restart so the
+        # iptables/forwarding rules are guaranteed to be applied. reconcile()
+        # also guarantees NAT/forwarding (Windows) are set up here rather than
+        # waiting for the service's first start to create them.
         was_active = platform.is_wg_active()
-        platform.install_wg_config(wg_conf)
-        if was_active:
-            platform.restart_wg(subnet=config.subnet)
+        platform.reconcile(
+            wg_conf, subnet=config.subnet, wss_port=port, force_restart=was_active,
+        )
         console.print("  [green]✓[/green] WireGuard interface up")
     except PlatformError as exc:
         console.print(f"  [red]✗[/red] WireGuard: {exc}")

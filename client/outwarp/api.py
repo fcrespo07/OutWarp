@@ -31,7 +31,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from outwarp import updater
+from outwarp import killswitch, updater
 from outwarp.config import (
     ClientConfig,
     ConfigError,
@@ -40,11 +40,9 @@ from outwarp.config import (
     import_owcfg_text,
     original_config_path,
 )
-from outwarp.fallback import build_ladder
 from outwarp.integrity import IntegrityIssue, likely_av_quarantine
 from outwarp.logs import MemoryLogHandler
 from outwarp.platforms import PlatformError, get_platform
-from outwarp.routing import escape_set
 from outwarp.settings import load_settings as _load_settings_at
 from outwarp.settings import save_settings as _save_settings_at
 from outwarp.tunnel import TunnelManager, TunnelState
@@ -189,6 +187,9 @@ class Api:
             )
             manager.auto_reconnect = bool(
                 self._settings.get("auto_reconnect", True)
+            )
+            manager.kill_switch_enabled = bool(
+                self._settings.get("kill_switch", False)
             )
 
     # ── pywebview wiring ──────────────────────────────────────────────────────
@@ -449,7 +450,6 @@ class Api:
         # Trust the state we were handed over a re-read of the manager.
         payload["status"] = _STATE_TO_JS.get(state, "disconnected")
         self._emit("status", payload)
-        self._sync_kill_switch(state)
         # CONNECTING/CONNECTED is when the Tunnel has had a chance to run its
         # hostile-network probe; surface the result so the UI banner can warn
         # the user that DNS interception was detected (and that wstunnel is
@@ -487,39 +487,6 @@ class Api:
             notify("OutWarp", f"Connection failed: {err}", urgency="critical")
         elif state is TunnelState.RECONNECTING and prev is TunnelState.CONNECTED:
             notify("OutWarp", "Connection dropped — reconnecting...")
-
-    def _sync_kill_switch(self, state: TunnelState) -> None:
-        """Engage/release the kill switch in response to a tunnel state change.
-
-        Engagement happens when the tunnel is unexpectedly down — the
-        RECONNECTING attempt window and the terminal FAILED state. Released on
-        a successful CONNECTED or a clean DISCONNECTED (user pressed stop).
-        CONNECTING (a fresh startup attempt) is left alone so a previously-
-        engaged switch isn't released the moment the user clicks Connect.
-        """
-        if not bool(self._settings.get("kill_switch", False)):
-            return
-        if self._manager is None:
-            return
-        try:
-            if state in (TunnelState.RECONNECTING, TunnelState.FAILED):
-                config = self._manager.config
-                allowlist = escape_set(config, build_ladder(config))
-                if not allowlist:
-                    msg = (
-                        "kill switch NOT engaged — no bypass addresses in profile "
-                        "(would lock the user out with no recovery path)"
-                    )
-                    log.warning("kill_switch: %s", msg)
-                    self._record_log("error", msg)
-                    return
-                get_platform().engage_kill_switch(allowlist)
-                self._record_log("warn", "kill switch engaged — outbound traffic blocked")
-            elif state in (TunnelState.CONNECTED, TunnelState.DISCONNECTED):
-                get_platform().release_kill_switch()
-        except PlatformError as exc:
-            log.warning("kill_switch sync failed: %s", exc)
-            self._record_log("error", f"kill switch error: {exc}")
 
     # ── profiles ──────────────────────────────────────────────────────────────
 
@@ -574,6 +541,7 @@ class Api:
             cfg,
             allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False)),
             auto_reconnect=bool(self._settings.get("auto_reconnect", True)),
+            kill_switch_enabled=bool(self._settings.get("kill_switch", False)),
         )
         new_manager.add_listener(self._on_state_change)
         self._manager = new_manager
@@ -691,6 +659,7 @@ class Api:
             cfg,
             allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False)),
             auto_reconnect=bool(self._settings.get("auto_reconnect", True)),
+            kill_switch_enabled=bool(self._settings.get("kill_switch", False)),
         )
         new_manager.add_listener(self._on_state_change)
         self._manager = new_manager
@@ -1119,38 +1088,28 @@ class Api:
         if isinstance(patch, dict) and "kill_switch" in patch:
             was = bool(before.get("kill_switch", False))
             now = bool(snapshot.get("kill_switch", False))
+            if self._manager is not None:
+                self._manager.kill_switch_enabled = now
             if was != now:
                 try:
-                    plat = get_platform()
                     if now:
                         # Activated mid-session: engage NOW if the tunnel is
                         # already down, so the user isn't leaking while the
-                        # next state change waits to fire.
+                        # next state change waits to fire. Otherwise just
+                        # persist the value — reconcile() would harmlessly
+                        # no-op or release for CONNECTED/DISCONNECTED, but
+                        # there's nothing to reconcile against yet.
                         if (
                             self._manager is not None
                             and self._manager.state in (
                                 TunnelState.RECONNECTING, TunnelState.FAILED,
                             )
                         ):
-                            config = self._manager.config
-                            allowlist = escape_set(config, build_ladder(config))
-                            if allowlist:
-                                plat.engage_kill_switch(allowlist)
-                                self._record_log(
-                                    "warn", "kill switch engaged — outbound traffic blocked"
-                                )
-                            else:
-                                msg = (
-                                    "kill switch NOT engaged — no bypass addresses "
-                                    "in profile (would lock the user out with no "
-                                    "recovery path)"
-                                )
-                                log.warning("kill_switch: %s", msg)
-                                self._record_log("error", msg)
+                            killswitch.reconcile(self._manager.config, self._manager.state)
                     else:
                         # Always release on disable — even if we never engaged
                         # — to recover from any stale rule.
-                        plat.release_kill_switch()
+                        get_platform().release_kill_switch()
                 except PlatformError as exc:
                     log.warning("kill_switch toggle failed: %s", exc)
                     kill_switch_error = str(exc)
@@ -1161,6 +1120,8 @@ class Api:
                             _save_settings(snapshot)
                         except OSError:
                             log.warning("could not roll back kill_switch")
+                        if self._manager is not None:
+                            self._manager.kill_switch_enabled = was
 
         self._emit("settings", snapshot)
         if autostart_error is not None:

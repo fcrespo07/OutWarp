@@ -102,6 +102,45 @@ class TestBuildServerWgConf:
         # Exactly one peer carries a PresharedKey line.
         assert conf.count("PresharedKey") == 1
 
+    def test_expired_client_excluded(self) -> None:
+        # CONCEPTO-D: expiry must be enforced by the server's own regenerated
+        # config, not only by `prune-expired` or the client's own refusal to
+        # import an expired .owcfg — otherwise a stale local clock (or nobody
+        # running the prune command) keeps a peer live indefinitely.
+        clients = [
+            ClientEntry(
+                name="expired", public_key="key1", address="10.0.0.2/32",
+                expires_at="2000-01-01",
+            ),
+            ClientEntry(
+                name="live", public_key="key2", address="10.0.0.3/32",
+                expires_at="2999-01-01",
+            ),
+            ClientEntry(name="forever", public_key="key3", address="10.0.0.4/32"),
+        ]
+        conf = build_server_wg_conf(_make_config(clients=clients))
+        assert conf.count("[Peer]") == 2
+        assert "# expired" not in conf
+        assert "# live" in conf
+        assert "# forever" in conf
+
+
+class TestBuildServerWgConfWindows:
+    def test_expired_client_excluded(self) -> None:
+        from outwarp_server.wireguard import build_server_wg_conf_windows
+
+        clients = [
+            ClientEntry(
+                name="expired", public_key="key1", address="10.0.0.2/32",
+                expires_at="2000-01-01",
+            ),
+            ClientEntry(name="live", public_key="key2", address="10.0.0.3/32"),
+        ]
+        conf = build_server_wg_conf_windows(_make_config(clients=clients))
+        assert conf.count("[Peer]") == 1
+        assert "# expired" not in conf
+        assert "# live" in conf
+
 
 class TestAddPeerLive:
     def test_calls_wg_set(self) -> None:

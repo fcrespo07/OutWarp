@@ -257,6 +257,68 @@ def test_config_fallback_rejects_bad_pin_mode(tmp_path):
         _parse(raw)
 
 
+def _raw_with_strategy(**strategy_overrides) -> dict:
+    return {
+        "schema_version": 1,
+        "server": {"endpoint": "e", "port": 443, "http_upgrade_path_prefix": "p"},
+        "tls": {"cert_fingerprint_sha256": VALID_FP},
+        "tunnel": {"local_port": 51820, "remote_host": "10.0.0.1", "remote_port": 51820},
+        "wireguard": {
+            "tunnel_name": "OutWarp",
+            "client_address": "10.0.0.42/32",
+            "client_private_key": "xif9YhWWYeCAt6e0GjpNuu9W1952Cagg/0weOOzPL6c=",
+            "server_public_key": "RFUpPmm7W7VHTyjKsHdpR5DV/QICx9UXub9dIMAYZsE=",
+        },
+        "routing": {"bypass_ips": []},
+        "fallback": {"strategies": [{"id": "x", **strategy_overrides}]},
+    }
+
+
+class TestFallbackStrategyValidation:
+    """CONCEPTO-C prop.1 (OutWarp-fix-plan.md): a fallback strategy's free-text
+    fields end up as wstunnel CLI args / HTTP header values — the .owcfg is
+    hostile input, so these need the same explicit validation decision every
+    other field in this parser already gets."""
+
+    def test_rejects_malformed_endpoint(self):
+        from outwarp.config import ConfigError, _parse
+        with pytest.raises(ConfigError, match="endpoint"):
+            _parse(_raw_with_strategy(endpoint="not a host!"))
+
+    def test_accepts_hostname_and_ip_endpoints(self):
+        from outwarp.config import _parse
+        for value in ("cdn.example.net", "203.0.113.99", "10.0.0.1"):
+            cfg = _parse(_raw_with_strategy(endpoint=value))
+            assert cfg.fallback.strategies[0].endpoint == value
+
+    def test_rejects_malformed_path_prefix(self):
+        from outwarp.config import ConfigError, _parse
+        with pytest.raises(ConfigError, match="path_prefix"):
+            _parse(_raw_with_strategy(path_prefix="has spaces"))
+
+    @pytest.mark.parametrize(
+        "field", ["sni_override", "host_header", "user_agent", "proxy"],
+    )
+    def test_rejects_control_characters_in_free_text_fields(self, field):
+        from outwarp.config import ConfigError, _parse
+        with pytest.raises(ConfigError, match=field):
+            _parse(_raw_with_strategy(**{field: "legit\r\nX-Injected: evil"}))
+
+    def test_free_text_fields_otherwise_pass_through_unrestricted(self):
+        # No format beyond "no control characters" — these are meant to hold
+        # arbitrary realistic HTTP header / SNI values.
+        from outwarp.config import _parse
+        cfg = _parse(_raw_with_strategy(
+            sni_override="cdn.example.net",
+            host_header="Host: something.example",
+            user_agent="Mozilla/5.0 (compatible; Test/1.0)",
+            proxy="http://user:pass@proxy.example:8080",
+        ))
+        s = cfg.fallback.strategies[0]
+        assert s.user_agent == "Mozilla/5.0 (compatible; Test/1.0)"
+        assert s.proxy == "http://user:pass@proxy.example:8080"
+
+
 # --- CA-mode rungs (schema v2 / ACME server branch) ---
 
 def test_ca_profile_marks_client_rungs_ca(monkeypatch):

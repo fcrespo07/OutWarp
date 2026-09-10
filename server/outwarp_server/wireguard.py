@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import subprocess
@@ -8,9 +9,13 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from outwarp_server.config import ServerConfig
+from outwarp_server.config import ClientEntry, ServerConfig
 
 log = logging.getLogger(__name__)
+
+
+def _is_expired(client: ClientEntry, today: str) -> bool:
+    return bool(client.expires_at) and client.expires_at < today
 
 
 class WireGuardError(RuntimeError):
@@ -134,11 +139,17 @@ def build_server_wg_conf_windows(config: ServerConfig) -> str:
         "MTU = 1380",
     ]
 
+    today = datetime.datetime.now(datetime.UTC).date().isoformat()
     for client in config.clients:
         # A client awaiting enrolment holds a reserved name, IP and PSK but no
         # public key yet. Emitting a [Peer] without one produces a config
         # wg-quick refuses outright, taking the whole interface down with it.
         if not client.public_key:
+            continue
+        # Expiry is enforced here, not just by `prune-expired` or the client's
+        # own refusal to import an expired .owcfg — an edited local clock or a
+        # never-run cron job must not keep a peer live forever (CONCEPTO-D).
+        if _is_expired(client, today):
             continue
         lines.append("")
         lines.append("[Peer]")
@@ -179,11 +190,15 @@ def build_server_wg_conf(config: ServerConfig) -> str:
         f"iptables -t nat -D POSTROUTING -s {subnet} -j MASQUERADE",
     ]
 
+    today = datetime.datetime.now(datetime.UTC).date().isoformat()
     for client in config.clients:
         # A client awaiting enrolment holds a reserved name, IP and PSK but no
         # public key yet. Emitting a [Peer] without one produces a config
         # wg-quick refuses outright, taking the whole interface down with it.
         if not client.public_key:
+            continue
+        # See build_server_wg_conf_windows: same server-enforced expiry check.
+        if _is_expired(client, today):
             continue
         lines.append("")
         lines.append("[Peer]")

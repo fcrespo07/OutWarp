@@ -339,3 +339,69 @@ class TestWindowsRestartWg:
         ):
             p.restart_wg()
         create_nat.assert_not_called()
+
+
+class _FakePlatform(ServerPlatform):
+    """Minimal concrete ServerPlatform recording call order, for testing
+    the base class's reconcile() composition in isolation from any real OS
+    interaction — see CONCEPTO-E in OutWarp-fix-plan.md."""
+
+    def __init__(self, *, active: bool = False) -> None:
+        self.calls: list[tuple] = []
+        self._active = active
+
+    def install_wstunnel_service(self, exec_start: str) -> None: ...
+    def uninstall_wstunnel_service(self) -> None: ...
+    def is_wstunnel_running(self) -> bool: return False
+    def restart_wstunnel_service(self) -> None: ...
+
+    def install_wg_config(self, conf_text: str, interface: str = "wg0") -> None:
+        self.calls.append(("install", conf_text, interface))
+
+    def reload_wg(self, interface: str = "wg0") -> None: ...
+
+    def is_wg_active(self, interface: str = "wg0") -> bool:
+        return self._active
+
+    def restart_wg(self, interface: str = "wg0", subnet: str | None = None) -> None:
+        self.calls.append(("restart", interface, subnet))
+
+    def uninstall_wg_config(self, interface: str = "wg0") -> None: ...
+    def wg_config_dir(self) -> Path: return Path("/fake")
+
+    def prepare_system(self, subnet: str, wss_port: int) -> None:
+        self.calls.append(("prepare", subnet, wss_port))
+
+
+class TestReconcile:
+    """CONCEPTO-E: one idempotent entry point instead of callers sequencing
+    prepare_system()/install_wg_config()/restart_wg() by hand — the exact
+    footgun that caused FIX-07."""
+
+    def test_always_prepares_system_first(self) -> None:
+        p = _FakePlatform(active=False)
+        p.reconcile("[Interface]\n", subnet="10.9.0.0/24", wss_port=443)
+        assert p.calls[0] == ("prepare", "10.9.0.0/24", 443)
+        assert p.calls[1] == ("install", "[Interface]\n", "wg0")
+
+    def test_force_restart_on_active_interface_uses_restart_wg(self) -> None:
+        p = _FakePlatform(active=True)
+        p.reconcile(
+            "[Interface]\n", subnet="10.9.0.0/24", wss_port=443, force_restart=True,
+        )
+        assert p.calls[0] == ("prepare", "10.9.0.0/24", 443)
+        assert p.calls[1] == ("restart", "wg0", "10.9.0.0/24")
+
+    def test_force_restart_on_inactive_interface_falls_back_to_install(self) -> None:
+        # Nothing to tear down on a fresh interface — a full "restart" makes
+        # no sense; reconcile() installs fresh instead.
+        p = _FakePlatform(active=False)
+        p.reconcile(
+            "[Interface]\n", subnet="10.9.0.0/24", wss_port=443, force_restart=True,
+        )
+        assert p.calls[1] == ("install", "[Interface]\n", "wg0")
+
+    def test_custom_interface_name_is_threaded_through(self) -> None:
+        p = _FakePlatform(active=True)
+        p.reconcile("conf", interface="OutWarp-Server", subnet="10.0.0.0/24", force_restart=True)
+        assert p.calls[1] == ("restart", "OutWarp-Server", "10.0.0.0/24")

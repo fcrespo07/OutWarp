@@ -116,6 +116,38 @@ class ServerPlatform(ABC):
         (Linux uses PostUp hooks instead, which are symmetric by construction).
         """
 
+    def reconcile(
+        self,
+        conf_text: str,
+        *,
+        interface: str | None = None,
+        subnet: str = "",
+        wss_port: int = 0,
+        force_restart: bool = False,
+    ) -> None:
+        """Idempotently bring WireGuard, and the OS-level network state it
+        depends on (NAT, IP forwarding, the wstunnel firewall rule), in line
+        with `conf_text`. Safe to call on every server start and after every
+        config change.
+
+        This replaces having callers sequence `prepare_system()` /
+        `install_wg_config()` / `restart_wg()` by hand — getting that order
+        wrong is exactly how FIX-07 happened (Windows silently dropped its
+        NAT rule on every reload). One entry point that always calls
+        `prepare_system()` first closes that class of bug generically instead
+        of per call site (CONCEPTO-E in OutWarp-fix-plan.md).
+
+        `force_restart` asks for a full teardown+reinstall even if the
+        interface is already active — needed when a change (e.g. the WG
+        listen port) can't be applied by a hot reload alone.
+        """
+        iface = interface or self.wg_interface_name()
+        self.prepare_system(subnet, wss_port)
+        if force_restart and self.is_wg_active(iface):
+            self.restart_wg(iface, subnet=subnet)
+        else:
+            self.install_wg_config(conf_text, iface)
+
     def check_prerequisites(self) -> PrerequisiteResult:
         """Verify (and, where possible, install) OS-level prerequisites.
 

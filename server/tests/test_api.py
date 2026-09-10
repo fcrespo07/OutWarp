@@ -679,10 +679,10 @@ def test_update_server_config_restarts_wg_on_port_change(tmp_path):
         r = api.update_server_config({"wg_listen_port": 51999})
 
     assert r["ok"] is True
-    # wg_listen_port changed → must do a full restart_wg, not just install_wg_config
+    # wg_listen_port changed → reconcile() must be asked for a full restart
     # (syncconf cannot change ListenPort on a live interface).
-    fake_platform.restart_wg.assert_called_once()
-    fake_platform.install_wg_config.assert_not_called()
+    fake_platform.reconcile.assert_called_once()
+    assert fake_platform.reconcile.call_args.kwargs["force_restart"] is True
 
 
 def test_update_server_config_only_syncconf_when_wg_port_unchanged(tmp_path):
@@ -704,9 +704,9 @@ def test_update_server_config_only_syncconf_when_wg_port_unchanged(tmp_path):
         r = api.update_server_config({"endpoint": "5.5.5.5"})
 
     assert r["ok"] is True
-    # WG port unchanged → install_wg_config (which does syncconf), no full restart.
-    fake_platform.restart_wg.assert_not_called()
-    fake_platform.install_wg_config.assert_called_once()
+    # WG port unchanged → reconcile() does a hot reload, no full restart.
+    fake_platform.reconcile.assert_called_once()
+    assert fake_platform.reconcile.call_args.kwargs["force_restart"] is False
 
 
 def test_rotate_tls_cert_restarts_systemd_when_running(tmp_path):

@@ -1053,17 +1053,19 @@ class Api:
             #    plain restart otherwise; also bounce the GUI subprocess).
             self._bounce_wstunnel(port_changed=wss_port_changed)
 
-            # 2) WG: install_wg_config does syncconf for peer changes, but
-            #    syncconf cannot change ListenPort or replay PostUp/PostDown.
-            #    Force a full down/up when the WG port (or subnet — handled
-            #    by future patches) really has to change.
+            # 2) WG: a hot reload (syncconf) handles peer changes, but cannot
+            #    change ListenPort or replay PostUp/PostDown. reconcile()
+            #    forces a full down/up when the WG port really has to change,
+            #    and always re-checks NAT/forwarding either way.
             platform = get_server_platform()
             try:
-                if wg_port_changed and platform.is_wg_active():
-                    platform.restart_wg(subnet=new_cfg.subnet)
-                else:
-                    from outwarp_server.server_manager import _get_wg_conf
-                    platform.install_wg_config(_get_wg_conf(new_cfg))
+                from outwarp_server.server_manager import _get_wg_conf
+                platform.reconcile(
+                    _get_wg_conf(new_cfg),
+                    subnet=new_cfg.subnet,
+                    wss_port=new_cfg.port,
+                    force_restart=wg_port_changed and platform.is_wg_active(),
+                )
             except Exception:
                 log.exception("update_server_config: wg bounce failed")
 

@@ -63,6 +63,52 @@ class TestPruneExpired:
         assert len(mgr.config.clients) == 1
 
 
+class TestDoStartPrunesExpiredFirst:
+    """CONCEPTO-D: a client whose expires_at passed while the server was off
+    must not just be silently excluded from the next wg0.conf — it must
+    actually be revoked (peer removal + token invalidation) on the next
+    start, not wait for someone to run `prune-expired` by hand."""
+
+    def test_do_start_calls_prune_expired_before_anything_else(
+        self, tmp_path: Path,
+    ) -> None:
+        mgr = ServerManager(_config([]))
+        with (
+            patch.object(mgr, "prune_expired") as mock_prune,
+            patch(
+                "outwarp_server.server_manager.default_config_path",
+                return_value=tmp_path / "server_config.json",
+            ),
+            # Let _do_start fail past that point (no real wstunnel/platform in
+            # this sandbox) — this test only cares that prune ran first.
+            patch(
+                "outwarp_server.server_manager.get_server_platform",
+                side_effect=RuntimeError("stop here"),
+            ),
+        ):
+            mgr._do_start()
+        mock_prune.assert_called_once()
+
+    def test_do_start_survives_a_failing_prune(self, tmp_path: Path) -> None:
+        """A prune failure (e.g. a transient WG hot-remove error) must not
+        abort the whole startup — connectivity for everyone else matters more
+        than one stale peer."""
+        mgr = ServerManager(_config([]))
+        with (
+            patch.object(mgr, "prune_expired", side_effect=RuntimeError("boom")),
+            patch(
+                "outwarp_server.server_manager.default_config_path",
+                return_value=tmp_path / "server_config.json",
+            ),
+            patch(
+                "outwarp_server.server_manager.get_server_platform",
+                side_effect=RuntimeError("stop here — reached past prune"),
+            ) as mock_platform,
+        ):
+            mgr._do_start()
+        mock_platform.assert_called_once()
+
+
 @pytest.mark.parametrize(
     "name",
     ["laptop", "ferra-portatil", "Casa_01", "movil.personal", "a", "Client 1", "x" * 64],

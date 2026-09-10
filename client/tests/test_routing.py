@@ -84,7 +84,7 @@ def test_kill_switch_allowlist_is_superset_of_wg_conf_exclusions(monkeypatch):
     )
     ladder = build_ladder(cfg)
 
-    kill_switch_allowlist = escape_set(cfg, ladder)  # what api.py._sync_kill_switch uses
+    kill_switch_allowlist = escape_set(cfg, ladder)  # what outwarp.killswitch.reconcile uses
     conf = build_wg_conf(cfg, extra_bypass=escape_set(cfg, ladder))  # what tunnel.py installs
 
     allowed_line = next(line for line in conf.splitlines() if line.startswith("AllowedIPs"))

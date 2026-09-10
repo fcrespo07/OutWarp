@@ -4,12 +4,12 @@ import contextlib
 import logging
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 
 from outwarp import __version__
 from outwarp.config import ClientConfig, ConfigError, default_config_path
+from outwarp.killswitch import release_stale_async
 from outwarp.logs import install_crash_logging, setup_logging
 
 log = logging.getLogger(__name__)
@@ -131,24 +131,6 @@ def _resolve_ui_path() -> str:
     return str(base / "index.html")
 
 
-def _release_stale_kill_switch_async() -> None:
-    """If a previous session crashed with the kill switch engaged, the netsh
-    rules survive. Release unconditionally on every startup — it's a no-op
-    when nothing is engaged, and prevents the user from being locked out of
-    their network without realising why. Runs on a daemon thread so the two
-    netsh subprocess calls (~300 ms total) don't gate the splash window."""
-    def _work() -> None:
-        try:
-            from outwarp.platforms import get_platform
-
-            get_platform().release_kill_switch()
-        except Exception:
-            log.exception("startup kill-switch cleanup failed (continuing)")
-    threading.Thread(
-        target=_work, daemon=True, name="outwarp-startup-killswitch",
-    ).start()
-
-
 def main() -> int:
     # As of 0.5.x the Textual TUI is the supported Linux UI: pywebview is
     # excluded from Linux wheels (see pyproject.toml's PEP 508 marker) so
@@ -174,7 +156,7 @@ def main() -> int:
         log.info("startup [%5.2fs] %s", time.monotonic() - t0, label)
 
     _stage(f"OutWarp client v{__version__} starting")
-    _release_stale_kill_switch_async()
+    release_stale_async()
 
     lock = _SingleInstanceLock()
     if not lock.acquire():

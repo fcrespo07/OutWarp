@@ -6,7 +6,6 @@ import logging
 import os
 import subprocess
 import sys
-from dataclasses import replace
 from pathlib import Path
 
 from rich.console import Console
@@ -19,11 +18,7 @@ from outwarp_server.config import (
     default_config_dir,
     default_config_path,
 )
-from outwarp_server.wireguard import (
-    build_server_wg_conf,
-    get_live_peers,
-    remove_peer_live,
-)
+from outwarp_server.wireguard import get_live_peers
 
 log = logging.getLogger(__name__)
 console = Console()
@@ -233,21 +228,13 @@ def _cmd_prune_expired(args: argparse.Namespace) -> int:
             console.print("Aborted.")
             return 1
 
-    from outwarp_server.platforms import PlatformError, get_server_platform
+    from outwarp_server import operations
 
-    remaining = [c for c in config.clients if not (c.expires_at and c.expires_at < today)]
+    config_path = _resolve_config_path(args)
     for c in expired:
-        try:
-            remove_peer_live(c.public_key)
-        except Exception as exc:
-            log.warning("Could not hot-remove peer %s: %s", c.name, exc)
-
-    updated = replace(config, clients=remaining)
-    updated.save(_resolve_config_path(args))
-    try:
-        get_server_platform().install_wg_config(build_server_wg_conf(updated))
-    except PlatformError as exc:
-        log.warning("Could not persist WG config to OS location: %s", exc)
+        # Already gone (e.g. revoked concurrently) — nothing left to prune.
+        with contextlib.suppress(KeyError):
+            operations.revoke_client(config, c.name, config_path=config_path)
 
     console.print(f"\n[green]Revoked {len(expired)} expired client(s).[/green]")
     return 0

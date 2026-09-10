@@ -260,7 +260,7 @@ class TestAddClient:
 
 class TestPruneExpired:
     @patch("outwarp_server.platforms.get_server_platform")
-    @patch("outwarp_server.cli.remove_peer_live")
+    @patch("outwarp_server.operations.remove_peer_live")
     def test_prune_revokes_only_expired(
         self, mock_remove: MagicMock, _plat: MagicMock, tmp_path: Path
     ) -> None:

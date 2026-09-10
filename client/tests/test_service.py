@@ -30,6 +30,7 @@ def test_run_daemon_returns_2_without_profile(monkeypatch):
     """No imported .owcfg → the service must exit non-zero (not hang) so
     systemd's Restart=on-failure surfaces the misconfiguration in the journal."""
     monkeypatch.setattr(service, "setup_logging", lambda: None)
+    monkeypatch.setattr(service, "release_stale_async", lambda: None)
 
     def _raise(_path):
         raise service.ConfigError("no profile")
@@ -42,6 +43,7 @@ def test_run_daemon_starts_then_stops_on_signal(monkeypatch):
     """Happy path: build + start the manager, and on SIGTERM (modelled by an
     already-set stop event) stop it cleanly and return 0."""
     monkeypatch.setattr(service, "setup_logging", lambda: None)
+    monkeypatch.setattr(service, "release_stale_async", lambda: None)
     fake_cfg = MagicMock()
     fake_cfg.server.endpoint = "203.0.113.10"
     fake_cfg.server.port = 443
@@ -68,6 +70,42 @@ def test_run_daemon_starts_then_stops_on_signal(monkeypatch):
     assert rc == 0
     mgr.start.assert_called_once()
     mgr.stop.assert_called_once()
+
+
+def test_run_daemon_releases_stale_kill_switch_and_honours_settings(monkeypatch):
+    """CONCEPTO-E / FIX-06b: the daemon is the systemd ExecStart= target — the
+    primary Linux path per CLAUDE.md — and used to never touch the kill switch
+    at all (it lived only in outwarp.api.Api, which the daemon never
+    constructs). A crash-orphaned rule must still get cleared here, and a
+    kill_switch=True in settings.json must still be honoured."""
+    monkeypatch.setattr(service, "setup_logging", lambda: None)
+    released = []
+    monkeypatch.setattr(service, "release_stale_async", lambda: released.append(True))
+    fake_cfg = MagicMock()
+    fake_cfg.server.endpoint = "203.0.113.10"
+    fake_cfg.server.port = 443
+    monkeypatch.setattr(service.ClientConfig, "load", lambda _p: fake_cfg)
+    monkeypatch.setattr(service, "load_settings", lambda: {"kill_switch": True})
+
+    captured_kwargs = {}
+
+    def _fake_manager(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(service, "TunnelManager", _fake_manager)
+    monkeypatch.setattr(service.signal, "signal", lambda *a, **k: None)
+
+    class _ImmediateStop:
+        def is_set(self): return True
+        def wait(self, _t): return True
+        def set(self): pass
+
+    monkeypatch.setattr(service.threading, "Event", _ImmediateStop)
+
+    assert service.run_daemon() == 0
+    assert released == [True]
+    assert captured_kwargs["kill_switch_enabled"] is True
 
 
 # ── _unit_content ──────────────────────────────────────────────────────────

@@ -179,6 +179,63 @@ def test_user_triggered_start_ignores_auto_connect_setting(
     fake_mgr_instance.start.assert_called_once()
 
 
+def test_start_manager_threads_kill_switch_setting_through(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """CONCEPTO-E / FIX-06b: the TUI's TunnelManager must honour a
+    kill_switch=True the user set via the (shared) settings.json — e.g. from
+    the pywebview GUI — even though the TUI has no kill-switch toggle of its
+    own yet. Before this, kill_switch was silently dead everywhere except
+    outwarp.api.Api."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    from outwarp.config import ClientConfig, default_config_path, import_owcfg
+    import_owcfg(_write_owcfg(tmp_path))
+
+    from unittest.mock import MagicMock, patch
+    captured_kwargs = {}
+
+    def _fake_manager(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return MagicMock()
+
+    settings = {
+        "auto_connect": False, "allow_tls_intercept": False,
+        "auto_reconnect": True, "kill_switch": True,
+    }
+
+    app = OutWarpClientTUI()
+    app.config = ClientConfig.load(default_config_path())
+
+    with patch("outwarp.tui.app.TunnelManager", _fake_manager), \
+         patch("outwarp.tui.app.load_settings", return_value=settings), \
+         patch.object(app, "_push_unique"):
+        app.start_manager(auto=True)
+
+    assert captured_kwargs["kill_switch_enabled"] is True
+
+
+def test_on_mount_releases_stale_kill_switch(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    from unittest.mock import patch
+
+    app = OutWarpClientTUI()
+    with (
+        patch("outwarp.tui.app.setup_logging"),
+        patch("outwarp.tui.app.release_stale_async") as released,
+        patch.object(app, "reload_config"),
+    ):
+        app.on_mount()
+    released.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_settings_modal_persists_tls_intercept(tmp_path: Path, monkeypatch) -> None:
     """Toggling TLS-intercept in the modal writes settings.json and the next

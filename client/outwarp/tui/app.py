@@ -6,6 +6,7 @@ import threading
 from textual.app import App
 
 from outwarp.config import ClientConfig, ConfigError, default_config_path
+from outwarp.killswitch import release_stale_async
 from outwarp.logs import setup_logging
 from outwarp.settings import load_settings
 from outwarp.tui.screens.connecting import ConnectingScreen
@@ -62,6 +63,7 @@ class OutWarpClientTUI(App):
 
     def on_mount(self) -> None:
         setup_logging()
+        release_stale_async()
         self._app_thread_id = threading.get_ident()
         self.reload_config()
 
@@ -112,6 +114,7 @@ class OutWarpClientTUI(App):
                 self.config,
                 allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False)),
                 auto_reconnect=bool(self._settings.get("auto_reconnect", True)),
+                kill_switch_enabled=bool(self._settings.get("kill_switch", False)),
             )
         except Exception as exc:
             log.exception("TunnelManager init failed")

@@ -144,8 +144,14 @@ def test_revoked_reservation_cannot_be_claimed(running) -> None:
     config_dir, config_path, url = running
     token = enrollment.issue(config_dir, "laptop")
     # Admin removed the client after issuing but before the client redeemed.
-    config = replace(ServerConfig.load(config_path), clients=[])
-    config.save(config_path)
+    # Soft-delete directly via the store rather than operations.revoke_client,
+    # which would also invalidate the token itself — a different guard,
+    # covered by test_a_token_cannot_be_replayed.
+    from outwarp_server.client_store import ClientStore
+    ServerConfig.load(config_path)  # triggers the JSON -> SQLite migration
+    store = ClientStore(config_path.parent / "clients.sqlite")
+    with store.transaction() as conn:
+        store.soft_delete("laptop", conn=conn)
 
     status, body = _post(url, {"token": token, "client_public_key": CLIENT_PUB})
 

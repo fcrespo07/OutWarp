@@ -9,6 +9,7 @@ formatting.
 from __future__ import annotations
 
 import base64
+import datetime
 import hashlib
 import logging
 import time
@@ -74,6 +75,10 @@ class RestartResult:
     wg_restarted: bool
     wstunnel_restarted: bool
     errors: list[str]
+
+
+def _today() -> str:
+    return datetime.datetime.now(datetime.UTC).date().isoformat()
 
 
 def _format_fingerprint(digest: str) -> str:
@@ -153,12 +158,13 @@ def add_client(
     with locked_config(config_path):
         # Reload the freshest on-disk state now that the lock is held — the
         # `config` argument may be a snapshot taken before another process's
-        # add/revoke/rotate committed (see locked_config's docstring).
+        # add/revoke/rotate committed (see locked_config's docstring). Its
+        # `.clients` is a snapshot of client_store.py's SQLite table as of this
+        # load; the transaction below re-reads it under the table's own write
+        # lock immediately before inserting, which is what actually closes the
+        # race — this reload is only for the non-client fields (spki, signing
+        # key backfill).
         config = ServerConfig.load(config_path)
-
-        for c in config.clients:
-            if c.name == name:
-                raise ValueError(f"Client '{name}' already exists.")
 
         config = _ensure_spki(config)
         config = _ensure_owcfg_signing_key(config)
@@ -173,42 +179,54 @@ def add_client(
             log.warning("Could not generate preshared key (continuing without one): %s", exc)
             psk = ""
 
-        allocated = [c.address for c in config.clients]
-        try:
-            client_address = next_available_ip(
-                config.subnet, config.server_address, allocated
-            )
-        except PoolExhaustedError as exc:
-            raise ValueError(str(exc)) from exc
+        from outwarp_server.client_store import ClientStore
+        store = ClientStore(config_path.parent / "clients.sqlite")
 
-        # Nothing to add to the interface yet in enrolment mode — there is no
-        # public key until the client redeems its token.
-        hot_added = not enroll
-        if not enroll:
+        with store.transaction() as conn:
+            if store.get(name, conn) is not None:
+                raise ValueError(f"Client '{name}' already exists.")
+
+            allocated = [c.address for c in store.list_active(conn)]
             try:
-                add_peer_live(client_public_key, client_address, psk=psk)
-            except Exception as exc:
-                log.warning("Could not hot-add peer (WireGuard may not be running): %s", exc)
-                hot_added = False
+                client_address = next_available_ip(
+                    config.subnet, config.server_address, allocated
+                )
+            except PoolExhaustedError as exc:
+                raise ValueError(str(exc)) from exc
 
-        enrollment_token = ""
-        enrollment_expires_at = 0
-        if enroll:
-            from outwarp_server import enrollment
-            ttl = enroll_ttl_seconds or enrollment.DEFAULT_TTL_SECONDS
-            enrollment_token = enrollment.issue(
-                config_path.parent, name, ttl_seconds=ttl
+            # Nothing to add to the interface yet in enrolment mode — there is
+            # no public key until the client redeems its token.
+            hot_added = not enroll
+            if not enroll:
+                try:
+                    add_peer_live(client_public_key, client_address, psk=psk)
+                except Exception as exc:
+                    log.warning(
+                        "Could not hot-add peer (WireGuard may not be running): %s", exc
+                    )
+                    hot_added = False
+
+            enrollment_token = ""
+            enrollment_expires_at = 0
+            if enroll:
+                from outwarp_server import enrollment
+                ttl = enroll_ttl_seconds or enrollment.DEFAULT_TTL_SECONDS
+                enrollment_token = enrollment.issue(
+                    config_path.parent, name, ttl_seconds=ttl
+                )
+                enrollment_expires_at = int(time.time()) + ttl
+
+            new_client = ClientEntry(
+                name=name,
+                public_key=client_public_key,
+                address=client_address,
+                psk=psk,
+                expires_at=expires_at,
+                enrolled_at=_today() if client_public_key else "",
             )
-            enrollment_expires_at = int(time.time()) + ttl
+            store.insert(new_client, conn=conn, created_at=_today())
 
-        new_client = ClientEntry(
-            name=name,
-            public_key=client_public_key,
-            address=client_address,
-            psk=psk,
-            expires_at=expires_at,
-        )
-        updated = replace(config, clients=[*config.clients, new_client])
+        updated = replace(config, clients=store.list_active())
         updated.save(config_path)
 
     wg_persist_warning = _persist_wg_config(updated)
@@ -255,26 +273,32 @@ def complete_enrollment(
     Raises KeyError if the slot is gone (the admin revoked the client between
     issuing and redeeming) and ValueError if the slot already has a key.
     """
-    target = next((c for c in config.clients if c.name == name), None)
-    if target is None:
-        raise KeyError(
-            f"Client '{name}' is no longer registered — the reservation was revoked."
-        )
-    if target.public_key:
-        raise ValueError(f"Client '{name}' already has a registered public key.")
+    from outwarp_server.client_store import ClientStore
+    store = ClientStore(config_path.parent / "clients.sqlite")
 
-    hot_added = True
-    try:
-        add_peer_live(client_public_key, target.address, psk=target.psk)
-    except Exception as exc:
-        log.warning("Could not hot-add enrolled peer (WireGuard may not be running): %s", exc)
-        hot_added = False
+    with store.transaction() as conn:
+        target = store.get(name, conn)
+        if target is None or target.state == "revoked":
+            raise KeyError(
+                f"Client '{name}' is no longer registered — the reservation was revoked."
+            )
+        if target.public_key:
+            raise ValueError(f"Client '{name}' already has a registered public key.")
 
-    enrolled = replace(target, public_key=client_public_key)
-    updated = replace(
-        config,
-        clients=[enrolled if c.name == name else c for c in config.clients],
-    )
+        hot_added = True
+        try:
+            add_peer_live(client_public_key, target.address, psk=target.psk)
+        except Exception as exc:
+            log.warning(
+                "Could not hot-add enrolled peer (WireGuard may not be running): %s", exc
+            )
+            hot_added = False
+
+        enrolled_at = _today()
+        store.mark_enrolled(name, client_public_key, enrolled_at=enrolled_at, conn=conn)
+        enrolled = replace(target, public_key=client_public_key, enrolled_at=enrolled_at)
+
+    updated = replace(config, clients=store.list_active())
     updated.save(config_path)
 
     return CompleteEnrollmentResult(
@@ -310,25 +334,38 @@ def revoke_client(
     """
     with locked_config(config_path):
         config = ServerConfig.load(config_path)
-        target = next((c for c in config.clients if c.name == name), None)
-        if target is None:
-            raise KeyError(f"Client '{name}' not found.")
 
-        # Revoking must also kill any token still outstanding for this name,
-        # otherwise the slot comes back the moment someone redeems it.
-        from outwarp_server import enrollment
-        enrollment.revoke(config_path.parent, name)
+        from outwarp_server.client_store import ClientStore
+        store = ClientStore(config_path.parent / "clients.sqlite")
 
-        # A client that never enrolled has no peer on the interface to remove.
-        hot_removed = True
-        if target.public_key:
-            try:
-                remove_peer_live(target.public_key)
-            except Exception as exc:
-                log.warning("Could not hot-remove peer (WireGuard may not be running): %s", exc)
-                hot_removed = False
+        with store.transaction() as conn:
+            target = store.get(name, conn)
+            if target is None or target.state == "revoked":
+                raise KeyError(f"Client '{name}' not found.")
 
-        updated = replace(config, clients=[c for c in config.clients if c.name != name])
+            # Revoking must also kill any token still outstanding for this
+            # name, otherwise the slot comes back the moment someone redeems it.
+            from outwarp_server import enrollment
+            enrollment.revoke(config_path.parent, name)
+
+            # A client that never enrolled has no peer on the interface to remove.
+            hot_removed = True
+            if target.public_key:
+                try:
+                    remove_peer_live(target.public_key)
+                except Exception as exc:
+                    log.warning(
+                        "Could not hot-remove peer (WireGuard may not be running): %s", exc
+                    )
+                    hot_removed = False
+
+            # Soft delete (CONCEPTO-D): the row stays, marked 'revoked', so
+            # "never enrolled" and "enrolled, then revoked" stay distinguishable
+            # — list_active() (what ServerConfig.clients reads) excludes it the
+            # same as a hard delete would have.
+            store.soft_delete(name, conn=conn)
+
+        updated = replace(config, clients=store.list_active())
         updated.save(config_path)
 
     wg_persist_warning: str | None = None
@@ -367,9 +404,6 @@ def rotate_client(
 
     with locked_config(config_path):
         config = ServerConfig.load(config_path)
-        target = next((c for c in config.clients if c.name == name), None)
-        if target is None:
-            raise ValueError(f"Client '{name}' not found.")
 
         config = _ensure_spki(config)
         config = _ensure_owcfg_signing_key(config)
@@ -382,26 +416,33 @@ def rotate_client(
             )
             new_psk = ""
 
-        hot_rotated = True
-        try:
-            remove_peer_live(target.public_key)
-        except Exception as exc:
-            log.warning("Could not hot-remove old peer (WireGuard may not be running): %s", exc)
-            hot_rotated = False
-        try:
-            add_peer_live(new_public, target.address, psk=new_psk)
-        except Exception as exc:
-            log.warning("Could not hot-add rotated peer (WireGuard may not be running): %s", exc)
-            hot_rotated = False
+        from outwarp_server.client_store import ClientStore
+        store = ClientStore(config_path.parent / "clients.sqlite")
 
-        updated_clients = [
-            ClientEntry(
-                name=c.name, public_key=new_public, address=c.address,
-                psk=new_psk, expires_at=c.expires_at,
-            ) if c.name == name else c
-            for c in config.clients
-        ]
-        updated = replace(config, clients=updated_clients)
+        with store.transaction() as conn:
+            target = store.get(name, conn)
+            if target is None or target.state == "revoked":
+                raise ValueError(f"Client '{name}' not found.")
+
+            hot_rotated = True
+            try:
+                remove_peer_live(target.public_key)
+            except Exception as exc:
+                log.warning(
+                    "Could not hot-remove old peer (WireGuard may not be running): %s", exc
+                )
+                hot_rotated = False
+            try:
+                add_peer_live(new_public, target.address, psk=new_psk)
+            except Exception as exc:
+                log.warning(
+                    "Could not hot-add rotated peer (WireGuard may not be running): %s", exc
+                )
+                hot_rotated = False
+
+            store.update_keys(name, new_public, new_psk, conn=conn)
+
+        updated = replace(config, clients=store.list_active())
         updated.save(config_path)
 
     wg_persist_warning: str | None = None

@@ -26,8 +26,10 @@ import threading
 from pathlib import Path
 
 from outwarp.config import ClientConfig, ConfigError, default_config_path
+from outwarp.killswitch import release_stale_async
 from outwarp.logs import setup_logging
 from outwarp.notify import notify as _notify
+from outwarp.settings import load_settings
 from outwarp.tunnel import TunnelManager, TunnelState
 
 log = logging.getLogger(__name__)
@@ -49,16 +51,19 @@ def run_daemon(*, allow_tls_intercept: bool = False) -> int:
     needs from the user's perspective.
     """
     setup_logging()
+    release_stale_async()
     try:
         config = ClientConfig.load(default_config_path())
     except ConfigError as exc:
         log.error("daemon: cannot start, no profile imported (%s)", exc)
         return 2
 
+    settings = load_settings()
     manager = TunnelManager(
         config,
         allow_tls_intercept=allow_tls_intercept,
         auto_reconnect=True,
+        kill_switch_enabled=bool(settings.get("kill_switch", False)),
     )
 
     last_state: list[TunnelState] = [TunnelState.DISCONNECTED]

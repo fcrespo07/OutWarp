@@ -29,6 +29,51 @@ _WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$")
 # outright above that, so this also doubles as an early, clear error.
 _TUNNEL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,15}$")
 
+# CONCEPTO-C prop.1 (OutWarp-fix-plan.md): the .owcfg is hostile input — it
+# travels by email, USB or messaging, and its "signing" block (profile_trust.py)
+# is opt-in TOFU, not a hard gate. Every field that reaches a subprocess
+# argument, an HTTP header, or a line written into a config file needs an
+# explicit validation decision at parse time, the same way WireGuard keys and
+# IPs already get one — a bare str(...) passthrough is a decision too, just
+# the wrong one, and it's the default this policy exists to remove. The two
+# checks below cover what the structural regexes elsewhere in this module
+# don't: host-shaped strings (via _is_hostname, defined further down —
+# forward references between module-level functions resolve fine, they're
+# only ever called after the whole module has loaded), and free text that
+# must not carry embedded control characters into a subprocess arg or HTTP
+# header value.
+
+# The wstunnel upgrade path prefix and the fallback ladder's own path_prefix
+# both end up as one argv element (--restrict-http-upgrade-path-prefix /
+# --http-upgrade-path-prefix) and, on the server side, a Caddyfile path
+# matcher — no slashes, spaces or control characters.
+_PATH_PREFIX_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def _is_valid_host(value: str) -> bool:
+    """Whether `value` is shaped like an IP address or a hostname.
+
+    Reuses _is_hostname (below) rather than a second regex — that function
+    already backs routing.bypass_ips' domain-or-IP acceptance.
+    """
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return _is_hostname(value)
+
+
+def _has_control_chars(value: str) -> bool:
+    """Whether `value` contains a C0 control character (incl. CR/LF/NUL).
+
+    None of this project's free-text fields (User-Agent, Host header, SNI
+    override, path prefix, proxy URL...) are legitimately multi-line — a
+    control character in one is either a malformed profile or an attempt to
+    inject a second HTTP header / config line into whatever the value gets
+    interpolated into downstream.
+    """
+    return any(ord(ch) < 0x20 for ch in value)
+
 
 class ConfigError(ValueError):
     pass
@@ -393,9 +438,16 @@ def _parse_enrollment(d: Any) -> EnrollmentConfig:
 def _parse_server(d: Any) -> ServerConfig:
     if not isinstance(d, dict):
         raise ConfigError("Section 'server' must be an object")
-    endpoint = _require(d, "endpoint", "server")
+    endpoint = str(_require(d, "endpoint", "server"))
+    if not _is_valid_host(endpoint):
+        raise ConfigError(f"server.endpoint is not a valid hostname or IP: {endpoint!r}")
     port = _require(d, "port", "server")
-    prefix = _require(d, "http_upgrade_path_prefix", "server")
+    prefix = str(_require(d, "http_upgrade_path_prefix", "server"))
+    if not _PATH_PREFIX_RE.match(prefix):
+        raise ConfigError(
+            "server.http_upgrade_path_prefix must be 1-128 characters of letters, "
+            f"digits, '.', '_' or '-', got {prefix!r}"
+        )
     if not isinstance(port, int) or not (1 <= port <= 65535):
         raise ConfigError(f"server.port must be an integer between 1 and 65535, got {port!r}")
     fallback_raw = d.get("fallback_ports", [])
@@ -451,14 +503,16 @@ def _parse_tunnel(d: Any) -> TunnelConfig:
     if not isinstance(d, dict):
         raise ConfigError("Section 'tunnel' must be an object")
     local_port = _require(d, "local_port", "tunnel")
-    remote_host = _require(d, "remote_host", "tunnel")
+    remote_host = str(_require(d, "remote_host", "tunnel"))
     remote_port = _require(d, "remote_port", "tunnel")
     for name, val in (("local_port", local_port), ("remote_port", remote_port)):
         if not isinstance(val, int) or not (1 <= val <= 65535):
             raise ConfigError(f"tunnel.{name} must be an integer between 1 and 65535, got {val!r}")
+    if not _is_valid_host(remote_host):
+        raise ConfigError(f"tunnel.remote_host is not a valid hostname or IP: {remote_host!r}")
     return TunnelConfig(
         local_port=local_port,
-        remote_host=str(remote_host),
+        remote_host=remote_host,
         remote_port=remote_port,
     )
 
@@ -576,16 +630,39 @@ def _parse_fallback(d: Any) -> FallbackConfig:
         bypass_raw = entry.get("bypass_ips", [])
         if not isinstance(bypass_raw, list) or not all(isinstance(x, str) for x in bypass_raw):
             raise ConfigError(f"fallback strategy '{sid}' bypass_ips must be a list of strings")
+
+        endpoint = str(entry.get("endpoint", ""))
+        if endpoint and not _is_valid_host(endpoint):
+            raise ConfigError(
+                f"fallback strategy '{sid}' endpoint is not a valid hostname or IP: {endpoint!r}"
+            )
+        path_prefix = str(entry.get("path_prefix", ""))
+        if path_prefix and not _PATH_PREFIX_RE.match(path_prefix):
+            raise ConfigError(f"fallback strategy '{sid}' path_prefix is not a valid path segment")
+        # sni_override, host_header, user_agent and proxy are free text passed
+        # straight to wstunnel as CLI args / HTTP header values — no shape to
+        # enforce beyond "can't smuggle a second header or argument in".
+        for field_name, field_value in (
+            ("sni_override", entry.get("sni_override", "")),
+            ("host_header", entry.get("host_header", "")),
+            ("user_agent", entry.get("user_agent", "")),
+            ("proxy", entry.get("proxy", "")),
+        ):
+            if _has_control_chars(str(field_value)):
+                raise ConfigError(
+                    f"fallback strategy '{sid}' {field_name} contains a control character"
+                )
+
         strategies.append(
             StrategyConfig(
                 id=sid,
-                endpoint=str(entry.get("endpoint", "")),
+                endpoint=endpoint,
                 port=port,
                 scheme=scheme,
                 sni_override=str(entry.get("sni_override", "")),
                 host_header=str(entry.get("host_header", "")),
                 user_agent=str(entry.get("user_agent", "")),
-                path_prefix=str(entry.get("path_prefix", "")),
+                path_prefix=path_prefix,
                 proxy=str(entry.get("proxy", "")),
                 pin_mode=pin_mode,
                 force_hostile=bool(entry.get("force_hostile", False)),

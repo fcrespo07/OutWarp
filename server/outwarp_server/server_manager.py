@@ -284,6 +284,17 @@ class ServerManager:
 
     def _do_start(self) -> None:
         try:
+            # CONCEPTO-D: a client whose expires_at passed while the server was
+            # off must not come back just because nobody ran `prune-expired` —
+            # revoke it (peer removal + token invalidation) before the interface
+            # comes up, not just exclude it from the config wireguard.py builds
+            # (that filter is the belt to this suspenders, for every reconcile
+            # in between restarts).
+            try:
+                self.prune_expired()
+            except Exception:
+                log.exception("prune_expired at startup failed (continuing)")
+
             platform = get_server_platform()
 
             # Verify NAT prerequisites (Windows: MSFT_NetNat WMI provider).
@@ -301,18 +312,16 @@ class ServerManager:
                 self._set_state(ServerState.ERROR)
                 return
 
-            # OS-level setup (IP forwarding, NAT, firewall). prepare_system()
-            # now raises PlatformError if NAT can't be created — propagate it.
-            try:
-                platform.prepare_system(self._config.subnet, self._config.port)
-            except PlatformError as exc:
-                log.error("prepare_system failed: %s", exc)
-                self._set_state(ServerState.ERROR)
-                return
-
+            # reconcile() does OS-level setup (IP forwarding, NAT, firewall)
+            # before touching the WG interface — it raises PlatformError if
+            # the NAT can't be created; propagate it.
             log.info("Installing WireGuard server interface")
             try:
-                platform.install_wg_config(_get_wg_conf(self._config))
+                platform.reconcile(
+                    _get_wg_conf(self._config),
+                    subnet=self._config.subnet,
+                    wss_port=self._config.port,
+                )
             except PlatformError as exc:
                 log.error("WireGuard setup failed: %s", exc)
                 self._set_state(ServerState.ERROR)

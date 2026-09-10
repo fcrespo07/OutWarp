@@ -55,6 +55,36 @@ def test_load_valid(tmp_path):
     assert cfg.reconnect.max_attempts == 5
 
 
+class TestOwcfgHostileInputValidation:
+    """CONCEPTO-C prop.1 (OutWarp-fix-plan.md): the .owcfg is hostile input —
+    server.endpoint, server.http_upgrade_path_prefix and tunnel.remote_host
+    used to reach a subprocess arg / HTTP path with a bare str(...) and no
+    shape check, unlike the WireGuard keys and IPs elsewhere in this parser."""
+
+    def test_rejects_malformed_server_endpoint(self, tmp_path):
+        data = {**VALID, "server": {**VALID["server"], "endpoint": "not a host!"}}
+        with pytest.raises(ConfigError, match="endpoint"):
+            ClientConfig.load(write_cfg(tmp_path, data))
+
+    def test_rejects_malformed_http_upgrade_path_prefix(self, tmp_path):
+        data = {
+            **VALID,
+            "server": {**VALID["server"], "http_upgrade_path_prefix": "has/slash"},
+        }
+        with pytest.raises(ConfigError, match="http_upgrade_path_prefix"):
+            ClientConfig.load(write_cfg(tmp_path, data))
+
+    def test_rejects_malformed_remote_host(self, tmp_path):
+        data = {**VALID, "tunnel": {**VALID["tunnel"], "remote_host": "not a host!"}}
+        with pytest.raises(ConfigError, match="remote_host"):
+            ClientConfig.load(write_cfg(tmp_path, data))
+
+    def test_accepts_hostname_endpoint(self, tmp_path):
+        data = {**VALID, "server": {**VALID["server"], "endpoint": "vpn.example.com"}}
+        cfg = ClientConfig.load(write_cfg(tmp_path, data))
+        assert cfg.server.endpoint == "vpn.example.com"
+
+
 def test_reconnect_defaults_when_missing(tmp_path):
     data = {k: v for k, v in VALID.items() if k != "reconnect"}
     cfg = ClientConfig.load(write_cfg(tmp_path, data))

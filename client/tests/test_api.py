@@ -388,102 +388,12 @@ def test_default_settings_include_kill_switch_off(tmp_path):
     assert api.get_settings()["kill_switch"] is False
 
 
-def test_kill_switch_engages_on_failed_when_enabled(tmp_path):
-    fake_plat = MagicMock()
-    (tmp_path / "settings.json").write_text(json.dumps({"kill_switch": True}))
-    mgr = _mgr_with_bypass(TunnelState.CONNECTED, ["203.0.113.42"])
-    with (
-        patch("outwarp.api.default_config_path",
-              return_value=tmp_path / "config.json"),
-        patch("outwarp.api.get_platform", return_value=fake_plat),
-    ):
-        api, _ = _make_api(mgr)
-        api._on_state_change(TunnelState.FAILED)
-    # escape_set() always adds the server endpoint on top of routing.bypass_ips
-    # (FIX-03): omitting it here is exactly the bug that let the kill switch
-    # block the client's own path back to the server.
-    fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42", "1.2.3.4"])
-    fake_plat.release_kill_switch.assert_not_called()
-
-
-def test_kill_switch_engages_on_reconnecting_too(tmp_path):
-    """RECONNECTING is the actual leak window — the WG iface is gone but the
-    user hasn't given up yet. The switch must engage there, not only on FAILED."""
-    fake_plat = MagicMock()
-    (tmp_path / "settings.json").write_text(json.dumps({"kill_switch": True}))
-    mgr = _mgr_with_bypass(TunnelState.CONNECTED, ["203.0.113.42"])
-    with (
-        patch("outwarp.api.default_config_path",
-              return_value=tmp_path / "config.json"),
-        patch("outwarp.api.get_platform", return_value=fake_plat),
-    ):
-        api, _ = _make_api(mgr)
-        api._on_state_change(TunnelState.RECONNECTING)
-    fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42", "1.2.3.4"])
-
-
-def test_kill_switch_releases_on_connected(tmp_path):
-    fake_plat = MagicMock()
-    (tmp_path / "settings.json").write_text(json.dumps({"kill_switch": True}))
-    mgr = _mgr_with_bypass(TunnelState.RECONNECTING, ["203.0.113.42"])
-    with (
-        patch("outwarp.api.default_config_path",
-              return_value=tmp_path / "config.json"),
-        patch("outwarp.api.get_platform", return_value=fake_plat),
-    ):
-        api, _ = _make_api(mgr)
-        api._on_state_change(TunnelState.CONNECTED)
-    fake_plat.release_kill_switch.assert_called_once()
-    fake_plat.engage_kill_switch.assert_not_called()
-
-
-def test_kill_switch_releases_on_clean_disconnected(tmp_path):
-    fake_plat = MagicMock()
-    (tmp_path / "settings.json").write_text(json.dumps({"kill_switch": True}))
-    mgr = _mgr_with_bypass(TunnelState.FAILED, ["203.0.113.42"])
-    with (
-        patch("outwarp.api.default_config_path",
-              return_value=tmp_path / "config.json"),
-        patch("outwarp.api.get_platform", return_value=fake_plat),
-    ):
-        api, _ = _make_api(mgr)
-        api._on_state_change(TunnelState.DISCONNECTED)
-    fake_plat.release_kill_switch.assert_called_once()
-
-
-def test_kill_switch_disabled_does_not_engage(tmp_path):
-    """Default off — state changes must not touch the firewall."""
-    fake_plat = MagicMock()
-    mgr = _mgr_with_bypass(TunnelState.CONNECTED, ["203.0.113.42"])
-    with (
-        patch("outwarp.api.default_config_path",
-              return_value=tmp_path / "config.json"),
-        patch("outwarp.api.get_platform", return_value=fake_plat),
-    ):
-        api, _ = _make_api(mgr)
-        api._on_state_change(TunnelState.FAILED)
-    fake_plat.engage_kill_switch.assert_not_called()
-    fake_plat.release_kill_switch.assert_not_called()
-
-
-def test_kill_switch_refuses_to_engage_without_bypass_ips(tmp_path):
-    """An escape set empty on every front (no routing.bypass_ips, no server
-    endpoint, no ladder rung) would mean the user has no recovery path once we
-    engage. Refuse and log instead of locking them out — this can only happen
-    on a badly hand-edited profile, since server.endpoint is normally a
-    required field, but the guard must hold regardless."""
-    fake_plat = MagicMock()
-    (tmp_path / "settings.json").write_text(json.dumps({"kill_switch": True}))
-    mgr = _mgr_with_bypass(TunnelState.CONNECTED, [])
-    mgr.config.server.endpoint = ""
-    with (
-        patch("outwarp.api.default_config_path",
-              return_value=tmp_path / "config.json"),
-        patch("outwarp.api.get_platform", return_value=fake_plat),
-    ):
-        api, _ = _make_api(mgr)
-        api._on_state_change(TunnelState.FAILED)
-    fake_plat.engage_kill_switch.assert_not_called()
+# Engage/release-on-state-change behaviour now lives in TunnelManager itself
+# (outwarp.killswitch, wired from tunnel.py's _set_state) rather than only in
+# Api, so it also works for the TUI and `outwarp-cli daemon` — neither goes
+# through Api at all. See TestKillSwitch in test_tunnel_manager.py. What
+# remains here is Api-specific: the settings.json toggle's immediate-effect
+# path and cleanup on shutdown.
 
 
 def test_set_kill_switch_off_releases_immediately(tmp_path):
@@ -511,6 +421,9 @@ def test_set_kill_switch_on_engages_now_if_tunnel_is_down(tmp_path):
         patch("outwarp.api.default_config_path",
               return_value=tmp_path / "config.json"),
         patch("outwarp.api.get_platform", return_value=fake_plat),
+        # The engage call itself happens inside outwarp.killswitch.reconcile(),
+        # which resolves get_platform() from its own module namespace.
+        patch("outwarp.killswitch.get_platform", return_value=fake_plat),
     ):
         api, _ = _make_api(mgr)
         r = api.set_settings({"kill_switch": True})
@@ -549,6 +462,7 @@ def test_set_kill_switch_rolls_back_on_platform_error(tmp_path):
         patch("outwarp.api.default_config_path",
               return_value=tmp_path / "config.json"),
         patch("outwarp.api.get_platform", return_value=fake_plat),
+        patch("outwarp.killswitch.get_platform", return_value=fake_plat),
     ):
         api, _ = _make_api(mgr)
         r = api.set_settings({"kill_switch": True})

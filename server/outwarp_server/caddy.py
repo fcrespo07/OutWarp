@@ -21,28 +21,21 @@ appends if missing — servers that already run Caddy for other sites keep worki
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import subprocess
 from pathlib import Path
 
+from outwarp_server.config import _EMAIL_RE, _HOSTNAME_RE
+
 log = logging.getLogger(__name__)
 
-# RFC 1123 hostname: 1-63-char labels (alnum + hyphen, no leading/trailing
-# hyphen) joined by dots, 253 chars total. FIX-13a: `domain` and `acme_email`
-# used to be interpolated raw into the Caddyfile text below — a value with
-# `{`, `}`, a space or a newline breaks the block's syntax or injects a
-# sibling directive. Only reachable today from setup_wizard.py (a local
-# operator with root), so the practical blast radius is an admin's own typo,
-# but validating at the point the string gets built is free and matches how
-# every other config surface in this project treats untrusted-shaped input.
-_HOSTNAME_RE = re.compile(
-    r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
-    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
-)
-# Not full RFC 5322 — just enough to keep the Caddyfile `email` directive
-# well-formed and reject anything that could break out of the line.
-_EMAIL_RE = re.compile(r"^[^\s{}\"']+@[^\s{}\"']+\.[^\s{}\"']+$")
+# `domain` and `acme_email` used to be interpolated raw into the Caddyfile
+# text below (FIX-13a) — a value with `{`, `}`, a space or a newline breaks
+# the block's syntax or injects a sibling directive. Only reachable today from
+# setup_wizard.py (a local operator with root), so the practical blast radius
+# is an admin's own typo, but validating at the point the string gets built is
+# free — same _HOSTNAME_RE/_EMAIL_RE config.py now applies to server_config.json
+# itself (CONCEPTO-C prop.1), kept in one place rather than duplicated here.
 
 CADDYFILE_MAIN = Path("/etc/caddy/Caddyfile")
 CADDY_CONF_D = Path("/etc/caddy/conf.d")

@@ -229,6 +229,47 @@ def test_client_psk_and_expiry_roundtrip(tmp_path: Path) -> None:
     assert "expires_at" not in raw["clients"][1]
 
 
+def test_client_state_and_enrolled_at_roundtrip(tmp_path: Path) -> None:
+    data = {
+        **VALID,
+        "clients": [
+            {
+                "name": "laptop", "public_key": "vn4n9d0JyfC8GQOt0YuK61s+3+kDkxCZ3a087Q5WSAo=",
+                "address": "10.0.0.2/32", "enrolled_at": "2026-01-01",
+            },
+            {
+                "name": "default", "public_key": "AV9+a8Wur0g3JAieklLME7UJUaa2lBJSJ2XP9NeAMG4=",
+                "address": "10.0.0.3/32",
+            },
+        ],
+    }
+    cfg = ServerConfig.load(_write(tmp_path, data))
+    by_name = {c.name: c for c in cfg.clients}
+    assert by_name["laptop"].state == "active"
+    assert by_name["laptop"].enrolled_at == "2026-01-01"
+    # Unspecified state/enrolled_at default to 'active' / empty.
+    assert by_name["default"].state == "active"
+    assert by_name["default"].enrolled_at == ""
+
+
+def test_rejects_unknown_client_state(tmp_path: Path) -> None:
+    data = {
+        **VALID,
+        "clients": [{**VALID["clients"][0], "state": "quarantined"}],
+    }
+    with pytest.raises(ConfigError, match="state"):
+        ServerConfig.load(_write(tmp_path, data))
+
+
+def test_rejects_malformed_enrolled_at(tmp_path: Path) -> None:
+    data = {
+        **VALID,
+        "clients": [{**VALID["clients"][0], "enrolled_at": "not-a-date"}],
+    }
+    with pytest.raises(ConfigError, match="enrolled_at"):
+        ServerConfig.load(_write(tmp_path, data))
+
+
 # --- transport branch fields ---
 
 def test_tls_mode_defaults_to_self_signed(tmp_path: Path) -> None:
@@ -261,3 +302,32 @@ def test_rejects_unknown_tls_mode(tmp_path: Path) -> None:
 def test_rejects_bad_internal_ws_port(tmp_path: Path, bad: object) -> None:
     with pytest.raises(ConfigError, match="internal_ws_port"):
         ServerConfig.load(_write(tmp_path, {**dict(VALID), "internal_ws_port": bad}))
+
+
+class TestServerConfigHostileInputValidation:
+    """CONCEPTO-C prop.1 (OutWarp-fix-plan.md): server_config.json is
+    semi-trusted, not hostile, but still gets a baseline check — cheap
+    defense in depth, applied consistently rather than left to whichever
+    field someone happened to remember."""
+
+    def test_rejects_malformed_endpoint(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigError, match="endpoint"):
+            ServerConfig.load(_write(tmp_path, {**dict(VALID), "endpoint": "not a host!"}))
+
+    def test_accepts_hostname_endpoint(self, tmp_path: Path) -> None:
+        cfg = ServerConfig.load(
+            _write(tmp_path, {**dict(VALID), "endpoint": "vpn.example.com"})
+        )
+        assert cfg.endpoint == "vpn.example.com"
+
+    def test_rejects_malformed_http_upgrade_path_prefix(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigError, match="http_upgrade_path_prefix"):
+            ServerConfig.load(
+                _write(tmp_path, {**dict(VALID), "http_upgrade_path_prefix": "has/slash"})
+            )
+
+    def test_rejects_malformed_acme_email(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigError, match="acme_email"):
+            ServerConfig.load(
+                _write(tmp_path, {**dict(VALID), "acme_email": "not-an-email"})
+            )

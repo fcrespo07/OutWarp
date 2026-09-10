@@ -7,7 +7,7 @@ import os
 import re
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,37 @@ _WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$")
 
 _EXPIRES_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# CONCEPTO-C prop.1 (OutWarp-fix-plan.md): server_config.json is semi-trusted
+# (admin-written, 0o600, not something an attacker typically controls) but
+# still gets the same baseline as the fully hostile .owcfg — cheap defense in
+# depth, and it forces a decision every time a new field is added instead of
+# defaulting silently to "no validation". `endpoint` and `http_upgrade_path_prefix`
+# used to reach a Caddyfile / wstunnel argv untouched by a str(...) passthrough.
+#
+# RFC 1123 hostname: 1-63-char labels joined by dots, 253 chars total. Also
+# used by caddy.py, which imports it from here rather than keeping its own
+# copy (FIX-13a originally defined it there, for the Caddyfile domain).
+_HOSTNAME_RE = re.compile(
+    r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+)
+# Not full RFC 5322 — just enough to reject anything that could break out of
+# a Caddyfile `email` directive or an ACME registration request.
+_EMAIL_RE = re.compile(r"^[^\s{}\"']+@[^\s{}\"']+\.[^\s{}\"']+$")
+# The wstunnel upgrade path prefix ends up as one argv element
+# (--restrict-http-upgrade-path-prefix) and a Caddyfile path matcher — no
+# slashes, spaces or control characters.
+_PATH_PREFIX_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def _is_valid_host(value: str) -> bool:
+    """Whether `value` is shaped like an IP address or an RFC 1123 hostname."""
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return bool(_HOSTNAME_RE.match(value))
+
 
 def validate_client_name(name: str) -> str:
     """Return the stripped name if it is a safe identifier, else raise ValueError."""
@@ -51,6 +82,9 @@ def validate_client_name(name: str) -> str:
     return cleaned
 
 
+_CLIENT_STATES = ("active", "revoked")
+
+
 @dataclass(frozen=True)
 class ClientEntry:
     name: str
@@ -60,10 +94,21 @@ class ClientEntry:
     # before PSK support — those keep working without one.
     psk: str = ""
     # ISO-8601 date (YYYY-MM-DD) after which this client should be considered
-    # expired. Empty = never expires. The server doesn't auto-revoke; the
-    # `prune-expired` command and the client (which refuses an expired .owcfg)
-    # enforce it.
+    # expired. wireguard.py's wg-conf builders exclude an expired client from
+    # the live interface on the next regeneration (CONCEPTO-D) in addition to
+    # the `prune-expired` command and the client's own refusal to import an
+    # expired .owcfg.
     expires_at: str = ""
+    # 'active' | 'revoked'. Revoking sets this rather than deleting the row
+    # (client_store.py) — so "never enrolled" and "enrolled, then revoked"
+    # stay distinguishable (CONCEPTO-D). Default 'active' so every existing
+    # keyword-constructed ClientEntry(...) in the codebase and tests keeps
+    # meaning what it always has.
+    state: str = "active"
+    # ISO-8601 date the public_key first became non-empty. Empty for a
+    # reservation still awaiting enrolment, and for clients migrated from a
+    # pre-CONCEPTO-A JSON config — that history genuinely isn't known.
+    enrolled_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -139,7 +184,17 @@ class ServerConfig:
             raise ConfigError(f"Config file not found: {path}") from exc
         except json.JSONDecodeError as exc:
             raise ConfigError(f"Config file is not valid JSON: {exc}") from exc
-        return _parse(raw)
+        parsed = _parse(raw)
+
+        # CONCEPTO-A: the client registry's source of truth is clients.sqlite,
+        # a sibling of this file — not the "clients" array just parsed above,
+        # which _parse() still reads only so migrate_from_json() has something
+        # to import the very first time a server sees this module. Deferred
+        # import: client_store.py imports ClientEntry from this module.
+        from outwarp_server.client_store import ClientStore
+        store = ClientStore(path.parent / "clients.sqlite")
+        store.migrate_from_json(parsed.clients)
+        return replace(parsed, clients=store.list_active())
 
     def save(self, path: Path) -> None:
         """Persist the server config with 0o600 perms.
@@ -271,6 +326,21 @@ def _parse(raw: dict[str, Any]) -> ServerConfig:
             f"server_address is not a valid IP/prefix: {server_address!r}"
         ) from exc
 
+    endpoint = str(_require(raw, "endpoint", "root"))
+    if not _is_valid_host(endpoint):
+        raise ConfigError(f"endpoint is not a valid hostname or IP: {endpoint!r}")
+
+    http_upgrade_path_prefix = str(_require(raw, "http_upgrade_path_prefix", "root"))
+    if not _PATH_PREFIX_RE.match(http_upgrade_path_prefix):
+        raise ConfigError(
+            "http_upgrade_path_prefix must be 1-128 characters of letters, digits, "
+            f"'.', '_' or '-', got {http_upgrade_path_prefix!r}"
+        )
+
+    acme_email = str(raw.get("acme_email", ""))
+    if acme_email and not _EMAIL_RE.match(acme_email):
+        raise ConfigError(f"acme_email is not a valid email address: {acme_email!r}")
+
     clients_raw = raw.get("clients", [])
     if not isinstance(clients_raw, list):
         raise ConfigError("clients must be a list")
@@ -278,16 +348,16 @@ def _parse(raw: dict[str, Any]) -> ServerConfig:
 
     return ServerConfig(
         schema_version=version,
-        endpoint=str(_require(raw, "endpoint", "root")),
+        endpoint=endpoint,
         port=port,
-        http_upgrade_path_prefix=str(_require(raw, "http_upgrade_path_prefix", "root")),
+        http_upgrade_path_prefix=http_upgrade_path_prefix,
         cert_path=str(_require(raw, "cert_path", "root")),
         key_path=str(_require(raw, "key_path", "root")),
         cert_fingerprint_sha256=str(_require(raw, "cert_fingerprint_sha256", "root")),
         spki_sha256=str(raw.get("spki_sha256", "")),
         tls_mode=tls_mode,
         internal_ws_port=internal_ws_port,
-        acme_email=str(raw.get("acme_email", "")),
+        acme_email=acme_email,
         enroll_port=enroll_port,
         wg_private_key=str(_require(raw, "wg_private_key", "root")),
         wg_public_key=str(_require(raw, "wg_public_key", "root")),
@@ -342,8 +412,19 @@ def _parse_client_entry(c: Any) -> ClientEntry:
             f"clients[{name!r}].expires_at must be YYYY-MM-DD, got {expires_at!r}"
         )
 
+    state = str(c.get("state", "active"))
+    if state not in _CLIENT_STATES:
+        raise ConfigError(f"clients[{name!r}].state must be one of {_CLIENT_STATES}, got {state!r}")
+
+    enrolled_at = str(c.get("enrolled_at", ""))
+    if enrolled_at and not _EXPIRES_AT_RE.match(enrolled_at):
+        raise ConfigError(
+            f"clients[{name!r}].enrolled_at must be YYYY-MM-DD, got {enrolled_at!r}"
+        )
+
     return ClientEntry(
-        name=name, public_key=public_key, address=address, psk=psk, expires_at=expires_at
+        name=name, public_key=public_key, address=address, psk=psk, expires_at=expires_at,
+        state=state, enrolled_at=enrolled_at,
     )
 
 
@@ -376,6 +457,8 @@ def _to_dict(cfg: ServerConfig) -> dict[str, Any]:
                 "address": c.address,
                 **({"psk": c.psk} if c.psk else {}),
                 **({"expires_at": c.expires_at} if c.expires_at else {}),
+                **({"state": c.state} if c.state != "active" else {}),
+                **({"enrolled_at": c.enrolled_at} if c.enrolled_at else {}),
             }
             for c in cfg.clients
         ],

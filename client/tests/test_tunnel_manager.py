@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import dataclasses
 import time
 from threading import Event
+from unittest.mock import MagicMock, patch
 
 from outwarp.config import (
     ClientConfig,
@@ -72,9 +74,15 @@ def _wait_until(predicate, timeout: float = 2.0, interval: float = 0.01) -> bool
     return False
 
 
-def _make_manager(cfg, tunnel, *, stability_seconds: float = 100.0) -> TunnelManager:
+def _make_manager(
+    cfg, tunnel, *, stability_seconds: float = 100.0, kill_switch_enabled: bool = False,
+) -> TunnelManager:
     return TunnelManager(
-        cfg, tunnel=tunnel, stability_seconds=stability_seconds, poll_interval=0.005,
+        cfg,
+        tunnel=tunnel,
+        stability_seconds=stability_seconds,
+        poll_interval=0.005,
+        kill_switch_enabled=kill_switch_enabled,
     )
 
 
@@ -376,3 +384,98 @@ def test_pick_delay_uses_progressive_indices():
 def test_pick_delay_empty_falls_back_to_5():
     from outwarp.tunnel import _pick_delay
     assert _pick_delay([], 1) == 5
+
+
+# --- kill switch (CONCEPTO-E / FIX-06b) ---
+#
+# TunnelManager now owns this reconciliation itself (via outwarp.killswitch),
+# instead of it living only in outwarp.api.Api — the pywebview GUI bridge,
+# which the TUI and `outwarp-cli daemon` never go through. Testing it here,
+# against the real TunnelManager, is what proves it now also works for those
+# two surfaces.
+
+class TestKillSwitch:
+    def test_engages_on_failed_when_enabled(self):
+        m = _make_manager(_make_config(), FakeTunnel(), kill_switch_enabled=True)
+        fake_plat = MagicMock()
+        with patch("outwarp.killswitch.get_platform", return_value=fake_plat):
+            m._set_state(TunnelState.CONNECTING)
+            m._set_state(TunnelState.FAILED)
+        # escape_set() always adds the server endpoint on top of routing.bypass_ips
+        # (FIX-03) — both configured to "203.0.113.42" in _make_config, so they collapse
+        # into one entry after de-dup.
+        fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42"])
+        fake_plat.release_kill_switch.assert_not_called()
+
+    def test_engages_on_reconnecting_too(self):
+        m = _make_manager(_make_config(), FakeTunnel(), kill_switch_enabled=True)
+        fake_plat = MagicMock()
+        with patch("outwarp.killswitch.get_platform", return_value=fake_plat):
+            m._set_state(TunnelState.CONNECTING)
+            m._set_state(TunnelState.RECONNECTING)
+        fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42"])
+
+    def test_releases_on_connected(self):
+        m = _make_manager(_make_config(), FakeTunnel(), kill_switch_enabled=True)
+        fake_plat = MagicMock()
+        with patch("outwarp.killswitch.get_platform", return_value=fake_plat):
+            m._set_state(TunnelState.RECONNECTING)
+            m._set_state(TunnelState.CONNECTED)
+        fake_plat.release_kill_switch.assert_called_once()
+
+    def test_releases_on_clean_disconnected(self):
+        m = _make_manager(_make_config(), FakeTunnel(), kill_switch_enabled=True)
+        fake_plat = MagicMock()
+        with patch("outwarp.killswitch.get_platform", return_value=fake_plat):
+            m._set_state(TunnelState.FAILED)
+            fake_plat.reset_mock()
+            m._set_state(TunnelState.DISCONNECTED)
+        fake_plat.release_kill_switch.assert_called_once()
+        fake_plat.engage_kill_switch.assert_not_called()
+
+    def test_disabled_never_touches_the_platform(self):
+        m = _make_manager(_make_config(), FakeTunnel(), kill_switch_enabled=False)
+        fake_plat = MagicMock()
+        with patch("outwarp.killswitch.get_platform", return_value=fake_plat):
+            m._set_state(TunnelState.CONNECTING)
+            m._set_state(TunnelState.FAILED)
+            m._set_state(TunnelState.DISCONNECTED)
+        fake_plat.engage_kill_switch.assert_not_called()
+        fake_plat.release_kill_switch.assert_not_called()
+
+    def test_toggling_the_property_takes_effect_on_the_next_transition(self):
+        m = _make_manager(_make_config(), FakeTunnel(), kill_switch_enabled=False)
+        fake_plat = MagicMock()
+        with patch("outwarp.killswitch.get_platform", return_value=fake_plat):
+            m._set_state(TunnelState.FAILED)
+            fake_plat.engage_kill_switch.assert_not_called()
+            m.kill_switch_enabled = True
+            m._set_state(TunnelState.CONNECTING)
+            m._set_state(TunnelState.RECONNECTING)
+        fake_plat.engage_kill_switch.assert_called_once()
+
+    def test_refuses_to_engage_with_no_bypass_addresses(self):
+        cfg = _make_config()
+        cfg = dataclasses.replace(cfg, routing=RoutingConfig(bypass_ips=[]))
+        cfg = dataclasses.replace(cfg, server=dataclasses.replace(cfg.server, endpoint=""))
+        m = _make_manager(cfg, FakeTunnel(), kill_switch_enabled=True)
+        fake_plat = MagicMock()
+        with patch("outwarp.killswitch.get_platform", return_value=fake_plat):
+            m._set_state(TunnelState.CONNECTING)
+            m._set_state(TunnelState.FAILED)
+        fake_plat.engage_kill_switch.assert_not_called()
+
+    def test_platform_error_is_swallowed_not_propagated_to_other_listeners(self):
+        """A kill-switch failure must not stop the rest of the state-change
+        dispatch (UI updates, notifications, stats) from running."""
+        from outwarp.platforms import PlatformError
+
+        m = _make_manager(_make_config(), FakeTunnel(), kill_switch_enabled=True)
+        fake_plat = MagicMock()
+        fake_plat.engage_kill_switch.side_effect = PlatformError("boom")
+        seen: list[TunnelState] = []
+        m.add_listener(seen.append)
+        with patch("outwarp.killswitch.get_platform", return_value=fake_plat):
+            m._set_state(TunnelState.CONNECTING)
+            m._set_state(TunnelState.FAILED)  # must not raise
+        assert seen[-1] == TunnelState.FAILED

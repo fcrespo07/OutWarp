@@ -476,6 +476,7 @@ class TunnelManager:
         poll_interval: float = 1.0,
         allow_tls_intercept: bool = False,
         auto_reconnect: bool = True,
+        kill_switch_enabled: bool = False,
         sticky_store: StickyStore | None = None,
     ) -> None:
         self._config = config
@@ -508,6 +509,7 @@ class TunnelManager:
         # failures still honour max_attempts — the user explicitly asked to
         # connect, so giving up immediately would surprise them.
         self._auto_reconnect = bool(auto_reconnect)
+        self._kill_switch_enabled = bool(kill_switch_enabled)
 
     @property
     def state(self) -> TunnelState:
@@ -562,6 +564,18 @@ class TunnelManager:
         # Live setting; affects the next unexpected-death path. We deliberately
         # do not touch a retry that's already in flight.
         self._auto_reconnect = bool(value)
+
+    @property
+    def kill_switch_enabled(self) -> bool:
+        return self._kill_switch_enabled
+
+    @kill_switch_enabled.setter
+    def kill_switch_enabled(self, value: bool) -> None:
+        # Live setting, honoured from the next state change. Turning it off
+        # does not itself release an already-engaged switch — callers that
+        # want that (e.g. api.py's settings toggle) still call
+        # platforms.release_kill_switch() explicitly for the immediate effect.
+        self._kill_switch_enabled = bool(value)
 
     @property
     def phase(self) -> str:
@@ -634,11 +648,23 @@ class TunnelManager:
                 return
             self._state = state
             listeners = list(self._listeners)
+        if self._kill_switch_enabled:
+            self._reconcile_kill_switch(state)
         for cb in listeners:
             try:
                 cb(state)
             except Exception:
                 log.exception("State listener raised")
+
+    def _reconcile_kill_switch(self, state: TunnelState) -> None:
+        # Imported lazily: outwarp.killswitch imports TunnelState from this
+        # module, so a module-level import here would be circular.
+        from outwarp import killswitch
+        from outwarp.platforms import PlatformError
+        try:
+            killswitch.reconcile(self._config, state)
+        except PlatformError as exc:
+            log.error("kill switch error: %s", exc)
 
     def _network_signature(self) -> str:
         gateway = ""
