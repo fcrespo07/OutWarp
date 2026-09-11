@@ -172,6 +172,10 @@ token valid for 15 minutes** instead. Consequences worth knowing:
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) —
+see [LICENSE](LICENSE) for details. Free for personal, educational and other
+noncommercial use; commercial use requires a separate agreement with the author.
+Third-party components OutWarp bundles or depends on keep their own licenses —
+see [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
 
 WireGuard is a registered trademark of Jason A. Donenfeld. wstunnel is licensed under BSD-3-Clause.
