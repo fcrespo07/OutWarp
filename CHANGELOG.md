@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: minor bumps may carry user-visible changes).
 
+## [Unreleased] — 0.12.1
+
+### Fixed
+- **Server: `--config-dir` was ignored by everything except the initial
+  load.** `ServerManager`, the GUI bridge, the web panel and the enrolment
+  listener re-resolved the config as `/etc/outwarp/server_config.json`, so a
+  Docker/Kubernetes deployment (`--config-dir /data`) failed every
+  add/revoke/rotate from the panel with "Config file not found" — a native
+  systemd install never noticed. The CLI now exports `OUTWARP_CONFIG_DIR` for
+  every component, and `ServerManager` keeps the path it was launched with.
+  (Found by the author's homelab agent; the temporary volume-mount workaround
+  at `/etc/outwarp` is no longer needed.)
+- **Client: a failed enrolment printed a raw traceback** (CLI) or crashed the
+  import modal/bridge (TUI, GUI) — `EnrollError` was not a `ConfigError`. It
+  is now reported like any other import error, with the likely cause: the
+  enrolment port (default 8444, separate from the tunnel port) not being
+  reachable, and the `--embed-key` alternative.
+- **Server: `add-client` now says that the enrolment port must be open** on
+  the firewall/router alongside the tunnel port (self-signed branch), and how
+  to fall back to `--embed-key` when it cannot be.
+
 ## [0.12.0] — 2026-09-11
 
 A full security audit (13 findings across three severity groups) plus five of

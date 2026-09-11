@@ -335,10 +335,22 @@ def _finish_import(config: ClientConfig, dest: Path | None, enroll: bool) -> Cli
     """
     target = dest or default_config_path()
     if enroll:
+        from outwarp.enroll import EnrollError, needs_enrollment
         from outwarp.enroll import enroll as _redeem
-        from outwarp.enroll import needs_enrollment
         if needs_enrollment(config):
-            config = _redeem(config)
+            try:
+                config = _redeem(config)
+            except EnrollError as exc:
+                # Every import surface handles ConfigError; an EnrollError
+                # escaping here was a raw traceback in the CLI and a crash in
+                # the TUI modal / GUI bridge.
+                raise ConfigError(
+                    f"{exc}\n"
+                    "This profile must be enrolled against the server before "
+                    "first use. If the enrolment port is not open on the "
+                    "server's firewall/router, ask the admin to open it, or to "
+                    "issue the profile with `outwarp-server add-client --embed-key`."
+                ) from exc
     config.save(target)
     # Snapshot the untouched import so profile editing can always be undone.
     config.save(original_config_path(target))

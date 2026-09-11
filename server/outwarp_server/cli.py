@@ -13,6 +13,7 @@ from rich.table import Table
 
 from outwarp_server import __version__
 from outwarp_server.config import (
+    CONFIG_DIR_ENV,
     ConfigError,
     ServerConfig,
     default_config_dir,
@@ -113,7 +114,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     config = _load_config(args)
-    manager = ServerManager(config)
+    manager = ServerManager(config, config_path=_resolve_config_path(args))
     manager.add_listener(lambda state: log.info("Server state: %s", state.value))
     manager.start()
 
@@ -197,6 +198,14 @@ def _cmd_add_client(args: argparse.Namespace) -> int:
             f"If the client reports 'already redeemed', the file was intercepted: "
             f"revoke and re-issue."
         )
+        if not result.config.behind_reverse_proxy:
+            console.print(
+                f"\n[yellow]The client enrols over TCP port {result.config.enroll_port}, "
+                f"not the tunnel port {result.config.port}.[/yellow] Open/forward it on "
+                f"the server firewall or home router as well, or the import fails with "
+                f"'Could not reach the enrolment endpoint'. If you cannot open it, "
+                f"issue the profile with [bold]--embed-key[/bold] instead."
+            )
     else:
         console.print(
             "\n[yellow]This profile embeds the client's private key[/yellow] "
@@ -1011,7 +1020,7 @@ def _cmd_web(args: argparse.Namespace) -> int:
         return 1
 
     memory_handler = setup_logging()
-    manager = ServerManager(config)
+    manager = ServerManager(config, config_path=_resolve_config_path(args))
 
     from outwarp_server.api import Api
     from outwarp_server.web_server import serve
@@ -1191,6 +1200,8 @@ def main(argv: list[str] | None = None) -> int:
     except ImportError:
         pass
     args = parser.parse_args(argv)
+    if getattr(args, "config_dir", None):
+        os.environ[CONFIG_DIR_ENV] = str(Path(args.config_dir))
     handler = _COMMANDS.get(args.command)
     if handler is None:
         parser.print_help()

@@ -90,8 +90,11 @@ def _get_wg_conf(config: ServerConfig) -> str:
 
 
 class ServerManager:
-    def __init__(self, config: ServerConfig) -> None:
+    def __init__(self, config: ServerConfig, config_path: Path | None = None) -> None:
         self._config = config
+        # Resolved once so a process started with --config-dir keeps reading
+        # and writing the same file it was launched with.
+        self._config_path = config_path or default_config_path()
         self._state = ServerState.STOPPED
         self._wstunnel: subprocess.Popen | None = None
         self._listeners: list[Callable[[ServerState], None]] = []
@@ -190,7 +193,7 @@ class ServerManager:
             result = operations.add_client(
                 self._config,
                 name,
-                config_path=default_config_path(),
+                config_path=self._config_path,
                 expires_at=expires_at,
                 enroll=True,
             )
@@ -232,7 +235,7 @@ class ServerManager:
         try:
             with self._lock:
                 result = operations.rotate_client(
-                    self._config, name, config_path=default_config_path(), output_dir=tmp_dir,
+                    self._config, name, config_path=self._config_path, output_dir=tmp_dir,
                 )
                 self._config = result.config
             owcfg_bytes = result.owcfg_path.read_bytes()
@@ -259,7 +262,7 @@ class ServerManager:
         with self._lock:
             try:
                 result = operations.revoke_client(
-                    self._config, name, config_path=default_config_path(),
+                    self._config, name, config_path=self._config_path,
                 )
             except KeyError as exc:
                 raise ValueError(f"Client '{name}' not found") from exc
@@ -401,7 +404,7 @@ class ServerManager:
         try:
             from outwarp_server import enroll_server
             self._enroll_server = enroll_server.serve(
-                self._config, default_config_path(), on_enrolled=self._on_enrolled,
+                self._config, self._config_path, on_enrolled=self._on_enrolled,
             )
         except Exception:
             log.exception(
@@ -419,7 +422,7 @@ class ServerManager:
         """
         del name
         try:
-            self._config = ServerConfig.load(default_config_path())
+            self._config = ServerConfig.load(self._config_path)
         except Exception:
             log.exception("Could not reload config after enrolment")
 

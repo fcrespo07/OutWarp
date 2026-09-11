@@ -12,6 +12,7 @@ import pytest
 
 from outwarp.config import (
     ClientConfig,
+    ConfigError,
     EnrollmentConfig,
     ReconnectConfig,
     RoutingConfig,
@@ -323,9 +324,12 @@ class TestImportRunsEnrollment:
             patch("outwarp.enroll.verify_tls_fingerprint"),
             patch("outwarp.enroll.urllib.request.urlopen",
                   side_effect=urllib.error.URLError("down")),
-            pytest.raises(EnrollError),
+            # Surfaces as ConfigError (what every import UI already handles),
+            # chained from the EnrollError, with a hint about --embed-key.
+            pytest.raises(ConfigError, match="embed-key") as excinfo,
         ):
             import_owcfg_text(self._v3_owcfg(), dest)
+        assert isinstance(excinfo.value.__cause__, EnrollError)
         assert not dest.exists()
 
     def test_enroll_false_parses_without_touching_the_network(self, tmp_path: Path) -> None:

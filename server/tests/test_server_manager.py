@@ -40,7 +40,7 @@ class TestPruneExpired:
             ClientEntry("forever", _PUB3, "10.0.0.4/32"),
         ]
         cfg = _config(clients)
-        mgr = ServerManager(cfg)
+        mgr = ServerManager(cfg, config_path=tmp_path / "server_config.json")
         # revoke_client now delegates to operations.revoke_client, which
         # reloads fresh from config_path under its file lock (FIX-04).
         cfg.save(tmp_path / "server_config.json")
@@ -56,7 +56,7 @@ class TestPruneExpired:
 
     def test_noop_when_nothing_expired(self, tmp_path: Path) -> None:
         clients = [ClientEntry("forever", _PUB1, "10.0.0.2/32")]
-        mgr = ServerManager(_config(clients))
+        mgr = ServerManager(_config(clients), config_path=tmp_path / "server_config.json")
         with patch("outwarp_server.server_manager.default_config_path",
                    return_value=tmp_path / "server_config.json"):
             assert mgr.prune_expired(today="2026-06-01") == []
@@ -72,7 +72,7 @@ class TestDoStartPrunesExpiredFirst:
     def test_do_start_calls_prune_expired_before_anything_else(
         self, tmp_path: Path,
     ) -> None:
-        mgr = ServerManager(_config([]))
+        mgr = ServerManager(_config([]), config_path=tmp_path / "server_config.json")
         with (
             patch.object(mgr, "prune_expired") as mock_prune,
             patch(
@@ -93,7 +93,7 @@ class TestDoStartPrunesExpiredFirst:
         """A prune failure (e.g. a transient WG hot-remove error) must not
         abort the whole startup — connectivity for everyone else matters more
         than one stale peer."""
-        mgr = ServerManager(_config([]))
+        mgr = ServerManager(_config([]), config_path=tmp_path / "server_config.json")
         with (
             patch.object(mgr, "prune_expired", side_effect=RuntimeError("boom")),
             patch(
@@ -159,7 +159,7 @@ class TestRotateClientKeys:
         old_pub = "yYzBcQWtwdHBN0USGevIH8L0z9WaUDItBX1ZLZMkYpk="
         clients = [ClientEntry("laptop", old_pub, "10.0.0.2/32")]
         cfg = _config(clients)
-        mgr = ServerManager(cfg)
+        mgr = ServerManager(cfg, config_path=tmp_path / "server_config.json")
         # FIX-04: operations.rotate_client reloads fresh from config_path under
         # its file lock, so the on-disk file must exist for this to find it.
         cfg.save(tmp_path / "server_config.json")
@@ -224,7 +224,7 @@ class TestConcurrentAddClient:
 
         n = 8
         cfg = _config([])
-        mgr = ServerManager(cfg)
+        mgr = ServerManager(cfg, config_path=tmp_path / "server_config.json")
         config_path = tmp_path / "server_config.json"
         cfg.save(config_path)
 
@@ -296,3 +296,48 @@ class TestWstunnelCommandBranches:
             assert "--restrict-http-upgrade-path-prefix" in cmd
             assert "--restrict-to" in cmd
             assert cmd[cmd.index("--restrict-to") + 1] == "127.0.0.1:51820"
+
+
+class TestConfigDirIsHonoured:
+    def test_add_client_uses_the_launch_config_dir_not_etc_outwarp(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression (k3s, `--config-dir /data serve`): ServerManager reloaded
+        the config from default_config_path() — /etc/outwarp — on every
+        add/revoke and failed with "Config file not found" because nothing was
+        ever written there. The manager must keep using the path it was
+        launched with."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        cfg_path = data_dir / "server_config.json"
+        _config([]).save(cfg_path)
+        mgr = ServerManager(ServerConfig.load(cfg_path), config_path=cfg_path)
+
+        etc = tmp_path / "etc-outwarp"  # stands in for /etc/outwarp: must stay untouched
+        with (
+            patch("outwarp_server.config.default_config_dir", return_value=etc),
+            patch("outwarp_server.operations.generate_wg_keypair", return_value=("priv", "pub")),
+            patch("outwarp_server.operations.generate_psk", return_value=""),
+            patch("outwarp_server.operations.add_peer_live"),
+            patch("outwarp_server.platforms.get_server_platform"),
+            patch("outwarp_server.server_manager.default_config_path",
+                  side_effect=AssertionError("manager must not consult the default path")),
+        ):
+            mgr.add_client("phone")
+
+        assert not etc.exists()
+        assert [c.name for c in ServerConfig.load(cfg_path).clients] == ["phone"]
+
+    def test_cli_config_dir_flag_is_exported_to_the_environment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Components that resolve the config dir on their own (GUI bridge,
+        panel, enrolment listener) must see the same --config-dir."""
+        from outwarp_server import cli
+        from outwarp_server.config import CONFIG_DIR_ENV, default_config_dir
+
+        monkeypatch.delenv(CONFIG_DIR_ENV, raising=False)
+        monkeypatch.setenv("OUTWARP_TEST_MODE", "1")
+        with patch.dict(cli._COMMANDS, {"status": lambda args: 0}):
+            cli.main(["--config-dir", str(tmp_path), "status"])
+        assert default_config_dir() == tmp_path

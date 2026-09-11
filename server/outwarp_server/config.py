@@ -209,7 +209,18 @@ class ServerConfig:
         )
 
 
+# Set by the CLI when --config-dir is given (and settable by a container
+# image) so every component that resolves the config dir on its own —
+# ServerManager, the GUI bridge, the panel, the enrolment listener — agrees
+# with the command line. Without it a `--config-dir /data serve` process
+# reloaded /etc/outwarp/server_config.json from add_client and failed.
+CONFIG_DIR_ENV = "OUTWARP_CONFIG_DIR"
+
+
 def default_config_dir() -> Path:
+    override = os.environ.get(CONFIG_DIR_ENV)
+    if override:
+        return Path(override)
     if sys.platform == "win32":
         base = Path(r"C:\ProgramData")
     else:
