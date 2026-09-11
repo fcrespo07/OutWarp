@@ -194,8 +194,16 @@ const Sparkline = ({ data, w = 72, h = 22, color = "var(--brand-2)", fill = true
 // ── Area throughput chart (dual: rx up, tx down-mirrored) ─────────────────
 const AreaChart = ({ rx, tx, h = 150 }) => {
   const W = 1000, P = 4;
-  const maxR = Math.max(...rx, 0.0001), maxT = Math.max(...tx, 0.0001);
-  const max = Math.max(maxR, maxT);
+  const dataMax = Math.max(...rx, ...tx, 0.0001);
+  // Peak-hold with slow decay instead of the raw window max: rescaling the
+  // Y axis to the exact instantaneous max on every 2s tick made a perfectly
+  // steady trickle of traffic look like it was constantly surging and
+  // settling, because the axis itself was a moving target. A real spike
+  // still snaps the ceiling up immediately (never clips); it just isn't
+  // allowed to collapse the instant that one sample scrolls out of view.
+  const maxRef = React.useRef(dataMax);
+  maxRef.current = dataMax > maxRef.current ? dataMax : Math.max(dataMax, maxRef.current * 0.95);
+  const max = maxRef.current;
   const n = rx.length;
   const mid = h / 2;
   const line = (arr, mirror) => {

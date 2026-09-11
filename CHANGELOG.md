@@ -55,6 +55,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of only logging it; the CLI prints it after every `import`, the GUI bridge
   returns it from `import_profile()` and logs it to the in-app log panel, and
   the TUI import modal shows it as a toast.
+- **Server web/GUI panel: the status badge lied whenever it wasn't the
+  process that started the service.** `ServerManager.state` only changes via
+  this instance's own `start()`/`stop()`; a companion admin process — the
+  `outwarp-panel` container next to `outwarp-server serve` in the Kubernetes
+  deployment, or `outwarp-server web`/`gui` run alongside a systemd-installed
+  wstunnel unit with no `serve` daemon at all — never calls `start()`, so its
+  dashboard reported "stopped" forever no matter how healthy the tunnel
+  actually was. `ServerManager.effective_state` now reconciles that ambiguous
+  default against the OS (`is_wstunnel_running()` / `is_wg_active()`, the
+  same probes `outwarp-server status` already used) instead of trusting only
+  this process's own history; `start()` also adopts an externally-running
+  service instead of racing it for the same port. **Migration**: the
+  Kubernetes manifest now sets `shareProcessNamespace: true` so the panel
+  container's `pgrep -x wstunnel` can actually see the sibling container's
+  process — re-apply `deploy/kubernetes/deployment.yaml`.
+- **Server dashboard: the live throughput graph and per-client sparklines
+  visibly "breathed"** even under steady traffic — both rescaled their Y axis
+  to the exact instantaneous max on every 2s tick, so a sample scrolling out
+  of the window constantly shrank or grew the whole chart. Both now use a
+  peak-hold-with-decay ceiling (jumps up instantly for a real spike, only
+  decays slowly) instead of the raw sliding-window max.
+- **Server dashboard: per-client rx/tx rate used the browser's clock**
+  against the server's polled counters — a backgrounded tab throttling timer
+  delivery, or a batch of delayed SSE events landing in the same tick, could
+  divide by a near-zero or huge `dt` and show a bogus spike or trough.
+  `list_clients()` now stamps each sample with `sampled_at` (when the server
+  actually took it), and the dashboard uses that instead of `Date.now()`.
+- **Server dashboard/API and client GUI both still reported `"license":
+  "MIT"`** (`get_app_info()` in both `api.py`, plus a hardcoded string in the
+  server login screen and the client's About disclaimer) — stale since the
+  project moved to PolyForm Noncommercial 1.0.0.
 
 ## [0.12.0] — 2026-09-11
 

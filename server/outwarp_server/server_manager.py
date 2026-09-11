@@ -113,6 +113,36 @@ class ServerManager:
         return self._state
 
     @property
+    def effective_state(self) -> ServerState:
+        """``state``, reconciled against the OS for a process that never
+        started the service itself.
+
+        ``self._state`` only ever changes via this instance's own
+        ``start()``/``stop()`` — it defaults to STOPPED and stays there for
+        the lifetime of a process that never calls them. That default is
+        correct for a lone desktop GUI/TUI/daemon process, but wrong for a
+        companion admin surface: the web/GUI panel run alongside a
+        separately-managed ``serve`` process (a Docker/Kubernetes sidecar
+        container, or a systemd-installed wstunnel unit with no
+        continuously-running ``serve`` at all) never calls ``start()``, so
+        its dashboard reported "stopped" forever even while the tunnel was
+        healthy. Only the ambiguous STOPPED default is worth checking against
+        the OS this way — STARTING/RUNNING/ERROR were set by an action this
+        process actually took and are left alone.
+        """
+        if self._state != ServerState.STOPPED:
+            return self._state
+        try:
+            platform = get_server_platform()
+            if platform.is_wstunnel_running() and platform.is_wg_active(
+                platform.wg_interface_name()
+            ):
+                return ServerState.RUNNING
+        except Exception:
+            log.debug("effective_state: platform probe failed", exc_info=True)
+        return self._state
+
+    @property
     def config(self) -> ServerConfig:
         return self._config
 
@@ -122,6 +152,12 @@ class ServerManager:
     def start(self) -> None:
         with self._lock:
             if self._state in (ServerState.STARTING, ServerState.RUNNING):
+                return
+            if self._wstunnel is None and self.effective_state == ServerState.RUNNING:
+                # Already running under a process we don't own (the systemd
+                # unit, or a sibling `serve` container) — adopt that state
+                # instead of racing it to bind the same port.
+                self._set_state(ServerState.RUNNING)
                 return
             self._set_state(ServerState.STARTING)
         threading.Thread(target=self._do_start, daemon=True, name="server-start").start()

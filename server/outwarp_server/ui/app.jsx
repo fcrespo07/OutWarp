@@ -61,20 +61,28 @@ function useLiveData() {
   }
   const prevRef = useRef({});       // public_key -> {rx, tx, t}
   const sparkRef = useRef({});      // public_key -> number[]
+  const peakRef = useRef({});       // public_key -> decaying peak (sparkline scale)
 
   const onClients = useCallback((rows) => {
     const s = ref.current;
-    const now = Date.now() / 1000;
+    const browserNow = Date.now() / 1000;
     let totRx = 0, totTx = 0, online = 0, idle = 0, offline = 0;
     const adapted = (rows || []).map((row) => {
+      // The server stamps each sample with the time it actually took it
+      // (sampled_at). Using that instead of the browser's clock keeps the
+      // rate correct even when a backgrounded tab throttles delivery and a
+      // batch of SSE events all land in the same JS tick — dividing by the
+      // real dt instead of a near-zero (or huge) one avoids a bogus
+      // instantaneous spike or trough.
+      const sampledAt = row.sampled_at != null ? row.sampled_at : browserNow;
       const prev = prevRef.current[row.public_key];
       let rxBps = 0, txBps = 0;
-      if (prev && now > prev.t) {
-        const dt = now - prev.t;
+      if (prev && sampledAt > prev.t) {
+        const dt = sampledAt - prev.t;
         rxBps = Math.max(0, (row.rx_bytes - prev.rx) / dt);
         txBps = Math.max(0, (row.tx_bytes - prev.tx) / dt);
       }
-      prevRef.current[row.public_key] = { rx: row.rx_bytes || 0, tx: row.tx_bytes || 0, t: now };
+      prevRef.current[row.public_key] = { rx: row.rx_bytes || 0, tx: row.tx_bytes || 0, t: sampledAt };
       const ring = (sparkRef.current[row.public_key] || new Array(24).fill(0)).slice(1);
       ring.push(rxBps);
       sparkRef.current[row.public_key] = ring;
@@ -82,8 +90,13 @@ function useLiveData() {
       if (state === "online") { online++; totRx += rxBps; totTx += txBps; }
       else if (state === "idle") idle++;
       else offline++;
-      // normalize spark to 0..1 for the sparkline
-      const peak = Math.max(...ring, 1);
+      // Normalize to 0..1 for the sparkline with the same decaying-peak
+      // trick as the throughput chart — a raw per-tick max makes a flat
+      // line look like it keeps spiking as old samples scroll out.
+      const prevPeak = peakRef.current[row.public_key] || 1;
+      const ringMax = Math.max(...ring, 1);
+      const peak = ringMax > prevPeak ? ringMax : Math.max(ringMax, prevPeak * 0.95);
+      peakRef.current[row.public_key] = peak;
       const normSpark = ring.map((v) => v / peak);
       return adaptClient(row, { rxBps, txBps, spark: normSpark });
     });

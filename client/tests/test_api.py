@@ -533,7 +533,7 @@ def test_get_app_info_returns_metadata():
     assert isinstance(info["python"], str) and info["python"]
     assert isinstance(info["platform"], str) and info["platform"]
     assert info["repo_url"].startswith("https://github.com/")
-    assert info["license"] == "MIT"
+    assert info["license"] == "PolyForm Noncommercial 1.0.0"
     names = {p["name"] for p in info["third_party"]}
     # Each component the README and CLAUDE.md call out should be in the list.
     assert {"wstunnel", "WireGuard", "pystray", "pywebview"} <= names

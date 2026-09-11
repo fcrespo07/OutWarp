@@ -341,3 +341,92 @@ class TestConfigDirIsHonoured:
         with patch.dict(cli._COMMANDS, {"status": lambda args: 0}):
             cli.main(["--config-dir", str(tmp_path), "status"])
         assert default_config_dir() == tmp_path
+
+
+class TestEffectiveState:
+    """`state` alone only reflects actions *this* process took — a companion
+    admin surface (the web/GUI panel next to a separately-managed `serve`
+    process, e.g. a Docker/Kubernetes sidecar, or a systemd-installed
+    wstunnel unit with no `serve` daemon at all) never calls start(), so its
+    dashboard reported "stopped" forever even with a perfectly healthy
+    tunnel. `effective_state` reconciles that ambiguous default against the
+    OS; a state this process actually set (STARTING/RUNNING/ERROR) is left
+    alone."""
+
+    def test_stopped_is_reconciled_to_running_when_the_os_says_so(self, tmp_path: Path) -> None:
+        mgr = ServerManager(_config([]), config_path=tmp_path / "server_config.json")
+        assert mgr.state.value == "stopped"
+        fake_platform = type(
+            "P", (), {
+                "is_wstunnel_running": lambda self: True,
+                "is_wg_active": lambda self, iface: True,
+                "wg_interface_name": lambda self: "wg0",
+            },
+        )()
+        with patch(
+            "outwarp_server.server_manager.get_server_platform", return_value=fake_platform,
+        ):
+            assert mgr.effective_state.value == "running"
+
+    def test_stopped_stays_stopped_when_the_os_agrees(self, tmp_path: Path) -> None:
+        mgr = ServerManager(_config([]), config_path=tmp_path / "server_config.json")
+        fake_platform = type(
+            "P", (), {
+                "is_wstunnel_running": lambda self: False,
+                "is_wg_active": lambda self, iface: False,
+                "wg_interface_name": lambda self: "wg0",
+            },
+        )()
+        with patch(
+            "outwarp_server.server_manager.get_server_platform", return_value=fake_platform,
+        ):
+            assert mgr.effective_state.value == "stopped"
+
+    def test_a_platform_probe_failure_falls_back_to_state(self, tmp_path: Path) -> None:
+        mgr = ServerManager(_config([]), config_path=tmp_path / "server_config.json")
+        with patch(
+            "outwarp_server.server_manager.get_server_platform",
+            side_effect=RuntimeError("no platform for this OS"),
+        ):
+            assert mgr.effective_state == mgr.state
+
+    def test_running_is_never_downgraded_by_a_disagreeing_probe(self, tmp_path: Path) -> None:
+        """This process's own RUNNING is ground truth — it started the
+        process itself and knows better than an OS probe that may not even
+        apply to how it manages the service (e.g. a Popen child never
+        registered with systemd)."""
+        mgr = ServerManager(_config([]), config_path=tmp_path / "server_config.json")
+        mgr._set_state(mgr.state.__class__.RUNNING)  # noqa: SLF001
+        fake_platform = type(
+            "P", (), {
+                "is_wstunnel_running": lambda self: False,
+                "is_wg_active": lambda self, iface: False,
+                "wg_interface_name": lambda self: "wg0",
+            },
+        )()
+        with patch(
+            "outwarp_server.server_manager.get_server_platform", return_value=fake_platform,
+        ):
+            assert mgr.effective_state.value == "running"
+
+    def test_start_adopts_an_externally_running_service_instead_of_racing_it(
+        self, tmp_path: Path,
+    ) -> None:
+        """Calling start() on a companion panel's manager while the service
+        is already running elsewhere must not spawn a second wstunnel."""
+        mgr = ServerManager(_config([]), config_path=tmp_path / "server_config.json")
+        fake_platform = type(
+            "P", (), {
+                "is_wstunnel_running": lambda self: True,
+                "is_wg_active": lambda self, iface: True,
+                "wg_interface_name": lambda self: "wg0",
+            },
+        )()
+        with patch(
+            "outwarp_server.server_manager.get_server_platform", return_value=fake_platform,
+        ), patch.object(
+            mgr, "_do_start", side_effect=AssertionError("must not attempt a real start"),
+        ):
+            mgr.start()
+        assert mgr.state.value == "running"
+        assert mgr._wstunnel is None  # noqa: SLF001 — no process spawned

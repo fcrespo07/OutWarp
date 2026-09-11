@@ -391,7 +391,9 @@ class Api:
                 try:
                     if self._manager is not None:
                         self._emit("status", {
-                            "status": _STATE_TO_JS.get(self._manager.state, "stopped"),
+                            "status": _STATE_TO_JS.get(
+                                self._manager.effective_state, "stopped"
+                            ),
                             "config_present": True,
                         })
                         self._emit("clients", self.list_clients())
@@ -445,7 +447,7 @@ class Api:
             return {"status": "empty", "config_present": False}
         cfg = self._manager.config
         return {
-            "status": _STATE_TO_JS.get(self._manager.state, "stopped"),
+            "status": _STATE_TO_JS.get(self._manager.effective_state, "stopped"),
             "config_present": True,
             "endpoint": cfg.endpoint,
             "port": cfg.port,
@@ -492,7 +494,7 @@ class Api:
             "python": _sys.version.split()[0],
             "platform": _platform.platform(),
             "repo_url": "https://github.com/fcrespo07/OutWarp",
-            "license": "MIT",
+            "license": "PolyForm Noncommercial 1.0.0",
             "third_party": [
                 {"name": "wstunnel",  "license": "BSD-3-Clause",
                  "url": "https://github.com/erebe/wstunnel"},
@@ -668,6 +670,14 @@ class Api:
         except Exception:
             live = {}
         now = int(time.time())
+        # Separate float timestamp for the dashboard's own rx/tx rate calc
+        # (app.jsx onClients): using the *browser's* Date.now() there against
+        # cumulative counters is fragile — a backgrounded tab throttles timer
+        # delivery and a delayed/batched SSE event then divides by a tiny or
+        # huge dt, producing a bogus spike or trough in the throughput chart.
+        # Stamping the sample with the time it was actually taken lets the
+        # client compute a correct rate regardless of delivery jitter.
+        sampled_at = time.time()
         out = []
         for c in self._manager.config.clients:
             peer = live.get(c.public_key)
@@ -694,6 +704,7 @@ class Api:
                 "rx_bytes": rx,
                 "tx_bytes": tx,
                 "expires_at": c.expires_at,
+                "sampled_at": sampled_at,
             })
         return out
 
@@ -1095,7 +1106,7 @@ class Api:
 
         threading.Thread(target=_bounce, daemon=True, name="api-cfg-update").start()
         self._emit("status", {
-            "status": _STATE_TO_JS.get(self._manager.state, "stopped"),
+            "status": _STATE_TO_JS.get(self._manager.effective_state, "stopped"),
             "config_present": True,
         })
         return {"ok": True}
@@ -1147,7 +1158,7 @@ class Api:
 
         threading.Thread(target=_bounce, daemon=True, name="api-cert-rotate").start()
         self._emit("status", {
-            "status": _STATE_TO_JS.get(self._manager.state, "stopped"),
+            "status": _STATE_TO_JS.get(self._manager.effective_state, "stopped"),
             "config_present": True,
             "cert_fingerprint_sha256": fingerprint,
         })

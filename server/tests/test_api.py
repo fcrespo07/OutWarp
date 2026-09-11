@@ -28,9 +28,14 @@ def _make_config(clients=()):
     )
 
 
-def _make_mgr(state=ServerState.STOPPED, clients=()):
+def _make_mgr(state=ServerState.STOPPED, clients=(), effective_state=None):
     m = MagicMock()
     m.state = state
+    # get_status()/the live poll read effective_state, not state (see
+    # ServerManager.effective_state) — default it to match state so every
+    # existing caller that only cares about the simple case keeps working;
+    # pass effective_state explicitly to exercise the OS-reconciliation path.
+    m.effective_state = effective_state if effective_state is not None else state
     m.config = _make_config(clients=clients)
     return m
 
@@ -56,6 +61,18 @@ def test_status_when_running():
     assert s["endpoint"] == "203.0.113.42"
     assert s["port"] == 443
     assert s["clients_count"] == 0
+
+
+def test_status_reports_the_reconciled_state_not_the_raw_one():
+    """Regression: get_status() used to read manager.state directly, which
+    stays "stopped" forever in a process that never called start() itself —
+    exactly the web/GUI panel running alongside a separately-managed `serve`
+    process (Docker/Kubernetes sidecar, or a systemd-installed wstunnel unit
+    with no `serve` daemon). The dashboard's status badge must reflect
+    effective_state (state reconciled against the OS), not the raw one."""
+    mgr = _make_mgr(state=ServerState.STOPPED, effective_state=ServerState.RUNNING)
+    api, _ = _make_api(mgr)
+    assert api.get_status()["status"] == "running"
 
 
 def test_deps_returns_resolved_paths():
@@ -180,6 +197,10 @@ def test_list_clients_merges_live_state():
     assert by_name["alice"]["last_handshake_seconds_ago"] == 10
     assert by_name["alice"]["rx_bytes"] == 100
     assert by_name["bob"]["status"] == "unknown"
+    # The dashboard computes rx/tx rate from this instead of the browser's own
+    # clock, which is fragile under tab throttling / delayed SSE delivery.
+    assert by_name["alice"]["sampled_at"] == 10_010
+    assert by_name["bob"]["sampled_at"] == 10_010
 
 
 def test_add_client_returns_owcfg(tmp_path):
@@ -432,7 +453,7 @@ def test_get_app_info_returns_versioned_payload():
     api, _ = _make_api()
     info = api.get_app_info()
     assert "version" in info and info["version"]
-    assert info["license"] == "MIT"
+    assert info["license"] == "PolyForm Noncommercial 1.0.0"
     assert info["repo_url"].startswith("https://github.com/")
     assert any(t["name"] == "wstunnel" for t in info["third_party"])
 

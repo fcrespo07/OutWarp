@@ -400,7 +400,28 @@ se respeta, falta el row del modal).
   wrappers `import_owcfg`/`import_owcfg_text` sin sufijo siguen igual) que
   CLI/GUI/TUI muestran al usuario.
 
-Cliente: 597 tests. Servidor: 506 tests. `ruff` limpio en ambos paquetes.
+- **Auditoría del panel web/GUI del servidor (2026-09-11), "el dashboard va
+  raro"**: el badge running/stopped mentía siempre que el proceso que lo
+  renderizaba no era el que arrancó el servicio — exactamente el caso del pod
+  de k3s (`outwarp-server serve` + `outwarp-panel web` en contenedores
+  separados, ninguno de los dos llama a `start()` del otro). Nuevo
+  `ServerManager.effective_state`: si `state` es el default STOPPED nunca
+  tocado, lo reconcilia contra el SO (`is_wstunnel_running()`/`is_wg_active()`,
+  los mismos probes que ya usaba `outwarp-server status`) — un `state`
+  RUNNING/STARTING/ERROR puesto por este mismo proceso no se toca. `start()`
+  adopta el servicio externo en vez de competir por el mismo puerto. Requiere
+  `shareProcessNamespace: true` en el pod (añadido a
+  `deploy/kubernetes/deployment.yaml`) para que el `pgrep` del contenedor
+  panel vea el proceso wstunnel del contenedor server. Además: gráfica de
+  tráfico y sparklines por cliente reescalaban el eje Y al máximo exacto de
+  la ventana en cada tick (parecía "respirar" con tráfico estable) → ahora
+  peak-hold con decaimiento lento; el cálculo de bps usaba `Date.now()` del
+  navegador en vez de un timestamp del servidor (`list_clients()` añade
+  `sampled_at`) — frágil con pestañas en segundo plano / SSE con retraso;
+  `get_app_info()` (cliente y servidor) y dos strings de UI decían
+  `"license": "MIT"`, desactualizado desde el cambio a PolyForm Noncommercial.
+
+Cliente: 597 tests. Servidor: 512 tests. `ruff` limpio en ambos paquetes.
 
 ### Cambios en 0.11.0 (arquitectura de seguridad)
 

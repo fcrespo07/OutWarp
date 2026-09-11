@@ -26,6 +26,15 @@ spec:
       # which is correct for a VPN server: traffic flows Pi ↔ clients directly.
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      # The `outwarp-panel` container has no view of wstunnel's health on its
+      # own: wstunnel runs as a plain subprocess of the `outwarp-server`
+      # container's `serve` process (no systemd inside a container), and by
+      # default each container gets its own PID namespace — `pgrep -x
+      # wstunnel` (KubernetesServerPlatform.is_wstunnel_running) would never
+      # find it, so the panel's dashboard reported "stopped" forever even
+      # with a perfectly healthy tunnel. Sharing the pod's PID namespace lets
+      # that pgrep actually see the sibling container's process.
+      shareProcessNamespace: true
 
       initContainers:
         - name: outwarp-init

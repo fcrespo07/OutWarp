@@ -45,7 +45,7 @@ function LoginScreen({ T, theme, appInfo, onLogin }) {
             {EIcons.shield(16)} {T.login_secured}
           </div>
         </div>
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-3)" }}>outwarp-server · v{(appInfo && appInfo.version) || ""} · MIT</div>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-3)" }}>outwarp-server · v{(appInfo && appInfo.version) || ""} · PolyForm Noncommercial</div>
         <svg aria-hidden style={{ position: "absolute", right: -60, bottom: -40, width: 420, height: 420, opacity: 0.5, pointerEvents: "none" }} viewBox="0 0 48 48" fill="none">
           <path d="M8 14 L18 24 L8 34" stroke="var(--line-strong)" strokeWidth="2" opacity="0.5" />
           <path d="M18 14 L28 24 L18 34" stroke="var(--line-strong)" strokeWidth="2" opacity="0.7" />

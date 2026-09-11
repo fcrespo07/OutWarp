@@ -54,7 +54,7 @@ const STR = {
     about_openRepo: "Abrir repositorio",
     about_thirdParty: "Componentes de terceros",
     about_openUrl: "Abrir →",
-    about_disclaimer: "OutWarp se distribuye bajo licencia MIT. WireGuard es marca registrada de Jason A. Donenfeld. wstunnel es un proyecto independiente de erebe.",
+    about_disclaimer: "OutWarp se distribuye bajo la licencia PolyForm Noncommercial 1.0.0. WireGuard es marca registrada de Jason A. Donenfeld. wstunnel es un proyecto independiente de erebe.",
     // Updates
     upd_check: "Buscar actualizaciones",
     upd_checking: "Buscando…",
@@ -247,7 +247,7 @@ const STR = {
     about_openRepo: "Open repository",
     about_thirdParty: "Third-party components",
     about_openUrl: "Open →",
-    about_disclaimer: "OutWarp is distributed under the MIT license. WireGuard is a registered trademark of Jason A. Donenfeld. wstunnel is an independent project by erebe.",
+    about_disclaimer: "OutWarp is distributed under the PolyForm Noncommercial 1.0.0 license. WireGuard is a registered trademark of Jason A. Donenfeld. wstunnel is an independent project by erebe.",
     // Updates
     upd_check: "Check for updates",
     upd_checking: "Checking…",

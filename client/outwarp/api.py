@@ -807,7 +807,7 @@ class Api:
             "python": sys.version.split()[0],
             "platform": platform_mod.platform(),
             "repo_url": "https://github.com/fcrespo07/OutWarp",
-            "license": "MIT",
+            "license": "PolyForm Noncommercial 1.0.0",
             "third_party": [
                 {"name": "wstunnel",  "license": "BSD-3-Clause",
                  "url": "https://github.com/erebe/wstunnel"},
