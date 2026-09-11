@@ -632,6 +632,16 @@ def _run_linux(cmd: list[str], timeout: float = 5.0) -> subprocess.CompletedProc
     )
 
 
+def _has_systemd() -> bool:
+    """True on a native systemd host; false in a container (Docker/K8s), where
+    ServerManager/KubernetesServerPlatform supervise wstunnel and WireGuard
+    directly instead. Checking for the runtime directory (not just the
+    `systemctl` binary) avoids false positives in chroots/WSL that ship the
+    binary without systemd actually running as PID 1.
+    """
+    return Path("/run/systemd/system").exists() and shutil.which("systemctl") is not None
+
+
 def _wg_tools_install_cmd() -> str:
     """Best-effort install command for wireguard-tools on the host's distro.
 
@@ -695,33 +705,80 @@ def check_linux_binaries(config: ServerConfig) -> CheckResult:
 
 
 def check_linux_kmod(config: ServerConfig) -> CheckResult:
-    """Verify the wireguard kernel module is available (loaded or loadable)."""
-    proc = _run_linux(["modinfo", "wireguard"])
-    if proc.returncode == 0:
-        first = next(
-            (ln for ln in proc.stdout.splitlines() if ln.startswith("filename:")),
-            "loaded",
+    """Verify the wireguard kernel module is available (loaded or loadable).
+
+    `modinfo` inspects /lib/modules/<running-kernel>/ for the host kernel —
+    that tree lives on the node, not inside a container image, so `modinfo`
+    is typically missing entirely in Docker/K8s (and would report a false
+    negative even if installed, since the host's module directory isn't
+    mounted in). There the live WireGuard interface itself — which can only
+    exist if the node's kernel module is loaded — is the reliable signal.
+    """
+    try:
+        proc = _run_linux(["modinfo", "wireguard"])
+    except FileNotFoundError:
+        pass
+    else:
+        if proc.returncode == 0:
+            first = next(
+                (ln for ln in proc.stdout.splitlines() if ln.startswith("filename:")),
+                "loaded",
+            )
+            return CheckResult(
+                name="WireGuard kernel module",
+                status=Status.PASS,
+                detail=first,
+            )
+        return CheckResult(
+            name="WireGuard kernel module",
+            status=Status.FAIL,
+            detail="modinfo wireguard failed — kernel module not present.",
+            remediation=(
+                "Install kernel headers and the wireguard kernel module: "
+                "apt install wireguard."
+            ),
+            remediation_command="apt install wireguard",
+            fix_kind="interactive",
         )
+
+    proc = _run_linux(["ip", "-o", "link", "show", "type", "wireguard"])
+    if proc.returncode == 0 and proc.stdout.strip():
+        iface = proc.stdout.split(":", 2)[1].strip() if ":" in proc.stdout else "wireguard"
         return CheckResult(
             name="WireGuard kernel module",
             status=Status.PASS,
-            detail=first,
+            detail=f"no modinfo here (container) — {iface} is up, kernel module is loaded",
         )
     return CheckResult(
         name="WireGuard kernel module",
         status=Status.FAIL,
-        detail="modinfo wireguard failed — kernel module not present.",
+        detail="No WireGuard interface up and modinfo isn't available to check further.",
         remediation=(
-            "Install kernel headers and the wireguard kernel module: "
-            "apt install wireguard."
+            "Load the wireguard kernel module on the node (modprobe wireguard) "
+            "and re-run outwarp-server init."
         ),
-        remediation_command="apt install wireguard",
-        fix_kind="interactive",
+        remediation_command="modprobe wireguard",
+        fix_kind="manual",
     )
 
 
 def check_linux_systemd(config: ServerConfig) -> CheckResult:
-    """Both wstunnel-outwarp.service and wg-quick@wg0.service must be active."""
+    """Both wstunnel-outwarp.service and wg-quick@wg0.service must be active.
+
+    Only meaningful on a native systemd install. In a container (Docker/K8s)
+    there is no systemd at all — ServerManager runs wstunnel as a plain
+    subprocess and KubernetesServerPlatform brings WireGuard up directly via
+    wg-quick — so this check doesn't apply; check_linux_listen_443 and
+    check_linux_listen_wg already cover the equivalent "is it actually
+    running" question for that platform.
+    """
+    if not _has_systemd():
+        return CheckResult(
+            name="systemd services active",
+            status=Status.SKIP,
+            detail="No systemd here (container) — wstunnel/WireGuard are supervised "
+                   "directly, not via systemd units. See the listening-port checks instead.",
+        )
     services = ["wstunnel-outwarp.service", f"wg-quick@{_LINUX_WG_INTERFACE}.service"]
     states: dict[str, str] = {}
     inactive: list[str] = []
@@ -773,6 +830,19 @@ def check_linux_listen_443(config: ServerConfig) -> CheckResult:
             name=f"Listening on TCP/{config.port}",
             status=Status.PASS,
             detail=out.splitlines()[1] if len(out.splitlines()) > 1 else "listening",
+        )
+    if not _has_systemd():
+        return CheckResult(
+            name=f"Listening on TCP/{config.port}",
+            status=Status.FAIL,
+            detail=f"Nothing bound to TCP/{config.port}.",
+            remediation=(
+                "No systemd here (container) — wstunnel is a subprocess of the "
+                "outwarp-server process itself. Restart the pod/container "
+                "(e.g. `kubectl rollout restart deployment/outwarp-server`)."
+            ),
+            remediation_command="kubectl rollout restart deployment/outwarp-server",
+            fix_kind="manual",
         )
     service = "caddy" if config.behind_reverse_proxy else "wstunnel-outwarp.service"
     return CheckResult(
@@ -838,6 +908,13 @@ def check_linux_listen_wg(config: ServerConfig) -> CheckResult:
     A UDP listener on 0.0.0.0:51820 means wstunnel exposed WireGuard plaintext
     to the public interface — the very thing the WSS wrapper was supposed to
     avoid. Treat that as FAIL.
+
+    Exception: KubernetesServerPlatform (and any no-systemd deploy) brings
+    WireGuard up via wg-quick directly — kernel WireGuard has no per-interface
+    bind-address option, `wg set <iface> listen-port` always opens on every
+    interface. `outwarp-server restart` cannot change that, so a bare FAIL
+    there is a dead end. Downgrade to WARN with the real mitigation: block
+    external access to this UDP port at the host/router firewall instead.
     """
     proc = _run_linux(["ss", "-ulnp", f"sport = :{config.wg_listen_port}"])
     lines = [ln for ln in proc.stdout.splitlines()[1:] if ln.strip()]
@@ -861,6 +938,22 @@ def check_linux_listen_wg(config: ServerConfig) -> CheckResult:
         if _local_addr(ln).startswith(("0.0.0.0:", "*:", "[::]:"))
     ]
     if public:
+        if not _has_systemd():
+            return CheckResult(
+                name=f"WG forwarder UDP/{config.wg_listen_port}",
+                status=Status.WARN,
+                detail=f"Listener bound to a public address: {public[0]} "
+                       "(expected for kernel WireGuard managed directly — no systemd here).",
+                remediation=(
+                    "This is normal for a container/K8s deploy: WireGuard's kernel "
+                    "listen-port always binds every interface, `outwarp-server restart` "
+                    "won't change it. If you want this port unreachable from outside "
+                    "and only wg.<domain>:443 usable, block external access to "
+                    f"UDP/{config.wg_listen_port} at your router/host firewall — "
+                    "WireGuard's own crypto still protects it either way."
+                ),
+                fix_kind="manual",
+            )
         return CheckResult(
             name=f"WG forwarder UDP/{config.wg_listen_port}",
             status=Status.FAIL,
