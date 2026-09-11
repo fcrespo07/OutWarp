@@ -368,19 +368,24 @@ def test_linux_is_wg_tunnel_active_false_when_helper_missing(tmp_path, monkeypat
 
 # --- LinuxPlatform: kill switch (helper-backed nftables) ---
 
-def test_linux_engage_kill_switch_invokes_helper_with_allowlist(linux_helper):
+_KS = dict(tunnel_iface="OutWarp", tunnel_address="10.9.0.4")
+
+
+def test_linux_engage_kill_switch_invokes_helper_with_iface_and_allowlist(linux_helper):
+    """The helper needs the tunnel interface first: its nft chain must accept
+    output on it, or the switch blocks the very traffic the tunnel carries."""
     p = _linux_platform(linux_helper)
     with patch("subprocess.run", return_value=_mock_run(0)) as mock_run:
-        p.engage_kill_switch(["203.0.113.42", "198.51.100.7"])
+        p.engage_kill_switch(["203.0.113.42", "198.51.100.0/24"], **_KS)
     assert mock_run.call_args[0][0] == [
-        str(linux_helper), "killswitch-on", "203.0.113.42", "198.51.100.7",
+        str(linux_helper), "killswitch-on", "OutWarp", "203.0.113.42", "198.51.100.0/24",
     ]
 
 
 def test_linux_engage_kill_switch_rejects_empty_allowlist(linux_helper):
     p = _linux_platform(linux_helper)
     with pytest.raises(PlatformError, match="empty allowlist"):
-        p.engage_kill_switch([])
+        p.engage_kill_switch([], **_KS)
 
 
 def test_linux_engage_kill_switch_raises_on_helper_failure(linux_helper):
@@ -389,7 +394,7 @@ def test_linux_engage_kill_switch_raises_on_helper_failure(linux_helper):
         patch("subprocess.run", return_value=_mock_run(2, stderr="nft not installed")),
         pytest.raises(PlatformError, match="Failed to engage kill switch"),
     ):
-        p.engage_kill_switch(["203.0.113.42"])
+        p.engage_kill_switch(["203.0.113.42"], **_KS)
 
 
 def test_linux_release_kill_switch_calls_helper_off(linux_helper):
@@ -680,30 +685,38 @@ def _is_netsh_show_rule(cmd, rule_name):
     )
 
 
-def test_windows_engage_kill_switch_adds_allow_then_block():
+def _is_set_outbound(cmd, action):
+    return cmd[0] == "powershell" and cmd[-1].endswith(f"-DefaultOutboundAction {action}")
+
+
+def test_windows_engage_kill_switch_uses_default_policy_not_a_block_rule():
+    """Windows evaluates block rules before allow rules, so a blanket block
+    rule would defeat the endpoint allow. The switch must flip the profile's
+    default outbound action instead, and allow both the endpoints (remoteip)
+    and the tunnel's own traffic (localip = WG address)."""
     p = WindowsPlatform()
     calls = []
 
     def fake_run(cmd, *a, **kw):
         calls.append(list(cmd))
-        # delete-rule probes report "no such rule" (rc != 0) so the wipe is
-        # a no-op; both add-rules succeed.
-        if cmd[3] == "delete":
+        if cmd[0] == "netsh" and cmd[3] == "delete":
             return _mock_run(1, stderr="No rules match the specified criteria.")
         return _mock_run(0)
 
     with patch("subprocess.run", side_effect=fake_run):
-        p.engage_kill_switch(["203.0.113.42", "203.0.113.43"])
+        p.engage_kill_switch(["203.0.113.42", "203.0.113.43"], **_KS)
 
-    add_calls = [c for c in calls if c[3] == "add"]
+    add_calls = [c for c in calls if c[0] == "netsh" and c[3] == "add"]
     assert len(add_calls) == 2
-    allow, block = add_calls
+    allow, tunnel = add_calls
     assert _is_netsh_add_rule(allow, "OutWarp-KillSwitch-Allow")
     assert "remoteip=203.0.113.42,203.0.113.43" in allow
-    assert "action=allow" in allow
-    assert "dir=out" in allow
-    assert _is_netsh_add_rule(block, "OutWarp-KillSwitch-Block")
-    assert "action=block" in block
+    assert _is_netsh_add_rule(tunnel, "OutWarp-KillSwitch-Tunnel")
+    assert "localip=10.9.0.4" in tunnel
+    assert all("action=allow" in c and "dir=out" in c for c in add_calls)
+    assert not any("action=block" in c for c in add_calls)
+    # Policy flip is the last step, after the allow rules exist.
+    assert _is_set_outbound(calls[-1], "Block")
 
 
 def test_windows_engage_kill_switch_wipes_stale_rules_first():
@@ -716,49 +729,67 @@ def test_windows_engage_kill_switch_wipes_stale_rules_first():
         return _mock_run(0)  # everything succeeds, including the wipe
 
     with patch("subprocess.run", side_effect=fake_run):
-        p.engage_kill_switch(["1.1.1.1"])
+        p.engage_kill_switch(["1.1.1.1"], **_KS)
 
-    delete_calls = [c for c in calls if c[3] == "delete"]
-    add_calls = [c for c in calls if c[3] == "add"]
-    # Two deletes (block then allow) before the two adds.
-    assert len(delete_calls) == 2
+    delete_calls = [c for c in calls if c[0] == "netsh" and c[3] == "delete"]
+    add_calls = [c for c in calls if c[0] == "netsh" and c[3] == "add"]
+    # Three deletes (legacy block, tunnel, allow) before the two adds.
+    assert len(delete_calls) == 3
     assert len(add_calls) == 2
-    # And they ran in that order.
-    first_add_idx = next(i for i, c in enumerate(calls) if c[3] == "add")
-    last_delete_idx = max(i for i, c in enumerate(calls) if c[3] == "delete")
+    first_add_idx = next(i for i, c in enumerate(calls) if c[0] == "netsh" and c[3] == "add")
+    last_delete_idx = max(i for i, c in enumerate(calls) if c[0] == "netsh" and c[3] == "delete")
     assert last_delete_idx < first_add_idx
 
 
 def test_windows_engage_kill_switch_rejects_empty_allowlist():
     p = WindowsPlatform()
     with pytest.raises(PlatformError, match="empty allowlist"):
-        p.engage_kill_switch([])
+        p.engage_kill_switch([], **_KS)
 
 
-def test_windows_engage_kill_switch_rolls_back_allow_when_block_fails():
+def test_windows_engage_kill_switch_rejects_missing_tunnel_address():
+    p = WindowsPlatform()
+    with pytest.raises(PlatformError, match="local address"):
+        p.engage_kill_switch(["1.1.1.1"], tunnel_iface="OutWarp", tunnel_address="")
+
+
+def test_windows_engage_kill_switch_rolls_back_rules_when_policy_fails():
     p = WindowsPlatform()
     calls = []
 
     def fake_run(cmd, *a, **kw):
         calls.append(list(cmd))
+        if cmd[0] == "powershell":
+            return _mock_run(1, stderr="boom")
         if cmd[3] == "delete":
             return _mock_run(1, stderr="No rules match the specified criteria.")
-        if cmd[3] == "add" and any("OutWarp-KillSwitch-Block" in s for s in cmd):
-            return _mock_run(1, stderr="boom")
-        return _mock_run(0)  # the allow add succeeds first
+        return _mock_run(0)
 
     with patch("subprocess.run", side_effect=fake_run), \
-            pytest.raises(PlatformError, match="block rule"):
-        p.engage_kill_switch(["1.1.1.1"])
+            pytest.raises(PlatformError, match="default outbound"):
+        p.engage_kill_switch(["1.1.1.1"], **_KS)
 
-    # After the block-rule add failed we should have deleted the allow rule
-    # we added, otherwise we leave a half-engaged switch behind.
-    rollback_deletes = [
-        c for c in calls
-        if c[3] == "delete" and any("OutWarp-KillSwitch-Allow" in s for s in c)
-    ]
-    # 1 from the wipe before the engage attempt + 1 rollback delete = 2.
-    assert len(rollback_deletes) == 2
+    # Allow rules added before the failed policy flip must be deleted again:
+    # 1 delete each from the initial wipe + 1 from the rollback.
+    for name in ("OutWarp-KillSwitch-Allow", "OutWarp-KillSwitch-Tunnel"):
+        deletes = [c for c in calls if c[0] == "netsh" and c[3] == "delete"
+                   and f"name={name}" in c]
+        assert len(deletes) == 2, name
+
+
+def test_windows_release_kill_switch_restores_outbound_policy_first():
+    """Getting the user back online must not depend on rule deletion succeeding."""
+    p = WindowsPlatform()
+    calls = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        return _mock_run(0)
+
+    with patch("subprocess.run", side_effect=fake_run):
+        p.release_kill_switch()
+
+    assert _is_set_outbound(calls[0], "Allow")
 
 
 def test_windows_release_kill_switch_deletes_both_rules():
@@ -772,9 +803,10 @@ def test_windows_release_kill_switch_deletes_both_rules():
     with patch("subprocess.run", side_effect=fake_run):
         p.release_kill_switch()
 
-    deleted = [c for c in calls if c[3] == "delete"]
+    deleted = [c for c in calls if c[0] == "netsh" and c[3] == "delete"]
     names = {a for c in deleted for a in c if a.startswith("name=")}
-    assert "name=OutWarp-KillSwitch-Block" in names
+    assert "name=OutWarp-KillSwitch-Block" in names  # legacy 0.11 rule
+    assert "name=OutWarp-KillSwitch-Tunnel" in names
     assert "name=OutWarp-KillSwitch-Allow" in names
 
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import logging
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -143,6 +145,28 @@ def build_wstunnel_command(
     return strategy_to_command(strategy, wstunnel_bin, _forward_spec(config))
 
 
+def _resolve_endpoints(endpoints) -> dict[str, str]:
+    """Best-effort IPv4 resolution of endpoint hostnames; literals map to themselves."""
+    out: dict[str, str] = {}
+    for ep in endpoints:
+        if not ep or ep in out:
+            continue
+        try:
+            ipaddress.ip_address(ep)
+            out[ep] = ep
+            continue
+        except ValueError:
+            pass
+        try:
+            infos = socket.getaddrinfo(ep, None, family=socket.AF_INET, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            log.warning("Could not pre-resolve %s (pin check will resolve it itself): %s", ep, exc)
+            continue
+        if infos:
+            out[ep] = infos[0][4][0]
+    return out
+
+
 class Tunnel:
     def __init__(
         self,
@@ -161,6 +185,15 @@ class Tunnel:
         self._proc: subprocess.Popen[str] | None = None
         self._stdout_thread: Thread | None = None
         self._wg_installed = False
+        # endpoint hostname -> IPv4 literal, filled at the top of connect().
+        self._resolved: dict[str, str] = {}
+        # Cooperative cancellation for an in-flight connect(). The ladder can
+        # take well over TunnelManager.stop()'s join budget (per rung: probe +
+        # pin + handshake wait + pings); without this, stop() tore the tunnel
+        # down underneath a still-running ladder, which then spawned the next
+        # rung's wstunnel into the void — an orphan that died later with
+        # "failed printing to stderr: Broken pipe" once the CLI had exited.
+        self._cancel = Event()
         # Fallback-ladder tuning. A rung is accepted only when a fresh WG
         # handshake appears within handshake_timeout AND (when require_ping) a
         # ping reaches verify_ping_target *through* the tunnel — a live wstunnel
@@ -210,6 +243,17 @@ class Tunnel:
                 log.log(level, "wstunnel: %s", stripped)
         except Exception:
             log.debug("_drain_stdout: read loop exited unexpectedly", exc_info=True)
+
+    def cancel(self) -> None:
+        """Ask an in-flight connect() to abort at its next checkpoint."""
+        self._cancel.set()
+
+    def clear_cancel(self) -> None:
+        self._cancel.clear()
+
+    def _check_cancelled(self) -> None:
+        if self._cancel.is_set():
+            raise TunnelError("Connection cancelled")
 
     @property
     def platform(self) -> Platform:
@@ -275,7 +319,17 @@ class Tunnel:
                 "firewall, or your network may block outbound connections to them."
             )
 
+        # Resolve every direct endpoint while the system resolver still has a
+        # working path. Once WireGuard is up its DNS (routed into the tunnel)
+        # takes over for every lookup, and the tunnel carries nothing until a
+        # rung succeeds — so a hostname lookup after this point stalls until
+        # resolved gives up (tens of seconds per rung, observed ~49 s).
+        self._resolved = _resolve_endpoints(
+            r.endpoint for r in attemptable if r.scheme == "wss" and not r.proxy
+        )
+
         try:
+            self._check_cancelled()
             self._phase_cb("tls")
             self._phase_cb("wg")
             extra_bypass = escape_set(self._config, ladder)
@@ -286,6 +340,7 @@ class Tunnel:
             total = len(attemptable)
             failures: list[str] = []
             for idx, strat in enumerate(attemptable):
+                self._check_cancelled()
                 self.strategy_callback(strat.label, idx, total)
                 log.info(
                     "Fallback ladder: trying rung %d/%d — %s (%s)",
@@ -327,26 +382,32 @@ class Tunnel:
                 return False, reason
 
         baseline = self._current_handshake()
+        # Last checkpoint before spawning: a cancel that landed during the pin
+        # check must not produce a wstunnel nobody will ever stop.
+        self._check_cancelled()
         try:
             self._start_wstunnel(strat)
         except Exception as exc:  # noqa: BLE001 — surface as a rung failure, keep laddering
             return False, f"wstunnel failed to start: {exc}"
 
         if not self._await_handshake(baseline):
-            return False, "no WireGuard handshake"
+            return False, "cancelled" if self._cancel.is_set() else "no WireGuard handshake"
         if self._require_ping and not self._await_ping():
+            if self._cancel.is_set():
+                return False, "cancelled"
             return False, "handshake but no traffic through tunnel"
         return True, ""
 
     def _check_pin(self, strat: ConnectionStrategy) -> tuple[bool, str]:
         tls = self._config.tls
+        connect_host = self._resolved.get(strat.endpoint)
         if strat.pin_mode == "ca":
             # Deliberately not tolerated by allow_tls_intercept: wstunnel gets
             # --tls-verify-certificate on this rung and would refuse the
             # connection anyway, so waving it through here would only swap a
             # precise error for a mute timeout.
             try:
-                verify_tls_ca(strat.endpoint, strat.port)
+                verify_tls_ca(strat.endpoint, strat.port, connect_host=connect_host)
                 return True, ""
             except CertificateNotTrustedError as exc:
                 log.warning("CA verification failed on rung '%s': %s", strat.id, exc)
@@ -356,10 +417,13 @@ class Tunnel:
 
         try:
             if tls.spki_sha256:
-                verify_tls_spki(strat.endpoint, strat.port, tls.spki_sha256)
+                verify_tls_spki(
+                    strat.endpoint, strat.port, tls.spki_sha256, connect_host=connect_host,
+                )
             else:
                 verify_tls_fingerprint(
-                    strat.endpoint, strat.port, tls.cert_fingerprint_sha256
+                    strat.endpoint, strat.port, tls.cert_fingerprint_sha256,
+                    connect_host=connect_host,
                 )
             return True, ""
         except FingerprintMismatchError as exc:
@@ -381,18 +445,20 @@ class Tunnel:
     def _await_handshake(self, baseline: int | None) -> bool:
         """Poll until a handshake strictly newer than `baseline` appears."""
         deadline = time.monotonic() + self._handshake_timeout
-        while time.monotonic() < deadline:
+        while time.monotonic() < deadline and not self._cancel.is_set():
             if self._proc is not None and self._proc.poll() is not None:
                 return False  # wstunnel died — this rung is dead
             hs = self._current_handshake()
             if hs is not None and (baseline is None or hs > baseline):
                 return True
-            time.sleep(0.5)
+            self._cancel.wait(0.5)
         return False
 
     def _await_ping(self, attempts: int = 4) -> bool:
         """Confirm packets actually traverse the tunnel to a public anycast IP."""
         for _ in range(attempts):
+            if self._cancel.is_set():
+                return False
             if measure_latency_ms(self._verify_ping_target, timeout_ms=1500) is not None:
                 return True
         return False
@@ -625,14 +691,21 @@ class TunnelManager:
             if self._thread is not None and self._thread.is_alive():
                 return
             self._stop_event.clear()
+            self._tunnel.clear_cancel()
             self._thread = Thread(target=self._run, daemon=True, name="outwarp-tunnel")
             self._thread.start()
 
     def stop(self, timeout: float = 10.0) -> None:
         self._stop_event.set()
+        # Abort an in-flight ladder so the worker tears down on its own thread
+        # and the join below actually completes; disconnect() afterwards is
+        # then an idempotent safety net rather than a concurrent teardown.
+        self._tunnel.cancel()
         thread = self._thread
         if thread is not None:
             thread.join(timeout=timeout)
+            if thread.is_alive():
+                log.warning("Tunnel worker still running after %.0fs; forcing disconnect", timeout)
         try:
             self._tunnel.disconnect()
         except Exception:
@@ -694,6 +767,8 @@ class TunnelManager:
             try:
                 self._tunnel.connect()
             except Exception as exc:
+                if self._stop_event.is_set():
+                    return  # cancelled by stop(); connect() already cleaned up
                 log.warning("Connect attempt %d failed: %s", attempt + 1, exc)
                 self._set_error(str(exc))
                 attempt += 1
@@ -736,6 +811,10 @@ class TunnelManager:
 
             log.warning("Tunnel died unexpectedly; cleaning up before retry")
             self._set_error("Connection closed unexpectedly")
+            # Flip state before tearing WG down: the kill switch engages on
+            # RECONNECTING, and the teardown + backoff below is exactly the
+            # window it exists to cover.
+            self._set_state(TunnelState.RECONNECTING)
             try:
                 self._tunnel.disconnect()
             except Exception:

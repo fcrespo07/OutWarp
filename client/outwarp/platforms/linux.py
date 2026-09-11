@@ -176,9 +176,14 @@ class LinuxPlatform(Platform):
     # ------------------------------------------------------------------
     # Backed by an nftables table the privileged helper owns
     # (killswitch-on/off/status). The output chain defaults to drop and only
-    # allows loopback, established connections and the allowlist IPs (the
-    # server endpoint(s)) so the wstunnel reconnect can still get out.
-    def engage_kill_switch(self, allowlist_ips: list[str]) -> None:
+    # allows loopback, established connections, the allowlist IPs (the
+    # server endpoint(s)) so the wstunnel reconnect can still get out, and the
+    # tunnel interface itself — plaintext packets traverse the output hook
+    # *before* WireGuard encapsulates them, so without that rule the switch
+    # blocked every byte the tunnel was supposed to carry.
+    def engage_kill_switch(
+        self, allowlist_ips: list[str], *, tunnel_iface: str, tunnel_address: str,
+    ) -> None:
         ips = [ip for ip in allowlist_ips if ip]
         if not ips:
             raise PlatformError(
@@ -186,13 +191,13 @@ class LinuxPlatform(Platform):
                 "that would block the very traffic wstunnel needs to reconnect."
             )
         self._require_helper()
-        result = self._run_helper("killswitch-on", *ips)
+        result = self._run_helper("killswitch-on", tunnel_iface, *ips)
         if result.returncode != 0:
             raise PlatformError(
                 "Failed to engage kill switch: "
                 f"{(result.stderr or result.stdout).strip() or 'unknown error'}. "
                 "If you upgraded OutWarp, re-run the installer so the privileged "
-                "helper gains the kill-switch commands; nftables must be installed."
+                "helper gains the current kill-switch command; nftables must be installed."
             )
 
     def release_kill_switch(self) -> None:

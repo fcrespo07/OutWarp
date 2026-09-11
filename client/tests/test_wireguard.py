@@ -249,3 +249,46 @@ def test_build_wg_conf_includes_psk_when_set():
     assert "PresharedKey = cHNrMDAw" in text
     # PSK belongs to the [Peer] section, after the peer's PublicKey.
     assert text.index("PublicKey = serv3rPub") < text.index("PresharedKey")
+
+
+# ─── get_tunnel_stats: must cross the privilege boundary on Linux ─────────────
+#
+# Regression (2026-09-11): `wg show <iface> dump` needs CAP_NET_ADMIN, so a
+# direct call from the desktop user never returns a handshake and the fallback
+# ladder failed every rung with "no WireGuard handshake" while the tunnel was
+# actually up. get_tunnel_stats must go through the helper like StatsSampler.
+
+_DUMP = (
+    "srvpriv\tsrvpub\t33801\toff\n"
+    "peerpub\tpsk\t127.0.0.1:51822\t10.9.0.1/32\t1789125567\t92\t244\t5\n"
+)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux-only helper bridge")
+def test_get_tunnel_stats_reads_via_helper_when_non_root(tmp_path) -> None:
+    from unittest.mock import MagicMock
+
+    from outwarp.wireguard import get_tunnel_stats
+
+    fake_helper = tmp_path / "outwarp-priv"
+    fake_helper.write_text("#!/bin/sh\nexit 0\n")
+    fake_helper.chmod(0o755)
+    with patch("outwarp.tunnel_stats.os.geteuid", return_value=1000), \
+         patch("outwarp.tunnel_stats.subprocess.run") as mock_run, \
+         patch.dict("os.environ", {"OUTWARP_HELPER": str(fake_helper)}):
+        mock_run.return_value = MagicMock(returncode=0, stdout=_DUMP, stderr="")
+        stats = get_tunnel_stats("OutWarp")
+
+    assert stats is not None
+    assert stats.latest_handshake == 1789125567
+    assert (stats.rx_bytes, stats.tx_bytes) == (92, 244)
+    cmd = mock_run.call_args[0][0]
+    assert cmd[:3] == ["sudo", "-n", str(fake_helper)]
+    assert cmd[3:] == ["dump", "OutWarp"]
+
+
+def test_get_tunnel_stats_none_when_unavailable() -> None:
+    from outwarp.wireguard import get_tunnel_stats
+
+    with patch("outwarp.tunnel_stats._wg_dump_stdout", return_value=None):
+        assert get_tunnel_stats("OutWarp") is None

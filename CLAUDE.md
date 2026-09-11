@@ -236,7 +236,13 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 ## Licencia
 
-**OutWarp** se distribuye bajo **MIT**. Confirmar antes de publicar la primera versión estable.
+**OutWarp** se distribuye bajo **[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)**
+(`LICENSE`, raíz) — uso libre para fines no comerciales; uso comercial requiere
+acuerdo aparte con el autor. Decisión explícita del autor (no MIT/Apache-2.0,
+que sí permiten uso comercial): quería prohibirlo. `THIRD_PARTY_LICENSES`
+(raíz) recoge las licencias de todo lo que se bundlea o de lo que depende
+(tabla abajo) — esas licencias de terceros no cambian por el cambio de
+licencia de OutWarp.
 
 ### Dependencias y sus licencias
 
@@ -259,9 +265,9 @@ Tras la instalación, el ejecutable del servidor expone subcomandos:
 
 ### Checklist antes de publicar la primera versión estable
 
-- [ ] Confirmar licencia MIT (o cambiar a Apache-2.0 si se esperan contribuciones corporativas).
-- [ ] Añadir fichero `LICENSE` en la raíz con el texto MIT.
-- [ ] Añadir fichero `THIRD_PARTY_LICENSES` con BSD-3-Clause de wstunnel + LGPL-3.0 de pystray + BSD-3-Clause de pywebview.
+- [x] Confirmar licencia. *(PolyForm Noncommercial 1.0.0 — decisión del autor, quería excluir uso comercial explícitamente.)*
+- [x] Añadir fichero `LICENSE` en la raíz con el texto de PolyForm Noncommercial 1.0.0.
+- [x] Añadir fichero `THIRD_PARTY_LICENSES` con BSD-3-Clause de wstunnel + LGPL-3.0 de pystray + BSD-3-Clause de pywebview (+ Pillow, platformdirs, CPython, Geist como cortesía).
 - [x] Verificar que no queden referencias a `vpn.fcrespo.tech`, `ClaveSegura123`, `10.43.9.43`, `PortatilDesbloqueado` ni IPs del autor. *(El código está limpio; las únicas menciones viven en este checklist.)*
 - [ ] Firmar el instalador Windows (eliminar warnings de SmartScreen/UAC en primer arranque).
 
@@ -357,7 +363,27 @@ se respeta, falta el row del modal).
   omarchy-vpn escanean ese directorio y adoptan/tumban cualquier túnel que
   encuentren, incluido el de OutWarp.
 
-Cliente: 575 tests. Servidor: 501 tests. `ruff` limpio en ambos paquetes.
+- **Pre-release (2026-09-11), tras diagnóstico en vivo + revisión senior**:
+  `get_tunnel_stats()` leía `wg show` sin privilegios → en Linux no-root la
+  escalera nunca veía el handshake y el cliente no conectaba desde 0.10.0
+  (ahora pasa por `outwarp-priv dump`, como `tunnel_stats.py`); `Tunnel.cancel()`
+  cooperativo para que `TunnelManager.stop()` no desmonte el túnel bajo una
+  escalera en curso (dejaba un wstunnel huérfano que moría con `Broken pipe`);
+  kill switch reescrito en ambos OS (Linux: regla `oifname <iface>`, helper
+  v2 `killswitch-on <iface> <ip|cidr>...`; Windows: `DefaultOutboundAction
+  Block` + allows por `remoteip`/`localip` en vez de una regla block — sin
+  probar en máquina real), allowlist resuelta a IPv4 (los dominios nunca
+  enganchaban), engancha antes del teardown; endpoints pre-resueltos antes de
+  subir WG (el DNS del túnel bloqueaba el pin check ~49 s); `doctor` sudoers
+  vía `sudo -l` + check de versión del helper; servidor: nombre revocado
+  reutilizable en `add-client`, GUI guarda bajo `locked_config` sin pisar la
+  clave de firma, perfil sin firma para endpoint ya pinneado se rechaza.
+  Pendiente 0.12.1: resolución DNS interna de wstunnel con WG arriba
+  (`--dns-resolver` al túnel muerto), veredicto de firma visible en GUI/TUI/CLI,
+  `load()` del servidor toma lock de escritura en cada carga (usar
+  `PRAGMA user_version`), `sudo -n` por poll de handshake llena auth.log.
+
+Cliente: 594 tests. Servidor: 503 tests. `ruff` limpio en ambos paquetes.
 
 ### Cambios en 0.11.0 (arquitectura de seguridad)
 
@@ -456,7 +482,7 @@ Fases del servidor (todas ✅): scaffolding + config, crypto (`crypto.py`), IP p
 
 ### Pendiente para la primera versión estable
 
-- ❌ Faltan los ficheros `LICENSE` y `THIRD_PARTY_LICENSES` en la raíz (ver checklist de licencias).
+- ✅ `LICENSE` (PolyForm Noncommercial 1.0.0) y `THIRD_PARTY_LICENSES` en la raíz.
 - ⚠️ Instalador Windows sin firmar → warnings de SmartScreen/UAC en primer arranque.
 - ⚠️ README aún marcado como "under active development, not yet ready for production".
 - ✅ Sin referencias del autor (`vpn.fcrespo.tech`, `ClaveSegura123`, etc.) en el código.

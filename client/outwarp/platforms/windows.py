@@ -22,14 +22,28 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _AUTOSTART_VALUE = "OutWarp"
 
-# Two-rule kill switch: an "allow outbound to endpoint(s)" rule that lets the
-# wstunnel reconnect attempt reach the server, plus a "block all outbound"
-# rule. Allow rules win over block rules on more specific matches in Windows
-# Filtering Platform, so the endpoint stays reachable while everything else
-# is blocked. Loopback (127.0.0.0/8 and ::1) is exempt by default and stays
-# reachable too.
+# Kill switch = the firewall profile's default *outbound* action flipped to
+# Block, plus two allow rules: outbound to the endpoint(s) so wstunnel can
+# reconnect, and outbound *from* the tunnel's own address so packets headed
+# into the WireGuard adapter still flow (netsh cannot scope a rule to an
+# adapter by name; the local address is the stable handle). An explicit
+# "block all outbound" rule cannot be used for this: Windows evaluates block
+# rules before allow rules regardless of specificity, so it would have
+# blocked the very endpoint traffic the allow rule was meant to let through.
+# Loopback is exempt from WFP filtering and stays reachable.
 _KILL_RULE_ALLOW = "OutWarp-KillSwitch-Allow"
+_KILL_RULE_TUNNEL = "OutWarp-KillSwitch-Tunnel"
+# Pre-0.12 installs used a blanket block rule; still deleted on release so an
+# upgrade never leaves one behind.
 _KILL_RULE_BLOCK = "OutWarp-KillSwitch-Block"
+_KILL_RULE_NAMES = (_KILL_RULE_BLOCK, _KILL_RULE_TUNNEL, _KILL_RULE_ALLOW)
+
+
+def _set_default_outbound(action: str) -> subprocess.CompletedProcess:
+    return _run([
+        "powershell", "-NoProfile", "-NonInteractive", "-Command",
+        f"Set-NetFirewallProfile -All -DefaultOutboundAction {action}",
+    ])
 
 
 def _quote_arg(arg: str) -> str:
@@ -221,60 +235,70 @@ class WindowsPlatform(Platform):
 
     # ── kill switch ───────────────────────────────────────────────────────
 
-    def engage_kill_switch(self, allowlist_ips: list[str]) -> None:
+    def engage_kill_switch(
+        self, allowlist_ips: list[str], *, tunnel_iface: str, tunnel_address: str,
+    ) -> None:
         if not allowlist_ips:
             raise PlatformError(
                 "engage_kill_switch refusing to run with an empty allowlist — "
                 "the wstunnel reconnect would never get out and the user would "
                 "have no way back online."
             )
-        # Idempotent: wipe any prior pair before adding fresh rules. Safer than
+        if not tunnel_address:
+            raise PlatformError(
+                "engage_kill_switch needs the tunnel's local address — without it "
+                "the switch would block the tunnel's own traffic."
+            )
+        # Idempotent: wipe any prior rules before adding fresh ones. Safer than
         # editing in place — if a previous run died mid-way and only one rule
-        # exists, this brings the pair back to a known state.
+        # exists, this brings the set back to a known state.
         self._delete_killswitch_rules()
 
-        ip_csv = ",".join(allowlist_ips)
-        allow = _run([
-            "netsh", "advfirewall", "firewall", "add", "rule",
-            f"name={_KILL_RULE_ALLOW}",
-            "dir=out", "action=allow", "profile=any", "enable=yes",
-            f"remoteip={ip_csv}",
-        ])
-        if allow.returncode != 0:
+        for name, scope in (
+            (_KILL_RULE_ALLOW, f"remoteip={','.join(allowlist_ips)}"),
+            (_KILL_RULE_TUNNEL, f"localip={tunnel_address}"),
+        ):
+            r = _run([
+                "netsh", "advfirewall", "firewall", "add", "rule",
+                f"name={name}", "dir=out", "action=allow", "profile=any",
+                "enable=yes", scope,
+            ])
+            if r.returncode != 0:
+                self._delete_killswitch_rules()
+                raise PlatformError(
+                    f"Failed to add kill-switch rule {name}: "
+                    f"{(r.stderr or r.stdout).strip()}"
+                )
+        policy = _set_default_outbound("Block")
+        if policy.returncode != 0:
+            # Never leave allow rules around with the policy unchanged — they
+            # are harmless, but the switch must not report as engaged.
+            self._delete_killswitch_rules()
             raise PlatformError(
-                f"Failed to add kill-switch allow rule: "
-                f"{(allow.stderr or allow.stdout).strip()}"
-            )
-        block = _run([
-            "netsh", "advfirewall", "firewall", "add", "rule",
-            f"name={_KILL_RULE_BLOCK}",
-            "dir=out", "action=block", "profile=any", "enable=yes",
-        ])
-        if block.returncode != 0:
-            # Roll back the allow rule so we don't leave a half-applied state.
-            _run(["netsh", "advfirewall", "firewall", "delete", "rule",
-                  f"name={_KILL_RULE_ALLOW}"])
-            raise PlatformError(
-                f"Failed to add kill-switch block rule: "
-                f"{(block.stderr or block.stdout).strip()}"
+                "Failed to set the firewall's default outbound action to Block: "
+                f"{(policy.stderr or policy.stdout).strip()}"
             )
 
     def release_kill_switch(self) -> None:
-        # Best-effort: delete-rule returns non-zero when the rule is absent,
-        # which is exactly the recovered-from-crash path. Surface only real
-        # errors (anything that isn't "not found").
+        # Best-effort and safe when nothing is engaged (called unconditionally
+        # on startup to recover from a crash). Restore the outbound default
+        # first so the user is back online even if rule deletion fails.
+        policy = _set_default_outbound("Allow")
+        if policy.returncode != 0:
+            log.warning("restoring default outbound action failed: %s",
+                        (policy.stderr or policy.stdout).strip())
         self._delete_killswitch_rules()
 
     def is_kill_switch_engaged(self) -> bool:
         # `show rule` exits 0 when the rule exists, 1 when it does not.
         result = _run([
             "netsh", "advfirewall", "firewall", "show", "rule",
-            f"name={_KILL_RULE_BLOCK}",
+            f"name={_KILL_RULE_TUNNEL}",
         ])
         return result.returncode == 0
 
     def _delete_killswitch_rules(self) -> None:
-        for name in (_KILL_RULE_BLOCK, _KILL_RULE_ALLOW):
+        for name in _KILL_RULE_NAMES:
             r = _run([
                 "netsh", "advfirewall", "firewall", "delete", "rule",
                 f"name={name}",

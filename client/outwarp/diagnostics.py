@@ -174,6 +174,50 @@ def check_helper_installed() -> CheckResult:
     )
 
 
+# Helper contract version this client was built against (install.sh
+# HELPER_VERSION). 2 = kill switch takes the tunnel interface + CIDRs.
+EXPECTED_HELPER_VERSION = 2
+
+
+def check_helper_version() -> CheckResult:
+    """The installed helper must speak the contract this client expects.
+
+    Wheel upgrades (`outwarp-cli update`, pipx) don't touch the helper, so a
+    client can outrun it; the kill switch then fails to engage (fail-open).
+    """
+    if not sys.platform.startswith("linux"):
+        return CheckResult(name="helper version", status=Status.SKIP, detail="Linux-only.")
+    helper = Path(os.environ.get("OUTWARP_HELPER") or str(_DEFAULT_HELPER))
+    if not helper.exists():
+        return CheckResult(
+            name="helper version", status=Status.SKIP,
+            detail="Helper not found — skipping version check.",
+        )
+    installed: int | None = None
+    try:
+        proc = _run(["sudo", "-n", str(helper), "version"], timeout=3)
+        if proc.returncode == 0 and proc.stdout.strip().isdigit():
+            installed = int(proc.stdout.strip())
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    if installed is not None and installed >= EXPECTED_HELPER_VERSION:
+        return CheckResult(
+            name="helper version", status=Status.PASS, detail=f"helper v{installed}",
+        )
+    found = "pre-0.12 (no version)" if installed is None else f"v{installed}"
+    return CheckResult(
+        name="helper version",
+        status=Status.WARN,
+        detail=(
+            f"helper is {found}, client expects v{EXPECTED_HELPER_VERSION} — "
+            "the kill switch cannot engage until the helper is updated."
+        ),
+        remediation="Re-run the installer to refresh /usr/local/libexec/outwarp-priv.",
+        remediation_command="bash <(curl -fsSL https://outwarp.dev/install.sh) client",
+        fix_kind="manual",
+    )
+
+
 def check_sudoers() -> CheckResult:
     """The helper's sudoers rule must allow passwordless execution."""
     if not sys.platform.startswith("linux"):
@@ -189,8 +233,11 @@ def check_sudoers() -> CheckResult:
             status=Status.SKIP,
             detail="Helper not found — skipping sudoers check.",
         )
+    # `sudo -l <cmd>` exits 0 only when the rule allows it without a password;
+    # it never runs the helper (which has no `version` subcommand — checking
+    # by running one reported every Linux install as misconfigured).
     try:
-        proc = _run(["sudo", "-n", str(helper), "version"], timeout=3)
+        proc = _run(["sudo", "-n", "-l", str(helper)], timeout=3)
         if proc.returncode == 0:
             return CheckResult(
                 name="sudoers rule",
@@ -406,6 +453,7 @@ def gather_checks() -> list[Check]:
         checks += [
             Check("helper", "Permissions", check_helper_installed),
             Check("sudoers", "Permissions", check_sudoers),
+            Check("helper_version", "Permissions", check_helper_version),
             Check("kmod", "WireGuard", check_wg_kernel_module),
             Check("systemd", "Service", check_systemd_unit),
             Check("notify", "Desktop", check_notify_send),

@@ -917,12 +917,17 @@ write_client_helper() {
 set -euo pipefail
 
 WG_CONF_DIR="/etc/wireguard-outwarp"
+# Bumped whenever a subcommand's contract changes; `outwarp-cli doctor`
+# compares it against the version the client was built for.
+HELPER_VERSION=2
 NAME_RE='^[A-Za-z0-9_=+.-]{1,15}$'
 IPV4_RE='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+IPV4_NET_RE='^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$'
 
 die() { echo "outwarp-priv: $*" >&2; exit 2; }
 need_name() { [[ "${1:-}" =~ $NAME_RE ]] || die "invalid tunnel name: ${1:-<empty>}"; }
 need_ipv4() { [[ "${1:-}" =~ $IPV4_RE ]] || die "invalid IPv4: ${1:-<empty>}"; }
+need_ipv4_net() { [[ "${1:-}" =~ $IPV4_NET_RE ]] || die "invalid IPv4/CIDR: ${1:-<empty>}"; }
 
 cmd="${1:-}"
 shift || true
@@ -973,13 +978,19 @@ case "$cmd" in
         ip route del "$ip/32" >/dev/null 2>&1 || true
         ;;
     killswitch-on)
+        # killswitch-on <tunnel-iface> <ip|cidr>...
         command -v nft >/dev/null 2>&1 || die "nftables (nft) not installed — cannot engage kill switch"
-        [[ $# -ge 1 ]] || die "killswitch-on needs at least one allowlist IP"
-        for ip in "$@"; do need_ipv4 "$ip"; done
+        [[ $# -ge 2 ]] || die "killswitch-on needs the tunnel interface and at least one allowlist IP"
+        iface="$1"; shift
+        need_name "$iface"
+        for ip in "$@"; do need_ipv4_net "$ip"; done
         nft delete table inet outwarp_ks >/dev/null 2>&1 || true
         nft add table inet outwarp_ks
         nft add chain inet outwarp_ks out '{ type filter hook output priority 0 ; policy drop ; }'
         nft add rule inet outwarp_ks out oif lo accept
+        # Plaintext packets bound for the tunnel hit the output hook before
+        # WireGuard wraps them: without this the switch blocks the tunnel too.
+        nft add rule inet outwarp_ks out oifname "$iface" accept
         nft add rule inet outwarp_ks out ct state established,related accept
         for ip in "$@"; do
             nft add rule inet outwarp_ks out ip daddr "$ip" accept
@@ -992,6 +1003,9 @@ case "$cmd" in
     killswitch-status)
         command -v nft >/dev/null 2>&1 || exit 1
         nft list table inet outwarp_ks >/dev/null 2>&1
+        ;;
+    version)
+        echo "$HELPER_VERSION"
         ;;
     *) die "unknown command: ${cmd:-<empty>}" ;;
 esac

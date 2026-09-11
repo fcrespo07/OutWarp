@@ -834,3 +834,33 @@ def test_emit_disables_window_on_failure_and_does_not_recurse(caplog):
     # Subsequent emits short-circuit and don't touch the dead window again.
     api._emit("clients", [])
     assert bad_window.evaluate_js.call_count == 1
+
+
+def test_update_server_config_does_not_clobber_secrets_written_by_another_process(tmp_path):
+    """Regression: the GUI saved a `replace()` of its in-memory snapshot. A CLI
+    `add-client` in another process (kubectl exec) backfills the .owcfg signing
+    key on disk in between; the next GUI save then erased it, and every client
+    that had pinned the key saw a bogus rotation. The save must patch the
+    freshest on-disk config instead."""
+    from dataclasses import replace
+
+    mgr = _make_mgr()
+    mgr._config = mgr.config
+    api, _ = _make_api(mgr)
+    path = tmp_path / "srv.json"
+    on_disk = replace(
+        mgr.config,
+        owcfg_signing_key_id="0011223344556677",
+        owcfg_signing_private_key="c2VjcmV0",
+        owcfg_signing_public_key="untrusted comment: x\nAAAA",
+    )
+    on_disk.save(path)
+
+    with patch("outwarp_server.api.default_config_path", return_value=path):
+        r = api.update_server_config({"port": 8443})
+
+    assert r["ok"] is True
+    saved = ServerConfig.load(path)
+    assert saved.port == 8443
+    assert saved.owcfg_signing_private_key == "c2VjcmV0"
+    assert saved.owcfg_signing_key_id == "0011223344556677"

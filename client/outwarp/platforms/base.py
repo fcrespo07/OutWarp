@@ -61,8 +61,14 @@ class Platform(ABC):
     # release_kill_switch() must be safe to call when nothing is engaged
     # (called unconditionally on app startup to recover from a crash).
 
+    # Besides the allowlist (concrete IPv4 addresses/CIDRs — never hostnames),
+    # the switch must let the tunnel's own inner traffic through: on Linux
+    # that is matched by output interface, on Windows by the tunnel's local
+    # address (netsh cannot scope a rule to an adapter by name).
     @abstractmethod
-    def engage_kill_switch(self, allowlist_ips: list[str]) -> None:
+    def engage_kill_switch(
+        self, allowlist_ips: list[str], *, tunnel_iface: str, tunnel_address: str,
+    ) -> None:
         ...
 
     @abstractmethod

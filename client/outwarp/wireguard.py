@@ -4,13 +4,13 @@ import ipaddress
 import logging
 import shutil
 import socket
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from outwarp.config import ClientConfig
 from outwarp.routing import escape_set
+from outwarp.tunnel_stats import _read_wg_transfer
 
 log = logging.getLogger(__name__)
 
@@ -35,44 +35,19 @@ def _find_wg_bin() -> Path | None:
 def get_tunnel_stats(tunnel_name: str) -> TunnelStats | None:
     """Read transfer counters + last handshake from `wg show <name> dump`.
 
+    Goes through tunnel_stats._wg_dump_stdout, which routes the read via the
+    privileged helper on Linux: `wg show` needs CAP_NET_ADMIN, so a direct
+    call from the desktop user never sees a handshake and the fallback ladder
+    fails every rung with "no WireGuard handshake" even when the tunnel is up.
+
     Returns None if `wg` isn't available or the tunnel isn't up; callers
     treat that as "no data yet".
     """
-    wg = _find_wg_bin()
-    if wg is None:
+    transfer = _read_wg_transfer(tunnel_name)
+    if transfer is None:
         return None
-    extra: dict = {}
-    if sys.platform == "win32":
-        extra["creationflags"] = subprocess.CREATE_NO_WINDOW
-    try:
-        result = subprocess.run(
-            [str(wg), "show", tunnel_name, "dump"],
-            capture_output=True, text=True, check=False, timeout=2,
-            **extra,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return None
-
-    # The first dump line is the interface; peer lines come after. The client
-    # only ever has one peer (the server), so we read the first peer line.
-    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
-    if len(lines) < 2:
-        return None
-    parts = lines[1].split("\t")
-    if len(parts) < 8:
-        return None
-    _pub, _preshared, _endpoint, _allowed, handshake, rx, tx, _keepalive = parts[:8]
-    try:
-        hs = int(handshake)
-    except ValueError:
-        hs = 0
-    return TunnelStats(
-        rx_bytes=int(rx) if rx.isdigit() else 0,
-        tx_bytes=int(tx) if tx.isdigit() else 0,
-        latest_handshake=hs if hs > 0 else None,
-    )
+    rx, tx, handshake = transfer
+    return TunnelStats(rx_bytes=rx, tx_bytes=tx, latest_handshake=handshake)
 
 
 def _resolve_bypass_networks(bypass_ips: list[str]) -> list[ipaddress.IPv4Network]:

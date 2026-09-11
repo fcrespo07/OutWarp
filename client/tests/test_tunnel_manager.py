@@ -45,9 +45,24 @@ class FakeTunnel:
         # picks a real rung, so the sticky store stays untouched.
         self.active_strategy_id = ""
         self.preferred_strategy_id = ""
+        self.cancel_calls = 0
+        # When set, connect() blocks until cancel() — models a ladder that
+        # outlives stop()'s join budget.
+        self.block_until_cancel: Event | None = None
+
+    def cancel(self) -> None:
+        self.cancel_calls += 1
+        if self.block_until_cancel is not None:
+            self.block_until_cancel.set()
+
+    def clear_cancel(self) -> None:
+        pass
 
     def connect(self) -> None:
         self.connect_calls += 1
+        if self.block_until_cancel is not None:
+            self.block_until_cancel.wait(timeout=5)
+            raise RuntimeError("Connection cancelled")
         if self.connect_errors:
             err = self.connect_errors.pop(0)
             if err is not None:
@@ -217,6 +232,8 @@ class _PhaseCallbackTunnel:
         self.alive = True
         self.active_strategy_id = ""
         self.preferred_strategy_id = ""
+        self.cancel = lambda: None
+        self.clear_cancel = lambda: None
         # Filled in by TunnelManager via the phase_callback kwarg of Tunnel().
         # We don't get one here — TunnelManager only injects it when it
         # constructs the Tunnel itself, so this fake plays the role of a
@@ -403,8 +420,11 @@ class TestKillSwitch:
             m._set_state(TunnelState.FAILED)
         # escape_set() always adds the server endpoint on top of routing.bypass_ips
         # (FIX-03) — both configured to "203.0.113.42" in _make_config, so they collapse
-        # into one entry after de-dup.
-        fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42"])
+        # into one entry after de-dup. The platform also gets what it needs to let
+        # the tunnel's own traffic through (interface on Linux, address on Windows).
+        fake_plat.engage_kill_switch.assert_called_once_with(
+            ["203.0.113.42"], tunnel_iface="OutWarp", tunnel_address="10.0.0.42",
+        )
         fake_plat.release_kill_switch.assert_not_called()
 
     def test_engages_on_reconnecting_too(self):
@@ -413,7 +433,9 @@ class TestKillSwitch:
         with patch("outwarp.killswitch.get_platform", return_value=fake_plat):
             m._set_state(TunnelState.CONNECTING)
             m._set_state(TunnelState.RECONNECTING)
-        fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42"])
+        fake_plat.engage_kill_switch.assert_called_once_with(
+            ["203.0.113.42"], tunnel_iface="OutWarp", tunnel_address="10.0.0.42",
+        )
 
     def test_releases_on_connected(self):
         m = _make_manager(_make_config(), FakeTunnel(), kill_switch_enabled=True)
@@ -479,3 +501,55 @@ class TestKillSwitch:
             m._set_state(TunnelState.CONNECTING)
             m._set_state(TunnelState.FAILED)  # must not raise
         assert seen[-1] == TunnelState.FAILED
+
+
+def test_stop_cancels_in_flight_connect_and_joins_worker():
+    """Regression: stop() used to join(timeout) and then disconnect() while the
+    ladder kept running, which spawned an orphan wstunnel after teardown. The
+    worker must be cancelled cooperatively and be dead before stop() returns,
+    and a cancellation must not be recorded as a failed attempt."""
+    tunnel = FakeTunnel()
+    tunnel.block_until_cancel = Event()
+    mgr = TunnelManager(_make_config(), tunnel=tunnel, poll_interval=0.01, sticky_store=MagicMock())
+    with patch.object(mgr, "_network_signature", return_value="net"):
+        mgr.start()
+        deadline = time.monotonic() + 2
+        while tunnel.connect_calls == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert tunnel.connect_calls == 1
+
+        t0 = time.monotonic()
+        mgr.stop(timeout=3.0)
+        assert time.monotonic() - t0 < 2.0, "stop() waited out the join instead of cancelling"
+
+    assert tunnel.cancel_calls >= 1
+    assert not mgr._thread.is_alive()
+    assert tunnel.connect_calls == 1  # no retry after the cancellation
+    assert mgr.state is TunnelState.DISCONNECTED
+    assert mgr.last_error is None
+
+
+def test_kill_switch_engages_before_teardown_and_backoff_after_death():
+    """Regression: after an unexpected tunnel death the manager tore WG down
+    and slept the backoff while still reporting CONNECTED; the kill switch only
+    engaged on the next loop iteration — leaving the exact window it exists
+    for unprotected. RECONNECTING must be signalled before disconnect()."""
+    fake = FakeTunnel()
+    order: list[str] = []
+    real_disconnect = fake.disconnect
+
+    def disconnect() -> None:
+        order.append("disconnect")
+        real_disconnect()
+
+    fake.disconnect = disconnect  # type: ignore[method-assign]
+    m = _make_manager(_make_config(max_attempts=5, delays=[0]), fake, kill_switch_enabled=True)
+    fake_plat = MagicMock()
+    fake_plat.engage_kill_switch.side_effect = lambda *a, **k: order.append("engage")
+    with patch("outwarp.killswitch.get_platform", return_value=fake_plat):
+        m.start()
+        assert _wait_until(lambda: m.state == TunnelState.CONNECTED)
+        fake.alive = False
+        assert _wait_until(lambda: "disconnect" in order and "engage" in order, timeout=3)
+        m.stop(timeout=2)
+    assert order.index("engage") < order.index("disconnect")

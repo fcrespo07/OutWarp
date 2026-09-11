@@ -15,6 +15,18 @@ from outwarp.config import ClientConfig
 from outwarp.fallback import ConnectionStrategy
 
 
+def proxy_host(proxy: str) -> str:
+    """Host part of a wstunnel-style proxy spec (``[user:pass@]host[:port]``).
+
+    The proxy is what wstunnel dials on a proxy rung, so it must escape the
+    tunnel exactly like a direct endpoint would — otherwise the rung loops.
+    """
+    spec = proxy.rsplit("@", 1)[-1]
+    if spec.startswith("["):  # bracketed IPv6 literal
+        return spec[1:].split("]", 1)[0]
+    return spec.rsplit(":", 1)[0] if spec.count(":") == 1 else spec
+
+
 def escape_set(config: ClientConfig, ladder: list[ConnectionStrategy]) -> list[str]:
     """Union of every address that must stay outside the tunnel across all rungs.
 
@@ -29,6 +41,8 @@ def escape_set(config: ClientConfig, ladder: list[ConnectionStrategy]) -> list[s
     for r in ladder:
         if r.endpoint:
             out.append(r.endpoint)
+        if r.proxy:
+            out.append(proxy_host(r.proxy))
         out.extend(r.bypass_ips)
     # De-dup preserving order.
     seen: set[str] = set()

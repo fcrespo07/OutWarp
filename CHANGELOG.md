@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: minor bumps may carry user-visible changes).
 
-## [0.12.0] — 2026-09-10
+## [0.12.0] — 2026-09-11
 
 A full security audit (13 findings across three severity groups) plus five of
 its six proposed architecture refactors.
@@ -95,12 +95,81 @@ its six proposed architecture refactors.
   `/etc/wireguard`, where other WireGuard-aware VPN managers (e.g.
   omarchy-vpn) scan, adopt, and tear down anything they find — including
   OutWarp's own active tunnel.
+- **Linux: the client could never connect as a regular user** (since 0.10.0).
+  The handshake check behind the fallback ladder read `wg show … dump`
+  directly, which needs `CAP_NET_ADMIN`; from the desktop user it silently
+  returned nothing, so every rung was rejected with "no WireGuard handshake"
+  while the tunnel was in fact up — and, because WireGuard had already
+  captured `0.0.0.0/0`, the machine was left without internet until the
+  attempt gave up. The read now goes through the privileged helper, like the
+  TUI's stats sampler always did. The GUI throughput chart used the same call
+  and was likewise blank.
+- **Disconnecting during a connection attempt could orphan `wstunnel`.**
+  `stop()` waited a bounded time for the ladder and then tore the tunnel
+  down underneath it; the ladder went on to launch the next rung's `wstunnel`
+  with nobody left to stop it, and that process later aborted with
+  `failed printing to stderr: Broken pipe` (the "Process crashed: wstunnel"
+  desktop notification). An in-flight connect is now cancelled cooperatively
+  and cleans up on its own thread before `stop()` returns.
+- **`outwarp-cli doctor` reported "sudoers rule ✗" on every Linux install.**
+  It probed by running a `version` subcommand the helper never had; it now
+  asks `sudo -l` whether the helper is allowed without a password, which
+  executes nothing. A new "helper version" check warns when the privileged
+  helper predates the client (wheel upgrades don't refresh it).
+- **Kill switch: it blocked the tunnel itself.** On Linux the nftables chain
+  never accepted output on the WireGuard interface — plaintext packets are
+  filtered *before* WireGuard wraps them — so with the switch engaged no rung
+  could ever verify and the user stayed offline until they disconnected by
+  hand. On Windows a blanket "block outbound" rule was paired with an allow
+  rule for the endpoint, but Windows evaluates block rules first, so even
+  the reconnect was blocked. The Linux helper (`killswitch-on`) now takes
+  the tunnel interface and accepts it (re-run the installer to refresh the
+  helper; `doctor` tells you if it is stale); Windows now flips the firewall
+  profile's default outbound action to Block and allows the endpoint(s) plus
+  traffic from the tunnel's own address instead of adding a block rule.
+  *The Windows path is untested on a real machine in this release.*
+- **Kill switch never engaged for domain-based profiles.** The endpoint
+  hostname was handed to the firewall unresolved and rejected, so the switch
+  silently stayed open; the allowlist is now resolved with the same resolver
+  the tunnel's own exclusions use, and CIDR bypass entries are accepted. The
+  HTTP proxy host of a proxy rung is now part of the escape set too.
+- **Kill switch engaged too late after a dropped tunnel.** The manager tore
+  WireGuard down and slept the reconnect backoff (5–60 s) while still in
+  `CONNECTED`; the switch only engaged on the next loop. It now engages
+  before the teardown.
+- **Connecting to a domain endpoint stalled ~49 s per rung.** Once WireGuard
+  is up its DNS is routed into the tunnel, which carries nothing until a rung
+  succeeds, so the pin check's hostname lookup hung until the resolver gave
+  up. Direct endpoints are now resolved before WireGuard comes up and the
+  pin check connects by address (hostname kept as SNI). wstunnel's own
+  lookup can still hit this when the resolver cache is cold — tracked for
+  0.12.1.
+- **Server: `add-client` refused a name that had been revoked.** Soft-delete
+  (0.12.0) kept the row, so re-issuing a device under its old name failed
+  with "already exists"; a revoked name is free again (fresh keys, fresh IP).
+- **Server GUI could erase secrets written by another process.** Changing
+  the port or rotating the certificate from the GUI saved an in-memory
+  snapshot of the config; an `add-client` run meanwhile (e.g. `kubectl exec`)
+  had backfilled the `.owcfg` signing key on disk, which the GUI save then
+  wiped — every client that had pinned it saw a bogus key rotation. Both
+  saves now patch the freshest on-disk config under the cross-process lock.
+- **Unsigned profile for an already-trusted server is now refused.** Once a
+  server's signing key is pinned, an unsigned `.owcfg` for the same endpoint
+  imported with only a log warning — stripping the signature off a tampered
+  profile bypassed the pin. Profiles from never-seen servers (0.11.0 issues
+  unsigned ones) still import with a warning.
 
 ### Migration
 No breaking changes for existing installs. Profiles and server configs from
 every prior version keep working; the client registry migrates automatically
 from `server_config.json` into its own SQLite table the first time a 0.12.0
 server loads it.
+
+**Linux clients: re-run the installer** (`install.sh client`) after
+upgrading. The privileged helper gained a new kill-switch contract
+(interface argument, CIDR allowlist, `version` subcommand); a wheel-only
+upgrade leaves the old helper in place, the kill switch then fails to engage
+(fail-open, logged), and `outwarp-cli doctor` reports the stale helper.
 
 ## [0.11.0] — 2026-08-03
 

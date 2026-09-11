@@ -136,3 +136,24 @@ def test_import_refuses_a_tampered_signed_profile(tmp_path, monkeypatch):
     with pytest.raises(ConfigError, match="invalid"):
         import_owcfg_text(json.dumps(signed), tmp_path / "config.json", enroll=False)
     assert not (tmp_path / "config.json").exists()
+
+
+def test_unsigned_profile_for_a_pinned_endpoint_is_rejected(tmp_path):
+    """Regression: once a server's key is pinned, an unsigned profile for the
+    same endpoint used to import with only a log warning — stripping the
+    `signing` block off a tampered profile bypassed the pin entirely."""
+    store = tmp_path / "known_servers.json"
+    profile_trust.verify_and_pin(_signed(copy.deepcopy(VALID)), path=store)
+    assert store.exists()
+
+    with pytest.raises(profile_trust.ProfileTrustError, match="unsigned"):
+        profile_trust.verify_and_pin(copy.deepcopy(VALID), path=store)
+
+
+def test_unsigned_profile_for_an_unknown_endpoint_still_imports(tmp_path):
+    """The fail-open path stays for servers never seen signing (0.11 servers)."""
+    store = tmp_path / "known_servers.json"
+    other = copy.deepcopy(VALID)
+    other["server"]["endpoint"] = "198.51.100.7"
+    profile_trust.verify_and_pin(_signed(copy.deepcopy(VALID)), path=store)
+    profile_trust.verify_and_pin(other, path=store)  # must not raise

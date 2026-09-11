@@ -70,10 +70,12 @@ def _pin(path: Path, endpoint: str, public_key_text: str) -> None:
 def verify_and_pin(raw: Any, *, path: Path | None = None) -> None:
     """Verify `raw`'s embedded "signing" block, if any, and TOFU-pin the key.
 
-    Raises ProfileTrustError only when a signature is *present but invalid* —
-    a profile from a server with no signing key configured yet (or an older
-    OutWarp version) is accepted with a warning, the same fail-open shape the
-    release updater already uses for "no manifest published". A key that
+    Raises ProfileTrustError when a signature is *present but invalid*, or
+    when the profile is unsigned for an endpoint whose key is already pinned
+    (a stripped signature must not downgrade the pin). A profile from a
+    never-seen server with no signing key configured yet (or an older OutWarp
+    version) is accepted with a warning, the same fail-open shape the release
+    updater already uses for "no manifest published". A key that
     differs from one already pinned for this server's endpoint is also only a
     warning: refusing outright would brick a legitimate admin-initiated key
     rotation with no recovery path in this first cut, and the profile's own
@@ -82,8 +84,21 @@ def verify_and_pin(raw: Any, *, path: Path | None = None) -> None:
     """
     if not isinstance(raw, dict):
         return
+    endpoint = str((raw.get("server") or {}).get("endpoint", ""))
+    store = path or known_servers_path()
     signing = raw.get("signing")
     if not signing:
+        if endpoint and endpoint in _load_known_servers(store):
+            # Fail-open is only for servers we have never seen sign anything.
+            # Once a key is pinned for this endpoint, an unsigned profile is
+            # exactly what stripping the signature off a tampered one looks
+            # like — accepting it would make the pin worthless.
+            raise ProfileTrustError(
+                f"Profile for {endpoint} is unsigned, but this server's signing "
+                "key is already trusted on this machine. Ask the server admin "
+                "for a signed profile; if the server was reinstalled, remove "
+                f"its entry from {store} first."
+            )
         log.warning("Profile has no signing block — cannot verify who issued it.")
         return
     if not isinstance(signing, dict):
@@ -99,10 +114,8 @@ def verify_and_pin(raw: Any, *, path: Path | None = None) -> None:
     except minisign.MinisignError as exc:
         raise ProfileTrustError(f"Profile signature is invalid: {exc}") from exc
 
-    endpoint = str((raw.get("server") or {}).get("endpoint", ""))
     if not endpoint:
         return
-    store = path or known_servers_path()
     known = _load_known_servers(store)
     previous = known.get(endpoint)
     if previous is None:

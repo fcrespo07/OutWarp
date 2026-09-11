@@ -624,7 +624,7 @@ class TestCheckPin:
         ):
             ok, _ = t._check_pin(_strategy())
         assert ok is True
-        spki.assert_called_once_with("203.0.113.42", 443, "B" * 95)
+        spki.assert_called_once_with("203.0.113.42", 443, "B" * 95, connect_host=None)
         fp.assert_not_called()
 
     def test_pin_rung_falls_back_to_the_cert_pin_for_v1_profiles(self):
@@ -635,7 +635,7 @@ class TestCheckPin:
         ):
             ok, _ = t._check_pin(_strategy())
         assert ok is True
-        fp.assert_called_once_with("203.0.113.42", 443, "A" * 95)
+        fp.assert_called_once_with("203.0.113.42", 443, "A" * 95, connect_host=None)
         spki.assert_not_called()
 
     def test_key_pin_mismatch_is_still_tolerable_when_the_user_opted_in(self):
@@ -650,3 +650,99 @@ class TestCheckPin:
                    side_effect=FingerprintMismatchError("mismatch")):
             ok, _ = t._check_pin(_strategy())
         assert ok is True
+
+
+def test_cancel_mid_ladder_stops_before_next_rung_and_tears_down():
+    """Regression: TunnelManager.stop() during a running ladder used to tear
+    WG down while the ladder went on to spawn the next rung's wstunnel — an
+    orphan that later died with 'failed printing to stderr: Broken pipe'.
+    A cancel during rung 1 must abort without launching rung 2 and must leave
+    the interface uninstalled and the current process terminated."""
+    from threading import Timer
+
+    cfg = _make_config()
+    plat = FakePlatform()
+    fake_proc = MagicMock()
+    fake_proc.poll.return_value = None
+    popen = MagicMock(return_value=fake_proc)
+    with (
+        patch("outwarp.tunnel.tcp_probe", return_value=True),
+        patch("outwarp.tunnel.verify_tls_fingerprint"),
+        patch("outwarp.tunnel.subprocess.Popen", popen),
+        patch("outwarp.tunnel.get_tunnel_stats", return_value=None),  # never handshakes
+        patch("outwarp.tunnel.measure_latency_ms", return_value=15),
+    ):
+        # Long handshake wait: without cancellation the ladder would sit here
+        # for seconds per rung; the cancel must cut rung 1 short.
+        t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"),
+                   handshake_timeout=10.0)
+        Timer(0.2, t.cancel).start()
+        start = time.monotonic()
+        with pytest.raises(TunnelError, match="cancelled"):
+            t.connect()
+        assert time.monotonic() - start < 3.0
+
+    assert popen.call_count == 1, "a second rung was launched after cancellation"
+    fake_proc.terminate.assert_called()
+    assert plat.installed is False
+
+
+def test_cancel_before_spawn_never_launches_wstunnel():
+    """A cancel that lands before the first spawn (e.g. during the pin check)
+    must not start any wstunnel at all."""
+    cfg = _make_config()
+    plat = FakePlatform()
+    popen = MagicMock()
+    with (
+        patch("outwarp.tunnel.tcp_probe", return_value=True),
+        patch("outwarp.tunnel.verify_tls_fingerprint"),
+        patch("outwarp.tunnel.subprocess.Popen", popen),
+    ):
+        t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"))
+        t.cancel()
+        with pytest.raises(TunnelError, match="cancelled"):
+            t.connect()
+    popen.assert_not_called()
+    assert plat.installed is False
+
+
+def test_direct_endpoints_are_resolved_before_wireguard_comes_up():
+    """Regression: once WG is up its DNS is routed into the (still dead)
+    tunnel, so a hostname lookup in the pin check stalled ~49 s per rung. The
+    endpoint must be resolved before install_wg_tunnel and the pin check must
+    connect to that address, keeping the hostname only as SNI."""
+    from dataclasses import replace
+    cfg = _make_config()
+    cfg = replace(cfg, server=replace(cfg.server, endpoint="vpn.example.org"),
+                  routing=replace(cfg.routing, bypass_ips=["vpn.example.org"]))
+    plat = FakePlatform()
+    fake_proc = MagicMock()
+    fake_proc.poll.return_value = None
+    events: list[str] = []
+    real_install = plat.install_wg_tunnel
+
+    def install(name, conf):
+        events.append("wg-up")
+        return real_install(name, conf)
+
+    plat.install_wg_tunnel = install  # type: ignore[method-assign]
+
+    def getaddrinfo(host, *a, **k):
+        events.append(f"resolve:{host}")
+        return [(2, 1, 6, "", ("203.0.113.42", 0))]
+
+    with (
+        patch("outwarp.tunnel.tcp_probe", return_value=True),
+        patch("outwarp.tunnel.socket.getaddrinfo", side_effect=getaddrinfo),
+        patch("outwarp.wireguard.socket.getaddrinfo", side_effect=getaddrinfo),
+        patch("outwarp.tunnel.verify_tls_fingerprint") as vtf,
+        patch("outwarp.tunnel.subprocess.Popen", return_value=fake_proc),
+        patch("outwarp.tunnel.get_tunnel_stats", side_effect=_handshake_after_start()),
+        patch("outwarp.tunnel.measure_latency_ms", return_value=15),
+    ):
+        t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"))
+        t.connect()
+
+    assert events.index("resolve:vpn.example.org") < events.index("wg-up")
+    assert vtf.call_args[0][0] == "vpn.example.org"  # SNI / verified name
+    assert vtf.call_args[1]["connect_host"] == "203.0.113.42"

@@ -428,7 +428,8 @@ def test_set_kill_switch_on_engages_now_if_tunnel_is_down(tmp_path):
         api, _ = _make_api(mgr)
         r = api.set_settings({"kill_switch": True})
     assert r["ok"] is True
-    fake_plat.engage_kill_switch.assert_called_once_with(["203.0.113.42", "1.2.3.4"])
+    fake_plat.engage_kill_switch.assert_called_once()
+    assert fake_plat.engage_kill_switch.call_args[0][0] == ["203.0.113.42", "1.2.3.4"]
 
 
 def test_set_kill_switch_on_no_op_if_tunnel_is_connected(tmp_path):

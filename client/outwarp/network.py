@@ -39,11 +39,16 @@ def tcp_probe(host: str, port: int, timeout: float = 5.0) -> bool:
         return False
 
 
-def get_tls_fingerprint(host: str, port: int, timeout: float = 5.0) -> str:
-    return _colon_hex(hashlib.sha256(_peer_cert_der(host, port, timeout)).digest())
+def get_tls_fingerprint(
+    host: str, port: int, timeout: float = 5.0, *, connect_host: str | None = None,
+) -> str:
+    der = _peer_cert_der(host, port, timeout, connect_host=connect_host)
+    return _colon_hex(hashlib.sha256(der).digest())
 
 
-def get_tls_spki_fingerprint(host: str, port: int, timeout: float = 5.0) -> str:
+def get_tls_spki_fingerprint(
+    host: str, port: int, timeout: float = 5.0, *, connect_host: str | None = None,
+) -> str:
     """SHA-256 over the peer's DER SubjectPublicKeyInfo, colon-hex uppercase.
 
     Pinning the key rather than the whole certificate (RFC 7469's model) is what
@@ -51,12 +56,19 @@ def get_tls_spki_fingerprint(host: str, port: int, timeout: float = 5.0) -> str:
     period, or a rebuild — without invalidating every .owcfg already handed out,
     as long as the key is reused.
     """
-    der = _peer_cert_der(host, port, timeout)
+    der = _peer_cert_der(host, port, timeout, connect_host=connect_host)
     return _colon_hex(hashlib.sha256(_spki_der(der)).digest())
 
 
-def verify_tls_ca(host: str, port: int, timeout: float = 5.0) -> None:
+def verify_tls_ca(
+    host: str, port: int, timeout: float = 5.0, *, connect_host: str | None = None,
+) -> None:
     """Validate the peer's chain and hostname against the system trust store.
+
+    `connect_host` (an already-resolved address) is where the TCP connection
+    goes; `host` stays the SNI / verified name. Callers that resolved the
+    endpoint before bringing WireGuard up pass it so this probe never issues a
+    DNS query that would be routed into a tunnel that is not carrying traffic yet.
 
     Mirrors, out of band, what wstunnel does in-band once it is passed
     --tls-verify-certificate. Running it first turns an untrusted chain into a
@@ -65,7 +77,7 @@ def verify_tls_ca(host: str, port: int, timeout: float = 5.0) -> None:
     """
     ctx = ssl.create_default_context()
     try:
-        with socket.create_connection((host, port), timeout=timeout) as sock:
+        with socket.create_connection((connect_host or host, port), timeout=timeout) as sock:
             ctx.wrap_socket(sock, server_hostname=host).close()
     except ssl.SSLCertVerificationError as exc:
         raise CertificateNotTrustedError(
@@ -84,12 +96,14 @@ def _colon_hex(digest: bytes) -> str:
     return ":".join(f"{b:02X}" for b in digest)
 
 
-def _peer_cert_der(host: str, port: int, timeout: float) -> bytes:
+def _peer_cert_der(
+    host: str, port: int, timeout: float, *, connect_host: str | None = None,
+) -> bytes:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     try:
-        with socket.create_connection((host, port), timeout=timeout) as sock, \
+        with socket.create_connection((connect_host or host, port), timeout=timeout) as sock, \
                 ctx.wrap_socket(sock, server_hostname=host) as ssock:
             der = ssock.getpeercert(binary_form=True)
     except OSError as exc:
@@ -307,8 +321,11 @@ def detect_hostile_network(
     return HostileDetection(hostile=False, reason="")
 
 
-def verify_tls_fingerprint(host: str, port: int, expected: str, timeout: float = 5.0) -> None:
-    actual = get_tls_fingerprint(host, port, timeout)
+def verify_tls_fingerprint(
+    host: str, port: int, expected: str, timeout: float = 5.0, *,
+    connect_host: str | None = None,
+) -> None:
+    actual = get_tls_fingerprint(host, port, timeout, connect_host=connect_host)
     if actual.upper() != expected.upper():
         raise FingerprintMismatchError(
             f"TLS certificate fingerprint mismatch for {host}:{port}.\n"
@@ -319,14 +336,17 @@ def verify_tls_fingerprint(host: str, port: int, expected: str, timeout: float =
         )
 
 
-def verify_tls_spki(host: str, port: int, expected: str, timeout: float = 5.0) -> None:
+def verify_tls_spki(
+    host: str, port: int, expected: str, timeout: float = 5.0, *,
+    connect_host: str | None = None,
+) -> None:
     """Key-level counterpart of verify_tls_fingerprint.
 
     A mismatch here is strictly stronger evidence of a different server than a
     certificate mismatch is: reissuing a certificate is routine, swapping the
     key underneath it is not.
     """
-    actual = get_tls_spki_fingerprint(host, port, timeout)
+    actual = get_tls_spki_fingerprint(host, port, timeout, connect_host=connect_host)
     if actual.upper() != expected.upper():
         raise FingerprintMismatchError(
             f"TLS public-key pin mismatch for {host}:{port}.\n"

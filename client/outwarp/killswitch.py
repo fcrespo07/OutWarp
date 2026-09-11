@@ -22,6 +22,7 @@ from outwarp.fallback import build_ladder
 from outwarp.platforms import get_platform
 from outwarp.routing import escape_set
 from outwarp.tunnel import TunnelState
+from outwarp.wireguard import _resolve_bypass_networks
 
 log = logging.getLogger(__name__)
 
@@ -41,17 +42,34 @@ def reconcile(config: ClientConfig, state: TunnelState) -> None:
     let it surface to roll back a user-facing action.
     """
     if state in (TunnelState.RECONNECTING, TunnelState.FAILED):
-        allowlist = escape_set(config, build_ladder(config))
+        allowlist = resolved_allowlist(config)
         if not allowlist:
             log.error(
-                "kill switch NOT engaged — no bypass addresses in profile "
-                "(would lock the user out with no recovery path)"
+                "kill switch NOT engaged — no resolvable bypass addresses in "
+                "profile (would lock the user out with no recovery path)"
             )
             return
-        get_platform().engage_kill_switch(allowlist)
+        get_platform().engage_kill_switch(
+            allowlist,
+            tunnel_iface=config.wireguard.tunnel_name,
+            tunnel_address=config.wireguard.client_address.split("/", 1)[0],
+        )
         log.warning("kill switch engaged — outbound traffic blocked")
     elif state in (TunnelState.CONNECTED, TunnelState.DISCONNECTED):
         get_platform().release_kill_switch()
+
+
+def resolved_allowlist(config: ClientConfig) -> list[str]:
+    """escape_set() as concrete IPv4 addresses/CIDRs, ready for a firewall.
+
+    The escape set may carry hostnames (a domain endpoint, a proxy); the same
+    resolver build_wg_conf uses turns them into networks here, so the kill
+    switch allowlist and the tunnel's AllowedIPs exclusion never disagree. A
+    hostname handed raw to nft/netsh is rejected and the switch silently
+    stays open — every domain-based profile hit that.
+    """
+    nets = _resolve_bypass_networks(escape_set(config, build_ladder(config)))
+    return [str(n.network_address) if n.prefixlen == 32 else str(n) for n in nets]
 
 
 def release_stale_async() -> None:

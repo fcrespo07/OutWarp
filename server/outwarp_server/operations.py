@@ -183,8 +183,12 @@ def add_client(
         store = ClientStore(config_path.parent / "clients.sqlite")
 
         with store.transaction() as conn:
-            if store.get(name, conn) is not None:
+            existing = store.get(name, conn)
+            if existing is not None and existing.state != "revoked":
                 raise ValueError(f"Client '{name}' already exists.")
+            # A revoked name is free again: re-issuing a device under its old
+            # name is the normal "lost laptop, new laptop" flow. The revoked
+            # row is replaced (fresh keys, fresh IP) inside this transaction.
 
             allocated = [c.address for c in store.list_active(conn)]
             try:
@@ -224,7 +228,10 @@ def add_client(
                 expires_at=expires_at,
                 enrolled_at=_today() if client_public_key else "",
             )
-            store.insert(new_client, conn=conn, created_at=_today())
+            store.insert(
+                new_client, conn=conn, created_at=_today(),
+                replace_revoked=existing is not None,
+            )
 
         updated = replace(config, clients=store.list_active())
         updated.save(config_path)

@@ -133,7 +133,19 @@ class ClientStore:
         *,
         conn: sqlite3.Connection,
         created_at: str = "",
+        replace_revoked: bool = False,
     ) -> None:
+        """Insert a new client row.
+
+        `name` is the primary key, so a revoked row blocks re-registration of
+        that name; with `replace_revoked` the revoked row is dropped first.
+        An *active* row is never replaced — the caller checks that under the
+        same transaction and raises.
+        """
+        if replace_revoked:
+            conn.execute(
+                "DELETE FROM clients WHERE name = ? AND state = 'revoked'", (entry.name,)
+            )
         conn.execute(
             "INSERT INTO clients "
             "(name, public_key, address, psk, expires_at, state, enrolled_at, created_at) "

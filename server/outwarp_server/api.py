@@ -37,6 +37,7 @@ from outwarp_server.config import (
     ServerConfig,
     default_config_dir,
     default_config_path,
+    locked_config,
 )
 from outwarp_server.crypto import generate_tls_cert, generate_wg_keypair, renew_tls_cert
 from outwarp_server.logs import MemoryLogHandler
@@ -45,6 +46,30 @@ from outwarp_server.server_manager import ServerManager, ServerState
 from outwarp_server.wireguard import get_live_peers
 
 log = logging.getLogger(__name__)
+
+
+def _save_config_patch(snapshot: ServerConfig, **fields: object) -> ServerConfig:
+    """Apply `fields` to the freshest on-disk config and save it.
+
+    Never save a snapshot taken from memory: another process (e.g. a CLI
+    `add-client` run from `kubectl exec`) may have backfilled secrets such as
+    the .owcfg signing key or the SPKI pin since this process loaded its
+    copy, and a snapshot save would silently erase them. `snapshot` is only
+    used when there is no file on disk yet.
+    """
+    from dataclasses import replace as _replace
+
+    from outwarp_server.config import ConfigError
+
+    path = default_config_path()
+    with locked_config(path):
+        try:
+            base = ServerConfig.load(path)
+        except ConfigError:
+            base = snapshot
+        new_cfg = _replace(base, **fields)
+        new_cfg.save(path)
+    return new_cfg
 
 _STATE_TO_JS = {
     ServerState.STOPPED:  "stopped",
@@ -1027,11 +1052,10 @@ class Api:
                 return {"ok": False, "error": "endpoint required"}
             new_endpoint = ep
 
-        from dataclasses import replace as _replace
-        new_cfg = _replace(cfg, port=new_port, wg_listen_port=new_wg_port, endpoint=new_endpoint)
         try:
-            from outwarp_server.config import default_config_path as _path
-            new_cfg.save(_path())
+            new_cfg = _save_config_patch(
+                cfg, port=new_port, wg_listen_port=new_wg_port, endpoint=new_endpoint,
+            )
         except OSError as exc:
             return {"ok": False, "error": f"could not save config: {exc}"}
 
@@ -1103,17 +1127,14 @@ class Api:
             log.exception("rotate_tls_cert: cert generation failed")
             return {"ok": False, "error": str(exc)}
 
-        from dataclasses import replace as _replace
-        new_cfg = _replace(
-            cfg,
-            cert_path=str(cert_path),
-            key_path=str(key_path),
-            cert_fingerprint_sha256=fingerprint,
-            spki_sha256=spki,
-        )
         try:
-            from outwarp_server.config import default_config_path as _path
-            new_cfg.save(_path())
+            new_cfg = _save_config_patch(
+                cfg,
+                cert_path=str(cert_path),
+                key_path=str(key_path),
+                cert_fingerprint_sha256=fingerprint,
+                spki_sha256=spki,
+            )
         except OSError as exc:
             return {"ok": False, "error": f"could not save config: {exc}"}
 

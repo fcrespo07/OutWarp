@@ -323,3 +323,41 @@ def test_add_client_produces_a_signed_owcfg_the_real_client_accepts(
     assert client_cfg.server.endpoint == "203.0.113.42"
     pinned = json.loads(known_servers.read_text(encoding="utf-8"))
     assert pinned["203.0.113.42"] == owcfg["signing"]["public_key"]
+
+
+@patch("outwarp_server.operations.add_peer_live")
+@patch("outwarp_server.operations.remove_peer_live")
+@patch("outwarp_server.operations.generate_psk", return_value="")
+@patch(
+    "outwarp_server.operations.generate_wg_keypair",
+    return_value=("priv2", "vn4n9d0JyfC8GQOt0YuK61s+3+kDkxCZ3a087Q5WSAo="),
+)
+def test_add_client_reuses_a_revoked_name(
+    _kg: MagicMock, _psk: MagicMock, _rm: MagicMock, _add: MagicMock, tmp_path: Path,
+) -> None:
+    """Regression (0.12.0 soft-delete): revoking 'laptop' must not burn the
+    name forever — re-issuing the same device name is the normal flow."""
+    from outwarp_server.client_store import ClientStore
+
+    cfg_path = _write_server_config(
+        tmp_path,
+        clients=[{
+            "name": "laptop",
+            "public_key": "arnx6499M4j0+dWG9m6Z/VQIDfLERvDlhmiwnAihbdA=",
+            "address": "10.0.0.2/32",
+        }],
+    )
+    config = ServerConfig.load(cfg_path)
+    operations.revoke_client(config, "laptop", config_path=cfg_path)
+
+    config = ServerConfig.load(cfg_path)
+    result = operations.add_client(config, "laptop", config_path=cfg_path, output_dir=tmp_path)
+
+    assert result.client.name == "laptop"
+    rows = ClientStore(tmp_path / "clients.sqlite").list_all()
+    assert [r.state for r in rows] == ["active"]
+    assert rows[0].public_key == "vn4n9d0JyfC8GQOt0YuK61s+3+kDkxCZ3a087Q5WSAo="
+    # An active duplicate is still refused.
+    config = ServerConfig.load(cfg_path)
+    with pytest.raises(ValueError, match="already exists"):
+        operations.add_client(config, "laptop", config_path=cfg_path, output_dir=tmp_path)
