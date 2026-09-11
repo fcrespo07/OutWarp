@@ -171,6 +171,44 @@ class TestStubPlatforms:
         ):
             assert p.is_wstunnel_running() is False
 
+    def test_is_wstunnel_running_true(self) -> None:
+        """ServerManager.effective_state (get_status()'s reconciliation
+        against the OS for a process that never started the service itself)
+        relies on this returning True when wstunnel is actually up."""
+        from unittest.mock import patch
+
+        from outwarp_server.platforms.windows import WindowsServerPlatform
+
+        p = WindowsServerPlatform()
+        with patch(
+            "outwarp_server.platforms.windows._run",
+            return_value=type(
+                "R", (), {"stdout": "wstunnel.exe   1234 Console  1   12,345 K", "returncode": 0},
+            )(),
+        ):
+            assert p.is_wstunnel_running() is True
+
+    def test_is_wg_active_true_and_false(self) -> None:
+        from unittest.mock import patch
+
+        from outwarp_server.platforms.windows import WindowsServerPlatform
+
+        p = WindowsServerPlatform()
+        with patch(
+            "outwarp_server.platforms.windows._run",
+            return_value=type("R", (), {"stdout": "STATE : 4 RUNNING", "returncode": 0})(),
+        ):
+            assert p.is_wg_active() is True
+        with patch(
+            "outwarp_server.platforms.windows._run",
+            return_value=type("R", (), {"stdout": "", "returncode": 1060})(),
+        ):
+            assert p.is_wg_active() is False
+
+    def test_wg_interface_name(self) -> None:
+        from outwarp_server.platforms.windows import _WG_INTERFACE, WindowsServerPlatform
+        assert WindowsServerPlatform().wg_interface_name() == _WG_INTERFACE
+
 
 def _ps_result(stdout: str = "", stderr: str = "", returncode: int = 0):
     return type("R", (), {"stdout": stdout, "stderr": stderr, "returncode": returncode})()
