@@ -78,25 +78,58 @@ class TestKmod:
         assert r.status is Status.FAIL
         assert r.fix_kind == "interactive"
 
+    def test_pass_via_interface_when_modinfo_missing(self) -> None:
+        """Container image: no modinfo on PATH, but the node's wg0 is up."""
+        with patch(
+            "outwarp_server.diagnostics._run_linux",
+            side_effect=[FileNotFoundError(), _completed("5: wg0: <POINTOPOINT>\n")],
+        ):
+            r = diagnostics.check_linux_kmod(_config())
+        assert r.status is Status.PASS
+        assert "container" in r.detail
+
+    def test_fail_when_modinfo_missing_and_no_interface(self) -> None:
+        with patch(
+            "outwarp_server.diagnostics._run_linux",
+            side_effect=[FileNotFoundError(), _completed("", returncode=1)],
+        ):
+            r = diagnostics.check_linux_kmod(_config())
+        assert r.status is Status.FAIL
+        assert r.fix_kind == "manual"
+
 
 class TestSystemd:
     def test_pass_when_all_active(self) -> None:
-        with patch(
-            "outwarp_server.diagnostics._run_linux",
-            return_value=_completed("active\n"),
+        with (
+            patch("outwarp_server.diagnostics._has_systemd", return_value=True),
+            patch(
+                "outwarp_server.diagnostics._run_linux",
+                return_value=_completed("active\n"),
+            ),
         ):
             r = diagnostics.check_linux_systemd(_config())
         assert r.status is Status.PASS
 
     def test_fail_includes_fix_callable(self) -> None:
-        with patch(
-            "outwarp_server.diagnostics._run_linux",
-            return_value=_completed("inactive\n"),
+        with (
+            patch("outwarp_server.diagnostics._has_systemd", return_value=True),
+            patch(
+                "outwarp_server.diagnostics._run_linux",
+                return_value=_completed("inactive\n"),
+            ),
         ):
             r = diagnostics.check_linux_systemd(_config())
         assert r.status is Status.FAIL
         assert r.fix_kind == "auto"
         assert callable(r.fix_callable)
+
+    def test_skip_when_no_systemd(self) -> None:
+        """Container (Docker/K8s): no systemd, wstunnel/WireGuard supervised
+        directly — this check doesn't apply, and mustn't crash trying to run
+        a missing `systemctl`."""
+        with patch("outwarp_server.diagnostics._has_systemd", return_value=False):
+            r = diagnostics.check_linux_systemd(_config())
+        assert r.status is Status.SKIP
 
 
 class TestListen443:
@@ -110,10 +143,23 @@ class TestListen443:
         assert r.status is Status.PASS
 
     def test_fail_when_port_idle(self) -> None:
-        with patch("outwarp_server.diagnostics._run_linux", return_value=_completed("State\n")):
+        with (
+            patch("outwarp_server.diagnostics._has_systemd", return_value=True),
+            patch("outwarp_server.diagnostics._run_linux", return_value=_completed("State\n")),
+        ):
             r = diagnostics.check_linux_listen_443(_config())
         assert r.status is Status.FAIL
         assert r.fix_kind == "auto"
+
+    def test_fail_when_port_idle_and_no_systemd(self) -> None:
+        with (
+            patch("outwarp_server.diagnostics._has_systemd", return_value=False),
+            patch("outwarp_server.diagnostics._run_linux", return_value=_completed("State\n")),
+        ):
+            r = diagnostics.check_linux_listen_443(_config())
+        assert r.status is Status.FAIL
+        assert r.fix_kind == "manual"
+        assert "kubectl" in r.remediation_command
 
 
 class TestListenWg:
@@ -125,9 +171,25 @@ class TestListenWg:
 
     def test_fail_when_bound_publicly(self) -> None:
         out = "State\nUNCONN  0  0  0.0.0.0:51820  *:*\n"
-        with patch("outwarp_server.diagnostics._run_linux", return_value=_completed(out)):
+        with (
+            patch("outwarp_server.diagnostics._has_systemd", return_value=True),
+            patch("outwarp_server.diagnostics._run_linux", return_value=_completed(out)),
+        ):
             r = diagnostics.check_linux_listen_wg(_config())
         assert r.status is Status.FAIL
+
+    def test_warn_when_bound_publicly_and_no_systemd(self) -> None:
+        """Kernel WireGuard under KubernetesServerPlatform always binds every
+        interface — that's unfixable via `outwarp-server restart`, so it's a
+        WARN with a firewall pointer instead of a dead-end FAIL there."""
+        out = "State\nUNCONN  0  0  0.0.0.0:51820  *:*\n"
+        with (
+            patch("outwarp_server.diagnostics._has_systemd", return_value=False),
+            patch("outwarp_server.diagnostics._run_linux", return_value=_completed(out)),
+        ):
+            r = diagnostics.check_linux_listen_wg(_config())
+        assert r.status is Status.WARN
+        assert r.fix_kind == "manual"
 
     def test_warn_when_no_listener_yet(self) -> None:
         with patch("outwarp_server.diagnostics._run_linux", return_value=_completed("State\n")):
