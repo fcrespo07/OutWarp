@@ -61,6 +61,44 @@ async def test_empty_state_when_no_profile(tmp_path: Path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_import_modal_notifies_with_the_signature_verdict(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A successful import used to dismiss silently — the signature verdict
+    (unsigned / verified / rotated key) only ever reached a log line."""
+    from textual.widgets import Input
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "outwarp.tui.app.default_config_path", lambda: tmp_path / "config.json",
+    )
+    owcfg_path = _write_owcfg(tmp_path)
+
+    app = OutWarpClientTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("i")
+        await pilot.pause(0.2)
+        modal = app.screen
+        assert isinstance(modal, ImportModal)
+
+        notified: dict = {}
+        monkeypatch.setattr(
+            modal, "notify",
+            lambda message, **kw: notified.update(message=message, **kw),
+        )
+        modal.query_one("#path", Input).value = str(owcfg_path)
+        modal.action_submit()
+        await pilot.pause(0.2)
+
+    assert notified.get("severity") == "warning"  # _write_owcfg's profile is unsigned
+    assert notified.get("message")
+
+
+@pytest.mark.asyncio
 async def test_failed_screen_when_wstunnel_missing(
     tmp_path: Path, monkeypatch,
 ) -> None:

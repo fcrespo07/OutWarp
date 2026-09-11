@@ -8,7 +8,7 @@ from textual.containers import Container
 from textual.screen import ModalScreen
 from textual.widgets import Input, ListItem, ListView, Static
 
-from outwarp.config import ConfigError, import_owcfg
+from outwarp.config import ConfigError, import_owcfg_with_verdict
 from outwarp.tui.tokens import BAD, DIM
 
 
@@ -112,8 +112,10 @@ class ImportModal(ModalScreen[bool]):
 
     def _do_import(self, path: Path) -> None:
         try:
-            import_owcfg(path)
+            _config, trust_verdict = import_owcfg_with_verdict(path)
         except ConfigError as exc:
             self.query_one("#result", Static).update(f"[{BAD}]Invalid .owcfg: {exc}[/]")
             return
+        severity = "information" if trust_verdict.status == "verified" else "warning"
+        self.notify(trust_verdict.message, title="Profile signature", severity=severity)
         self.dismiss(True)

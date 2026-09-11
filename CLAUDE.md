@@ -378,12 +378,29 @@ se respeta, falta el row del modal).
   vía `sudo -l` + check de versión del helper; servidor: nombre revocado
   reutilizable en `add-client`, GUI guarda bajo `locked_config` sin pisar la
   clave de firma, perfil sin firma para endpoint ya pinneado se rechaza.
-  Pendiente 0.12.1: resolución DNS interna de wstunnel con WG arriba
-  (`--dns-resolver` al túnel muerto), veredicto de firma visible en GUI/TUI/CLI,
-  `load()` del servidor toma lock de escritura en cada carga (usar
-  `PRAGMA user_version`), `sudo -n` por poll de handshake llena auth.log.
 
-Cliente: 594 tests. Servidor: 503 tests. `ruff` limpio en ambos paquetes.
+- **0.12.1 (2026-09-11), bugs reales encontrados usando el producto**:
+  `--config-dir` era ignorado por `ServerManager`/GUI/panel/enrolment fuera
+  de la carga inicial (detectado por el propio autor + su agente de homelab
+  contra el despliegue k3s real) — el CLI exporta ahora `OUTWARP_CONFIG_DIR`
+  y `ServerManager` conserva el path con el que arrancó; `EnrollError` sin
+  capturar escapaba como traceback crudo en vez de un `ConfigError` accionable
+  (puerto de enrolment inalcanzable); `add-client` avisa de que ese puerto
+  hay que abrirlo aparte del túnel. Bugs de diseño encontrados en la propia
+  revisión de estos cambios: sudoers del helper sin `!syslog,!pam_session` →
+  el poll a 1Hz del dashboard TUI inundaba auth.log; `ServerConfig.load()`
+  tomaba el lock de escritura de `clients.sqlite` en cada carga para
+  comprobar una migración que ya estaba hecha (pre-check sin lock antes de
+  `BEGIN IMMEDIATE`); el resolver DNS del rung hostil (`1.1.1.1`) no estaba
+  en `escape_set()`, así que con WG arriba y el túnel caído la resolución de
+  wstunnel se colaba dentro del túnel muerto y se quedaba colgada; el
+  veredicto de `verify_and_pin()` (verificado/sin firmar/clave rotada) sólo
+  llegaba al log — ahora es un `TrustVerdict` devuelto por
+  `import_owcfg_with_verdict()`/`import_owcfg_text_with_verdict()` (los
+  wrappers `import_owcfg`/`import_owcfg_text` sin sufijo siguen igual) que
+  CLI/GUI/TUI muestran al usuario.
+
+Cliente: 597 tests. Servidor: 506 tests. `ruff` limpio en ambos paquetes.
 
 ### Cambios en 0.11.0 (arquitectura de seguridad)
 

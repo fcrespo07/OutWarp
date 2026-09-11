@@ -170,6 +170,7 @@ def test_import_profile_replaces_manager(tmp_path):
 
     assert r["ok"] is True
     assert r["profile"]["endpoint"] == "203.0.113.42:443"
+    assert r["trust"]["status"] == "unverified"  # _VALID_OWCFG carries no signing block
     assert captured["mgr"] is fake_tm
     assert api._manager is fake_tm
     fake_tm.add_listener.assert_called_once()
@@ -429,7 +430,7 @@ def test_set_kill_switch_on_engages_now_if_tunnel_is_down(tmp_path):
         r = api.set_settings({"kill_switch": True})
     assert r["ok"] is True
     fake_plat.engage_kill_switch.assert_called_once()
-    assert fake_plat.engage_kill_switch.call_args[0][0] == ["203.0.113.42", "1.2.3.4"]
+    assert fake_plat.engage_kill_switch.call_args[0][0] == ["203.0.113.42", "1.2.3.4", "1.1.1.1"]
 
 
 def test_set_kill_switch_on_no_op_if_tunnel_is_connected(tmp_path):

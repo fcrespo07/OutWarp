@@ -1023,7 +1023,12 @@ write_client_sudoers() {
 # Managed by OutWarp installer - do not edit by hand.
 # Lets the tray app (running as $TARGET_USER) invoke the OutWarp
 # privileged helper without a password prompt. The helper validates inputs.
-$TARGET_USER ALL=(root) NOPASSWD: $CLIENT_HELPER
+# The TUI dashboard polls "dump" at 1Hz for as long as it's open, so we skip
+# the syslog line and PAM session open/close per invocation - otherwise a
+# single dashboard session floods auth.log with thousands of lines.
+Cmnd_Alias OUTWARP_HELPER = $CLIENT_HELPER
+Defaults!OUTWARP_HELPER !syslog, !pam_session
+$TARGET_USER ALL=(root) NOPASSWD: OUTWARP_HELPER
 EOF
     chmod 0440 "$tmp"
     if ! $SUDO visudo -cf "$tmp" >/dev/null; then

@@ -6,7 +6,7 @@ import json
 import pytest
 
 from outwarp import profile_trust
-from outwarp.config import ConfigError, import_owcfg_text
+from outwarp.config import ConfigError, import_owcfg_text, import_owcfg_text_with_verdict
 
 VALID = {
     "schema_version": 1,
@@ -56,23 +56,26 @@ def _signed(raw: dict) -> dict:
 
 def test_no_signing_block_warns_and_does_not_raise(tmp_path):
     store = tmp_path / "known_servers.json"
-    profile_trust.verify_and_pin(copy.deepcopy(VALID), path=store)  # must not raise
+    verdict = profile_trust.verify_and_pin(copy.deepcopy(VALID), path=store)  # must not raise
     assert not store.exists()
+    assert verdict.status == "unverified"
 
 
 def test_non_dict_input_is_a_noop():
-    profile_trust.verify_and_pin([1, 2, 3])  # must not raise
-    profile_trust.verify_and_pin("not a dict")  # must not raise
+    assert profile_trust.verify_and_pin([1, 2, 3]).status == "unverified"  # must not raise
+    assert profile_trust.verify_and_pin("not a dict").status == "unverified"  # must not raise
 
 
 def test_valid_signature_pins_the_key(tmp_path):
     store = tmp_path / "known_servers.json"
     signed = _signed(copy.deepcopy(VALID))
 
-    profile_trust.verify_and_pin(signed, path=store)
+    verdict = profile_trust.verify_and_pin(signed, path=store)
 
     pinned = json.loads(store.read_text(encoding="utf-8"))
     assert pinned["203.0.113.42"] == signed["signing"]["public_key"]
+    assert verdict.status == "verified"
+    assert "pinned" in verdict.message
 
 
 def test_tampered_field_is_rejected(tmp_path):
@@ -99,10 +102,11 @@ def test_same_key_on_repeat_import_does_not_warn_or_change_the_pin(tmp_path, cap
 
     caplog.clear()
     with caplog.at_level("WARNING"):
-        profile_trust.verify_and_pin(signed, path=store)
+        verdict = profile_trust.verify_and_pin(signed, path=store)
     assert not any("different key" in r.message for r in caplog.records)
     pinned = json.loads(store.read_text(encoding="utf-8"))
     assert pinned["203.0.113.42"] == signed["signing"]["public_key"]
+    assert verdict.status == "verified"
 
 
 def test_different_key_for_a_known_endpoint_warns_but_keeps_the_old_pin(tmp_path, caplog):
@@ -115,9 +119,10 @@ def test_different_key_for_a_known_endpoint_warns_but_keeps_the_old_pin(tmp_path
 
     second = _signed(copy.deepcopy(VALID))  # fresh keypair -> different public_key
     with caplog.at_level("WARNING"):
-        profile_trust.verify_and_pin(second, path=store)
+        verdict = profile_trust.verify_and_pin(second, path=store)
     assert any("different key" in r.message for r in caplog.records)
     assert json.loads(store.read_text(encoding="utf-8"))["203.0.113.42"] == original_pin
+    assert verdict.status == "key_rotated"
 
 
 # --- end-to-end through import_owcfg_text ---
@@ -127,6 +132,19 @@ def test_import_accepts_a_validly_signed_profile(tmp_path, monkeypatch):
     signed = _signed(copy.deepcopy(VALID))
     cfg = import_owcfg_text(json.dumps(signed), tmp_path / "config.json", enroll=False)
     assert cfg.server.endpoint == "203.0.113.42"
+
+
+def test_import_with_verdict_surfaces_the_trust_outcome(tmp_path, monkeypatch):
+    """CLI/GUI/TUI all need this to show the user what happened to the
+    signature — it used to only ever reach a log line."""
+    monkeypatch.setattr(profile_trust, "known_servers_path", lambda: tmp_path / "known.json")
+    signed = _signed(copy.deepcopy(VALID))
+    cfg, verdict = import_owcfg_text_with_verdict(
+        json.dumps(signed), tmp_path / "config.json", enroll=False
+    )
+    assert cfg.server.endpoint == "203.0.113.42"
+    assert verdict.status == "verified"
+    assert verdict.message
 
 
 def test_import_refuses_a_tampered_signed_profile(tmp_path, monkeypatch):

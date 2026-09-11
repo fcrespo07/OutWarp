@@ -96,6 +96,7 @@ def test_import_success(tmp_path, isolated_config, capsys):
     out = capsys.readouterr().out
     assert "Imported profile" in out
     assert "203.0.113.42:443" in out
+    assert "Signature:" in out
 
 
 def test_import_missing_file(tmp_path, isolated_config, capsys):

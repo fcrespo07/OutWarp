@@ -58,13 +58,28 @@ def test_resolved_allowlist_matches_wireguard_exclusion():
     assert resolved_allowlist(cfg) == expected
 
 
-def test_reconcile_refuses_to_engage_when_nothing_resolves():
+def test_reconcile_refuses_to_engage_when_allowlist_is_empty():
+    cfg = _cfg()
+    plat = MagicMock()
+    with patch("outwarp.killswitch.resolved_allowlist", return_value=[]), \
+         patch("outwarp.killswitch.get_platform", return_value=plat):
+        reconcile(cfg, TunnelState.FAILED)
+    plat.engage_kill_switch.assert_not_called()
+
+
+def test_reconcile_still_engages_via_hostile_resolver_when_endpoint_dns_fails():
+    """S1 (direct-hostile) is always in the ladder, so 1.1.1.1 — the resolver
+    a hostile rung bootstraps itself with — always escapes the tunnel, even
+    when the profile's own endpoint hostname can't be resolved at all. The
+    kill switch should still engage rather than give up on protection."""
     cfg = _cfg(endpoint="nowhere.invalid", bypass=["nowhere.invalid"])
     plat = MagicMock()
     with patch("outwarp.wireguard.socket.getaddrinfo", side_effect=OSError("nxdomain")), \
          patch("outwarp.killswitch.get_platform", return_value=plat):
         reconcile(cfg, TunnelState.FAILED)
-    plat.engage_kill_switch.assert_not_called()
+    plat.engage_kill_switch.assert_called_once_with(
+        ["1.1.1.1"], tunnel_iface="OutWarp", tunnel_address="10.9.0.4",
+    )
 
 
 def test_reconcile_passes_interface_and_address():
@@ -73,7 +88,7 @@ def test_reconcile_passes_interface_and_address():
     with patch("outwarp.killswitch.get_platform", return_value=plat):
         reconcile(cfg, TunnelState.RECONNECTING)
     plat.engage_kill_switch.assert_called_once_with(
-        ["203.0.113.42"], tunnel_iface="OutWarp", tunnel_address="10.9.0.4",
+        ["203.0.113.42", "1.1.1.1"], tunnel_iface="OutWarp", tunnel_address="10.9.0.4",
     )
 
 

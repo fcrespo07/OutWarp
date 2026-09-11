@@ -37,7 +37,7 @@ from outwarp.config import (
     ConfigError,
     apply_profile_patch,
     default_config_path,
-    import_owcfg_text,
+    import_owcfg_text_with_verdict,
     original_config_path,
 )
 from outwarp.integrity import IntegrityIssue, likely_av_quarantine
@@ -526,7 +526,9 @@ class Api:
             # — import_owcfg_text would otherwise resolve its own
             # ``outwarp.config.default_config_path`` and clobber the real
             # user config (we hit that during local validation).
-            cfg = import_owcfg_text(file_content, dest=default_config_path())
+            cfg, trust_verdict = import_owcfg_text_with_verdict(
+                file_content, dest=default_config_path()
+            )
         except ConfigError as exc:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:
@@ -553,8 +555,14 @@ class Api:
 
         prof = _profile_from_config(cfg)
         self._record_log("info", f"profile imported: {prof['name']}")
+        log_level = "warning" if trust_verdict.status != "verified" else "info"
+        self._record_log(log_level, f"profile signature: {trust_verdict.message}")
         self._emit("status", self._status_payload())
-        return {"ok": True, "profile": prof}
+        return {
+            "ok": True,
+            "profile": prof,
+            "trust": {"status": trust_verdict.status, "message": trust_verdict.message},
+        }
 
     def remove_profile(self, profile_id: str) -> dict[str, Any]:
         # Single-profile model: `profile_id` is ignored. There is at most one

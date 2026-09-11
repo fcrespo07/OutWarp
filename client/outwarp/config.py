@@ -8,9 +8,12 @@ import re
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from platformdirs import user_config_dir
+
+if TYPE_CHECKING:
+    from outwarp import profile_trust
 
 _APP_NAME = "OutWarp"
 # v2 added tls.verify / tls.spki_sha256 (the ACME + Caddy server branch).
@@ -290,23 +293,43 @@ def original_config_path(config_path: Path | None = None) -> Path:
 def import_owcfg(
     warpcfg_path: Path, dest: Path | None = None, *, enroll: bool = True
 ) -> ClientConfig:
+    config, _verdict = import_owcfg_with_verdict(warpcfg_path, dest, enroll=enroll)
+    return config
+
+
+def import_owcfg_with_verdict(
+    warpcfg_path: Path, dest: Path | None = None, *, enroll: bool = True
+) -> tuple[ClientConfig, profile_trust.TrustVerdict]:
     try:
         text = warpcfg_path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise ConfigError(f"Config file not found: {warpcfg_path}") from exc
-    return import_owcfg_text(text, dest, enroll=enroll)
+    return import_owcfg_text_with_verdict(text, dest, enroll=enroll)
 
 
 def import_owcfg_text(
     text: str, dest: Path | None = None, *, enroll: bool = True
 ) -> ClientConfig:
-    """Like import_owcfg but from an in-memory string (GUI bridge path).
+    config, _verdict = import_owcfg_text_with_verdict(text, dest, enroll=enroll)
+    return config
+
+
+def import_owcfg_text_with_verdict(
+    text: str, dest: Path | None = None, *, enroll: bool = True
+) -> tuple[ClientConfig, profile_trust.TrustVerdict]:
+    """Like import_owcfg_text but also returns the signature verdict.
 
     Verifies the profile's embedded signature (CONCEPTO-C prop.2) before
     parsing it into a ClientConfig — the raw dict is what the signature was
     computed over, so verification has to happen here rather than after
     _parse() has normalised it into the dataclass schema (defaults filled in,
     fields reordered) and lost byte-for-byte fidelity with what was signed.
+
+    The verdict used to only reach a log line, so an unsigned profile or a
+    rotated signing key looked like an ordinary import from every surface
+    (CLI, GUI, TUI). Split into its own function rather than changing
+    import_owcfg_text's return shape so the many existing callers/tests that
+    only want the config are unaffected.
     """
     try:
         raw = json.loads(text)
@@ -315,11 +338,11 @@ def import_owcfg_text(
 
     from outwarp import profile_trust
     try:
-        profile_trust.verify_and_pin(raw)
+        verdict = profile_trust.verify_and_pin(raw)
     except profile_trust.ProfileTrustError as exc:
         raise ConfigError(str(exc)) from exc
 
-    return _finish_import(_parse(raw), dest, enroll)
+    return _finish_import(_parse(raw), dest, enroll), verdict
 
 
 def _finish_import(config: ClientConfig, dest: Path | None, enroll: bool) -> ClientConfig:

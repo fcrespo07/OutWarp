@@ -27,7 +27,7 @@ from outwarp.config import (
     ClientConfig,
     ConfigError,
     default_config_path,
-    import_owcfg,
+    import_owcfg_with_verdict,
     original_config_path,
 )
 from outwarp.logs import default_log_path, setup_logging
@@ -79,7 +79,7 @@ def _cmd_import(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        config = import_owcfg(src)
+        config, trust_verdict = import_owcfg_with_verdict(src)
     except ConfigError as exc:
         _err(f"Error: invalid .owcfg — {exc}")
         return 1
@@ -92,6 +92,7 @@ def _cmd_import(args: argparse.Namespace) -> int:
         _print(f"  Name:      {config.name}")
     _print(f"  WG iface:  {config.wireguard.tunnel_name}")
     _print(f"  WG addr:   {config.wireguard.client_address}")
+    _print(f"  Signature: {trust_verdict.message}")
     _print("")
     _print("Start the tunnel with: outwarp-cli connect")
     return 0

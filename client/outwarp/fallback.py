@@ -55,6 +55,15 @@ _PROXY_ENV_VARS = (
     "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy",
 )
 
+# DNS resolver a force_hostile rung tells wstunnel to bootstrap its own
+# connection with (--dns-resolver). wstunnel does that lookup itself, as a
+# plain UDP packet from this process — if WireGuard is already up with
+# AllowedIPs=0.0.0.0/0 (a reconnect after the tunnel died, exactly when a
+# hostile rung is retried), that packet is captured into the dead tunnel
+# unless this IP is also in escape_set()'s exclusions, and the lookup hangs
+# until timeout instead of failing fast. Exported so routing.py can add it.
+HOSTILE_DNS_RESOLVER_IP = "1.1.1.1"
+
 
 @dataclass(frozen=True)
 class ConnectionStrategy:
@@ -125,7 +134,9 @@ def strategy_to_command(
     if strategy.pin_mode == "ca":
         cmd.append("--tls-verify-certificate")
     if strategy.force_hostile:
-        cmd.extend(["--dns-resolver", "dns://1.1.1.1", "--dns-resolver-prefer-ipv4"])
+        cmd.extend(
+            ["--dns-resolver", f"dns://{HOSTILE_DNS_RESOLVER_IP}", "--dns-resolver-prefer-ipv4"]
+        )
     if strategy.sni_override:
         cmd.extend(["--tls-sni-override", strategy.sni_override])
     headers: list[str] = []

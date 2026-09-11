@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,22 @@ _APP_NAME = "OutWarp"
 
 class ProfileTrustError(ValueError):
     """A .owcfg carries a "signing" block that does not verify."""
+
+
+@dataclass(frozen=True)
+class TrustVerdict:
+    """What verify_and_pin() actually decided, for surfacing to the user.
+
+    Every import path (CLI, GUI, TUI) used to have no way to show this at
+    all — the outcome only ever reached a log line, so an unsigned profile or
+    a rotated signing key looked identical to a normal import from the
+    user's side. ``status`` is a stable machine-readable tag the GUI bridge
+    can key a banner style on; ``message`` is the human-readable sentence
+    every surface can print/log/toast verbatim.
+    """
+
+    status: str  # "verified" | "unverified" | "key_rotated"
+    message: str
 
 
 def known_servers_path() -> Path:
@@ -67,7 +84,7 @@ def _pin(path: Path, endpoint: str, public_key_text: str) -> None:
         path.write_text(json.dumps(known, indent=2), encoding="utf-8")
 
 
-def verify_and_pin(raw: Any, *, path: Path | None = None) -> None:
+def verify_and_pin(raw: Any, *, path: Path | None = None) -> TrustVerdict:
     """Verify `raw`'s embedded "signing" block, if any, and TOFU-pin the key.
 
     Raises ProfileTrustError when a signature is *present but invalid*, or
@@ -81,9 +98,14 @@ def verify_and_pin(raw: Any, *, path: Path | None = None) -> None:
     rotation with no recovery path in this first cut, and the profile's own
     signature already verified against the key *it* claims — see the module
     docstring for exactly what that does and doesn't prove.
+
+    Returns a TrustVerdict describing the outcome instead of only logging it,
+    so every import surface (CLI, GUI, TUI) can show the user what happened —
+    an unsigned profile or a rotated key used to be indistinguishable from an
+    ordinary import unless someone went looking at the log file.
     """
     if not isinstance(raw, dict):
-        return
+        return TrustVerdict("unverified", "Profile is not a JSON object — nothing to verify.")
     endpoint = str((raw.get("server") or {}).get("endpoint", ""))
     store = path or known_servers_path()
     signing = raw.get("signing")
@@ -100,7 +122,9 @@ def verify_and_pin(raw: Any, *, path: Path | None = None) -> None:
                 f"its entry from {store} first."
             )
         log.warning("Profile has no signing block — cannot verify who issued it.")
-        return
+        return TrustVerdict(
+            "unverified", "Profile has no signing block — cannot verify who issued it."
+        )
     if not isinstance(signing, dict):
         raise ProfileTrustError("'signing' must be an object")
     public_key = str(signing.get("public_key", ""))
@@ -115,15 +139,24 @@ def verify_and_pin(raw: Any, *, path: Path | None = None) -> None:
         raise ProfileTrustError(f"Profile signature is invalid: {exc}") from exc
 
     if not endpoint:
-        return
+        return TrustVerdict("verified", "Signature verified.")
     known = _load_known_servers(store)
     previous = known.get(endpoint)
     if previous is None:
         _pin(store, endpoint, public_key)
-    elif previous != public_key:
+        return TrustVerdict(
+            "verified", "Signature verified — server key pinned for future imports."
+        )
+    if previous != public_key:
         log.warning(
             "Profile for %s is signed with a different key than the one "
             "last seen for this server — confirm with the server admin that "
             "the signing key was intentionally rotated before trusting it.",
             endpoint,
         )
+        return TrustVerdict(
+            "key_rotated",
+            "Signature verified, but with a different key than last time — confirm "
+            "with the server admin that the key was intentionally rotated.",
+        )
+    return TrustVerdict("verified", "Signature verified — matches the pinned server key.")

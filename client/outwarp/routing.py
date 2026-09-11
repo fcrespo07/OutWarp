@@ -12,7 +12,7 @@ set must call.
 from __future__ import annotations
 
 from outwarp.config import ClientConfig
-from outwarp.fallback import ConnectionStrategy
+from outwarp.fallback import HOSTILE_DNS_RESOLVER_IP, ConnectionStrategy
 
 
 def proxy_host(proxy: str) -> str:
@@ -43,6 +43,11 @@ def escape_set(config: ClientConfig, ladder: list[ConnectionStrategy]) -> list[s
             out.append(r.endpoint)
         if r.proxy:
             out.append(proxy_host(r.proxy))
+        if r.force_hostile:
+            # wstunnel resolves its own endpoint via this resolver on a
+            # force_hostile rung; it must escape too or the lookup goes
+            # into the tunnel it's trying to (re)build. See fallback.py.
+            out.append(HOSTILE_DNS_RESOLVER_IP)
         out.extend(r.bypass_ips)
     # De-dup preserving order.
     seen: set[str] = set()

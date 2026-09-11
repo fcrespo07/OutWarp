@@ -114,6 +114,23 @@ class TestMigration:
         store.migrate_from_json([])
         assert store.list_all() == []
 
+    def test_repeated_migration_does_not_take_the_write_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """After the first successful migration, every subsequent
+        `ServerConfig.load()` calls this with a non-empty list again (it
+        always round-trips `list_active()` back into the JSON `clients`
+        array) — that must stay a lock-free read, not a `BEGIN IMMEDIATE`
+        transaction, or every load serializes against concurrent writers."""
+        store = ClientStore(tmp_path / "clients.sqlite")
+        store.migrate_from_json([_entry("laptop", "10.0.0.2/32")])
+
+        def _boom():
+            raise AssertionError("migrate_from_json took the write lock on a no-op call")
+
+        monkeypatch.setattr(store, "transaction", _boom)
+        store.migrate_from_json([_entry("laptop", "10.0.0.2/32")])
+
 
 class TestConcurrentInsert:
     """CONCEPTO-A: the actual point of moving off the JSON+flock bridge — two

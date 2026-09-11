@@ -187,6 +187,18 @@ class ClientStore:
         """
         if not clients:
             return
+        # Cheap, lock-free pre-check: `ServerConfig.save()` always round-trips
+        # `store.list_active()` back into the JSON `clients` array, so after
+        # the very first load `clients` here is never empty again and this
+        # call is a guaranteed no-op. Without this check, *every* subsequent
+        # `ServerConfig.load()` (every CLI command, every panel poll) opened
+        # a `BEGIN IMMEDIATE` write lock on clients.sqlite just to find that
+        # out, serializing reads against concurrent add/revoke/rotate writers
+        # for no reason. The count re-checked inside the transaction below
+        # remains the authoritative race guard for the one time it matters.
+        with contextlib.closing(self._connect()) as conn:
+            if conn.execute("SELECT COUNT(*) FROM clients").fetchone()[0]:
+                return
         with self.transaction() as conn:
             count = conn.execute("SELECT COUNT(*) FROM clients").fetchone()[0]
             if count:

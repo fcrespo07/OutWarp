@@ -26,6 +26,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Server: `add-client` now says that the enrolment port must be open** on
   the firewall/router alongside the tunnel port (self-signed branch), and how
   to fall back to `--embed-key` when it cannot be.
+- **Linux: the TUI dashboard's 1Hz `wg show` poll flooded auth.log.** Every
+  sample went through `sudo -n outwarp-priv dump <iface>`, and sudo logs a
+  syslog line plus a PAM session open/close per invocation by default —
+  thousands of lines an hour for as long as the dashboard stayed open. The
+  installer's sudoers rule now scopes `!syslog, !pam_session` to just that
+  helper invocation. **Migration**: re-run `install.sh client` to pick up the
+  new sudoers rule.
+- **Server: `ServerConfig.load()` took a write lock on `clients.sqlite` on
+  every load**, not just the one-time JSON migration it exists for — `save()`
+  always round-trips the client list back into the JSON `clients` array, so
+  every load after the first re-triggered the migration's `BEGIN IMMEDIATE`
+  transaction purely to find out it was already done. That serialized every
+  read (every CLI command, every panel poll) against concurrent
+  add/revoke/rotate writers for no reason. A lock-free pre-check now skips it
+  in the overwhelmingly common case.
+- **Client: wstunnel's own DNS bootstrap could stall on a dead tunnel.** A
+  hostile-network rung tells wstunnel to resolve its endpoint via
+  `--dns-resolver dns://1.1.1.1`, a query wstunnel makes itself — but with
+  WireGuard already up and `AllowedIPs=0.0.0.0/0` capturing the whole host,
+  that packet went into the tunnel the rung was trying to (re)build instead
+  of out the normal route, and hung until timeout. `1.1.1.1` is now part of
+  `escape_set()`'s exclusions whenever a hostile rung is in the ladder (always,
+  by default), so it (and the kill switch allowlist) stay in sync with what
+  wstunnel actually needs to reach.
+- **Signature verdict was invisible outside the log file.** `verify_and_pin()`
+  now returns a `TrustVerdict` (verified / unverified / key rotated) instead
+  of only logging it; the CLI prints it after every `import`, the GUI bridge
+  returns it from `import_profile()` and logs it to the in-app log panel, and
+  the TUI import modal shows it as a toast.
 
 ## [0.12.0] — 2026-09-11
 
