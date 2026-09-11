@@ -103,6 +103,10 @@ class TestRequireRoot:
         fail, not silently rotate the panel's admin token."""
         monkeypatch.delenv("OUTWARP_TEST_MODE", raising=False)
         monkeypatch.setattr("os.geteuid", lambda: 1000, raising=False)
+        if sys.platform == "win32":
+            # The privilege probe is IsUserAnAdmin(); CI runners are admins.
+            import ctypes
+            monkeypatch.setattr(ctypes.windll.shell32, "IsUserAnAdmin", lambda: 0)
         with pytest.raises(SystemExit):
             main(["--config-dir", str(tmp_path), "admin-token", "--rotate"])
 

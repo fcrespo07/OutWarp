@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import sys
 import threading
 from pathlib import Path
+
+import pytest
 
 from outwarp_server.client_store import ClientStore
 from outwarp_server.config import ClientEntry
@@ -13,6 +16,7 @@ def _entry(name: str, address: str, **overrides) -> ClientEntry:
 
 
 class TestSchemaAndBasics:
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes are not enforced on NTFS")
     def test_creates_db_file_at_0o600(self, tmp_path: Path) -> None:
         db_path = tmp_path / "clients.sqlite"
         ClientStore(db_path)
