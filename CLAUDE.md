@@ -281,7 +281,7 @@ licencia de OutWarp.
 
 ## Estado actual
 
-**Versión actual: `0.12.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
+**Versión actual: `0.12.1`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
 
 ### Cambios en 0.12.0 (auditoría de seguridad completa + refactors de arquitectura)
 
