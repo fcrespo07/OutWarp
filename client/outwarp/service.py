@@ -41,17 +41,28 @@ SERVICE_NAME = "outwarp-client.service"
 # ── daemon runtime ──────────────────────────────────────────────────────
 
 
-def run_daemon(*, allow_tls_intercept: bool = False) -> int:
-    """Run the tunnel until SIGTERM/SIGINT. Returns a shell exit code.
+# Exit status when the reconnect schedule is exhausted. Non-zero on purpose:
+# the unit is Restart=on-failure, so this is what hands the retry back to the
+# service manager instead of leaving a process that will never try again.
+EXIT_GAVE_UP = 3
+
+
+def run_daemon(
+    *, allow_tls_intercept: bool = False, stop: threading.Event | None = None,
+) -> int:
+    """Run the tunnel until SIGTERM/SIGINT, or until it gives up.
 
     Designed to be the ExecStart= target of a systemd/SCM unit: silent on
     stdout, all messages routed through the project logger (which writes to
     the rotating log file). Auto-reconnect always honours the config's
-    reconnect schedule — that's exactly the loop that a background service
-    needs from the user's perspective.
+    reconnect schedule; once that is exhausted (FAILED) the process exits
+    with EXIT_GAVE_UP rather than idling — it used to stay alive doing
+    nothing, so Restart=on-failure never fired and a laptop that booted
+    before its Wi-Fi came up had no tunnel until someone restarted the unit
+    by hand. Returns a shell exit code. `stop` is the shutdown event, exposed
+    so tests can drive it without signals.
     """
     setup_logging()
-    release_stale_async()
     try:
         config = ClientConfig.load(default_config_path())
     except ConfigError as exc:
@@ -59,14 +70,26 @@ def run_daemon(*, allow_tls_intercept: bool = False) -> int:
         return 2
 
     settings = load_settings()
+    kill_switch = bool(settings.get("kill_switch", False))
+    if kill_switch:
+        # A rule left by a previous run is not stale here: with the switch
+        # on, the service manager restarting us after a FAILED exit must not
+        # open the network for the ~2 minutes the next attempt takes. It is
+        # released the normal way, on CONNECTED, or by a clean stop.
+        log.info("daemon: kill switch enabled — leaving any engaged rule in place")
+    else:
+        release_stale_async()
     manager = TunnelManager(
         config,
         allow_tls_intercept=allow_tls_intercept,
         auto_reconnect=True,
-        kill_switch_enabled=bool(settings.get("kill_switch", False)),
+        kill_switch_enabled=kill_switch,
     )
 
+    stop = stop or threading.Event()
+    gave_up = threading.Event()
     last_state: list[TunnelState] = [TunnelState.DISCONNECTED]
+    was_connected: list[bool] = [False]
 
     def _on_state(state: TunnelState) -> None:
         if state == last_state[0]:
@@ -75,16 +98,24 @@ def run_daemon(*, allow_tls_intercept: bool = False) -> int:
         last_state[0] = state
         log.info("daemon: tunnel state -> %s", state.value)
         if state is TunnelState.CONNECTED:
+            was_connected[0] = True
             _notify("OutWarp", "Connected")
         elif state is TunnelState.FAILED:
             err = manager.last_error or "unknown error"
-            _notify("OutWarp", f"Connection failed: {err}", urgency="critical")
+            log.error("daemon: giving up after the reconnect schedule: %s", err)
+            # Only a lost connection is worth a notification. A fresh process
+            # that never got through is the restart loop doing its job (no
+            # network yet), and nagging every couple of minutes would just
+            # teach the user to dismiss it.
+            if was_connected[0]:
+                _notify("OutWarp", f"Connection failed: {err}", urgency="critical")
+            gave_up.set()
+            stop.set()
         elif state is TunnelState.RECONNECTING and prev is TunnelState.CONNECTED:
             _notify("OutWarp", "Connection dropped — reconnecting...")
 
     manager.add_listener(_on_state)
 
-    stop = threading.Event()
     # On Windows SCM signals raise outside the main thread; the SCM wrapper
     # will install its own control handler when we ship a Windows service.
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -100,7 +131,7 @@ def run_daemon(*, allow_tls_intercept: bool = False) -> int:
         log.info("daemon: stopping")
         manager.stop()
         log.info("daemon: stopped")
-    return 0
+    return EXIT_GAVE_UP if gave_up.is_set() else 0
 
 
 # ── systemd --user service management (Linux) ───────────────────────────

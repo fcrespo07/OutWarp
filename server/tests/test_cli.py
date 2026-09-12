@@ -789,3 +789,45 @@ class TestEnrollListener:
         config_dir = _write_server_config(tmp_path)
         with patch("outwarp_server.cli.os.geteuid", return_value=1000), pytest.raises(SystemExit):
             main(["--config-dir", str(config_dir), "enroll-listener"])
+
+
+class TestServe:
+    """`serve` is the container entrypoint. It used to block on its stop
+    event no matter what the manager did, so a wstunnel that died left a
+    process Docker/kubelet considered healthy with nothing listening."""
+
+    def _run(self, tmp_path: Path, drive):
+        from outwarp_server.server_manager import ServerState
+
+        config_dir = _write_server_config(tmp_path)
+        mgr = MagicMock()
+
+        def _start():
+            drive(mgr.add_listener.call_args.args[0], ServerState)
+
+        mgr.start.side_effect = _start
+        with (
+            patch("outwarp_server.server_manager.ServerManager", return_value=mgr),
+            patch("signal.signal"),
+        ):
+            return main(["--config-dir", str(config_dir), "serve"]), mgr
+
+    def test_exits_nonzero_when_the_manager_reports_error(self, tmp_path: Path) -> None:
+        from outwarp_server.cli import EXIT_SERVER_ERROR
+
+        def _drive(listener, state):
+            listener(state.STARTING)
+            listener(state.ERROR)
+
+        rc, mgr = self._run(tmp_path, _drive)
+        assert rc == EXIT_SERVER_ERROR == 3
+        mgr.stop.assert_called_once()
+
+    def test_returns_zero_on_a_signalled_stop(self, tmp_path: Path) -> None:
+        def _drive(listener, state):
+            listener(state.RUNNING)
+
+        with patch("threading.Event.wait", return_value=True):
+            rc, mgr = self._run(tmp_path, _drive)
+        assert rc == 0
+        mgr.stop.assert_called_once()

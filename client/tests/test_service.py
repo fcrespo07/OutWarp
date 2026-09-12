@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from outwarp import service
+from outwarp.tunnel import TunnelState
 
 
 @pytest.fixture
@@ -39,45 +40,11 @@ def test_run_daemon_returns_2_without_profile(monkeypatch):
     assert service.run_daemon() == 2
 
 
-def test_run_daemon_starts_then_stops_on_signal(monkeypatch):
-    """Happy path: build + start the manager, and on SIGTERM (modelled by an
-    already-set stop event) stop it cleanly and return 0."""
-    monkeypatch.setattr(service, "setup_logging", lambda: None)
-    monkeypatch.setattr(service, "release_stale_async", lambda: None)
-    fake_cfg = MagicMock()
-    fake_cfg.server.endpoint = "203.0.113.10"
-    fake_cfg.server.port = 443
-    monkeypatch.setattr(service.ClientConfig, "load", lambda _p: fake_cfg)
+def _daemon_env(monkeypatch, *, kill_switch=False):
+    """Stub everything around run_daemon except the manager's listener hook,
+    which tests drive by hand to model tunnel state changes."""
+    import threading
 
-    mgr = MagicMock()
-    monkeypatch.setattr(service, "TunnelManager", lambda *a, **k: mgr)
-    # Don't perturb pytest's own SIGINT/SIGTERM handlers.
-    monkeypatch.setattr(service.signal, "signal", lambda *a, **k: None)
-
-    class _ImmediateStop:
-        def is_set(self):
-            return True
-
-        def wait(self, _t):
-            return True
-
-        def set(self):
-            pass
-
-    monkeypatch.setattr(service.threading, "Event", _ImmediateStop)
-
-    rc = service.run_daemon()
-    assert rc == 0
-    mgr.start.assert_called_once()
-    mgr.stop.assert_called_once()
-
-
-def test_run_daemon_releases_stale_kill_switch_and_honours_settings(monkeypatch):
-    """CONCEPTO-E / FIX-06b: the daemon is the systemd ExecStart= target — the
-    primary Linux path per CLAUDE.md — and used to never touch the kill switch
-    at all (it lived only in outwarp.api.Api, which the daemon never
-    constructs). A crash-orphaned rule must still get cleared here, and a
-    kill_switch=True in settings.json must still be honoured."""
     monkeypatch.setattr(service, "setup_logging", lambda: None)
     released = []
     monkeypatch.setattr(service, "release_stale_async", lambda: released.append(True))
@@ -85,27 +52,91 @@ def test_run_daemon_releases_stale_kill_switch_and_honours_settings(monkeypatch)
     fake_cfg.server.endpoint = "203.0.113.10"
     fake_cfg.server.port = 443
     monkeypatch.setattr(service.ClientConfig, "load", lambda _p: fake_cfg)
-    monkeypatch.setattr(service, "load_settings", lambda: {"kill_switch": True})
+    monkeypatch.setattr(service, "load_settings", lambda: {"kill_switch": kill_switch})
+    monkeypatch.setattr(service.signal, "signal", lambda *a, **k: None)
+    notified = []
+    monkeypatch.setattr(service, "_notify", lambda *a, **k: notified.append((a, k)))
 
+    mgr = MagicMock()
+    mgr.last_error = "no WireGuard handshake"
     captured_kwargs = {}
 
     def _fake_manager(*args, **kwargs):
         captured_kwargs.update(kwargs)
-        return MagicMock()
+        return mgr
 
     monkeypatch.setattr(service, "TunnelManager", _fake_manager)
-    monkeypatch.setattr(service.signal, "signal", lambda *a, **k: None)
+    return mgr, captured_kwargs, released, notified, threading.Event()
 
-    class _ImmediateStop:
-        def is_set(self): return True
-        def wait(self, _t): return True
-        def set(self): pass
 
-    monkeypatch.setattr(service.threading, "Event", _ImmediateStop)
+def test_run_daemon_starts_then_stops_on_signal(monkeypatch):
+    """Happy path: build + start the manager, and on SIGTERM (modelled by an
+    already-set stop event) stop it cleanly and return 0."""
+    mgr, _kw, _rel, _n, stop = _daemon_env(monkeypatch)
+    stop.set()
+    rc = service.run_daemon(stop=stop)
+    assert rc == 0
+    mgr.start.assert_called_once()
+    mgr.stop.assert_called_once()
 
-    assert service.run_daemon() == 0
+
+def test_run_daemon_exits_nonzero_when_the_schedule_is_exhausted(monkeypatch):
+    """The daemon used to sit idle in FAILED forever, so Restart=on-failure
+    never fired: a laptop that booted before Wi-Fi had no tunnel until the
+    unit was restarted by hand. Giving up must be an exit the service
+    manager can see — and, having never connected, not a notification."""
+    mgr, _kw, _rel, notified, stop = _daemon_env(monkeypatch)
+
+    def _start():
+        listener = mgr.add_listener.call_args.args[0]
+        listener(TunnelState.CONNECTING)
+        listener(TunnelState.FAILED)
+
+    mgr.start.side_effect = _start
+    rc = service.run_daemon(stop=stop)
+    assert rc == service.EXIT_GAVE_UP == 3
+    mgr.stop.assert_called_once()
+    assert notified == []
+
+
+def test_run_daemon_notifies_a_drop_but_not_a_boot_time_miss(monkeypatch):
+    mgr, _kw, _rel, notified, stop = _daemon_env(monkeypatch)
+
+    def _start():
+        listener = mgr.add_listener.call_args.args[0]
+        listener(TunnelState.CONNECTING)
+        listener(TunnelState.CONNECTED)
+        listener(TunnelState.RECONNECTING)
+        listener(TunnelState.FAILED)
+
+    mgr.start.side_effect = _start
+    assert service.run_daemon(stop=stop) == service.EXIT_GAVE_UP
+    messages = [a[1] for a, _k in notified]
+    assert messages == [
+        "Connected",
+        "Connection dropped — reconnecting...",
+        "Connection failed: no WireGuard handshake",
+    ]
+
+
+def test_run_daemon_releases_stale_kill_switch_only_when_the_switch_is_off(monkeypatch):
+    """CONCEPTO-E / FIX-06b: the daemon is the systemd ExecStart= target — the
+    primary Linux path per CLAUDE.md — and used to never touch the kill switch
+    at all. A crash-orphaned rule is cleared at startup when the user has the
+    switch off. With it on, the rule is what the user asked for: after a
+    FAILED exit the service manager restarts us, and releasing here would
+    open the network for the minutes the next attempt takes."""
+    _mgr, kw, released, _n, stop = _daemon_env(monkeypatch, kill_switch=False)
+    stop.set()
+    assert service.run_daemon(stop=stop) == 0
     assert released == [True]
-    assert captured_kwargs["kill_switch_enabled"] is True
+    assert kw["kill_switch_enabled"] is False
+
+    _mgr, kw, released, _n, stop = _daemon_env(monkeypatch, kill_switch=True)
+    stop.set()
+    assert service.run_daemon(stop=stop) == 0
+    assert released == []
+    assert kw["kill_switch_enabled"] is True
 
 
 # ── _unit_content ──────────────────────────────────────────────────────────

@@ -100,25 +100,43 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return run_init(config_dir)
 
 
+# `serve` exit status when the manager ends up in ERROR (wstunnel died,
+# WireGuard would not come up, prerequisites missing). Non-zero so the
+# container runtime's restart policy takes over instead of a process that
+# looks alive to Docker/kubelet while nothing is listening.
+EXIT_SERVER_ERROR = 3
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     """Run the server in foreground — intended for Docker/Kubernetes.
 
     Loads server_config.json, starts wstunnel + WireGuard via ServerManager,
-    and blocks until SIGTERM or SIGINT.
+    and blocks until SIGTERM or SIGINT — or until the manager reports ERROR,
+    which used to leave the process blocking forever with the tunnel down
+    and only a liveness probe (if one matched the port) to notice.
     """
     import signal
     import threading
 
-    from outwarp_server.server_manager import ServerManager
+    from outwarp_server.server_manager import ServerManager, ServerState
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     config = _load_config(args)
     manager = ServerManager(config, config_path=_resolve_config_path(args))
-    manager.add_listener(lambda state: log.info("Server state: %s", state.value))
+    stop_event = threading.Event()
+    failed = threading.Event()
+
+    def _on_state(state: ServerState) -> None:
+        log.info("Server state: %s", state.value)
+        if state is ServerState.ERROR:
+            log.error("Server entered ERROR — exiting so the supervisor can restart it")
+            failed.set()
+            stop_event.set()
+
+    manager.add_listener(_on_state)
     manager.start()
 
-    stop_event = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop_event.set())
     signal.signal(signal.SIGINT, lambda *_: stop_event.set())
 
@@ -128,7 +146,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     log.info("Shutting down...")
     manager.stop()
     log.info("Done.")
-    return 0
+    return EXIT_SERVER_ERROR if failed.is_set() else 0
 
 
 def _cmd_enroll_listener(args: argparse.Namespace) -> int:
