@@ -297,6 +297,15 @@ class TestWstunnelCommandBranches:
             assert "--restrict-to" in cmd
             assert cmd[cmd.index("--restrict-to") + 1] == "127.0.0.1:51820"
 
+    def test_both_branches_allow_a_forward_to_the_enrolment_listener_only(self) -> None:
+        """B-018: enrolment rides the transport as a TCP forward to the
+        loopback listener, so wstunnel must allow exactly that destination on
+        top of WireGuard's — and nothing else, or the path prefix would become
+        a generic TCP proxy into the server."""
+        for cmd in (self._cmd(), self._cmd(tls_mode="acme")):
+            restricts = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--restrict-to"]
+            assert restricts == ["127.0.0.1:51820", "127.0.0.1:8444"]
+
 
 class TestConfigDirIsHonoured:
     def test_add_client_uses_the_launch_config_dir_not_etc_outwarp(
@@ -312,6 +321,8 @@ class TestConfigDirIsHonoured:
         cfg_path = data_dir / "server_config.json"
         _config([]).save(cfg_path)
         mgr = ServerManager(ServerConfig.load(cfg_path), config_path=cfg_path)
+        # add_client writes <name>.owcfg to the cwd — keep it out of the repo.
+        monkeypatch.chdir(tmp_path)
 
         etc = tmp_path / "etc-outwarp"  # stands in for /etc/outwarp: must stay untouched
         with (
