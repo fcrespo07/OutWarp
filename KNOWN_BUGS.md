@@ -127,6 +127,30 @@ Leyenda de estado:
 **Fix:** Añadido `--dangerous-disable-certificate-verification` al comando de wstunnel en `build_wstunnel_command`. La seguridad de identidad del servidor la proporciona el pinning SHA-256 (`verify_tls_fingerprint`) que se ejecuta antes de arrancar wstunnel, por lo que omitir la validación CA de wstunnel no introduce vulnerabilidades adicionales.
 **Prevención:** Al integrar cualquier binario externo que haga TLS, verificar siempre cómo gestiona certs auto-firmados. No asumir que el flujo Python y el binario heredan la misma configuración de confianza TLS.
 
+### ✅ B-018 — Enrolamiento imposible: el listener estaba en un segundo puerto público, y en Linux/systemd nadie lo arrancaba
+**Síntomas:** Todo perfil de enrolamiento (el formato por defecto desde 0.11.0) fallaba al importar con "Could not reach the enrolment endpoint"; `list-clients` mostraba clientes en "enrolment expired". En el despliegue k3s real: 443 reenviado, ningún peer con handshake en 17 h. `doctor` en verde.
+**Causa raíz:** Dos problemas: (1) en la rama autofirmada el listener (`enroll_server.py`) escuchaba en `0.0.0.0:8444` con su propio TLS: un segundo puerto que ni `deploy/README.md`, ni el configmap, ni el panel, ni `doctor` mencionaban, y que ningún router doméstico tenía abierto; (2) en la instalación Linux con systemd el listener solo existía dentro de `ServerManager._do_start()`, que solo `serve`/GUI/Windows mantienen vivo — el wizard escribe las units de wstunnel y wg-quick y sale, así que nada lo ejecutaba jamás.
+**Fix:** El listener solo escucha en loopback (HTTP plano) y el cliente lo alcanza como forward TCP de wstunnel por el propio puerto del túnel (`--restrict-to 127.0.0.1:<enroll_port>` además del de WireGuard; `.owcfg` v4 con `enrollment.remote_port`). En Linux, nueva `outwarp-enroll.service` (setup/restart/uninstall/status/doctor). Verificado e2e con el wstunnel 10.5.2 real (`server/tests/test_enroll_transport_e2e.py`).
+**Prevención:** Cualquier superficie que un cliente deba alcanzar "antes del túnel" tiene que (a) ir por el puerto que ya está abierto y (b) tener un supervisor en **cada** plataforma (`ServerPlatform.manages_enroll_service`). `doctor` debe cubrirla: un check verde con enrolamiento imposible es lo que ocultó esto.
+
+### ✅ B-019 — DNS del túnel y ping de verificación fuera del túnel
+**Síntomas:** Con el túnel "conectado", los nombres no resolvían en redes hostiles (o resolvían por fuera, a la vista de la red); un servidor sin NAT (B-005) aparecía como conectado con tráfico.
+**Causa raíz:** Desde 0.12.1 `escape_set()` excluía `1.1.1.1` de `AllowedIPs` para que el rung `direct-hostile` pudiera resolver el endpoint con WG ya instalado. Pero `1.1.1.1` es también el DNS por defecto de todo perfil (`owcfg.py`) y el destino del ping "handshake pero sin tráfico por el túnel" (`Tunnel._await_ping`). Fuga de DNS + verificación que nunca podía fallar.
+**Fix:** `tunnel._with_addresses()` resuelve cada rung (resolver del sistema; `1.1.1.1` en crudo para los rungs hostiles; también el host del proxy) **antes** de levantar WG y le pasa a wstunnel la IP con `--tls-sni-override`/`Host:` = hostname (comprobado en el fuente de wstunnel 10.5.2: el SNI override es el `ServerName` contra el que rustls verifica). `escape_set()` excluye las IPs resueltas, no el resolver.
+**Prevención:** Nada que vaya en `AllowedIPs`/allowlist del kill switch puede coincidir con un destino que **debe** ir por el túnel. Un test lo fija (`test_the_tunnel_dns_and_the_verification_ping_stay_inside_the_tunnel`).
+
+### ✅ B-020 — `outwarp-cli daemon` y `outwarp-server serve` se rendían sin salir
+**Síntomas:** Portátil arrancado antes de tener Wi-Fi: sin túnel hasta reiniciar la unit a mano. Pod/contenedor con wstunnel muerto: proceso vivo, nada escuchando, solo el liveness probe (si coincidía el puerto) lo reiniciaba.
+**Causa raíz:** Ambos esperaban en un `Event` que solo una señal ponía; `FAILED`/`ERROR` no lo tocaban → `Restart=on-failure` y la restart policy nunca actuaban.
+**Fix:** Salida con código 3 en `FAILED`/`ERROR`. El daemon solo notifica una conexión **perdida** (no un fallo de arranque) y, con kill switch activado, no libera al arrancar la regla que dejó la ejecución anterior.
+**Prevención:** Un proceso supervisado que ha llegado a un estado terminal debe **salir**: idle ≠ vivo.
+
+### ✅ B-021 — Panel web con estado congelado y botones que peleaban con el transporte
+**Síntomas:** Clientes enrolados por el contenedor `serve` (o añadidos por `kubectl exec`) no aparecían, o seguían como "offline", hasta reiniciar el panel. "Parar" desde el panel tumbaba la VPN del contenedor `serve` (`wg-quick down`) sin que este se enterase; "Iniciar" después lanzaba un segundo wstunnel que moría por puerto ocupado.
+**Causa raíz:** `Api` leía la config cargada al arrancar y nunca la recargaba; `ServerManager.stop()/start()` actuaban sobre un transporte que no era suyo.
+**Fix:** `ServerManager.refresh_config()` (mtime de `server_config.json` y `clients.sqlite`); estado `pending` para slots sin clave; `get_status().service_control` (`full`/`restart`/`none`) y la API rechaza lo que no aplica.
+**Prevención:** Cualquier surface "companion" (panel, GUI junto a systemd) debe asumir que el estado lo escriben otros procesos y que el transporte puede no ser suyo.
+
 ---
 
 ## Abiertos
