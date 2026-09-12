@@ -1,17 +1,23 @@
-"""HTTPS listener that redeems enrolment tokens.
+"""Loopback HTTP listener that redeems enrolment tokens.
 
-A client importing a v3 .owcfg has to reach the server *before* the tunnel
-exists, so this is the one OutWarp surface that has to be publicly dialable
-without WireGuard. It is deliberately tiny: one route, one verb, no sessions, no
-static files. The only credential it accepts is a single-use token with a short
-TTL, checked against a salted scrypt hash, behind the same sliding-window rate
+A client importing an enrolment .owcfg has to reach the server *before* the
+tunnel exists, so this is the one OutWarp surface a client talks to without
+WireGuard. It is deliberately tiny: one route, one verb, no sessions, no static
+files. The only credential it accepts is a single-use token with a short TTL,
+checked against a salted scrypt hash, behind the same sliding-window rate
 limiter the admin panel uses.
 
-Exposure follows the transport branch. Behind Caddy it binds loopback and is
-published on the public port under the secret path prefix, so it adds no new
-open port. In the self-signed branch it binds publicly with the server's own
-certificate — the same one the transport uses, so the client validates it with
-the pin it already has in the profile.
+It only ever binds loopback, speaking plain HTTP: the client reaches it *through
+the transport port*, as a wstunnel TCP forward to ``127.0.0.1:<enroll_port>``
+(``build_wstunnel_command`` restricts the server to exactly that destination on
+top of the WireGuard one). So enrolment adds no open port, and the endpoint is
+no more discoverable than the tunnel itself — a client has to present the
+secret upgrade path before wstunnel will forward a single byte here. It used to
+bind publicly on ``enroll_port`` with its own TLS in the self-signed branch,
+which meant a second port to forward on every router and firewall — and on a
+home router the one nobody had opened, so imports failed with "could not reach
+the enrolment endpoint" (see KNOWN_BUGS B-018). The Caddy (acme) branch is the
+same picture with Caddy in front of wstunnel.
 """
 
 from __future__ import annotations
@@ -19,7 +25,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import ssl
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,7 +33,7 @@ from typing import Any
 
 from outwarp_server import enrollment, operations
 from outwarp_server.config import ServerConfig
-from outwarp_server.web_auth import RateLimiter, client_ip
+from outwarp_server.web_auth import RateLimiter
 
 log = logging.getLogger(__name__)
 
@@ -49,17 +54,11 @@ class _EnrollServer(ThreadingHTTPServer):
         config_path: Path,
         rate_limiter: RateLimiter,
         on_enrolled: Any = None,
-        *,
-        behind_reverse_proxy: bool = False,
     ) -> None:
         super().__init__(address, _EnrollHandler)
         self.config_path = config_path
         self.rate_limiter = rate_limiter
         self.on_enrolled = on_enrolled
-        # FIX-08: only True when this listener binds loopback behind our own
-        # Caddyfile — see web_auth.client_ip's docstring for why that's the
-        # condition that makes X-Forwarded-For trustworthy here.
-        self.behind_reverse_proxy = behind_reverse_proxy
         # Redeem-then-register must not interleave: two clients enrolling at the
         # same moment would otherwise read the same config and one write would
         # lose the other's peer.
@@ -78,10 +77,15 @@ class _EnrollHandler(BaseHTTPRequestHandler):
         log.debug("enroll: " + fmt, *args)
 
     def _client_ip(self) -> str:
-        direct = self.client_address[0] if self.client_address else ""
-        return client_ip(
-            self.headers, direct, behind_reverse_proxy=self.ctx.behind_reverse_proxy
-        )
+        # Every request arrives from wstunnel's forward, so this is always the
+        # loopback peer and the rate limiter is effectively one shared bucket.
+        # That is accepted: the limiter only counts *failed* redemptions, the
+        # tokens it protects are single-use with a short TTL, and reaching this
+        # listener at all already requires the secret upgrade path. Headers
+        # are deliberately not consulted — nothing in front of this listener
+        # sets a trustworthy X-Forwarded-For, so honouring one would let a
+        # caller pick its own bucket and dodge the limit.
+        return self.client_address[0] if self.client_address else "?"
 
     def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -198,6 +202,9 @@ class _EnrollHandler(BaseHTTPRequestHandler):
         )
 
 
+LISTEN_HOST = "127.0.0.1"
+
+
 def serve(
     config: ServerConfig,
     config_path: Path,
@@ -206,23 +213,16 @@ def serve(
 ) -> _EnrollServer:
     """Start the listener in a background thread and return it for shutdown().
 
-    Binds loopback (and speaks plain HTTP) when Caddy fronts it, because Caddy
-    already terminated TLS; binds publicly with the server certificate
-    otherwise.
+    Loopback and plain HTTP in every branch: TLS is the transport's job
+    (wstunnel's own certificate, or Caddy's in front of it), and the only
+    thing that can reach this socket is wstunnel's restricted forward.
     """
-    host = "127.0.0.1" if config.behind_reverse_proxy else "0.0.0.0"  # noqa: S104
     httpd = _EnrollServer(
-        (host, config.enroll_port), config_path, RateLimiter(), on_enrolled,
-        behind_reverse_proxy=config.behind_reverse_proxy,
+        (LISTEN_HOST, config.enroll_port), config_path, RateLimiter(), on_enrolled,
     )
-
-    if not config.behind_reverse_proxy:
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(certfile=config.cert_path, keyfile=config.key_path)
-        httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
-
     threading.Thread(
         target=httpd.serve_forever, name="outwarp-enroll", daemon=True
     ).start()
-    log.info("Enrolment listener on %s:%s", host, config.enroll_port)
+    log.info("Enrolment listener on %s:%s (reached via the tunnel port)",
+             LISTEN_HOST, config.enroll_port)
     return httpd

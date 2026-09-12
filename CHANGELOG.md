@@ -6,6 +6,76 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: minor bumps may carry user-visible changes).
 
+## [0.13.0] — 2026-09-12
+
+### Changed
+- **Enrolment goes through the tunnel port.** A v4 `.owcfg` no longer names
+  a separate HTTPS enrolment URL: the client opens a wstunnel TCP forward to
+  the server's loopback enrolment listener over the same public port the
+  tunnel uses (walking the same fallback ladder), and wstunnel is restricted
+  to exactly that destination on top of WireGuard's. One open port, in both
+  transport branches, and the enrolment endpoint is no longer publicly
+  discoverable — reaching it requires the secret upgrade path. The Caddy
+  front drops its `/<prefix>-enroll` route. **Compatibility:** profiles
+  issued by a server ≥ this release need a client ≥ this release (older
+  clients report an unsupported profile version); `--embed-key` still works
+  for old clients, and a new client still imports v3 profiles from an older
+  server.
+- **Linux (systemd): new `outwarp-enroll.service`**, installed by `setup`,
+  (re)written by `restart`, removed by `uninstall`, shown by `status` and
+  checked by `doctor`. **Migration:** after updating, run
+  `sudo outwarp-server restart` once — it now re-renders both units from the
+  current code, so a new wstunnel argv or a unit that did not exist before
+  actually reaches systemd.
+- **Client daemon / server `serve` exit when they give up.** `outwarp-cli
+  daemon` exits 3 once the reconnect schedule is exhausted (FAILED) and
+  `outwarp-server serve` exits 3 when the manager reaches ERROR, so
+  `Restart=on-failure` / the container restart policy take over. The daemon
+  only notifies a *lost* connection, not a boot-time miss, and with the kill
+  switch enabled it no longer releases an engaged rule at startup.
+- **Admin panel / GUI service controls follow who owns the transport.**
+  `get_status().service_control` is `full` (this process runs wstunnel),
+  `restart` (systemd units — restart only, via the same path as
+  `outwarp-server restart`) or `none` (a panel next to a `serve` container);
+  the Service screen disables what does not apply and says why.
+- **Kubernetes manifests:** the liveness probe no longer hard-codes port 443
+  (an `exec` probe checks wstunnel + wg0 instead — no more `tls handshake
+  eof` line every 30 s in the pod log); `service.yaml` publishes the same
+  port as the ConfigMap; optional `OUTWARP_ENROLL_PORT` (loopback only, never
+  forwarded). The image sets `OUTWARP_PLATFORM=kubernetes` so a plain
+  `docker run` no longer falls into the systemd platform.
+
+### Fixed
+- **Enrolment was dead on arrival in two common setups.** Self-signed
+  branch: the listener bound a second public port (8444) that no home router
+  forwarded — and nothing in the deploy docs, the ConfigMap, the panel or
+  `doctor` mentioned it. Native systemd install: nothing ran the listener at
+  all after the wizard exited. See "Changed" above; `doctor` now checks the
+  listener on Linux and Windows.
+- **Client: the tunnel's DNS and the connectivity ping went around the
+  tunnel.** Since 0.12.1 `1.1.1.1` was excluded from `AllowedIPs` so a
+  hostile-DNS rung could resolve the endpoint with WireGuard already up — but
+  it is also every profile's default DNS and the target of the "handshake but
+  no traffic through the tunnel" ping. Endpoints (and proxies) are now
+  resolved in Python before WireGuard comes up and wstunnel is handed the
+  address with the hostname kept as SNI/Host; nothing about the resolver
+  escapes the tunnel any more.
+- **Admin panel showed its start-up snapshot forever.** Clients enrolled by
+  the `serve` container's listener (or added over `kubectl exec`) never
+  appeared, or stayed "offline", until the panel restarted; it now reloads
+  when the config or the client store changes on disk. Unenrolled slots are
+  reported as `pending` rather than folded into "offline".
+- **Admin panel "stop" next to a `serve` container took the live tunnel
+  down** (`wg-quick down` under a process that never noticed) and "start"
+  then spawned a second wstunnel that died on the taken port.
+- **`ServerManager.add_client` left a token-bearing `.owcfg` in the process
+  cwd** (`/` under systemd, `/data` in the pod); it returns the bytes from a
+  temp dir, as `rotate_client_keys` already did.
+- **`doctor` warned about an exposed loopback wstunnel on every domain-branch
+  server**: `ss` prints the peer column as `0.0.0.0:*`, which a substring
+  check mistook for the local bind.
+- **`init` (Docker/Kubernetes) derived the server address assuming a /24.**
+
 ## [0.12.1] — 2026-09-11
 
 ### Fixed

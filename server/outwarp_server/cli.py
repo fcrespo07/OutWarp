@@ -31,7 +31,7 @@ _PRIVILEGED_COMMANDS = frozenset({
     "setup", "add-client", "list-clients", "revoke-client", "rotate-client",
     "renew-cert", "prune-expired", "status", "restart", "uninstall", "doctor",
     "init", "serve", "tui",
-    "web", "admin-token",
+    "web", "admin-token", "enroll-listener",
 })
 # ``gui`` is intentionally NOT in the privileged set: the pywebview shell is
 # safe to launch as the invoking user, and the underlying API enforces root
@@ -100,25 +100,43 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return run_init(config_dir)
 
 
+# `serve` exit status when the manager ends up in ERROR (wstunnel died,
+# WireGuard would not come up, prerequisites missing). Non-zero so the
+# container runtime's restart policy takes over instead of a process that
+# looks alive to Docker/kubelet while nothing is listening.
+EXIT_SERVER_ERROR = 3
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     """Run the server in foreground — intended for Docker/Kubernetes.
 
     Loads server_config.json, starts wstunnel + WireGuard via ServerManager,
-    and blocks until SIGTERM or SIGINT.
+    and blocks until SIGTERM or SIGINT — or until the manager reports ERROR,
+    which used to leave the process blocking forever with the tunnel down
+    and only a liveness probe (if one matched the port) to notice.
     """
     import signal
     import threading
 
-    from outwarp_server.server_manager import ServerManager
+    from outwarp_server.server_manager import ServerManager, ServerState
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     config = _load_config(args)
     manager = ServerManager(config, config_path=_resolve_config_path(args))
-    manager.add_listener(lambda state: log.info("Server state: %s", state.value))
+    stop_event = threading.Event()
+    failed = threading.Event()
+
+    def _on_state(state: ServerState) -> None:
+        log.info("Server state: %s", state.value)
+        if state is ServerState.ERROR:
+            log.error("Server entered ERROR — exiting so the supervisor can restart it")
+            failed.set()
+            stop_event.set()
+
+    manager.add_listener(_on_state)
     manager.start()
 
-    stop_event = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop_event.set())
     signal.signal(signal.SIGINT, lambda *_: stop_event.set())
 
@@ -128,6 +146,35 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     log.info("Shutting down...")
     manager.stop()
     log.info("Done.")
+    return EXIT_SERVER_ERROR if failed.is_set() else 0
+
+
+def _cmd_enroll_listener(args: argparse.Namespace) -> int:
+    """Run the enrolment listener in the foreground — the ExecStart= of
+    ``outwarp-enroll.service`` on a native Linux install.
+
+    Everywhere a ServerManager process keeps the transport up (Windows, Docker,
+    Kubernetes, the desktop GUI) the listener is hosted in-process and this
+    command is never needed; a systemd install only leaves units behind, so the
+    listener gets one of its own. Blocks until SIGTERM or SIGINT.
+    """
+    import signal
+    import threading
+
+    from outwarp_server import enroll_server
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    config = _load_config(args)
+    httpd = enroll_server.serve(config, _resolve_config_path(args))
+
+    stop_event = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop_event.set())
+    signal.signal(signal.SIGINT, lambda *_: stop_event.set())
+    stop_event.wait()
+
+    httpd.shutdown()
+    httpd.server_close()
     return 0
 
 
@@ -190,22 +237,16 @@ def _cmd_add_client(args: argparse.Namespace) -> int:
         console.print(
             f"\n[bold]This profile holds a one-time enrolment token, not a private "
             f"key.[/bold] The client generates its own keypair on import and "
-            f"redeems the token; the server never sees it.\n"
+            f"redeems the token through the tunnel port "
+            f"({result.config.endpoint}:{result.config.port}); the server never "
+            f"sees the private key and no other port needs to be open.\n"
             f"  Valid until: [yellow]{deadline}[/yellow] "
-            f"({args.enroll_ttl} min from now)\n"
-            f"  Endpoint:    {result.config.enroll_url}\n\n"
+            f"({args.enroll_ttl} min from now)\n\n"
             f"Send it now — after that window the client must ask for a new one. "
             f"If the client reports 'already redeemed', the file was intercepted: "
-            f"revoke and re-issue."
+            f"revoke and re-issue. Clients older than 0.13 cannot read this "
+            f"profile; use [bold]--embed-key[/bold] for those."
         )
-        if not result.config.behind_reverse_proxy:
-            console.print(
-                f"\n[yellow]The client enrols over TCP port {result.config.enroll_port}, "
-                f"not the tunnel port {result.config.port}.[/yellow] Open/forward it on "
-                f"the server firewall or home router as well, or the import fails with "
-                f"'Could not reach the enrolment endpoint'. If you cannot open it, "
-                f"issue the profile with [bold]--embed-key[/bold] instead."
-            )
     else:
         console.print(
             "\n[yellow]This profile embeds the client's private key[/yellow] "
@@ -487,7 +528,7 @@ def _cmd_restart(args: argparse.Namespace) -> int:
     config = _load_config(args)
 
     console.print("[bold]Regenerating WireGuard config...[/bold]")
-    result = operations.restart_services(config)
+    result = operations.restart_services(config, config_path=_resolve_config_path(args))
 
     if result.wg_conf_written:
         console.print("  [green]✓[/green] wg0.conf written")
@@ -509,7 +550,20 @@ def _cmd_restart(args: argparse.Namespace) -> int:
     if result.wstunnel_restarted:
         console.print("  [green]✓[/green] wstunnel restarted")
     else:
-        msg = result.errors[-1] if result.errors else "wstunnel restart failed"
+        msg = next(
+            (e for e in result.errors if e.startswith("wstunnel")), "wstunnel restart failed",
+        )
+        console.print(f"  [red]✗[/red] {msg}")
+        return 1
+
+    console.print("[bold]Restarting enrolment listener...[/bold]")
+    if result.enroll_restarted:
+        console.print("  [green]✓[/green] enrolment listener restarted")
+    else:
+        msg = next(
+            (e for e in result.errors if e.startswith("enrolment")),
+            "enrolment listener restart failed",
+        )
         console.print(f"  [red]✗[/red] {msg}")
         return 1
 
@@ -589,7 +643,7 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     legacy = _legacy_artifacts(install_prefix)
 
     console.print("[bold red]WARNING:[/bold red] This will permanently remove OutWarp server:")
-    console.print("  • wstunnel systemd service")
+    console.print("  • wstunnel and enrolment listener systemd services")
     console.print("  • WireGuard interface, config and PostUp/PostDown rules")
     console.print(f"  • Server config and TLS certificates: {config_dir}")
     console.print("  • Persistent IP forwarding sysctl drop-in")
@@ -619,6 +673,7 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
 
     console.print()
     _step("Stopping & removing wstunnel service", platform.uninstall_wstunnel_service)
+    _step("Stopping & removing enrolment listener", platform.uninstall_enroll_service)
     _step("Bringing down WireGuard + removing config", platform.uninstall_wg_config)
 
     def _rm_caddy_front() -> None:
@@ -722,6 +777,13 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
     table.add_row("wstunnel service", _status_cell(wstunnel_active, wstunnel_error))
     table.add_row("WireGuard interface", _status_cell(wg_active, wg_error))
+    if platform.manages_enroll_service:
+        # Only a native systemd install has a listener of its own to report;
+        # everywhere else it lives inside the `serve`/GUI process.
+        table.add_row(
+            "Enrolment listener",
+            "[green]running[/green]" if platform.is_enroll_running() else "[red]stopped[/red]",
+        )
 
     console.print(table)
     return 0
@@ -811,6 +873,12 @@ def build_parser() -> argparse.ArgumentParser:
         "serve",
         help="Run the server in foreground (Docker/Kubernetes entrypoint) — "
              "starts wstunnel + WireGuard and blocks until SIGTERM",
+    )
+
+    sub.add_parser(
+        "enroll-listener",
+        help="Run the enrolment listener in foreground (ExecStart of "
+             "outwarp-enroll.service on Linux; not needed where `serve` runs)",
     )
 
     p_add = sub.add_parser("add-client", help="Register a new client")
@@ -1174,6 +1242,7 @@ _COMMANDS: dict[str, callable] = {
     "setup": _cmd_setup,
     "init": _cmd_init,
     "serve": _cmd_serve,
+    "enroll-listener": _cmd_enroll_listener,
     "add-client": _cmd_add_client,
     "list-clients": _cmd_list_clients,
     "revoke-client": _cmd_revoke_client,

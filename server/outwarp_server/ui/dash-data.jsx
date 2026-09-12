@@ -42,6 +42,7 @@ const DS_STR = {
     online: "En línea",
     idle: "Inactivo",
     offline: "Desconectado",
+    pending: "Pendiente",
     uptime: "Uptime",
 
     // dashboard
@@ -96,6 +97,7 @@ const DS_STR = {
     detail_transfer: "Transferido",
     detail_session: "Sesión actual",
     detail_live: "En vivo",
+    detail_pending: "Sin enrolar — el cliente aún no ha canjeado su token",
     detail_regen: "Regenerar .owcfg",
     detail_rotate: "Rotar claves",
     detail_revoke: "Revocar",
@@ -151,6 +153,8 @@ const DS_STR = {
     service_since: "activo desde",
     service_actions: "Acciones del servidor",
     service_confirmRestart: "Reiniciar el servicio cortará las conexiones activas unos segundos. ¿Continuar?",
+    service_managedBySystemd: "El túnel lo gestionan las unidades systemd de este host: desde aquí solo se puede reiniciar (equivale a `outwarp-server restart`).",
+    service_managedElsewhere: "El túnel lo ejecuta otro proceso de este host (el contenedor `serve`). Desde este panel no se puede arrancar, parar ni reiniciar; usa el runtime de contenedores.",
 
     // logs
     logs_title: "Registro",
@@ -239,6 +243,7 @@ const DS_STR = {
     online: "Online",
     idle: "Idle",
     offline: "Offline",
+    pending: "Pending",
     uptime: "Uptime",
 
     dash_title: "Overview",
@@ -290,6 +295,7 @@ const DS_STR = {
     detail_transfer: "Transferred",
     detail_session: "Current session",
     detail_live: "Live",
+    detail_pending: "Not enrolled — the client has not redeemed its token yet",
     detail_regen: "Regenerate .owcfg",
     detail_rotate: "Rotate keys",
     detail_revoke: "Revoke",
@@ -342,6 +348,8 @@ const DS_STR = {
     service_since: "active since",
     service_actions: "Server actions",
     service_confirmRestart: "Restarting the service will drop active connections for a few seconds. Continue?",
+    service_managedBySystemd: "The tunnel is run by this host's systemd units: only a restart is possible from here (same as `outwarp-server restart`).",
+    service_managedElsewhere: "The tunnel is run by another process on this host (the `serve` container). It cannot be started, stopped or restarted from this panel; use your container runtime.",
 
     logs_title: "Logs",
     logs_sub: "journalctl -u wstunnel -u wg-quick@wg0 · live",

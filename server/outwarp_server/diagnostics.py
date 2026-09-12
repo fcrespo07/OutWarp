@@ -561,6 +561,35 @@ def check_win_listening_port(config: ServerConfig) -> CheckResult:
     )
 
 
+def check_win_enroll_listener(config: ServerConfig) -> CheckResult:
+    """Same contract as check_linux_enroll_listener: up, loopback only."""
+    name = f"Enrolment listener TCP/{config.enroll_port}"
+    result = _ps(
+        f"Get-NetTCPConnection -State Listen -LocalPort {config.enroll_port} "
+        "-ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty LocalAddress"
+    )
+    addr = result.stdout.strip()
+    if not addr:
+        return CheckResult(
+            name=name,
+            status=Status.FAIL,
+            detail="No process bound to the enrolment port — enrolment profiles "
+                   "cannot be redeemed.",
+            remediation=(
+                "The listener runs inside the OutWarp server process; check its logs "
+                "for 'Could not start the enrolment listener' (port already in use?)."
+            ),
+        )
+    if addr not in ("127.0.0.1", "::1"):
+        return CheckResult(
+            name=name,
+            status=Status.WARN,
+            detail=f"Bound on {addr}, not loopback — leftover from a pre-0.13 install.",
+            remediation="Restart the OutWarp server so the listener rebinds on 127.0.0.1.",
+        )
+    return CheckResult(name=name, status=Status.PASS, detail=f"{addr}:{config.enroll_port}")
+
+
 def check_win_firewall(config: ServerConfig) -> CheckResult:
     result = _ps(
         "Get-NetFirewallRule -DisplayName 'OutWarp-wstunnel' -ErrorAction SilentlyContinue "
@@ -762,6 +791,11 @@ def check_linux_kmod(config: ServerConfig) -> CheckResult:
     )
 
 
+def _enroll_unit_installed() -> bool:
+    from outwarp_server.platforms.linux import _ENROLL_SERVICE_PATH
+    return _ENROLL_SERVICE_PATH.exists()
+
+
 def check_linux_systemd(config: ServerConfig) -> CheckResult:
     """Both wstunnel-outwarp.service and wg-quick@wg0.service must be active.
 
@@ -779,7 +813,11 @@ def check_linux_systemd(config: ServerConfig) -> CheckResult:
             detail="No systemd here (container) — wstunnel/WireGuard are supervised "
                    "directly, not via systemd units. See the listening-port checks instead.",
         )
-    services = ["wstunnel-outwarp.service", f"wg-quick@{_LINUX_WG_INTERFACE}.service"]
+    services = [
+        "wstunnel-outwarp.service",
+        f"wg-quick@{_LINUX_WG_INTERFACE}.service",
+        "outwarp-enroll.service",
+    ]
     states: dict[str, str] = {}
     inactive: list[str] = []
     for svc in services:
@@ -794,6 +832,22 @@ def check_linux_systemd(config: ServerConfig) -> CheckResult:
             name="systemd services active",
             status=Status.PASS,
             detail=", ".join(f"{k}={v}" for k, v in states.items()),
+        )
+
+    if "outwarp-enroll.service" in inactive and not _enroll_unit_installed():
+        # Installs from before the listener had a unit (< 0.13): `restart`
+        # (re)writes every unit from the current code, a plain systemctl
+        # restart of a unit that does not exist cannot.
+        return CheckResult(
+            name="systemd services active",
+            status=Status.FAIL,
+            detail=", ".join(f"{k}={v}" for k, v in states.items()),
+            remediation=(
+                "outwarp-enroll.service is not installed, so enrolment profiles "
+                "cannot be redeemed. Run `outwarp-server restart` to install it."
+            ),
+            remediation_command="outwarp-server restart",
+            fix_kind="manual",
         )
 
     def _fix_restart(_config: ServerConfig) -> None:
@@ -812,6 +866,21 @@ def check_linux_systemd(config: ServerConfig) -> CheckResult:
         fix_kind="auto",
         fix_callable=_fix_restart,
     )
+
+
+def _ss_local_addr(line: str) -> str:
+    """Local Address:Port column of an `ss -lnp` row.
+
+    `ss` prints the peer column as `0.0.0.0:*` for every listener, so a plain
+    substring test for "0.0.0.0" flags loopback sockets as public too.
+    """
+    parts = line.split()
+    # State Recv-Q Send-Q Local:Port Peer:Port [process]
+    return parts[3] if len(parts) >= 4 else ""
+
+
+def _bound_publicly(line: str) -> bool:
+    return _ss_local_addr(line).startswith(("0.0.0.0:", "*:", "[::]:"))
 
 
 def check_linux_listen_443(config: ServerConfig) -> CheckResult:
@@ -875,7 +944,7 @@ def check_linux_listen_internal_ws(config: ServerConfig) -> CheckResult:
     if any(f":{port}" in line for line in lines):
         # Binding 0.0.0.0 here would expose the un-TLS'd listener to the network
         # and let anyone who knows the path skip the front entirely.
-        exposed = any("0.0.0.0" in line or "*:" in line for line in lines)
+        exposed = any(_bound_publicly(line) for line in lines)
         if exposed:
             return CheckResult(
                 name=name,
@@ -897,6 +966,66 @@ def check_linux_listen_internal_ws(config: ServerConfig) -> CheckResult:
         fix_kind="auto",
         fix_callable=lambda _c: subprocess.run(
             ["systemctl", "start", "wstunnel-outwarp.service"],
+            check=True, capture_output=True, text=True,
+        ),
+    )
+
+
+def check_linux_enroll_listener(config: ServerConfig) -> CheckResult:
+    """The enrolment listener must be up, and on loopback only.
+
+    It is what turns an `add-client` profile into a registered peer; without
+    it every enrolment import fails with "could not reach the enrolment
+    endpoint" even though the tunnel port is wide open (B-018). It is reached
+    through wstunnel's restricted forward, so a public bind means an install
+    from before 0.13 is still exposing it with its own TLS on a port nobody
+    needs open any more.
+    """
+    name = f"Enrolment listener TCP/{config.enroll_port}"
+    proc = _run_linux(["ss", "-tlnp", f"sport = :{config.enroll_port}"])
+    lines = [ln for ln in proc.stdout.splitlines()[1:] if ln.strip()]
+    if lines:
+        if any(_bound_publicly(ln) for ln in lines):
+            return CheckResult(
+                name=name,
+                status=Status.WARN,
+                detail=f"TCP/{config.enroll_port} is bound on all interfaces, not just loopback",
+                remediation=(
+                    "Clients enrol through the tunnel port now; the public listener is "
+                    "a leftover. Run `outwarp-server restart` (or restart the "
+                    "container) so it rebinds on 127.0.0.1."
+                ),
+                remediation_command="outwarp-server restart",
+            )
+        return CheckResult(name=name, status=Status.PASS, detail=f"127.0.0.1:{config.enroll_port}")
+    if not _has_systemd():
+        return CheckResult(
+            name=name,
+            status=Status.FAIL,
+            detail=f"Nothing bound to TCP/{config.enroll_port} — enrolment profiles "
+                   "cannot be redeemed.",
+            remediation=(
+                "No systemd here (container) — the listener runs inside the "
+                "`outwarp-server serve` process. Check its logs for 'Could not start "
+                "the enrolment listener' (port already in use?) and restart the "
+                "pod/container."
+            ),
+            remediation_command="kubectl rollout restart deployment/outwarp-server",
+            fix_kind="manual",
+        )
+    return CheckResult(
+        name=name,
+        status=Status.FAIL,
+        detail=f"Nothing bound to TCP/{config.enroll_port} — enrolment profiles "
+               "cannot be redeemed.",
+        remediation=(
+            "Start the listener: systemctl start outwarp-enroll.service. If the unit "
+            "does not exist (install older than 0.13), `outwarp-server restart` writes it."
+        ),
+        remediation_command="systemctl start outwarp-enroll.service",
+        fix_kind="auto",
+        fix_callable=lambda _c: subprocess.run(
+            ["systemctl", "start", "outwarp-enroll.service"],
             check=True, capture_output=True, text=True,
         ),
     )
@@ -928,15 +1057,7 @@ def check_linux_listen_wg(config: ServerConfig) -> CheckResult:
                 "this is normal until the first client connects."
             ),
         )
-    def _local_addr(line: str) -> str:
-        parts = line.split()
-        # ss -ulnp columns: State Recv-Q Send-Q LocalAddress:Port PeerAddress:Port [process]
-        return parts[3] if len(parts) >= 4 else ""
-
-    public = [
-        ln for ln in lines
-        if _local_addr(ln).startswith(("0.0.0.0:", "*:", "[::]:"))
-    ]
+    public = [ln for ln in lines if _bound_publicly(ln)]
     if public:
         if not _has_systemd():
             return CheckResult(
@@ -1176,6 +1297,7 @@ def gather_checks() -> list[Check]:
             Check("wg_svc", "WireGuard", check_win_wg_service),
             Check("wstunnel_proc", "wstunnel", check_win_wstunnel_running),
             Check("listen", "wstunnel", check_win_listening_port),
+            Check("enroll_listener", "Enrolment", check_win_enroll_listener),
             Check("firewall", "Firewall", check_win_firewall),
         ]
     if sys.platform.startswith("linux"):
@@ -1186,6 +1308,7 @@ def gather_checks() -> list[Check]:
             Check("linux_listen_443", "wstunnel", check_linux_listen_443),
             Check("linux_listen_internal_ws", "wstunnel", check_linux_listen_internal_ws),
             Check("linux_listen_wg", "wstunnel", check_linux_listen_wg),
+            Check("linux_enroll_listener", "Enrolment", check_linux_enroll_listener),
             Check("linux_ip_forward", "Network", check_linux_ip_forward),
             Check("linux_nat_masquerade", "NAT", check_linux_nat_masquerade),
             Check("linux_fail2ban", "Hardening", check_linux_fail2ban),

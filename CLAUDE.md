@@ -281,7 +281,40 @@ licencia de OutWarp.
 
 ## Estado actual
 
-**Versión actual: `0.12.1`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
+**Versión actual: `0.13.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
+
+### Cambios en 0.13.0 — auditoría "qué sigue bloqueando"
+
+Auditoría del 2026-09-12 sobre `9c255f2` (código + el pod k3s real como
+evidencia, no como objetivo: OutWarp se mantiene igual para Windows,
+Linux/systemd, Docker y k8s). Detalle en `CHANGELOG.md` (Unreleased) y
+`KNOWN_BUGS.md` B-018…B-021. Lo estructural:
+
+- **Enrolamiento por el puerto del túnel (`.owcfg` v4).** El listener
+  (`enroll_server.py`) solo escucha en loopback; el cliente llega como
+  forward TCP de wstunnel (`--restrict-to 127.0.0.1:<enroll_port>` además
+  del de WG) por el mismo puerto y la misma escalera que el túnel
+  (`client/outwarp/enroll.py::_redeem_via_transport`). En Linux/systemd hay
+  `outwarp-enroll.service` (`outwarp-server enroll-listener`); en
+  Windows/Docker/k8s lo aloja `ServerManager`. `ServerPlatform` gana
+  `manages_enroll_service` y `os_managed_transport`. `restart` re-renderiza
+  las units (es el paso post-`update`). Caddy ya no lleva ruta `-enroll`.
+  Test e2e con wstunnel real: `server/tests/test_enroll_transport_e2e.py`.
+- **Resolución antes de WG.** `tunnel._with_addresses()` resuelve cada rung
+  (sistema / `1.1.1.1` en crudo para hostiles / host del proxy) antes de
+  instalar WG; `ConnectionStrategy.connect_host` hace que wstunnel marque la
+  IP con SNI/Host = hostname. `escape_set()` ya no excluye `1.1.1.1`.
+- **`daemon`/`serve` salen con código 3** en FAILED/ERROR.
+- **Panel:** `ServerManager.refresh_config()`, estado `pending`,
+  `service_control` (`full`/`restart`/`none`), `add_client` sin fichero en
+  cwd.
+- **k8s:** liveness `exec` (pgrep wstunnel + wg0), `OUTWARP_ENROLL_PORT`
+  opcional, `OUTWARP_PLATFORM=kubernetes` en la imagen.
+
+Seguimientos apuntados (no hechos): kill switch + endpoint por hostname (la
+allowlist no cubre el DNS que la reconexión necesita); TOCTOU del pin en el
+enrolamiento (pin en una conexión, POST en otra — mismo modelo que el
+transporte); rate limiter del enrolamiento es un cubo global tras el forward.
 
 ### Cambios en 0.12.0 (auditoría de seguridad completa + refactors de arquitectura)
 
@@ -421,7 +454,7 @@ se respeta, falta el row del modal).
   `get_app_info()` (cliente y servidor) y dos strings de UI decían
   `"license": "MIT"`, desactualizado desde el cambio a PolyForm Noncommercial.
 
-Cliente: 597 tests. Servidor: 512 tests. `ruff` limpio en ambos paquetes.
+Cliente: 596 tests. Servidor: 531 tests (+2 e2e con wstunnel real, se saltan sin el binario). `ruff` limpio en ambos paquetes.
 
 ### Cambios en 0.11.0 (arquitectura de seguridad)
 

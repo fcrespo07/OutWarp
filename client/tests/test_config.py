@@ -481,3 +481,50 @@ def test_v1_profile_round_trip_omits_v2_tls_keys(tmp_path):
     saved = json.loads(dest.read_text(encoding="utf-8"))
     assert "verify" not in saved["tls"]
     assert "spki_sha256" not in saved["tls"]
+
+
+class TestEnrolmentSchemaV4:
+    """v4 redeems the token through the tunnel port (B-018): the profile names
+    the server-side loopback port wstunnel forwards to, not a public URL."""
+
+    def _v4(self) -> dict:
+        wg = {k: v for k, v in VALID["wireguard"].items() if k != "client_private_key"}
+        return {
+            **VALID, "schema_version": 4, "wireguard": wg,
+            "enrollment": {"token": "ow_enroll_abc", "remote_port": 8444},
+        }
+
+    def test_loads_remote_port_without_a_url(self, tmp_path):
+        cfg = ClientConfig.load(write_cfg(tmp_path, self._v4()))
+        assert cfg.schema_version == 4
+        assert cfg.enrollment.token == "ow_enroll_abc"
+        assert cfg.enrollment.remote_port == 8444
+        assert cfg.enrollment.url == ""
+
+    def test_round_trips_through_save(self, tmp_path):
+        cfg = ClientConfig.load(write_cfg(tmp_path, self._v4()))
+        dest = tmp_path / "saved.json"
+        cfg.save(dest)
+        saved = json.loads(dest.read_text(encoding="utf-8"))
+        assert saved["enrollment"] == {"token": "ow_enroll_abc", "remote_port": 8444}
+
+    def test_v3_url_form_still_loads(self, tmp_path):
+        data = self._v4()
+        data["schema_version"] = 3
+        data["enrollment"] = {"token": "ow_enroll_abc", "url": "https://x.example:8444/enroll"}
+        cfg = ClientConfig.load(write_cfg(tmp_path, data))
+        assert cfg.enrollment.url == "https://x.example:8444/enroll"
+        assert cfg.enrollment.remote_port == 0
+
+    def test_token_needs_somewhere_to_go(self, tmp_path):
+        data = self._v4()
+        data["enrollment"] = {"token": "ow_enroll_abc"}
+        with pytest.raises(ConfigError, match="neither enrollment.remote_port nor"):
+            ClientConfig.load(write_cfg(tmp_path, data))
+
+    @pytest.mark.parametrize("bad", ["8444", -1, 70000, True])
+    def test_rejects_a_bad_remote_port(self, tmp_path, bad):
+        data = self._v4()
+        data["enrollment"]["remote_port"] = bad
+        with pytest.raises(ConfigError, match="enrollment.remote_port"):
+            ClientConfig.load(write_cfg(tmp_path, data))

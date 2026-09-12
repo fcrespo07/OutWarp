@@ -133,13 +133,45 @@ def test_restart_services_returns_all_three_true_on_success(
     cfg_path = _write_server_config(tmp_path)
     config = ServerConfig.load(cfg_path)
     fake = MagicMock()
+    fake.manages_enroll_service = False
     mock_platform.return_value = fake
     result = operations.restart_services(config)
     assert result.wg_conf_written and result.wg_restarted and result.wstunnel_restarted
+    assert result.enroll_restarted
     assert result.errors == []
     fake.install_wg_config.assert_called_once()
     fake.restart_wg.assert_called_once()
     fake.restart_wstunnel_service.assert_called_once()
+    fake.restart_enroll_service.assert_called_once()
+    # No OS-managed units on this platform: nothing to re-render.
+    fake.install_wstunnel_service.assert_not_called()
+    fake.install_enroll_service.assert_not_called()
+
+
+@patch("outwarp_server.server_manager._find_wstunnel", return_value="/usr/local/bin/wstunnel")
+@patch("outwarp_server.platforms.get_server_platform")
+def test_restart_services_rerenders_units_where_the_os_manages_them(
+    mock_platform: MagicMock, _find: MagicMock, tmp_path: Path,
+) -> None:
+    """`outwarp-server update` tells the admin to run `restart`: on a systemd
+    install that has to rewrite both units from the current code, or a new
+    argv (e.g. the enrolment `--restrict-to`) and a unit that did not exist
+    before the upgrade (outwarp-enroll.service) never reach systemd."""
+    cfg_path = _write_server_config(tmp_path)
+    config = ServerConfig.load(cfg_path)
+    fake = MagicMock()
+    fake.manages_enroll_service = True
+    mock_platform.return_value = fake
+
+    result = operations.restart_services(config, config_path=cfg_path)
+
+    assert result.errors == []
+    wstunnel_exec = fake.install_wstunnel_service.call_args.args[0]
+    assert f"--restrict-to 127.0.0.1:{config.enroll_port}" in wstunnel_exec
+    enroll_exec = fake.install_enroll_service.call_args.args[0]
+    assert enroll_exec.endswith(f"--config-dir {tmp_path} enroll-listener")
+    fake.restart_wstunnel_service.assert_called_once()
+    fake.restart_enroll_service.assert_called_once()
 
 
 @patch("outwarp_server.operations.add_peer_live")

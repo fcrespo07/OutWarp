@@ -13,8 +13,8 @@ spec:
     app: outwarp-server
   ports:
     - name: wss
-      port: 8443
-      targetPort: 8443
+      port: 443  # must match OUTWARP_PORT in configmap.yaml
+      targetPort: 443
       protocol: TCP
     # Web admin panel (outwarp-panel sidecar). With hostNetwork it's already
     # bound on the node's NIC; this entry is for internal DNS / ingress wiring.

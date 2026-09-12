@@ -297,6 +297,15 @@ class TestWstunnelCommandBranches:
             assert "--restrict-to" in cmd
             assert cmd[cmd.index("--restrict-to") + 1] == "127.0.0.1:51820"
 
+    def test_both_branches_allow_a_forward_to_the_enrolment_listener_only(self) -> None:
+        """B-018: enrolment rides the transport as a TCP forward to the
+        loopback listener, so wstunnel must allow exactly that destination on
+        top of WireGuard's — and nothing else, or the path prefix would become
+        a generic TCP proxy into the server."""
+        for cmd in (self._cmd(), self._cmd(tls_mode="acme")):
+            restricts = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--restrict-to"]
+            assert restricts == ["127.0.0.1:51820", "127.0.0.1:8444"]
+
 
 class TestConfigDirIsHonoured:
     def test_add_client_uses_the_launch_config_dir_not_etc_outwarp(
@@ -312,6 +321,8 @@ class TestConfigDirIsHonoured:
         cfg_path = data_dir / "server_config.json"
         _config([]).save(cfg_path)
         mgr = ServerManager(ServerConfig.load(cfg_path), config_path=cfg_path)
+        # add_client writes <name>.owcfg to the cwd — keep it out of the repo.
+        monkeypatch.chdir(tmp_path)
 
         etc = tmp_path / "etc-outwarp"  # stands in for /etc/outwarp: must stay untouched
         with (
@@ -430,3 +441,91 @@ class TestEffectiveState:
             mgr.start()
         assert mgr.state.value == "running"
         assert mgr._wstunnel is None  # noqa: SLF001 — no process spawned
+
+
+class TestExternalConfigChanges:
+    """The panel/GUI keeps one ServerManager for its whole life while other
+    processes write the state it displays (the `serve` container's enrolment
+    listener, `add-client` over kubectl exec, outwarp-enroll.service). It
+    used to show its start-up snapshot forever."""
+
+    def _mgr(self, tmp_path: Path) -> tuple[ServerManager, Path]:
+        cfg_path = tmp_path / "server_config.json"
+        _config([]).save(cfg_path)
+        return ServerManager(ServerConfig.load(cfg_path), config_path=cfg_path), cfg_path
+
+    def test_refresh_is_a_noop_when_nothing_changed(self, tmp_path: Path) -> None:
+        mgr, _ = self._mgr(tmp_path)
+        with patch("outwarp_server.server_manager.ServerConfig.load") as load:
+            assert mgr.refresh_config() is False
+        load.assert_not_called()
+
+    def test_refresh_picks_up_a_client_enrolled_by_another_process(
+        self, tmp_path: Path,
+    ) -> None:
+        import os
+        from dataclasses import replace
+
+        from outwarp_server.client_store import ClientStore
+
+        mgr, cfg_path = self._mgr(tmp_path)
+        assert mgr.config.clients == []
+
+        # What enroll_server.py does in the other process: SQLite row + save.
+        store = ClientStore(tmp_path / "clients.sqlite")
+        with store.transaction() as conn:
+            store.insert(
+                ClientEntry(name="laptop", public_key=_PUB1, address="10.0.0.2/32"),
+                conn=conn, created_at="2026-01-01",
+            )
+        replace(mgr.config, clients=store.list_active()).save(cfg_path)
+        # Coarse filesystems could give the rewrite the same mtime.
+        os.utime(cfg_path, (2_000_000_000, 2_000_000_000))
+
+        assert mgr.refresh_config() is True
+        assert [c.name for c in mgr.config.clients] == ["laptop"]
+        assert mgr.refresh_config() is False
+
+    def test_own_writes_do_not_trigger_a_reload(self, tmp_path: Path) -> None:
+        mgr, _ = self._mgr(tmp_path)
+        with (
+            patch("outwarp_server.operations.generate_psk", return_value=""),
+            patch("outwarp_server.platforms.get_server_platform"),
+        ):
+            mgr.add_client("phone")
+        with patch("outwarp_server.server_manager.ServerConfig.load") as load:
+            assert mgr.refresh_config() is False
+        load.assert_not_called()
+
+
+class TestAddClientLeavesNoFile:
+    def test_returns_bytes_and_writes_nothing_to_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A token-bearing .owcfg used to land in the panel's cwd — `/` under
+        systemd, /data in the pod — and stay there unread."""
+        import json
+
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        cfg_path = tmp_path / "server_config.json"
+        _config([]).save(cfg_path)
+        mgr = ServerManager(ServerConfig.load(cfg_path), config_path=cfg_path)
+        with (
+            patch("outwarp_server.operations.generate_psk", return_value=""),
+            patch("outwarp_server.platforms.get_server_platform"),
+        ):
+            owcfg = json.loads(mgr.add_client("phone"))
+        assert owcfg["name"] == "phone"
+        assert owcfg["enrollment"]["token"].startswith("ow_enroll_")
+        assert list(cwd.iterdir()) == []
+
+
+def test_owns_transport_only_with_a_live_subprocess(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "server_config.json"
+    _config([]).save(cfg_path)
+    mgr = ServerManager(ServerConfig.load(cfg_path), config_path=cfg_path)
+    assert mgr.owns_transport is False
+    mgr._wstunnel = object()  # noqa: SLF001 — what _do_start sets
+    assert mgr.owns_transport is True

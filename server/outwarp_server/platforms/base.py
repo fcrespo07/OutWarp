@@ -59,6 +59,43 @@ class ServerPlatform(ABC):
     def restart_wstunnel_service(self) -> None:
         ...
 
+    # ── enrolment listener ───────────────────────────────────────────────────
+    # The token-redemption endpoint (enroll_server.py) has to run as long as
+    # the transport does, or every enrolment .owcfg is dead on arrival. Where
+    # a ServerManager process is what keeps the transport up (Windows, Docker,
+    # Kubernetes, the desktop GUI) it hosts the listener itself and these are
+    # no-ops. A native systemd install has no such process — the wizard leaves
+    # only units behind — so Linux overrides them with a unit of its own.
+
+    @property
+    def os_managed_transport(self) -> bool:
+        """True when wstunnel and WireGuard run as OS services this platform
+        can restart on its own (systemd), so a process that does not own the
+        wstunnel subprocess — the web panel, the GUI next to a headless
+        install — can still offer a restart. False where the transport is a
+        subprocess of some ServerManager (Windows, Docker, Kubernetes): from
+        another process there is nothing safe to drive."""
+        return False
+
+    @property
+    def manages_enroll_service(self) -> bool:
+        """True when this platform runs the listener as an OS service of its
+        own (so status/doctor have a unit to report on)."""
+        return False
+
+    def install_enroll_service(self, exec_start: str) -> None:  # noqa: B027
+        """Register the enrolment listener as an OS service running `exec_start`."""
+
+    def uninstall_enroll_service(self) -> None:  # noqa: B027
+        pass
+
+    def is_enroll_running(self) -> bool:
+        """Whether the OS-managed listener is up; False where none is installed."""
+        return False
+
+    def restart_enroll_service(self) -> None:  # noqa: B027
+        pass
+
     @abstractmethod
     def install_wg_config(self, conf_text: str, interface: str = "wg0") -> None:
         ...

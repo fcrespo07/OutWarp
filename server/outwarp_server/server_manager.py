@@ -61,6 +61,12 @@ def build_wstunnel_command(config: ServerConfig, wstunnel_bin: Path) -> list[str
         str(wstunnel_bin),
         "server",
         "--restrict-to", f"127.0.0.1:{config.wg_listen_port}",
+        # Enrolment rides the same transport: the client opens a TCP forward to
+        # the loopback listener (enroll_server.py) over the very WSS port the
+        # tunnel uses, so no second public port is needed. Exactly these two
+        # destinations and nothing else — the path prefix gates the upgrade,
+        # this gates where a forward may go.
+        "--restrict-to", f"127.0.0.1:{config.enroll_port}",
     ]
     if config.behind_reverse_proxy:
         cmd += [
@@ -80,6 +86,21 @@ def build_wstunnel_command(config: ServerConfig, wstunnel_bin: Path) -> list[str
 # Kept so existing internal callers and tests that reach for the private name
 # keep working; the public one is what new code should use.
 _build_wstunnel_command = build_wstunnel_command
+
+
+def build_enroll_listener_command(config_path: Path) -> list[str]:
+    """The one place the standalone enrolment listener invocation is defined.
+
+    Rendered into the systemd unit on Linux (LinuxServerPlatform
+    .install_enroll_service), where nothing else keeps the listener alive
+    between wizard runs. Resolves the CLI the same way the client's service
+    module does: the installed ``outwarp-server`` on PATH first, so a pipx
+    install wins over a dev checkout, then whatever launched this process.
+    """
+    exe = shutil.which("outwarp-server")
+    if exe is None:
+        exe = str(Path(sys.argv[0]).resolve())
+    return [exe, "--config-dir", str(config_path.parent), "enroll-listener"]
 
 
 def _get_wg_conf(config: ServerConfig) -> str:
@@ -105,12 +126,57 @@ class ServerManager:
         # dashboard reads its DB to render the 24h sparkline + top talkers.
         self._traffic_scheduler = None
         self._enroll_server = None
+        self._config_stamp = self._current_config_stamp()
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     @property
     def state(self) -> ServerState:
         return self._state
+
+    @property
+    def owns_transport(self) -> bool:
+        """True when wstunnel is a subprocess of this manager, i.e. this
+        process is the one keeping the tunnel up rather than a companion
+        panel next to a `serve` container or a systemd unit."""
+        return self._wstunnel is not None
+
+    def _current_config_stamp(self) -> tuple[float, float]:
+        """mtimes of the two files another process can change under us."""
+        def _mtime(path: Path) -> float:
+            try:
+                return path.stat().st_mtime
+            except OSError:
+                return 0.0
+        return (
+            _mtime(self._config_path),
+            _mtime(self._config_path.parent / "clients.sqlite"),
+        )
+
+    def refresh_config(self) -> bool:
+        """Reload the config if another process changed it on disk.
+
+        The panel/GUI holds this manager for as long as it runs while the
+        state it shows is written by others: the `serve` container's
+        enrolment listener admits a client (public key + enrolled_at land in
+        clients.sqlite), an admin runs `add-client` over `kubectl exec`, the
+        standalone listener on a systemd install redeems a token. Without
+        this the panel kept its start-up snapshot forever — a client that
+        enrolled minutes ago stayed "pending" and a CLI-added one never
+        appeared until the panel was restarted. Cheap enough for the 2 s
+        live poll: two stat() calls, and a load only when something moved.
+        Returns whether a reload happened.
+        """
+        stamp = self._current_config_stamp()
+        if stamp == self._config_stamp:
+            return False
+        try:
+            self._config = ServerConfig.load(self._config_path)
+        except Exception:
+            log.exception("Could not reload config after an external change")
+            return False
+        self._config_stamp = stamp
+        return True
 
     @property
     def effective_state(self) -> ServerState:
@@ -210,8 +276,8 @@ class ServerManager:
         self._stop_event.clear()
         self.start()
 
-    def add_client(self, name: str, *, expires_at: str = "") -> Path:
-        """Register a new client and return the path to its .owcfg.
+    def add_client(self, name: str, *, expires_at: str = "") -> bytes:
+        """Register a new client and return its .owcfg content.
 
         Delegates to :func:`outwarp_server.operations.add_client` so the GUI,
         the TUI and the CLI all take exactly one path through key handling —
@@ -222,20 +288,33 @@ class ServerManager:
         private key, and the peer is admitted when the client redeems it.
         `expires_at` is an optional ISO date (YYYY-MM-DD); the client refuses an
         expired profile and `prune_expired` can revoke it server-side.
+
+        Like `rotate_client_keys`, the file is written to a private temp dir
+        that is gone before this returns: this manager lives inside a
+        long-running GUI/panel whose cwd is wherever systemd or the container
+        started it, and a token-bearing profile has no business sitting there
+        unread. The GUI's save dialog and the panel's download get the bytes.
         """
         from outwarp_server import operations
 
-        with self._lock:
-            result = operations.add_client(
-                self._config,
-                name,
-                config_path=self._config_path,
-                expires_at=expires_at,
-                enroll=True,
-            )
-            self._config = result.config
-        log.info("Client '%s' added — .owcfg at %s", name, result.owcfg_path)
-        return result.owcfg_path
+        tmp_dir = Path(tempfile.mkdtemp(prefix="outwarp-add-"))
+        try:
+            with self._lock:
+                result = operations.add_client(
+                    self._config,
+                    name,
+                    config_path=self._config_path,
+                    output_dir=tmp_dir,
+                    expires_at=expires_at,
+                    enroll=True,
+                )
+                self._config = result.config
+                self._config_stamp = self._current_config_stamp()
+            owcfg_bytes = result.owcfg_path.read_bytes()
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        log.info("Client '%s' added", name)
+        return owcfg_bytes
 
     def prune_expired(self, *, today: str = "") -> list[str]:
         """Revoke every client whose expires_at is strictly before `today`
@@ -274,6 +353,7 @@ class ServerManager:
                     self._config, name, config_path=self._config_path, output_dir=tmp_dir,
                 )
                 self._config = result.config
+                self._config_stamp = self._current_config_stamp()
             owcfg_bytes = result.owcfg_path.read_bytes()
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -303,6 +383,7 @@ class ServerManager:
             except KeyError as exc:
                 raise ValueError(f"Client '{name}' not found") from exc
             self._config = result.config
+            self._config_stamp = self._current_config_stamp()
 
         if result.wg_persist_warning:
             log.warning("Could not persist WG config: %s", result.wg_persist_warning)
@@ -459,6 +540,7 @@ class ServerManager:
         del name
         try:
             self._config = ServerConfig.load(self._config_path)
+            self._config_stamp = self._current_config_stamp()
         except Exception:
             log.exception("Could not reload config after enrolment")
 

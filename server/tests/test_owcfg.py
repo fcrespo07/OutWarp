@@ -319,3 +319,28 @@ class TestEnsureOwcfgSigningKey:
         server = replace(_make_server_config(), owcfg_signing_private_key="existing-key-material")
         updated = _ensure_owcfg_signing_key(server)
         assert updated is server
+
+
+class TestEnrolmentProfile:
+    def test_v4_redeems_through_the_tunnel_port(self) -> None:
+        """B-018: v3 carried a public HTTPS URL on a second port (8444) that
+        no home router forwards. v4 carries only the server-side loopback port
+        the client reaches as a wstunnel forward over `server.port`."""
+        owcfg = build_owcfg(
+            _make_server_config(), "laptop", "", "10.0.0.2/32",
+            enrollment_token="ow_enroll_abc",
+        )
+        assert owcfg["schema_version"] == 4
+        assert owcfg["enrollment"] == {"token": "ow_enroll_abc", "remote_port": 8444}
+        assert "client_private_key" not in owcfg["wireguard"]
+
+    def test_v4_in_the_acme_branch_too(self) -> None:
+        """One mechanism for both branches: behind Caddy the forward rides
+        the same WebSocket, so no per-branch URL is needed."""
+        from dataclasses import replace
+
+        cfg = replace(_make_server_config(), tls_mode="acme", enroll_port=9000)
+        owcfg = build_owcfg(cfg, "laptop", "", "10.0.0.2/32", enrollment_token="ow_enroll_abc")
+        assert owcfg["schema_version"] == 4
+        assert owcfg["enrollment"] == {"token": "ow_enroll_abc", "remote_port": 9000}
+        assert owcfg["tls"] == {"verify": "ca"}

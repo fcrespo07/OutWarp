@@ -445,6 +445,7 @@ class Api:
     def get_status(self) -> dict[str, Any]:
         if self._manager is None:
             return {"status": "empty", "config_present": False}
+        self._manager.refresh_config()
         cfg = self._manager.config
         return {
             "status": _STATE_TO_JS.get(self._manager.effective_state, "stopped"),
@@ -456,8 +457,28 @@ class Api:
             "wg_listen_port": cfg.wg_listen_port,
             "cert_fingerprint_sha256": cfg.cert_fingerprint_sha256,
             "clients_count": len(cfg.clients),
+            "clients_pending": sum(1 for c in cfg.clients if not c.public_key),
+            "service_control": self._service_control(),
             **self._tls_info(cfg),
         }
+
+    def _service_control(self) -> str:
+        """What the Service screen may do from *this* process.
+
+        "full": wstunnel is this manager's subprocess (desktop GUI, Windows
+        service) — start/stop/restart act on the real thing. "restart": the
+        transport is OS-managed (systemd) and can be bounced, but start/stop
+        would only fight the units. "none": a companion panel next to a
+        `serve` process it cannot see (Docker/Kubernetes sidecar) — stop
+        used to run `wg-quick down` under the live tunnel, and start then
+        spawned a second wstunnel that died on the taken port.
+        """
+        if self._manager is None:
+            return "none"
+        if self._manager.owns_transport:
+            return "full"
+        from outwarp_server.platforms import get_server_platform
+        return "restart" if get_server_platform().os_managed_transport else "none"
 
     def _tls_info(self, cfg: ServerConfig) -> dict[str, Any]:
         """Cert expiry for the dashboard TLS card. Best-effort: a missing or
@@ -636,15 +657,24 @@ class Api:
 
     # ── service control ──────────────────────────────────────────────────────
 
+    _NOT_OWNED = (
+        "the tunnel is run by another process on this host (a `serve` container "
+        "or a systemd unit); this panel cannot start or stop it"
+    )
+
     def start_service(self) -> dict[str, Any]:
         if self._manager is None:
             return {"ok": False, "error": "server not configured"}
+        if self._service_control() != "full":
+            return {"ok": False, "error": self._NOT_OWNED}
         self._manager.start()
         return {"ok": True}
 
     def stop_service(self) -> dict[str, Any]:
         if self._manager is None:
             return {"ok": False, "error": "server not configured"}
+        if self._service_control() != "full":
+            return {"ok": False, "error": self._NOT_OWNED}
         threading.Thread(
             target=self._manager.stop, daemon=True, name="api-stop"
         ).start()
@@ -653,6 +683,25 @@ class Api:
     def restart_service(self) -> dict[str, Any]:
         if self._manager is None:
             return {"ok": False, "error": "server not configured"}
+        control = self._service_control()
+        if control == "none":
+            return {"ok": False, "error": self._NOT_OWNED}
+        if control == "restart":
+            # Same path as `outwarp-server restart`: re-render + bounce the
+            # units rather than this manager's (non-existent) subprocess.
+            from outwarp_server import operations
+
+            manager = self._manager
+
+            def _bounce() -> None:
+                result = operations.restart_services(
+                    manager.config, config_path=manager._config_path,  # noqa: SLF001
+                )
+                for err in result.errors:
+                    log.error("restart_service: %s", err)
+
+            threading.Thread(target=_bounce, daemon=True, name="api-restart").start()
+            return {"ok": True}
         threading.Thread(
             target=self._manager.restart, daemon=True, name="api-restart"
         ).start()
@@ -663,6 +712,7 @@ class Api:
     def list_clients(self) -> list[dict[str, Any]]:
         if self._manager is None:
             return []
+        self._manager.refresh_config()
         try:
             from outwarp_server.platforms import get_server_platform
             iface = get_server_platform().wg_interface_name()
@@ -680,8 +730,15 @@ class Api:
         sampled_at = time.time()
         out = []
         for c in self._manager.config.clients:
-            peer = live.get(c.public_key)
-            if peer is None:
+            peer = live.get(c.public_key) if c.public_key else None
+            if not c.public_key:
+                # Slot reserved, token not redeemed yet: there is no peer to
+                # be online or offline. Shown as its own state so an admin can
+                # tell "never enrolled" from "enrolled, not connected".
+                status_, age = "pending", None
+                endpoint = None
+                rx = tx = 0
+            elif peer is None:
                 status_, age = "unknown", None
                 endpoint = None
                 rx = tx = 0
@@ -727,23 +784,17 @@ class Api:
                 datetime.datetime.now(datetime.UTC).date() + datetime.timedelta(days=d)
             ).isoformat()
         try:
-            owcfg_path = self._manager.add_client(name, expires_at=expires_at)
+            owcfg_bytes = self._manager.add_client(name, expires_at=expires_at)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:
             log.exception("add_client failed")
             return {"ok": False, "error": str(exc)}
-        try:
-            owcfg_bytes = owcfg_path.read_bytes()
-            owcfg_text = owcfg_bytes.decode("utf-8")
-        except OSError as exc:
-            return {"ok": False, "error": f"could not read generated owcfg: {exc}"}
         self._emit("clients", self.list_clients())
         return {
             "ok": True,
             "name": name,
-            "path": str(owcfg_path),
-            "owcfg": owcfg_text,
+            "owcfg": owcfg_bytes.decode("utf-8"),
             "owcfg_base64": base64.b64encode(owcfg_bytes).decode("ascii"),
         }
 

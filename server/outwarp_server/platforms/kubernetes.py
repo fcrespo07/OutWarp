@@ -35,6 +35,28 @@ class KubernetesServerPlatform(LinuxServerPlatform):
         # In K8s use: kubectl rollout restart deployment/outwarp-server
         pass
 
+    # ── enrolment listener: hosted by ServerManager, same as wstunnel ────────
+
+    @property
+    def os_managed_transport(self) -> bool:
+        return False
+
+    @property
+    def manages_enroll_service(self) -> bool:
+        return False
+
+    def install_enroll_service(self, exec_start: str) -> None:
+        pass
+
+    def uninstall_enroll_service(self) -> None:
+        pass
+
+    def is_enroll_running(self) -> bool:
+        return False
+
+    def restart_enroll_service(self) -> None:
+        pass
+
     # ── WireGuard: wg-quick directly, no systemd ─────────────────────────────
 
     def install_wg_config(self, conf_text: str, interface: str = "wg0") -> None:

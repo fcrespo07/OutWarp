@@ -143,10 +143,14 @@ class TestAddClient:
         assert main(["--config-dir", str(config_dir), "add-client", "laptop"]) == 0
 
         owcfg = json.loads((tmp_path / "laptop.owcfg").read_text(encoding="utf-8"))
-        assert owcfg["schema_version"] == 3
+        assert owcfg["schema_version"] == 4
         assert "client_private_key" not in owcfg["wireguard"]
         assert owcfg["enrollment"]["token"].startswith("ow_enroll_")
-        assert owcfg["enrollment"]["url"].startswith("https://")
+        # v4: redeemed through the tunnel port as a wstunnel forward to this
+        # loopback port on the server — no URL, no second public port.
+        assert owcfg["enrollment"] == {
+            "token": owcfg["enrollment"]["token"], "remote_port": 8444,
+        }
         # The PSK is still pre-shared through the profile; only the identity key
         # is withheld.
         assert owcfg["wireguard"]["preshared_key"] == "cHNrdmFsdWU="
@@ -420,12 +424,14 @@ class TestRestart:
     ) -> None:
         config_dir = _write_server_config(tmp_path)
         fake = MagicMock()
+        fake.manages_enroll_service = False
         mock_platform.return_value = fake
         ret = main(["--config-dir", str(config_dir), "restart"])
         assert ret == 0
         fake.install_wg_config.assert_called_once()
         fake.restart_wg.assert_called_once()
         fake.restart_wstunnel_service.assert_called_once()
+        fake.restart_enroll_service.assert_called_once()
 
     @patch("outwarp_server.platforms.get_server_platform")
     def test_restart_returns_1_on_wg_failure(
@@ -754,3 +760,80 @@ class TestRenewCert:
     def test_reports_a_missing_key_instead_of_crashing(self, tmp_path: Path) -> None:
         config_dir = _write_server_config(tmp_path)  # cert/key paths don't exist
         assert main(["--config-dir", str(config_dir), "renew-cert"]) == 1
+
+
+class TestEnrollListener:
+    """`enroll-listener` is the ExecStart of outwarp-enroll.service on a
+    systemd install — the only supervisor the token listener has there."""
+
+    @patch("outwarp_server.enroll_server.serve")
+    def test_serves_the_launch_config_dir_until_signalled(
+        self, mock_serve: MagicMock, tmp_path: Path,
+    ) -> None:
+        import threading
+
+        config_dir = _write_server_config(tmp_path)
+        httpd = MagicMock()
+        mock_serve.return_value = httpd
+        with patch.object(threading.Event, "wait", return_value=True):
+            ret = main(["--config-dir", str(config_dir), "enroll-listener"])
+        assert ret == 0
+        cfg, path = mock_serve.call_args.args
+        assert path == config_dir / "server_config.json"
+        assert cfg.enroll_port == 8444
+        httpd.shutdown.assert_called_once()
+        httpd.server_close.assert_called_once()
+
+    def test_requires_root(self, monkeypatch, tmp_path: Path) -> None:
+        # Same shape as TestRootCheck: os.geteuid does not exist on Windows,
+        # so the gate itself is what gets asserted, not the euid.
+        monkeypatch.delenv("OUTWARP_TEST_MODE", raising=False)
+        config_dir = _write_server_config(tmp_path)
+        with (
+            patch("outwarp_server.cli._require_root", side_effect=SystemExit(1)) as gate,
+            pytest.raises(SystemExit),
+        ):
+            main(["--config-dir", str(config_dir), "enroll-listener"])
+        gate.assert_called_once_with("enroll-listener")
+
+
+class TestServe:
+    """`serve` is the container entrypoint. It used to block on its stop
+    event no matter what the manager did, so a wstunnel that died left a
+    process Docker/kubelet considered healthy with nothing listening."""
+
+    def _run(self, tmp_path: Path, drive):
+        from outwarp_server.server_manager import ServerState
+
+        config_dir = _write_server_config(tmp_path)
+        mgr = MagicMock()
+
+        def _start():
+            drive(mgr.add_listener.call_args.args[0], ServerState)
+
+        mgr.start.side_effect = _start
+        with (
+            patch("outwarp_server.server_manager.ServerManager", return_value=mgr),
+            patch("signal.signal"),
+        ):
+            return main(["--config-dir", str(config_dir), "serve"]), mgr
+
+    def test_exits_nonzero_when_the_manager_reports_error(self, tmp_path: Path) -> None:
+        from outwarp_server.cli import EXIT_SERVER_ERROR
+
+        def _drive(listener, state):
+            listener(state.STARTING)
+            listener(state.ERROR)
+
+        rc, mgr = self._run(tmp_path, _drive)
+        assert rc == EXIT_SERVER_ERROR == 3
+        mgr.stop.assert_called_once()
+
+    def test_returns_zero_on_a_signalled_stop(self, tmp_path: Path) -> None:
+        def _drive(listener, state):
+            listener(state.RUNNING)
+
+        with patch("threading.Event.wait", return_value=True):
+            rc, mgr = self._run(tmp_path, _drive)
+        assert rc == 0
+        mgr.stop.assert_called_once()

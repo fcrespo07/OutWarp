@@ -150,7 +150,7 @@ class DashboardScreen(Screen):
             if not result:
                 return
             from outwarp_server import operations
-            res = operations.restart_services(self.app.config)
+            res = operations.restart_services(self.app.config, config_path=self.app.config_path)
             if res.errors:
                 self.notify("Restart had issues: " + "; ".join(res.errors), severity="error")
             else:
@@ -159,7 +159,10 @@ class DashboardScreen(Screen):
         self.app.push_screen(
             ConfirmModal(
                 title="Restart services?",
-                body="Regenerate wg0.conf and bounce wg-quick + wstunnel.",
+                body=(
+                    "Regenerate wg0.conf and bounce wg-quick, wstunnel and the "
+                    "enrolment listener."
+                ),
                 ok_label="Restart",
             ),
             _go,

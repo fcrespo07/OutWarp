@@ -19,7 +19,7 @@ from outwarp_server.config import ServerConfig
 from outwarp_server.crypto import generate_tls_cert, generate_wg_keypair
 from outwarp_server.platforms import PlatformError, get_server_platform
 from outwarp_server.platforms.base import PrerequisiteStatus
-from outwarp_server.server_manager import build_wstunnel_command
+from outwarp_server.server_manager import build_enroll_listener_command, build_wstunnel_command
 from outwarp_server.wireguard import build_server_wg_conf
 
 log = logging.getLogger(__name__)
@@ -273,6 +273,18 @@ def run_setup(config_dir: Path) -> int:
         console.print(f"  [red]✗[/red] wstunnel: {exc}")
         return 1
 
+    # Without this, enrolment profiles are dead on a systemd install: nothing
+    # else runs the token listener once the wizard exits (it lives inside
+    # ServerManager, which only `serve`/the GUI keep alive).
+    try:
+        platform.install_enroll_service(
+            " ".join(build_enroll_listener_command(config_path))
+        )
+        console.print("  [green]✓[/green] enrolment listener enabled")
+    except PlatformError as exc:
+        console.print(f"  [red]✗[/red] enrolment listener: {exc}")
+        return 1
+
     if use_domain:
         _configure_caddy(config)
 
@@ -335,7 +347,6 @@ def _configure_caddy(config: ServerConfig) -> None:
             config.http_upgrade_path_prefix,
             internal_ws_port=config.internal_ws_port,
             acme_email=config.acme_email,
-            enroll_port=config.enroll_port,
         )
     except caddy.CaddyError as exc:
         console.print(f"  [red]✗[/red] Caddy: {exc}")

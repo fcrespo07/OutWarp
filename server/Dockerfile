@@ -38,6 +38,14 @@ RUN set -eux; \
 
 WORKDIR /app
 
+# Auto-detection (platforms/__init__.py) only recognises Kubernetes via the
+# KUBERNETES_SERVICE_HOST env var that the kubelet injects — a plain
+# `docker run` (no Kubernetes API to reach) never sets it, so it used to fall
+# through to LinuxServerPlatform, which shells out to `systemctl` and fails
+# inside a container. "kubernetes" here doesn't mean "running under k8s"; it
+# means "a container supervised by ServerManager", which is true either way.
+ENV OUTWARP_PLATFORM=kubernetes
+
 COPY . .
 # Production (non-editable) install — no extras needed in a container:
 # Textual TUI and pywebview are desktop-only features.
