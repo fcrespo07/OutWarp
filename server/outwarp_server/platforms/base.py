@@ -68,6 +68,16 @@ class ServerPlatform(ABC):
     # only units behind — so Linux overrides them with a unit of its own.
 
     @property
+    def os_managed_transport(self) -> bool:
+        """True when wstunnel and WireGuard run as OS services this platform
+        can restart on its own (systemd), so a process that does not own the
+        wstunnel subprocess — the web panel, the GUI next to a headless
+        install — can still offer a restart. False where the transport is a
+        subprocess of some ServerManager (Windows, Docker, Kubernetes): from
+        another process there is nothing safe to drive."""
+        return False
+
+    @property
     def manages_enroll_service(self) -> bool:
         """True when this platform runs the listener as an OS service of its
         own (so status/doctor have a unit to report on)."""

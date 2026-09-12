@@ -3,7 +3,7 @@ const { Card, SLabel, PageHead, Btn, Pill, Dot, Toggle, Segmented, Stat, Field, 
         Sparkline, AreaChart, BarSeries, Donut, KV, Icons, useUI } = window;
 const { fmtBytes, fmtBps, fmtDuration, fmtAgo, tr } = window.DSfmt;
 
-const stateTone = (s) => s === "online" ? "good" : s === "idle" ? "warn" : "neutral";
+const stateTone = (s) => s === "online" ? "good" : s === "idle" || s === "pending" ? "warn" : "neutral";
 
 const MiniKV = ({ k, v, last }) => (
   <div style={{ display: "grid", gridTemplateColumns: "82px 1fr", gap: 8, padding: "5px 0", borderBottom: last ? "none" : "1px solid var(--line)" }}>
@@ -42,6 +42,7 @@ function ScreenDashboard({ C }) {
   const ui = useUI();
   const { T, live, server, go } = C;
   const online = live.totals.online, idle = live.totals.idle, offline = live.totals.offline;
+  // Pending (unenrolled) slots are not peers yet; they don't count as offline.
   const total = online + idle + offline;
   const services = deriveServices(live.status);
   const traffic = useTraffic(C, "24h");
@@ -207,6 +208,7 @@ function ScreenClients({ C }) {
     { value: "online", label: T.online },
     { value: "idle", label: T.idle },
     { value: "offline", label: T.offline },
+    { value: "pending", label: T.pending },
   ];
   const rows = live.clients.filter((c) => {
     if (filter !== "all" && c.state !== filter) return false;
@@ -335,6 +337,12 @@ function ScreenService({ C }) {
   const { T, live } = C;
   const [busy, setBusy] = React.useState("");
   const services = deriveServices(live.status);
+  // What this process may do: "full" (it runs wstunnel itself), "restart"
+  // (systemd units it can bounce), "none" (a panel next to a `serve`
+  // container it cannot drive). See Api._service_control.
+  const control = (live.status && live.status.service_control) || "none";
+  const canStartStop = control === "full";
+  const canRestart = control !== "none";
   const act = async (kind, confirmBody) => {
     if (confirmBody) { const ok = await C.confirm({ title: T[`service_${kind}`] || kind, body: confirmBody }); if (!ok) return; }
     setBusy(kind);
@@ -360,10 +368,15 @@ function ScreenService({ C }) {
       <Card>
         <SLabel style={{ marginBottom: 14 }}>{T.service_actions}</SLabel>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
-          <Btn kind="primary" icon={Icons.power(15)} disabled={!!busy} onClick={() => act("start")}>{T.service_start}</Btn>
-          <Btn icon={Icons.refresh(15)} disabled={!!busy} onClick={() => act("restart", T.service_confirmRestart)}>{T.service_restart}</Btn>
-          <Btn kind="danger" icon={Icons.power(15)} disabled={!!busy} onClick={() => act("stop", T.service_confirmRestart)}>{T.service_stop}</Btn>
+          <Btn kind="primary" icon={Icons.power(15)} disabled={!!busy || !canStartStop} onClick={() => act("start")}>{T.service_start}</Btn>
+          <Btn icon={Icons.refresh(15)} disabled={!!busy || !canRestart} onClick={() => act("restart", T.service_confirmRestart)}>{T.service_restart}</Btn>
+          <Btn kind="danger" icon={Icons.power(15)} disabled={!!busy || !canStartStop} onClick={() => act("stop", T.service_confirmRestart)}>{T.service_stop}</Btn>
         </div>
+        {control !== "full" && (
+          <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 12 }}>
+            {control === "restart" ? T.service_managedBySystemd : T.service_managedElsewhere}
+          </div>
+        )}
       </Card>
     </div>
   );

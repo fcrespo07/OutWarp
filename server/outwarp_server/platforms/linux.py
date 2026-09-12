@@ -102,6 +102,10 @@ class LinuxServerPlatform(ServerPlatform):
             raise PlatformError(f"Failed to restart wstunnel: {exc.stderr.strip()}") from exc
 
     @property
+    def os_managed_transport(self) -> bool:
+        return True
+
+    @property
     def manages_enroll_service(self) -> bool:
         return True
 

@@ -27,6 +27,9 @@ const ipOnly = (addr) => (addr ? String(addr).split("/")[0] : "—");
 // Map a raw list_clients() row to the shape the screens expect, carrying the
 // derived live rate + sparkline computed in useLiveData.
 function adaptClient(row, derived) {
+  // "unknown" = enrolled but not on the interface right now; "pending" (no
+  // public key yet, token unredeemed) is a state of its own — there is no
+  // peer to be online or offline.
   const state = row.status === "unknown" ? "offline" : row.status;
   return {
     name: row.name,
@@ -52,21 +55,23 @@ function useLiveData() {
     ref.current = {
       status: null,
       clients: [],
-      totals: { online: 0, idle: 0, offline: 0, rxBps: 0, txBps: 0 },
+      totals: { online: 0, idle: 0, offline: 0, pending: 0, rxBps: 0, txBps: 0 },
       rxSeries: new Array(60).fill(0),
       txSeries: new Array(60).fill(0),
       logs: [],
       uptimeSec: null,
     };
   }
-  const prevRef = useRef({});       // public_key -> {rx, tx, t}
-  const sparkRef = useRef({});      // public_key -> number[]
-  const peakRef = useRef({});       // public_key -> decaying peak (sparkline scale)
+  // Keyed by client name: pending clients all share an empty public_key and
+  // used to collapse into one row of rate/sparkline state.
+  const prevRef = useRef({});       // name -> {rx, tx, t}
+  const sparkRef = useRef({});      // name -> number[]
+  const peakRef = useRef({});       // name -> decaying peak (sparkline scale)
 
   const onClients = useCallback((rows) => {
     const s = ref.current;
     const browserNow = Date.now() / 1000;
-    let totRx = 0, totTx = 0, online = 0, idle = 0, offline = 0;
+    let totRx = 0, totTx = 0, online = 0, idle = 0, offline = 0, pending = 0;
     const adapted = (rows || []).map((row) => {
       // The server stamps each sample with the time it actually took it
       // (sampled_at). Using that instead of the browser's clock keeps the
@@ -75,33 +80,34 @@ function useLiveData() {
       // real dt instead of a near-zero (or huge) one avoids a bogus
       // instantaneous spike or trough.
       const sampledAt = row.sampled_at != null ? row.sampled_at : browserNow;
-      const prev = prevRef.current[row.public_key];
+      const prev = prevRef.current[row.name];
       let rxBps = 0, txBps = 0;
       if (prev && sampledAt > prev.t) {
         const dt = sampledAt - prev.t;
         rxBps = Math.max(0, (row.rx_bytes - prev.rx) / dt);
         txBps = Math.max(0, (row.tx_bytes - prev.tx) / dt);
       }
-      prevRef.current[row.public_key] = { rx: row.rx_bytes || 0, tx: row.tx_bytes || 0, t: sampledAt };
-      const ring = (sparkRef.current[row.public_key] || new Array(24).fill(0)).slice(1);
+      prevRef.current[row.name] = { rx: row.rx_bytes || 0, tx: row.tx_bytes || 0, t: sampledAt };
+      const ring = (sparkRef.current[row.name] || new Array(24).fill(0)).slice(1);
       ring.push(rxBps);
-      sparkRef.current[row.public_key] = ring;
+      sparkRef.current[row.name] = ring;
       const state = row.status === "unknown" ? "offline" : row.status;
       if (state === "online") { online++; totRx += rxBps; totTx += txBps; }
       else if (state === "idle") idle++;
+      else if (state === "pending") pending++;
       else offline++;
       // Normalize to 0..1 for the sparkline with the same decaying-peak
       // trick as the throughput chart — a raw per-tick max makes a flat
       // line look like it keeps spiking as old samples scroll out.
-      const prevPeak = peakRef.current[row.public_key] || 1;
+      const prevPeak = peakRef.current[row.name] || 1;
       const ringMax = Math.max(...ring, 1);
       const peak = ringMax > prevPeak ? ringMax : Math.max(ringMax, prevPeak * 0.95);
-      peakRef.current[row.public_key] = peak;
+      peakRef.current[row.name] = peak;
       const normSpark = ring.map((v) => v / peak);
       return adaptClient(row, { rxBps, txBps, spark: normSpark });
     });
     s.clients = adapted;
-    s.totals = { online, idle, offline, rxBps: totRx, txBps: totTx };
+    s.totals = { online, idle, offline, pending, rxBps: totRx, txBps: totTx };
     s.rxSeries = s.rxSeries.slice(1).concat(totRx);
     s.txSeries = s.txSeries.slice(1).concat(totTx);
     force((x) => x + 1);

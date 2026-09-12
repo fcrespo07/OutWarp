@@ -203,18 +203,18 @@ def test_list_clients_merges_live_state():
     assert by_name["bob"]["sampled_at"] == 10_010
 
 
-def test_add_client_returns_owcfg(tmp_path):
-    owcfg_file = tmp_path / "alice.owcfg"
-    owcfg_file.write_text('{"hi": 1}', encoding="utf-8")
+def test_add_client_returns_owcfg():
+    """The manager hands back bytes and leaves no file behind: the GUI's save
+    dialog and the panel's download are the delivery, not the server's cwd."""
     mgr = _make_mgr()
-    mgr.add_client.return_value = owcfg_file
+    mgr.add_client.return_value = b'{"hi": 1}'
 
     api, _ = _make_api(mgr)
     r = api.add_client("alice")
 
     assert r["ok"] is True
     assert r["name"] == "alice"
-    assert r["path"] == str(owcfg_file)
+    assert "path" not in r
     assert r["owcfg"] == '{"hi": 1}'
     assert base64.b64decode(r["owcfg_base64"]) == b'{"hi": 1}'
     mgr.add_client.assert_called_once_with("alice", expires_at="")
@@ -885,3 +885,82 @@ def test_update_server_config_does_not_clobber_secrets_written_by_another_proces
     assert saved.port == 8443
     assert saved.owcfg_signing_private_key == "c2VjcmV0"
     assert saved.owcfg_signing_key_id == "0011223344556677"
+
+
+def test_list_clients_marks_unenrolled_slots_as_pending():
+    """A reserved slot has no public key, so there is no peer to be online or
+    offline; the dashboard used to fold it into "offline" and key its per-row
+    state on the empty public key, so every pending client shared one row."""
+    clients = [
+        ClientEntry(name="alice", public_key="aliceKey", address="10.0.0.2/32"),
+        ClientEntry(name="new", public_key="", address="10.0.0.3/32"),
+    ]
+    mgr = _make_mgr(state=ServerState.RUNNING, clients=clients)
+    api, _ = _make_api(mgr)
+    with patch("outwarp_server.api.get_live_peers", return_value={}):
+        out = {c["name"]: c for c in api.list_clients()}
+    assert out["alice"]["status"] == "unknown"
+    assert out["new"]["status"] == "pending"
+    assert api.get_status()["clients_pending"] == 1
+
+
+def test_status_and_clients_refresh_the_config_first():
+    mgr = _make_mgr()
+    api, _ = _make_api(mgr)
+    with patch("outwarp_server.api.get_live_peers", return_value={}):
+        api.get_status()
+        api.list_clients()
+    assert mgr.refresh_config.call_count == 2
+
+
+class TestServiceControl:
+    """What the Service screen may do depends on who runs the tunnel. A
+    panel next to a `serve` container used to run `wg-quick down` under the
+    live tunnel on "stop", and "start" then spawned a second wstunnel that
+    died on the taken port."""
+
+    def _api(self, *, owns: bool, os_managed: bool):
+        mgr = _make_mgr(state=ServerState.RUNNING)
+        mgr.owns_transport = owns
+        plat = MagicMock()
+        plat.os_managed_transport = os_managed
+        api, _ = _make_api(mgr)
+        return api, mgr, patch("outwarp_server.platforms.get_server_platform", return_value=plat)
+
+    def test_full_when_this_process_owns_wstunnel(self):
+        api, mgr, plat = self._api(owns=True, os_managed=False)
+        with plat:
+            assert api.get_status()["service_control"] == "full"
+            assert api.start_service() == {"ok": True}
+            assert api.stop_service() == {"ok": True}
+            assert api.restart_service() == {"ok": True}
+        mgr.start.assert_called_once()
+
+    def test_restart_only_next_to_systemd_units(self):
+        api, mgr, plat = self._api(owns=False, os_managed=True)
+        with plat, patch("outwarp_server.operations.restart_services") as restart:
+            assert api.get_status()["service_control"] == "restart"
+            assert api.start_service()["ok"] is False
+            assert api.stop_service()["ok"] is False
+            assert api.restart_service() == {"ok": True}
+            import time
+            for _ in range(50):
+                if restart.called:
+                    break
+                time.sleep(0.01)
+        restart.assert_called_once()
+        mgr.start.assert_not_called()
+        mgr.stop.assert_not_called()
+        mgr.restart.assert_not_called()
+
+    def test_nothing_from_a_sidecar_panel(self):
+        api, mgr, plat = self._api(owns=False, os_managed=False)
+        with plat:
+            assert api.get_status()["service_control"] == "none"
+            for call in (api.start_service, api.stop_service, api.restart_service):
+                r = call()
+                assert r["ok"] is False
+                assert "another process" in r["error"]
+        mgr.start.assert_not_called()
+        mgr.stop.assert_not_called()
+        mgr.restart.assert_not_called()

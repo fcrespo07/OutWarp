@@ -145,7 +145,7 @@ function AddClientModal({ T, C, onClose }) {
               <div>
                 <div style={{ border: "1px solid color-mix(in srgb, var(--brand-2) 36%, transparent)", background: "color-mix(in srgb, var(--brand-2) 7%, transparent)", borderRadius: ui.radiusSm, padding: "12px 14px", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.7 }}>
                   <div><span style={{ color: "var(--brand-2)" }}>✓</span> <b>{result.name}.owcfg</b> <span style={{ color: "var(--text-3)" }}>· {T.add_done}</span></div>
-                  <div style={{ color: "var(--text-3)", wordBreak: "break-all" }}>{T.add_writtenTo} {result.path}</div>
+                  {result.path && <div style={{ color: "var(--text-3)", wordBreak: "break-all" }}>{T.add_writtenTo} {result.path}</div>}
                   <div><span style={{ color: "var(--brand-2)" }}>✓</span> <span style={{ color: "var(--text-2)" }}>hot-added · wg syncconf wg0</span></div>
                 </div>
               </div>
@@ -176,7 +176,7 @@ function ClientDrawer({ T, client, lang, C, onClose, confirm }) {
     return () => { alive = false; };
   }, [client.name]);
   if (!client) return null;
-  const tone = client.state === "online" ? "good" : client.state === "idle" ? "warn" : "neutral";
+  const tone = client.state === "online" ? "good" : client.state === "idle" || client.state === "pending" ? "warn" : "neutral";
   const allowed = detail && detail.allowed_ips ? detail.allowed_ips.join(", ") : "—";
 
   // The server never stores the client's private key, so producing a fresh
@@ -221,7 +221,8 @@ function ClientDrawer({ T, client, lang, C, onClose, confirm }) {
           <ECard pad={14} style={{ background: "var(--bg)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)", letterSpacing: ".08em", textTransform: "uppercase", fontFamily: "var(--font-mono)" }}>{T.detail_session}</span>
-              {client.state !== "offline" && <EPill tone="good">{EIcons.bolt(11)} {T.detail_live}</EPill>}
+              {(client.state === "online" || client.state === "idle") && <EPill tone="good">{EIcons.bolt(11)} {T.detail_live}</EPill>}
+              {client.state === "pending" && <EPill tone="warn">{T.detail_pending}</EPill>}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>

@@ -38,6 +38,10 @@ class KubernetesServerPlatform(LinuxServerPlatform):
     # ── enrolment listener: hosted by ServerManager, same as wstunnel ────────
 
     @property
+    def os_managed_transport(self) -> bool:
+        return False
+
+    @property
     def manages_enroll_service(self) -> bool:
         return False
 
