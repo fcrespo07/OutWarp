@@ -789,9 +789,11 @@ class TestEnrollListener:
         # so the gate itself is what gets asserted, not the euid.
         monkeypatch.delenv("OUTWARP_TEST_MODE", raising=False)
         config_dir = _write_server_config(tmp_path)
-        with patch("outwarp_server.cli._require_root", side_effect=SystemExit(1)) as gate:
-            with pytest.raises(SystemExit):
-                main(["--config-dir", str(config_dir), "enroll-listener"])
+        with (
+            patch("outwarp_server.cli._require_root", side_effect=SystemExit(1)) as gate,
+            pytest.raises(SystemExit),
+        ):
+            main(["--config-dir", str(config_dir), "enroll-listener"])
         gate.assert_called_once_with("enroll-listener")
 
 
