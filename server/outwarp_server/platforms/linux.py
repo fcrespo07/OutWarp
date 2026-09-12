@@ -12,6 +12,8 @@ log = logging.getLogger(__name__)
 
 _SERVICE_NAME = "wstunnel-outwarp.service"
 _SERVICE_PATH = Path("/etc/systemd/system") / _SERVICE_NAME
+_ENROLL_SERVICE_NAME = "outwarp-enroll.service"
+_ENROLL_SERVICE_PATH = Path("/etc/systemd/system") / _ENROLL_SERVICE_NAME
 _SYSCTL_DROP_IN = Path("/etc/sysctl.d/99-outwarp.conf")
 # These mirror the paths in installer/linux/install.sh — keep in sync.
 # 0.5.x ships via pipx (PIPX_HOME=/opt/pipx); 0.4.x used a plain venv under
@@ -25,6 +27,24 @@ _UNIT_TEMPLATE = """\
 [Unit]
 Description=OutWarp wstunnel server
 After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={exec_start}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+_ENROLL_UNIT_TEMPLATE = """\
+[Unit]
+Description=OutWarp enrolment listener
+# Loopback-only; clients reach it through the wstunnel forward, so it is only
+# useful while the transport is up.
+After=network-online.target {wstunnel_unit}
 Wants=network-online.target
 
 [Service]
@@ -80,6 +100,49 @@ class LinuxServerPlatform(ServerPlatform):
             _run(["systemctl", "restart", _SERVICE_NAME])
         except subprocess.CalledProcessError as exc:
             raise PlatformError(f"Failed to restart wstunnel: {exc.stderr.strip()}") from exc
+
+    @property
+    def manages_enroll_service(self) -> bool:
+        return True
+
+    def install_enroll_service(self, exec_start: str) -> None:
+        unit = _ENROLL_UNIT_TEMPLATE.format(
+            exec_start=exec_start, wstunnel_unit=_SERVICE_NAME,
+        )
+        try:
+            _ENROLL_SERVICE_PATH.write_text(unit, encoding="utf-8")
+            os.chmod(_ENROLL_SERVICE_PATH, 0o644)
+        except OSError as exc:
+            raise PlatformError(f"Failed to write enrolment unit: {exc}") from exc
+        try:
+            _run(["systemctl", "daemon-reload"])
+            _run(["systemctl", "enable", "--now", _ENROLL_SERVICE_NAME])
+        except subprocess.CalledProcessError as exc:
+            raise PlatformError(
+                f"Failed to enable enrolment listener: {exc.stderr.strip()}"
+            ) from exc
+        log.info("Installed enrolment listener service: %s", _ENROLL_SERVICE_PATH)
+
+    def uninstall_enroll_service(self) -> None:
+        try:
+            _run(["systemctl", "disable", "--now", _ENROLL_SERVICE_NAME], check=False)
+            if _ENROLL_SERVICE_PATH.exists():
+                _ENROLL_SERVICE_PATH.unlink()
+            _run(["systemctl", "daemon-reload"], check=False)
+        except OSError as exc:
+            raise PlatformError(f"Failed to remove enrolment unit: {exc}") from exc
+
+    def is_enroll_running(self) -> bool:
+        result = _run(["systemctl", "is-active", _ENROLL_SERVICE_NAME], check=False)
+        return result.stdout.strip() == "active"
+
+    def restart_enroll_service(self) -> None:
+        try:
+            _run(["systemctl", "restart", _ENROLL_SERVICE_NAME])
+        except subprocess.CalledProcessError as exc:
+            raise PlatformError(
+                f"Failed to restart enrolment listener: {exc.stderr.strip()}"
+            ) from exc
 
     def install_wg_config(self, conf_text: str, interface: str = "wg0") -> None:
         conf_path = self.wg_config_dir() / f"{interface}.conf"

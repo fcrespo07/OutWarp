@@ -54,6 +54,47 @@ class TestLinuxPlatform:
         assert ["systemctl", "daemon-reload"] in commands
         assert any("enable" in cmd for cmd in commands)
 
+    @patch("outwarp_server.platforms.linux._ENROLL_SERVICE_PATH")
+    @patch("outwarp_server.platforms.linux.os.chmod")
+    @patch("outwarp_server.platforms.linux._run")
+    def test_install_enroll_service_writes_unit_after_wstunnel_and_enables(
+        self, mock_run: MagicMock, mock_chmod: MagicMock, mock_path: MagicMock,
+    ) -> None:
+        """B-018: a systemd install left nothing running the enrolment
+        listener — it only lived inside ServerManager, which the wizard never
+        keeps alive. Linux now gets a unit of its own, ordered after wstunnel
+        since the listener is only reachable through its forward."""
+        platform = LinuxServerPlatform()
+        assert platform.manages_enroll_service is True
+        platform.install_enroll_service(
+            "/usr/local/bin/outwarp-server --config-dir /etc/outwarp enroll-listener"
+        )
+        unit_text = mock_path.write_text.call_args[0][0]
+        assert (
+            "ExecStart=/usr/local/bin/outwarp-server --config-dir /etc/outwarp enroll-listener"
+            in unit_text
+        )
+        assert "After=network-online.target wstunnel-outwarp.service" in unit_text
+        assert "Restart=always" in unit_text
+        commands = [call.args[0] for call in mock_run.call_args_list]
+        assert ["systemctl", "daemon-reload"] in commands
+        assert ["systemctl", "enable", "--now", "outwarp-enroll.service"] in commands
+
+    @patch("outwarp_server.platforms.linux._run")
+    def test_enroll_service_lifecycle(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(stdout="active\n")
+        platform = LinuxServerPlatform()
+        assert platform.is_enroll_running() is True
+        platform.restart_enroll_service()
+        with patch("outwarp_server.platforms.linux._ENROLL_SERVICE_PATH") as unit:
+            unit.exists.return_value = True
+            platform.uninstall_enroll_service()
+            unit.unlink.assert_called_once()
+        commands = [call.args[0] for call in mock_run.call_args_list]
+        assert ["systemctl", "is-active", "outwarp-enroll.service"] in commands
+        assert ["systemctl", "restart", "outwarp-enroll.service"] in commands
+        assert ["systemctl", "disable", "--now", "outwarp-enroll.service"] in commands
+
     @patch("outwarp_server.platforms.linux._run")
     def test_is_wstunnel_running_true(self, mock_run: MagicMock) -> None:
         mock_run.return_value = MagicMock(stdout="active\n")
@@ -163,6 +204,12 @@ class TestStubPlatforms:
         # install/uninstall are no-ops on Windows (ServerManager owns wstunnel)
         p.install_wstunnel_service("/b server")
         p.uninstall_wstunnel_service()
+        # Same for the enrolment listener: ServerManager hosts it in-process.
+        assert p.manages_enroll_service is False
+        p.install_enroll_service("/b enroll-listener")
+        p.uninstall_enroll_service()
+        p.restart_enroll_service()
+        assert p.is_enroll_running() is False
 
         # is_wstunnel_running checks via tasklist; mock subprocess so it works off-platform
         with patch(

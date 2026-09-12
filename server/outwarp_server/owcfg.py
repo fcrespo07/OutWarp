@@ -23,7 +23,7 @@ def build_owcfg(
     a .owcfg built without them stays byte-for-byte compatible with older
     clients (which ignore unknown keys anyway).
 
-    With `enrollment_token` the profile is a v3 one: it carries no
+    With `enrollment_token` the profile is a v4 one: it carries no
     `client_private_key` at all, and the client generates its own keypair on
     import and redeems the token to register the public half. That is the shape
     that keeps client private keys off the server and out of the delivery
@@ -96,10 +96,16 @@ def build_owcfg(
         },
     }
     if enrollment_token:
-        owcfg["schema_version"] = 3
+        # v4: the token is redeemed *through the transport* — the client opens
+        # a wstunnel TCP forward to 127.0.0.1:remote_port on the server (see
+        # enroll_server.py) over the tunnel port it already has in `server`,
+        # so there is nothing else to dial. v3 carried a public HTTPS `url` on
+        # a second port instead; a v3 client refuses this file with "update
+        # OutWarp", which is the honest answer — it cannot enrol here.
+        owcfg["schema_version"] = 4
         owcfg["enrollment"] = {
             "token": enrollment_token,
-            "url": server_config.enroll_url,
+            "remote_port": server_config.enroll_port,
         }
     if expires_at:
         owcfg["meta"] = {"expires_at": expires_at}

@@ -113,6 +113,7 @@ class TestSystemd:
     def test_fail_includes_fix_callable(self) -> None:
         with (
             patch("outwarp_server.diagnostics._has_systemd", return_value=True),
+            patch("outwarp_server.diagnostics._enroll_unit_installed", return_value=True),
             patch(
                 "outwarp_server.diagnostics._run_linux",
                 return_value=_completed("inactive\n"),
@@ -122,6 +123,40 @@ class TestSystemd:
         assert r.status is Status.FAIL
         assert r.fix_kind == "auto"
         assert callable(r.fix_callable)
+
+    def test_checks_the_enrolment_unit_too(self) -> None:
+        """B-018: a systemd install had no process running the enrolment
+        listener at all, so every enrolment profile was dead on arrival while
+        doctor reported all green. The unit is now part of the set."""
+        with (
+            patch("outwarp_server.diagnostics._has_systemd", return_value=True),
+            patch("outwarp_server.diagnostics._enroll_unit_installed", return_value=True),
+            patch(
+                "outwarp_server.diagnostics._run_linux",
+                return_value=_completed("active\n"),
+            ) as run,
+        ):
+            r = diagnostics.check_linux_systemd(_config())
+        assert r.status is Status.PASS
+        queried = [call.args[0][-1] for call in run.call_args_list]
+        assert "outwarp-enroll.service" in queried
+
+    def test_missing_enrolment_unit_points_at_restart_not_systemctl(self) -> None:
+        """Upgrading from < 0.13 leaves no outwarp-enroll.service on disk;
+        `systemctl restart` of a unit that does not exist is a dead end, so
+        the remediation is the command that (re)writes every unit."""
+        def _is_active(cmd, timeout=5.0):
+            return _completed("inactive\n" if "enroll" in cmd[-1] else "active\n")
+
+        with (
+            patch("outwarp_server.diagnostics._has_systemd", return_value=True),
+            patch("outwarp_server.diagnostics._enroll_unit_installed", return_value=False),
+            patch("outwarp_server.diagnostics._run_linux", side_effect=_is_active),
+        ):
+            r = diagnostics.check_linux_systemd(_config())
+        assert r.status is Status.FAIL
+        assert r.fix_kind == "manual"
+        assert r.remediation_command == "outwarp-server restart"
 
     def test_skip_when_no_systemd(self) -> None:
         """Container (Docker/K8s): no systemd, wstunnel/WireGuard supervised
@@ -293,3 +328,50 @@ def test_gather_includes_linux_checks() -> None:
     assert "linux_binaries" in keys
     assert "linux_ip_forward" in keys
     assert "linux_nat_masquerade" in keys
+
+
+class TestEnrollListener:
+    """B-018: doctor was all green on a server where no enrolment could ever
+    complete. The listener is now a check of its own, with the same three
+    outcomes as the WG forwarder: loopback = pass, public = warn, absent = fail."""
+
+    _HEADER = "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process\n"
+
+    def _ss(self, local: str) -> str:
+        return self._HEADER + f'LISTEN 0 128 {local} 0.0.0.0:* users:(("python3",pid=7,fd=4))\n'
+
+    def test_pass_on_loopback(self) -> None:
+        with patch("outwarp_server.diagnostics._run_linux",
+                   return_value=_completed(self._ss("127.0.0.1:8444"))):
+            r = diagnostics.check_linux_enroll_listener(_config())
+        assert r.status is Status.PASS
+
+    def test_warns_when_still_public(self) -> None:
+        with patch("outwarp_server.diagnostics._run_linux",
+                   return_value=_completed(self._ss("0.0.0.0:8444"))):
+            r = diagnostics.check_linux_enroll_listener(_config())
+        assert r.status is Status.WARN
+        assert r.remediation_command == "outwarp-server restart"
+
+    def test_fails_with_the_unit_to_start_under_systemd(self) -> None:
+        with (
+            patch("outwarp_server.diagnostics._has_systemd", return_value=True),
+            patch("outwarp_server.diagnostics._run_linux",
+                  return_value=_completed(self._HEADER)),
+        ):
+            r = diagnostics.check_linux_enroll_listener(_config())
+        assert r.status is Status.FAIL
+        assert r.fix_kind == "auto"
+        assert r.remediation_command == "systemctl start outwarp-enroll.service"
+
+    def test_fails_pointing_at_the_serve_process_in_a_container(self) -> None:
+        with (
+            patch("outwarp_server.diagnostics._has_systemd", return_value=False),
+            patch("outwarp_server.diagnostics._run_linux",
+                  return_value=_completed(self._HEADER)),
+        ):
+            r = diagnostics.check_linux_enroll_listener(_config())
+        assert r.status is Status.FAIL
+        assert r.fix_kind == "manual"
+        assert "serve" in r.remediation
+

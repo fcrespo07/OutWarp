@@ -1,27 +1,40 @@
 """Client half of the enrolment handshake.
 
-A v3 .owcfg arrives without a private key: it carries a one-time token and the
-URL to redeem it at. This module generates the keypair locally, posts only the
-public half, and hands back a profile that is complete — with a private key that
-has never left this machine.
+An enrolment .owcfg arrives without a private key: it carries a one-time token
+and where to redeem it. This module generates the keypair locally, posts only
+the public half, and hands back a profile that is complete — with a private key
+that has never left this machine.
 
-The redemption call happens before the tunnel exists, so it is the one request
-the client makes over the open network. It is authenticated the same way the
-transport is: against the system CA store for a profile behind a real
-certificate, or against the profile's own pin for a self-signed server.
+The redemption happens before the tunnel exists, so it is the one request the
+client makes over the open network. Since schema v4 it goes *through the tunnel
+port*: wstunnel opens a TCP forward to the server's loopback listener over the
+same WSS front (and, if that is blocked, the same fallback ladder) the tunnel
+itself will use, so enrolment needs no port of its own and inherits the
+transport's trust model — the system CA store behind a real certificate, the
+profile's own pin for a self-signed server. v3 profiles carried a public HTTPS
+URL on a second port instead; that path is kept so a profile issued by an older
+server still imports.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import socket
 import ssl
+import subprocess
+import sys
+import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import replace
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from outwarp.config import ClientConfig, ConfigError
+from outwarp.fallback import ConnectionStrategy, build_ladder, strategy_to_command
 from outwarp.keygen import KeygenError, generate_keypair
 from outwarp.network import (
     CertificateNotTrustedError,
@@ -35,10 +48,22 @@ log = logging.getLogger(__name__)
 
 _TIMEOUT = 20.0
 _USER_AGENT = "OutWarp-Enroll"
+# How long to give wstunnel to open its local listener. It binds before dialling
+# the server, so this only covers process start-up, not the network.
+_FORWARD_READY_TIMEOUT = 5.0
 
 
 class EnrollError(RuntimeError):
-    pass
+    """User-facing enrolment failure.
+
+    ``terminal`` marks the ones another transport rung cannot fix — the server
+    answered and refused, or it is not the server the profile was issued for —
+    so the ladder stops instead of spending a retry per rung.
+    """
+
+    def __init__(self, message: str, *, terminal: bool = False) -> None:
+        super().__init__(message)
+        self.terminal = terminal
 
 
 def needs_enrollment(config: ClientConfig) -> bool:
@@ -55,8 +80,8 @@ def enroll(config: ClientConfig) -> ClientConfig:
     if not needs_enrollment(config):
         return config
 
-    url = config.enrollment.url
-    if not url:
+    enrollment = config.enrollment
+    if not (enrollment.remote_port or enrollment.url):
         raise EnrollError("This profile has an enrolment token but no endpoint to use it at.")
 
     try:
@@ -64,10 +89,12 @@ def enroll(config: ClientConfig) -> ClientConfig:
     except KeygenError as exc:
         raise EnrollError(str(exc)) from exc
 
-    _verify_endpoint(config, url)
-    payload = _post(
-        url, {"token": config.enrollment.token, "client_public_key": public_key}, config
-    )
+    body = {"token": enrollment.token, "client_public_key": public_key}
+    if enrollment.remote_port:
+        payload = _redeem_via_transport(config, body)
+    else:
+        _verify_endpoint(config, enrollment.url)
+        payload = _post(enrollment.url, body, config)
 
     # The server is authoritative for the address it reserved; trust its answer
     # over the copy baked into the file in case the pool shifted.
@@ -94,6 +121,96 @@ def enroll(config: ClientConfig) -> ClientConfig:
     return replace(config, wireguard=wg, enrollment=EnrollmentConfig())
 
 
+def _redeem_via_transport(config: ClientConfig, body: dict) -> dict:
+    """Post the token through a wstunnel forward on the tunnel port.
+
+    Walks the same rungs the tunnel would (direct, public-DNS, proxy, alternate
+    ports — everything that dials the profile's own endpoint) so a network that
+    needs the second rung to carry WireGuard also gets to enrol. Each rung is
+    pinned the way the tunnel pins it before wstunnel is started.
+    """
+    from outwarp.tunnel import find_wstunnel
+
+    try:
+        wstunnel_bin = find_wstunnel()
+    except Exception as exc:  # TunnelError, kept out of the import graph
+        raise EnrollError(str(exc)) from exc
+
+    rungs = [r for r in build_ladder(config) if r.endpoint == config.server.endpoint]
+    failures: list[str] = []
+    for rung in rungs:
+        try:
+            if rung.scheme == "wss" and not rung.proxy and rung.pin_mode != "none":
+                _verify_endpoint(config, f"https://{rung.endpoint}:{rung.port}/")
+            with _open_forward(config, rung, wstunnel_bin) as local_port:
+                return _post(f"http://127.0.0.1:{local_port}/enroll", body, config)
+        except EnrollError as exc:
+            if exc.terminal:
+                raise
+            log.warning("Enrolment via rung '%s' failed: %s", rung.id, exc)
+            failures.append(f"{rung.label}: {exc}")
+    raise EnrollError(
+        "Could not reach the enrolment endpoint through the tunnel port:\n  "
+        + "\n  ".join(failures)
+    )
+
+
+def _forward_command(
+    rung: ConnectionStrategy, wstunnel_bin: Path, local_port: int, remote_port: int,
+) -> list[str]:
+    """wstunnel argv for a TCP forward to the server's loopback listener."""
+    return strategy_to_command(
+        rung, wstunnel_bin, f"tcp://127.0.0.1:{local_port}:127.0.0.1:{remote_port}"
+    )
+
+
+@contextlib.contextmanager
+def _open_forward(
+    config: ClientConfig, rung: ConnectionStrategy, wstunnel_bin: Path,
+) -> Iterator[int]:
+    """Run a wstunnel forward for the duration of the block; yields its local port."""
+    local_port = _free_port()
+    cmd = _forward_command(rung, wstunnel_bin, local_port, config.enrollment.remote_port)
+    log.info("Enrolment forward via rung '%s': %s", rung.id, rung.url)
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+    )
+    try:
+        _wait_for_local_port(proc, local_port)
+        yield local_port
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _wait_for_local_port(proc: subprocess.Popen, port: int) -> None:
+    deadline = time.monotonic() + _FORWARD_READY_TIMEOUT
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            raise EnrollError(
+                f"wstunnel exited before opening its local port (code {proc.returncode})"
+            )
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return
+        except OSError:
+            time.sleep(0.1)
+    raise EnrollError("wstunnel did not open its local forward port in time")
+
+
 def _verify_endpoint(config: ClientConfig, url: str) -> None:
     """Apply the profile's trust model to the enrolment host before posting.
 
@@ -118,7 +235,8 @@ def _verify_endpoint(config: ClientConfig, url: str) -> None:
     except FingerprintMismatchError as exc:
         raise EnrollError(
             "Refusing to enrol: the server at the enrolment endpoint is not the one "
-            f"this profile was issued for.\n{exc}"
+            f"this profile was issued for.\n{exc}",
+            terminal=True,
         ) from exc
     except NetworkError as exc:
         raise EnrollError(f"Could not reach the enrolment endpoint {host}:{port}: {exc}") from exc
@@ -149,7 +267,8 @@ def _post(url: str, body: dict, config: ClientConfig) -> dict:
         with urllib.request.urlopen(req, timeout=_TIMEOUT, context=ctx) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as exc:
-        raise EnrollError(_http_error_message(exc)) from exc
+        # The server answered: the token, not the transport, is the problem.
+        raise EnrollError(_http_error_message(exc), terminal=True) from exc
     except ssl.SSLCertVerificationError as exc:
         raise EnrollError(
             "The enrolment endpoint's certificate is not trusted: "

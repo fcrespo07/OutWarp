@@ -37,8 +37,6 @@ def _config(tmp_path: Path, **overrides) -> ServerConfig:
         subnet="10.0.0.0/24",
         server_address="10.0.0.1/24",
         wg_listen_port=51820,
-        # Loopback + no TLS wrapping keeps the test about the protocol; the TLS
-        # branch is exercised by test_web_server, which shares the same wrapper.
         tls_mode="acme",
         enroll_port=_free_port(),
         clients=[],
@@ -195,13 +193,12 @@ def test_repeated_failures_are_rate_limited(running) -> None:
     assert 429 in codes, f"expected a lockout after repeated bad tokens, got {codes}"
 
 
-def test_rate_limit_buckets_by_x_forwarded_for_behind_proxy(running) -> None:
-    """FIX-08: the fixture's config is tls_mode='acme' (behind_reverse_proxy),
-    the loopback-only branch a real Caddy front terminates for. Before this
-    fix every request shared the TCP peer's address (127.0.0.1, whoever
-    connects when Caddy is the proxy) as its rate-limit key regardless of who
-    the real client was — five bad attempts from ANY client locked enrolment
-    out for every client behind the same Caddy instance."""
+def test_x_forwarded_for_cannot_pick_a_rate_limit_bucket(running) -> None:
+    """Every request reaches this listener through wstunnel's loopback forward,
+    so the peer address is all there is to key the limiter on. A header must
+    not override it: nothing in front of the listener sets a trustworthy
+    X-Forwarded-For, so honouring one would let a brute-forcer rotate a fake
+    origin per attempt and never trip the limit."""
     _, _, url = running
 
     def attempt(spoofed_ip: str) -> int:
@@ -211,12 +208,35 @@ def test_rate_limit_buckets_by_x_forwarded_for_behind_proxy(running) -> None:
             headers={"X-Forwarded-For": spoofed_ip},
         )[0]
 
-    codes_a = [attempt("9.9.9.1") for _ in range(6)]
-    assert 429 in codes_a, f"expected client A to get locked out, got {codes_a}"
+    codes = [attempt(f"9.9.9.{i}") for i in range(8)]
+    assert 429 in codes, f"expected a lockout despite rotating X-Forwarded-For, got {codes}"
 
-    # A different client (different X-Forwarded-For) behind the same Caddy
-    # instance must not be caught in the same bucket.
-    assert attempt("9.9.9.2") != 429
+
+def test_listener_binds_loopback_only_and_speaks_plain_http(tmp_path) -> None:
+    """B-018: the self-signed branch used to bind 0.0.0.0 with its own TLS,
+    which meant a second public port to forward. It now only ever answers on
+    loopback, reached as a wstunnel TCP forward over the tunnel port; TLS is
+    the transport's job."""
+    config_path = tmp_path / "server_config.json"
+    config = _config(tmp_path, tls_mode="self-signed")
+    config.save(config_path)
+
+    httpd = enroll_server.serve(config, config_path)
+    try:
+        host, port = httpd.server_address[:2]
+        assert host == "127.0.0.1"
+        assert port == config.enroll_port
+        assert not hasattr(httpd.socket, "context"), "socket must not be TLS-wrapped"
+        # A plain-HTTP POST with a garbage token is refused, not rejected at
+        # the TLS layer.
+        status, _ = _post(
+            f"http://127.0.0.1:{port}/enroll",
+            {"token": "ow_enroll_nope", "client_public_key": CLIENT_PUB},
+        )
+        assert status == 403
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 def test_oversized_body_is_rejected(running) -> None:

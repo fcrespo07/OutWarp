@@ -61,6 +61,12 @@ def build_wstunnel_command(config: ServerConfig, wstunnel_bin: Path) -> list[str
         str(wstunnel_bin),
         "server",
         "--restrict-to", f"127.0.0.1:{config.wg_listen_port}",
+        # Enrolment rides the same transport: the client opens a TCP forward to
+        # the loopback listener (enroll_server.py) over the very WSS port the
+        # tunnel uses, so no second public port is needed. Exactly these two
+        # destinations and nothing else — the path prefix gates the upgrade,
+        # this gates where a forward may go.
+        "--restrict-to", f"127.0.0.1:{config.enroll_port}",
     ]
     if config.behind_reverse_proxy:
         cmd += [
@@ -80,6 +86,21 @@ def build_wstunnel_command(config: ServerConfig, wstunnel_bin: Path) -> list[str
 # Kept so existing internal callers and tests that reach for the private name
 # keep working; the public one is what new code should use.
 _build_wstunnel_command = build_wstunnel_command
+
+
+def build_enroll_listener_command(config_path: Path) -> list[str]:
+    """The one place the standalone enrolment listener invocation is defined.
+
+    Rendered into the systemd unit on Linux (LinuxServerPlatform
+    .install_enroll_service), where nothing else keeps the listener alive
+    between wizard runs. Resolves the CLI the same way the client's service
+    module does: the installed ``outwarp-server`` on PATH first, so a pipx
+    install wins over a dev checkout, then whatever launched this process.
+    """
+    exe = shutil.which("outwarp-server")
+    if exe is None:
+        exe = str(Path(sys.argv[0]).resolve())
+    return [exe, "--config-dir", str(config_path.parent), "enroll-listener"]
 
 
 def _get_wg_conf(config: ServerConfig) -> str:

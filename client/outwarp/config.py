@@ -18,10 +18,12 @@ if TYPE_CHECKING:
 _APP_NAME = "OutWarp"
 # v2 added tls.verify / tls.spki_sha256 (the ACME + Caddy server branch).
 # v3 replaced wireguard.client_private_key with an enrolment token: the client
-# generates its own keypair and registers the public half. Older profiles stay
+# generates its own keypair and registers the public half.
+# v4 moved the token redemption onto the tunnel port (enrollment.remote_port
+# instead of a public enrollment.url on a second port). Older profiles stay
 # valid forever — the parser accepts anything up to this number, so a server can
 # keep issuing v1/v2 .owcfg files that older clients also read.
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 _FINGERPRINT_RE = re.compile(r"^([0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}$")
 _TLS_VERIFY_MODES = ("pin", "ca")
 # A WireGuard base64 key/PSK is always 44 chars, the last one from a fixed
@@ -128,16 +130,23 @@ class TunnelConfig:
 
 @dataclass(frozen=True)
 class EnrollmentConfig:
-    """Present on a v3 profile until the token has been redeemed.
+    """Present on an enrolment profile until the token has been redeemed.
 
     ``token`` is single-use and short-lived; it is cleared once enrolment
     succeeds, so a saved profile never keeps a spent credential. Its presence
     alongside an empty ``wireguard.client_private_key`` is what tells the import
     path there is a key to generate first.
+
+    Where to redeem it depends on the schema. v4 carries ``remote_port``: the
+    loopback port on the server the client reaches as a wstunnel TCP forward
+    over the tunnel port it already has, so enrolment needs no port of its own
+    (B-018). v3 carried a public HTTPS ``url`` on a second port instead; still
+    honoured so a profile from an older server keeps importing.
     """
 
     token: str = ""
     url: str = ""
+    remote_port: int = 0
 
 
 @dataclass(frozen=True)
@@ -370,9 +379,10 @@ def _finish_import(config: ClientConfig, dest: Path | None, enroll: bool) -> Cli
                 raise ConfigError(
                     f"{exc}\n"
                     "This profile must be enrolled against the server before "
-                    "first use. If the enrolment port is not open on the "
-                    "server's firewall/router, ask the admin to open it, or to "
-                    "issue the profile with `outwarp-server add-client --embed-key`."
+                    "first use. Enrolment goes through the tunnel port itself, "
+                    "so if the server is reachable the admin should check that "
+                    "its enrolment listener is running (`outwarp-server doctor`), "
+                    "or issue the profile with `outwarp-server add-client --embed-key`."
                 ) from exc
     config.save(target)
     # Snapshot the untouched import so profile editing can always be undone.
@@ -463,11 +473,21 @@ def _parse_enrollment(d: Any) -> EnrollmentConfig:
         raise ConfigError("Section 'enrollment' must be an object")
     token = str(d.get("token", ""))
     url = str(d.get("url", ""))
-    if token and not url:
-        raise ConfigError("enrollment.token is set but enrollment.url is missing")
+    remote_port = d.get("remote_port", 0)
+    if not isinstance(remote_port, int) or isinstance(remote_port, bool) or remote_port < 0:
+        raise ConfigError(
+            f"enrollment.remote_port must be a non-negative integer, got {remote_port!r}"
+        )
+    if remote_port > 65535:
+        raise ConfigError(f"enrollment.remote_port must be at most 65535, got {remote_port}")
+    if token and not (url or remote_port):
+        raise ConfigError(
+            "enrollment.token is set but neither enrollment.remote_port nor "
+            "enrollment.url says where to redeem it"
+        )
     if url and not url.startswith(("https://", "http://")):
         raise ConfigError(f"enrollment.url must be an http(s) URL, got {url!r}")
-    return EnrollmentConfig(token=token, url=url)
+    return EnrollmentConfig(token=token, url=url, remote_port=remote_port)
 
 
 def _parse_server(d: Any) -> ServerConfig:
@@ -784,8 +804,12 @@ def _to_dict(cfg: ClientConfig) -> dict[str, Any]:
         d["wireguard"]["preshared_key"] = cfg.wireguard.preshared_key
     if cfg.fallback.strategies or not cfg.fallback.enabled:
         d["fallback"] = _fallback_to_dict(cfg.fallback)
-    if cfg.enrollment.token or cfg.enrollment.url:
-        d["enrollment"] = {"token": cfg.enrollment.token, "url": cfg.enrollment.url}
+    if cfg.enrollment.token or cfg.enrollment.url or cfg.enrollment.remote_port:
+        d["enrollment"] = {"token": cfg.enrollment.token}
+        if cfg.enrollment.remote_port:
+            d["enrollment"]["remote_port"] = cfg.enrollment.remote_port
+        if cfg.enrollment.url:
+            d["enrollment"]["url"] = cfg.enrollment.url
     if cfg.expires_at:
         d["meta"] = {"expires_at": cfg.expires_at}
     return d

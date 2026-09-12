@@ -16,7 +16,13 @@ import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from outwarp_server.config import ClientEntry, ServerConfig, locked_config, validate_client_name
+from outwarp_server.config import (
+    ClientEntry,
+    ServerConfig,
+    default_config_path,
+    locked_config,
+    validate_client_name,
+)
 from outwarp_server.crypto import generate_psk, generate_wg_keypair
 from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
 from outwarp_server.owcfg import build_owcfg, write_owcfg
@@ -75,6 +81,7 @@ class RestartResult:
     wg_restarted: bool
     wstunnel_restarted: bool
     errors: list[str]
+    enroll_restarted: bool = False
 
 
 def _today() -> str:
@@ -485,20 +492,34 @@ def rotate_client(
     )
 
 
-def restart_services(config: ServerConfig) -> RestartResult:
-    """Regenerate wg0.conf, fully restart wg-quick, then restart wstunnel.
+def restart_services(config: ServerConfig, *, config_path: Path | None = None) -> RestartResult:
+    """Regenerate wg0.conf, fully restart wg-quick, then wstunnel, then the
+    enrolment listener.
 
     Order matters: if wg config write or wg restart fail, wstunnel is left
     alone — an interrupted restart that takes wstunnel down without WG is worse
     than no restart at all.
+
+    On a platform that runs wstunnel and the listener as OS services (Linux
+    systemd), their units are re-rendered first: `outwarp-server update` tells
+    the admin to run `restart`, and this is what makes a new argv (a new
+    `--restrict-to`, a changed port) or a unit that did not exist in the
+    previous version actually reach systemd. Restarting a stale unit would
+    keep running the old invocation and silently miss the upgrade.
     """
     from outwarp_server.platforms import PlatformError, get_server_platform
+    from outwarp_server.server_manager import (
+        _find_wstunnel,
+        build_enroll_listener_command,
+        build_wstunnel_command,
+    )
 
     platform = get_server_platform()
     errors: list[str] = []
     wg_conf_written = False
     wg_restarted = False
     wstunnel_restarted = False
+    enroll_restarted = False
 
     try:
         platform.install_wg_config(build_server_wg_conf(config))
@@ -515,9 +536,30 @@ def restart_services(config: ServerConfig) -> RestartResult:
         return RestartResult(wg_conf_written, wg_restarted, wstunnel_restarted, errors)
 
     try:
+        if platform.manages_enroll_service:
+            wstunnel_bin = _find_wstunnel()
+            if wstunnel_bin is None:
+                raise PlatformError("wstunnel binary not found")
+            platform.install_wstunnel_service(
+                " ".join(build_wstunnel_command(config, Path(wstunnel_bin)))
+            )
         platform.restart_wstunnel_service()
         wstunnel_restarted = True
     except PlatformError as exc:
         errors.append(f"wstunnel restart: {exc}")
+        return RestartResult(wg_conf_written, wg_restarted, wstunnel_restarted, errors)
 
-    return RestartResult(wg_conf_written, wg_restarted, wstunnel_restarted, errors)
+    try:
+        if platform.manages_enroll_service:
+            platform.install_enroll_service(
+                " ".join(build_enroll_listener_command(config_path or default_config_path()))
+            )
+        platform.restart_enroll_service()
+        enroll_restarted = True
+    except PlatformError as exc:
+        errors.append(f"enrolment listener restart: {exc}")
+
+    return RestartResult(
+        wg_conf_written, wg_restarted, wstunnel_restarted, errors,
+        enroll_restarted=enroll_restarted,
+    )

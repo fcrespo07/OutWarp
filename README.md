@@ -115,7 +115,7 @@ After running the server installer, the following commands are available:
 
 1. The **server** wizard installs wstunnel as a systemd service, generates WireGuard keys, and configures the public port according to which transport branch you chose (below).
 2. For each client, `add-client` writes a `.owcfg` containing everything needed to connect — endpoint, server public key, routing rules, and a one-time enrolment token.
-3. The **client** imports the `.owcfg`, **generates its own WireGuard keypair locally**, and redeems the token to register the public half. Its private key never leaves the machine and the server never sees it.
+3. The **client** imports the `.owcfg`, **generates its own WireGuard keypair locally**, and redeems the token to register the public half — through the same public port the tunnel uses (a wstunnel TCP forward to the server's loopback enrolment listener), so nothing else has to be opened. Its private key never leaves the machine and the server never sees it.
 4. The client then brings up the WireGuard interface, excludes the server's address from the tunnel so wstunnel traffic does not loop, and maintains the connection with automatic reconnection and exponential backoff.
 
 ### Two transport branches
@@ -130,7 +130,7 @@ its public port. Pick based on the networks your clients need to work from.
 | Client authenticates the server by | Validating the chain against the system CA store — wstunnel enforces it in-band too | Pinning the certificate's public key |
 | Works on a network that inspects TLS | **Yes** | No — a self-signed certificate is trivially spotted |
 | Needs | A domain pointing at the server | Nothing |
-| Extra open port for enrolment | No (published on 443 under the secret path) | Yes (default 8444/tcp) |
+| Extra open port for enrolment | No | No |
 
 The self-signed branch is enough where the only obstacle is blocked UDP — hotel
 Wi-Fi, CGNAT, a firewall that allows 443/tcp. It is *not* enough against a
@@ -150,6 +150,9 @@ token valid for 15 minutes** instead. Consequences worth knowing:
 - Send the file promptly. After the window, ask the admin for a new one.
 - The client needs WireGuard tools installed at import time, because it generates
   its own key there.
+- Enrolment goes through the tunnel port itself, so if the tunnel port is
+  reachable, enrolment is. Profiles issued by a server ≥ 0.13 need a client
+  ≥ 0.13 (older clients report an unsupported profile version).
 - If the client reports *"this token was already redeemed"*, the file was
   intercepted. Revoke the client and issue a new profile.
 - `--embed-key` restores the old behaviour for clients too old to enrol. It is

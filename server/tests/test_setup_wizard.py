@@ -158,6 +158,14 @@ class TestTransportBranch:
         exec_start = platform.install_wstunnel_service.call_args[0][0]
         assert "wss://0.0.0.0:443" in exec_start
         assert "--tls-certificate" in exec_start
+        # Both destinations wstunnel may forward to: WireGuard and enrolment.
+        assert f"--restrict-to 127.0.0.1:{cfg.wg_listen_port}" in exec_start
+        assert f"--restrict-to 127.0.0.1:{cfg.enroll_port}" in exec_start
+
+        # B-018: the listener needs a supervisor of its own once the wizard
+        # exits, and it must point at the config dir setup wrote to.
+        enroll_exec = platform.install_enroll_service.call_args[0][0]
+        assert enroll_exec.endswith(f"--config-dir {tmp_path} enroll-listener")
 
 
 def test_domain_branch_is_not_offered_off_linux(tmp_path: Path) -> None:

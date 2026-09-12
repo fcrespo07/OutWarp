@@ -139,10 +139,9 @@ class ServerConfig:
     tls_mode: str = "self-signed"
     internal_ws_port: int = 8080
     acme_email: str = ""
-    # Port the enrolment listener binds. Behind Caddy it is loopback-only and
-    # published on the public port under the secret path prefix; in the
-    # self-signed branch it is a public HTTPS port of its own, using the same
-    # certificate (and therefore the same pin) as the transport.
+    # Loopback port the enrolment listener binds (enroll_server.py). Never
+    # public: clients reach it as a wstunnel TCP forward over the transport
+    # port, so the only thing to keep free here is the port itself.
     enroll_port: int = 8444
     # This server's own minisign keypair, used to sign every .owcfg it issues
     # (CONCEPTO-C prop.2 — see build_owcfg's docstring). Unrelated to the
@@ -158,23 +157,6 @@ class ServerConfig:
     @property
     def behind_reverse_proxy(self) -> bool:
         return self.tls_mode == "acme"
-
-    @property
-    def enroll_path(self) -> str:
-        """Public path of the enrolment endpoint in the Caddy-fronted branch.
-
-        Derived from the same secret prefix as the transport so the endpoint is
-        no more discoverable than the tunnel itself.
-        """
-        return f"/{self.http_upgrade_path_prefix.strip('/')}-enroll"
-
-    @property
-    def enroll_url(self) -> str:
-        """Where a client posts its public key to redeem an enrolment token."""
-        if self.behind_reverse_proxy:
-            host = self.endpoint if self.port == 443 else f"{self.endpoint}:{self.port}"
-            return f"https://{host}{self.enroll_path}"
-        return f"https://{self.endpoint}:{self.enroll_port}/enroll"
 
     @classmethod
     def load(cls, path: Path) -> ServerConfig:
