@@ -281,9 +281,9 @@ licencia de OutWarp.
 
 ## Estado actual
 
-**Versión actual: `0.12.1`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
+**Versión actual: `0.13.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
 
-### Pendiente de release (tras 0.12.1) — auditoría "qué sigue bloqueando"
+### Cambios en 0.13.0 — auditoría "qué sigue bloqueando"
 
 Auditoría del 2026-09-12 sobre `9c255f2` (código + el pod k3s real como
 evidencia, no como objetivo: OutWarp se mantiene igual para Windows,
