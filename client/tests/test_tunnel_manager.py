@@ -422,11 +422,8 @@ class TestKillSwitch:
         # (FIX-03) — both configured to "203.0.113.42" in _make_config, so they collapse
         # into one entry after de-dup. The platform also gets what it needs to let
         # the tunnel's own traffic through (interface on Linux, address on Windows).
-        # escape_set() also always adds 1.1.1.1: the resolver a force_hostile
-        # rung (always in the ladder) bootstraps itself with, which must
-        # escape the tunnel too or its DNS query goes into a dead tunnel.
         fake_plat.engage_kill_switch.assert_called_once_with(
-            ["203.0.113.42", "1.1.1.1"], tunnel_iface="OutWarp", tunnel_address="10.0.0.42",
+            ["203.0.113.42"], tunnel_iface="OutWarp", tunnel_address="10.0.0.42",
         )
         fake_plat.release_kill_switch.assert_not_called()
 
@@ -437,7 +434,7 @@ class TestKillSwitch:
             m._set_state(TunnelState.CONNECTING)
             m._set_state(TunnelState.RECONNECTING)
         fake_plat.engage_kill_switch.assert_called_once_with(
-            ["203.0.113.42", "1.1.1.1"], tunnel_iface="OutWarp", tunnel_address="10.0.0.42",
+            ["203.0.113.42"], tunnel_iface="OutWarp", tunnel_address="10.0.0.42",
         )
 
     def test_releases_on_connected(self):

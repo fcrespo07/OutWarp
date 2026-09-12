@@ -99,3 +99,45 @@ def test_kill_switch_allowlist_is_superset_of_wg_conf_exclusions(monkeypatch):
         assert not any(ip in net for net in allowed_nets), (
             f"{addr} is in the kill switch allowlist but still covered by AllowedIPs"
         )
+
+
+def test_the_tunnel_dns_and_the_verification_ping_stay_inside_the_tunnel(monkeypatch):
+    """Regression (0.12.1): S1 direct-hostile is always in the ladder and its
+    resolver, 1.1.1.1, was added to escape_set() so wstunnel could look the
+    endpoint up with WG already installed. But 1.1.1.1 is also the profile's
+    default DNS and Tunnel's connectivity ping target — so every default
+    profile leaked DNS around the tunnel, and the "handshake but no traffic
+    through the tunnel" check pinged a host the tunnel did not carry and
+    could never fail. The lookup now happens in Python before WG comes up
+    (tunnel._with_addresses) and nothing about the resolver escapes."""
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    cfg = _cfg()
+    ladder = build_ladder(cfg)
+    assert any(r.force_hostile for r in ladder)
+    ips = escape_set(cfg, ladder)
+    assert "1.1.1.1" not in ips
+    assert "1.1.1.1" in cfg.wireguard.dns
+
+    monkeypatch.setattr(
+        "outwarp.wireguard.socket.getaddrinfo",
+        lambda *a, **k: [(2, 1, 6, "", ("203.0.113.42", 0))],
+    )
+    conf = build_wg_conf(cfg, extra_bypass=ips)
+    allowed = next(ln for ln in conf.splitlines() if ln.startswith("AllowedIPs"))
+    import ipaddress
+    nets = [ipaddress.ip_network(n.strip()) for n in allowed.split("=", 1)[1].split(",")]
+    assert any(ipaddress.ip_address("1.1.1.1") in n for n in nets), allowed
+    assert not any(ipaddress.ip_address("203.0.113.42") in n for n in nets), allowed
+
+
+def test_escape_set_includes_the_address_a_rung_was_resolved_to():
+    """A force_hostile rung may resolve the endpoint to a different address
+    than the system resolver (that is the point of it); both must escape or
+    wstunnel's connection on that rung is captured into the tunnel."""
+    from dataclasses import replace
+    cfg = _cfg()
+    ladder = build_ladder(cfg)
+    pinned = [replace(r, connect_host="198.51.100.7") for r in ladder]
+    ips = escape_set(cfg, pinned)
+    assert "wg.example.com" in ips
+    assert "198.51.100.7" in ips

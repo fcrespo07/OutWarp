@@ -17,6 +17,7 @@ from outwarp.config import (
     TunnelConfig,
     WireguardConfig,
 )
+from outwarp.fallback import build_ladder
 from outwarp.platforms.base import Platform, PlatformError
 from outwarp.tunnel import (
     _ANSI_ESCAPE_RE,
@@ -746,3 +747,125 @@ def test_direct_endpoints_are_resolved_before_wireguard_comes_up():
     assert events.index("resolve:vpn.example.org") < events.index("wg-up")
     assert vtf.call_args[0][0] == "vpn.example.org"  # SNI / verified name
     assert vtf.call_args[1]["connect_host"] == "203.0.113.42"
+
+
+# --- addresses are resolved before WG is up and handed to wstunnel ---
+
+def test_rungs_dial_the_resolved_address_with_the_hostname_as_sni_and_host():
+    """Regression: with WG installed (AllowedIPs ≈ 0/0) any lookup wstunnel
+    did for itself went into a tunnel that carried nothing yet. Rungs are
+    resolved in Python first — system resolver for the plain rung, the public
+    one for the force_hostile rung — and wstunnel dials the address while the
+    hostname stays on the wire as SNI (what rustls verifies against) and Host
+    (what a Caddy front routes on)."""
+    from dataclasses import replace
+
+    from outwarp.fallback import strategy_to_command
+    from outwarp.tunnel import _with_addresses
+
+    cfg = _make_config()
+    cfg = replace(cfg, server=replace(cfg.server, endpoint="vpn.example.org", port=8443))
+    ladder = build_ladder(cfg)
+
+    def getaddrinfo(host, *a, **k):
+        return [(2, 1, 6, "", ("203.0.113.42", 0))]
+
+    with (
+        patch("outwarp.tunnel.socket.getaddrinfo", side_effect=getaddrinfo),
+        patch("outwarp.tunnel._query_dns_a_record_via", return_value="198.51.100.7") as public,
+    ):
+        pinned = _with_addresses(ladder)
+
+    by_id = {r.id: r for r in pinned}
+    assert by_id["direct"].connect_host == "203.0.113.42"
+    assert by_id["direct-hostile"].connect_host == "198.51.100.7"
+    public.assert_called_once_with("1.1.1.1", "vpn.example.org")
+
+    cmd = strategy_to_command(by_id["direct"], Path("/usr/bin/wstunnel"), "udp://x")
+    assert cmd[-1] == "wss://203.0.113.42:8443"
+    assert cmd[cmd.index("--tls-sni-override") + 1] == "vpn.example.org"
+    assert "Host: vpn.example.org:8443" in cmd
+    cmd = strategy_to_command(by_id["direct-hostile"], Path("/usr/bin/wstunnel"), "udp://x")
+    assert cmd[-1] == "wss://198.51.100.7:8443"
+
+
+def test_hostile_rung_falls_back_to_the_system_resolver_when_the_public_one_is_silent():
+    from dataclasses import replace
+
+    from outwarp.tunnel import _with_addresses
+
+    cfg = _make_config()
+    cfg = replace(cfg, server=replace(cfg.server, endpoint="vpn.example.org"))
+    with (
+        patch("outwarp.tunnel.socket.getaddrinfo",
+              return_value=[(2, 1, 6, "", ("203.0.113.42", 0))]),
+        patch("outwarp.tunnel._query_dns_a_record_via", return_value=None),
+    ):
+        pinned = _with_addresses(build_ladder(cfg))
+    assert {r.connect_host for r in pinned} == {"203.0.113.42"}
+
+
+def test_literal_endpoints_are_left_alone_and_render_unchanged():
+    """An IP endpoint (the self-signed default) needs no lookup: no SNI
+    override, no Host header beyond wstunnel's own, identical argv to before."""
+    from outwarp.fallback import strategy_to_command
+    from outwarp.tunnel import _with_addresses
+
+    with patch("outwarp.tunnel._query_dns_a_record_via") as public:
+        pinned = _with_addresses(build_ladder(_make_config()))
+    public.assert_not_called()
+    direct = next(r for r in pinned if r.id == "direct")
+    assert direct.connect_host == "203.0.113.42"
+    assert not direct.dials_by_address
+    cmd = strategy_to_command(direct, Path("/usr/bin/wstunnel"), "udp://x")
+    assert "--tls-sni-override" not in cmd
+    assert not any(h.startswith("Host:") for h in cmd)
+    assert cmd[-1] == "wss://203.0.113.42"
+
+
+def test_proxy_rung_dials_the_resolved_proxy(monkeypatch):
+    from outwarp.tunnel import _with_addresses
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://user:pw@proxy.corp:3128")
+    ladder = build_ladder(_make_config())
+    with patch("outwarp.tunnel.socket.getaddrinfo",
+               return_value=[(2, 1, 6, "", ("10.1.2.3", 0))]):
+        pinned = _with_addresses(ladder)
+    proxied = next(r for r in pinned if r.proxy)
+    assert proxied.proxy == "user:pw@10.1.2.3:3128"
+
+
+def test_connect_installs_wg_with_every_resolved_address_excluded():
+    """The address a rung will dial has to be outside AllowedIPs, or that
+    rung's own connection loops into the tunnel. Covers the hostile rung
+    resolving to a different address than the system resolver gave."""
+    from dataclasses import replace
+    cfg = _make_config()
+    cfg = replace(cfg, server=replace(cfg.server, endpoint="vpn.example.org"),
+                  routing=replace(cfg.routing, bypass_ips=[]))
+    plat = FakePlatform()
+    confs: list[str] = []
+    real_install = plat.install_wg_tunnel
+
+    def _install(name, conf):
+        confs.append(conf)
+        return real_install(name, conf)
+
+    plat.install_wg_tunnel = _install  # type: ignore[method-assign]
+    fake_proc = MagicMock()
+    fake_proc.poll.return_value = None
+    resolved = [(2, 1, 6, "", ("203.0.113.42", 0))]
+    with (
+        _apply(_verified_connect_patches(fake_proc)),
+        patch("outwarp.tunnel.socket.getaddrinfo", return_value=resolved),
+        patch("outwarp.wireguard.socket.getaddrinfo", return_value=resolved),
+        patch("outwarp.tunnel._query_dns_a_record_via", return_value="198.51.100.7"),
+    ):
+        Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel")).connect()
+
+    import ipaddress
+    allowed = next(ln for ln in confs[0].splitlines() if ln.startswith("AllowedIPs"))
+    nets = [ipaddress.ip_network(n.strip()) for n in allowed.split("=", 1)[1].split(",")]
+    for ip in ("203.0.113.42", "198.51.100.7"):
+        assert not any(ipaddress.ip_address(ip) in n for n in nets), (ip, allowed)
+    assert any(ipaddress.ip_address("1.1.1.1") in n for n in nets)

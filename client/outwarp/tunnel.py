@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from enum import Enum
 from pathlib import Path
 from threading import Event, Lock, Thread
@@ -19,6 +20,7 @@ from platformdirs import user_data_dir
 
 from outwarp.config import ClientConfig
 from outwarp.fallback import (
+    HOSTILE_DNS_RESOLVER_IP,
     ConnectionStrategy,
     StickyStore,
     build_ladder,
@@ -32,6 +34,7 @@ from outwarp.network import (
     FingerprintMismatchError,
     HostileDetection,
     NetworkError,
+    _query_dns_a_record_via,
     detect_hostile_network,
     measure_latency_ms,
     tcp_probe,
@@ -40,7 +43,7 @@ from outwarp.network import (
     verify_tls_spki,
 )
 from outwarp.platforms import Platform, get_platform
-from outwarp.routing import escape_set
+from outwarp.routing import escape_set, proxy_host, proxy_with_host
 from outwarp.wireguard import build_wg_conf, get_tunnel_stats
 
 _APP_NAME = "OutWarp"
@@ -145,8 +148,13 @@ def build_wstunnel_command(
     return strategy_to_command(strategy, wstunnel_bin, _forward_spec(config))
 
 
-def _resolve_endpoints(endpoints) -> dict[str, str]:
-    """Best-effort IPv4 resolution of endpoint hostnames; literals map to themselves."""
+def _resolve_endpoints(endpoints, *, resolver_ip: str = "") -> dict[str, str]:
+    """Best-effort IPv4 resolution of endpoint hostnames; literals map to themselves.
+
+    With `resolver_ip` the lookup is a raw A query to that server instead of
+    the system resolver — what a force_hostile rung wants on a network whose
+    DNS lies — falling back to the system answer when it gets none.
+    """
     out: dict[str, str] = {}
     for ep in endpoints:
         if not ep or ep in out:
@@ -157,13 +165,58 @@ def _resolve_endpoints(endpoints) -> dict[str, str]:
             continue
         except ValueError:
             pass
+        if resolver_ip:
+            answer = _query_dns_a_record_via(resolver_ip, ep)
+            if answer:
+                out[ep] = answer
+                continue
+            log.warning(
+                "Public resolver %s gave no answer for %s; using the system one",
+                resolver_ip, ep,
+            )
         try:
             infos = socket.getaddrinfo(ep, None, family=socket.AF_INET, type=socket.SOCK_STREAM)
         except OSError as exc:
-            log.warning("Could not pre-resolve %s (pin check will resolve it itself): %s", ep, exc)
+            log.warning("Could not pre-resolve %s (wstunnel will resolve it itself): %s", ep, exc)
             continue
         if infos:
             out[ep] = infos[0][4][0]
+    return out
+
+
+def _with_addresses(
+    rungs: list[ConnectionStrategy],
+) -> list[ConnectionStrategy]:
+    """Pin every rung to the address it will dial, resolved now, before
+    WireGuard comes up.
+
+    Once the interface is installed with AllowedIPs≈0.0.0.0/0, any lookup
+    wstunnel makes for itself is captured into a tunnel that carries nothing
+    until a rung succeeds — it stalls until the resolver times out (observed
+    ~49 s per rung) instead of failing fast. So the hostname is turned into an
+    address here, system resolver for ordinary rungs and the public one for
+    force_hostile rungs, and wstunnel is handed the address with the hostname
+    kept as SNI/Host (see strategy_to_command). A proxy rung gets the same
+    treatment for the proxy. Rungs whose name cannot be resolved are left as
+    they are; wstunnel then tries the lookup itself and the rung fails on its
+    own timeout rather than taking the others with it.
+    """
+    system = _resolve_endpoints(
+        [r.endpoint for r in rungs if not r.force_hostile]
+        + [proxy_host(r.proxy) for r in rungs if r.proxy]
+    )
+    public = _resolve_endpoints(
+        [r.endpoint for r in rungs if r.force_hostile], resolver_ip=HOSTILE_DNS_RESOLVER_IP,
+    )
+    out: list[ConnectionStrategy] = []
+    for r in rungs:
+        addr = (public if r.force_hostile else system).get(r.endpoint, "")
+        proxy = r.proxy
+        if proxy:
+            proxy_addr = system.get(proxy_host(proxy), "")
+            if proxy_addr:
+                proxy = proxy_with_host(proxy, proxy_addr)
+        out.append(replace(r, connect_host=addr, proxy=proxy))
     return out
 
 
@@ -185,8 +238,6 @@ class Tunnel:
         self._proc: subprocess.Popen[str] | None = None
         self._stdout_thread: Thread | None = None
         self._wg_installed = False
-        # endpoint hostname -> IPv4 literal, filled at the top of connect().
-        self._resolved: dict[str, str] = {}
         # Cooperative cancellation for an in-flight connect(). The ladder can
         # take well over TunnelManager.stop()'s join budget (per rung: probe +
         # pin + handshake wait + pings); without this, stop() tore the tunnel
@@ -319,14 +370,13 @@ class Tunnel:
                 "firewall, or your network may block outbound connections to them."
             )
 
-        # Resolve every direct endpoint while the system resolver still has a
-        # working path. Once WireGuard is up its DNS (routed into the tunnel)
-        # takes over for every lookup, and the tunnel carries nothing until a
-        # rung succeeds — so a hostname lookup after this point stalls until
-        # resolved gives up (tens of seconds per rung, observed ~49 s).
-        self._resolved = _resolve_endpoints(
-            r.endpoint for r in attemptable if r.scheme == "wss" and not r.proxy
-        )
+        # Resolve every rung's endpoint (and proxy) while the resolvers are
+        # still reachable — see _with_addresses. Done on the full ladder, not
+        # just the attemptable rungs, so the addresses end up in escape_set()
+        # and the kill switch allowlist alike.
+        ladder = _with_addresses(ladder)
+        attemptable_ids = {r.id for r in attemptable}
+        attemptable = [r for r in ladder if r.id in attemptable_ids]
 
         try:
             self._check_cancelled()
@@ -400,7 +450,7 @@ class Tunnel:
 
     def _check_pin(self, strat: ConnectionStrategy) -> tuple[bool, str]:
         tls = self._config.tls
-        connect_host = self._resolved.get(strat.endpoint)
+        connect_host = strat.connect_host or None
         if strat.pin_mode == "ca":
             # Deliberately not tolerated by allow_tls_intercept: wstunnel gets
             # --tls-verify-certificate on this rung and would refuse the

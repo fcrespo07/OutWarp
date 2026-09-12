@@ -12,7 +12,7 @@ set must call.
 from __future__ import annotations
 
 from outwarp.config import ClientConfig
-from outwarp.fallback import HOSTILE_DNS_RESOLVER_IP, ConnectionStrategy
+from outwarp.fallback import ConnectionStrategy
 
 
 def proxy_host(proxy: str) -> str:
@@ -25,6 +25,20 @@ def proxy_host(proxy: str) -> str:
     if spec.startswith("["):  # bracketed IPv6 literal
         return spec[1:].split("]", 1)[0]
     return spec.rsplit(":", 1)[0] if spec.count(":") == 1 else spec
+
+
+def proxy_with_host(proxy: str, host: str) -> str:
+    """`proxy` with its host part replaced by `host` (credentials/port kept).
+
+    Used to hand wstunnel a pre-resolved proxy address, for the same reason a
+    direct rung gets one: with WireGuard up, a lookup wstunnel makes itself is
+    captured into a tunnel that carries nothing yet.
+    """
+    creds, at, spec = proxy.rpartition("@")
+    current = proxy_host(proxy)
+    # A bracketed IPv6 literal carries two extra characters around the host.
+    rest = spec[len(current) + 2:] if spec.startswith("[") else spec[len(current):]
+    return f"{creds}{at}{host}{rest}"
 
 
 def escape_set(config: ClientConfig, ladder: list[ConnectionStrategy]) -> list[str]:
@@ -41,13 +55,10 @@ def escape_set(config: ClientConfig, ladder: list[ConnectionStrategy]) -> list[s
     for r in ladder:
         if r.endpoint:
             out.append(r.endpoint)
+        if r.connect_host:
+            out.append(r.connect_host)
         if r.proxy:
             out.append(proxy_host(r.proxy))
-        if r.force_hostile:
-            # wstunnel resolves its own endpoint via this resolver on a
-            # force_hostile rung; it must escape too or the lookup goes
-            # into the tunnel it's trying to (re)build. See fallback.py.
-            out.append(HOSTILE_DNS_RESOLVER_IP)
         out.extend(r.bypass_ips)
     # De-dup preserving order.
     seen: set[str] = set()

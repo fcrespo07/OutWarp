@@ -55,13 +55,17 @@ _PROXY_ENV_VARS = (
     "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy",
 )
 
-# DNS resolver a force_hostile rung tells wstunnel to bootstrap its own
-# connection with (--dns-resolver). wstunnel does that lookup itself, as a
-# plain UDP packet from this process — if WireGuard is already up with
-# AllowedIPs=0.0.0.0/0 (a reconnect after the tunnel died, exactly when a
-# hostile rung is retried), that packet is captured into the dead tunnel
-# unless this IP is also in escape_set()'s exclusions, and the lookup hangs
-# until timeout instead of failing fast. Exported so routing.py can add it.
+# Public resolver a force_hostile rung uses instead of the system one, for
+# networks whose DNS lies about the endpoint. The lookup is done here, in
+# Python, *before* WireGuard comes up (tunnel.py pre-resolves every rung's
+# endpoint and hands wstunnel the address, keeping the hostname as SNI/Host),
+# so it never has to escape the tunnel. It used to be excluded from
+# AllowedIPs so wstunnel's own lookup could get out with WG up — which also
+# put the profile's default DNS (this same address) and the connectivity
+# ping outside the tunnel: a DNS leak, and a "traffic through tunnel" check
+# that could not fail. wstunnel still gets --dns-resolver pointed here for
+# the one case it does resolve a name itself (the enrolment forward, which
+# runs before any WireGuard interface exists).
 HOSTILE_DNS_RESOLVER_IP = "1.1.1.1"
 
 
@@ -88,13 +92,24 @@ class ConnectionStrategy:
     # tunnel (e.g. a CDN's anycast ranges). The endpoint itself is added by the
     # caller; this is for fronts that resolve to a different address than the URL.
     bypass_ips: tuple[str, ...] = ()
+    # Address wstunnel should actually dial when `endpoint` is a hostname that
+    # was resolved ahead of time (tunnel.py, before WireGuard comes up). The
+    # hostname stays on the wire as SNI and Host, so nothing changes for the
+    # server or a middlebox; it only spares wstunnel a DNS lookup it could not
+    # make once every packet is captured into a tunnel that is not up yet.
+    connect_host: str = ""
 
     @property
     def url(self) -> str:
         default = 443 if self.scheme == "wss" else 80
+        host = self.connect_host or self.endpoint
         if self.port == default:
-            return f"{self.scheme}://{self.endpoint}"
-        return f"{self.scheme}://{self.endpoint}:{self.port}"
+            return f"{self.scheme}://{host}"
+        return f"{self.scheme}://{host}:{self.port}"
+
+    @property
+    def dials_by_address(self) -> bool:
+        return bool(self.connect_host) and self.connect_host != self.endpoint
 
     @property
     def dedup_key(self) -> tuple:
@@ -137,11 +152,26 @@ def strategy_to_command(
         cmd.extend(
             ["--dns-resolver", f"dns://{HOSTILE_DNS_RESOLVER_IP}", "--dns-resolver-prefer-ipv4"]
         )
-    if strategy.sni_override:
-        cmd.extend(["--tls-sni-override", strategy.sni_override])
+    # A pre-resolved rung dials the address but must still present the
+    # hostname: rustls verifies the certificate against --tls-sni-override
+    # (wstunnel 10.x, WsClientConfig::tls_server_name) and Caddy routes on
+    # Host. A rung that sets either on purpose (a CDN front) keeps its own.
+    sni_override = strategy.sni_override
+    host_header = strategy.host_header
+    if strategy.dials_by_address:
+        if not sni_override and strategy.scheme == "wss":
+            sni_override = strategy.endpoint
+        if not host_header:
+            default = 443 if strategy.scheme == "wss" else 80
+            host_header = (
+                strategy.endpoint if strategy.port == default
+                else f"{strategy.endpoint}:{strategy.port}"
+            )
+    if sni_override:
+        cmd.extend(["--tls-sni-override", sni_override])
     headers: list[str] = []
-    if strategy.host_header:
-        headers.append(f"Host: {strategy.host_header}")
+    if host_header:
+        headers.append(f"Host: {host_header}")
     if strategy.user_agent:
         headers.append(f"User-Agent: {strategy.user_agent}")
     for h in headers:
