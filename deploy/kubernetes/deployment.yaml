@@ -93,10 +93,21 @@ spec:
             limits:
               cpu: "500m"
               memory: "256Mi"
+          # exec, not tcpSocket: a plain TCP probe against OUTWARP_PORT would
+          # (a) hardcode a port that must track the ConfigMap by hand — any
+          # deployment that changes OUTWARP_PORT away from 443 CrashLoopBackOffs
+          # on a probe that can never succeed — and (b) makes wstunnel log a
+          # "tls handshake eof" line every periodSeconds forever, since a bare
+          # TCP connect never completes the TLS/WS handshake it expects. Instead
+          # check the two things that actually mean "the tunnel is up" without
+          # opening a socket: the wstunnel process is alive (shareProcessNamespace
+          # lets this container's pgrep see it) and wg0 exists.
           livenessProbe:
-            tcpSocket:
-              # Must match OUTWARP_PORT in the ConfigMap.
-              port: 443
+            exec:
+              command:
+                - bash
+                - -c
+                - "pgrep -x wstunnel >/dev/null && [ -d /sys/class/net/wg0 ]"
             initialDelaySeconds: 15
             periodSeconds: 30
             failureThreshold: 3
@@ -114,8 +125,9 @@ spec:
         # your own ingress/tunnel — e.g. a Cloudflare Tunnel public hostname →
         # Caddy `reverse_proxy https://<host>:9443 { transport http { tls_insecure_skip_verify } }`.
         # NOTE: service start/stop/restart in the panel act on this container's
-        # own manager, not the `serve` process — status may read "stopped" while
-        # the VPN is up. Client add/revoke and all read views work live.
+        # own manager, not the `serve` process — the panel itself indicates
+        # that those controls don't apply here. Client add/revoke and all read
+        # views work live.
         - name: outwarp-panel
           image: ghcr.io/fcrespo07/outwarp-server:main
           imagePullPolicy: Always

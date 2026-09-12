@@ -20,9 +20,10 @@ In every scenario you need:
 - A public IPv4 address (or a DNS name resolving to one) that clients can
   reach. CGNAT and double-NAT setups will not work without an external
   reverse proxy.
-- One TCP port reachable from the public internet (default `443`). Open it on
-  your firewall / router / cloud security group **before** running the
-  installer's probe.
+- **Only one** TCP port reachable from the public internet: `OUTWARP_PORT`
+  (default `443`). Client enrolment goes through this same port — there is no
+  second public port to open. Open it on your firewall / router / cloud
+  security group **before** running the installer's probe.
 - Linux kernel ≥ 5.6 on the **host** (kernel WireGuard module). The container
   itself does not need to ship `wireguard.ko`; it just calls into the host
   kernel via `wg-quick`.
@@ -153,10 +154,11 @@ Open `deploy/kubernetes/configmap.yaml` and replace at least:
 | Key | What to set it to |
 |---|---|
 | `OUTWARP_ENDPOINT` | Public IP or DNS name clients will dial. Baked into `.owcfg`. |
-| `OUTWARP_PORT` | Public TCP/WSS port. Must be reachable from the internet. |
+| `OUTWARP_PORT` | Public TCP/WSS port. Must be reachable from the internet — the **only** port that needs to be. |
 | `OUTWARP_WG_PORT` | Loopback UDP port; change only if it collides with another wg-* service on the node. |
 | `OUTWARP_SUBNET` | A subnet that does **not** overlap your LAN, pod CIDR or service CIDR. |
 | `OUTWARP_SERVER_ADDRESS` | First usable address of that subnet (e.g. `10.0.0.1/24`). |
+| `OUTWARP_ENROLL_PORT` *(optional)* | Loopback client-enrolment port, default `8444`. Never opened on the router — clients enrol through `OUTWARP_PORT`. Change only if `8444` collides with something else on the node. |
 
 ### 2. Apply with kustomize
 
@@ -209,6 +211,22 @@ useful if you don't want to rely on GHCR. After the image is loaded, switch
 `spec.template.spec.containers[*].image` in `deployment.yaml` to the local
 tag (e.g. `outwarp-server:v0.5.5`) and set `imagePullPolicy: Never`.
 
+### Liveness and restarts
+
+`outwarp-server serve` exits with code 3 when its internal `ServerManager`
+enters the `ERROR` state (e.g. wstunnel or WireGuard died and couldn't
+recover) — that non-zero exit is what makes the container runtime's restart
+policy (`restart: unless-stopped` in Compose, the Pod's default `Always` in
+`deployment.yaml`) actually restart it, instead of leaving a dead process
+sitting in a healthy-looking container.
+
+The `outwarp-server` container's `livenessProbe` in `deployment.yaml` runs
+`pgrep -x wstunnel` + a check that `wg0` exists, rather than opening a TCP
+connection to `OUTWARP_PORT`: a raw TCP probe never completes the WSS
+handshake wstunnel expects, so it both logs a `tls handshake eof` line on
+every probe and hardcodes a port that has to be kept in sync with the
+ConfigMap by hand.
+
 ### Storage
 
 The PVC uses `storageClassName: local-path`, which is the default on k3s
@@ -246,6 +264,8 @@ on every push is the point.
 | Client connects via WSS but gets no IP / handshake never completes | `OUTWARP_SUBNET` clashes with the client's LAN, OR `NET_ADMIN` capability missing. |
 | Clients connect but cannot reach the internet | IP forwarding disabled on the host (`sysctl net.ipv4.ip_forward`) or NAT/MASQUERADE rule missing — `outwarp-server doctor` will tell you which. |
 | `exec format error` on Raspberry Pi | Image was pulled as `amd64`. Confirm with `docker image inspect` and re-pull on the Pi so it picks the `arm64` manifest. |
+| Client error "Could not reach the enrolment endpoint through the tunnel port" | The enrolment listener isn't up inside the container — check the `serve` logs for "Could not start the enrolment listener" (`OUTWARP_ENROLL_PORT` already taken on the node) and restart the pod. |
+| Client error "Unsupported schema_version 4 … Update OutWarp client" | The client is older than 0.13; profiles from this server enrol through the tunnel port, which it cannot do. Update the client, or issue the profile with `add-client --embed-key`. |
 
 When in doubt run `outwarp-server --config-dir /data doctor` inside the
 container — it inspects binaries, kernel modules, listen ports, IP forwarding

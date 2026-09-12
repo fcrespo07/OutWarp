@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import secrets
@@ -20,7 +21,8 @@ def run_init(config_dir: Path) -> int:
       OUTWARP_PORT            (default 443) — wstunnel WSS listen port
       OUTWARP_WG_PORT         (default 51820) — WireGuard loopback listen port
       OUTWARP_SUBNET          (default 10.0.0.0/24) — WireGuard subnet
-      OUTWARP_SERVER_ADDRESS  (default <subnet>.1/24) — server WG address
+      OUTWARP_SERVER_ADDRESS  (default <subnet>'s first usable host) — server WG address
+      OUTWARP_ENROLL_PORT     (default 8444) — loopback client-enrolment listen port
       OUTWARP_UPGRADE_PATH    (optional) — HTTP upgrade path prefix; auto-generated if absent
 
     Idempotent: if server_config.json already exists the function returns 0
@@ -46,12 +48,21 @@ def run_init(config_dir: Path) -> int:
     try:
         port = int(os.environ.get("OUTWARP_PORT", "443"))
         wg_listen_port = int(os.environ.get("OUTWARP_WG_PORT", "51820"))
+        enroll_port = int(os.environ.get("OUTWARP_ENROLL_PORT", "8444"))
     except ValueError as exc:
         log.error("Invalid port value: %s", exc)
         return 1
+    if not (1 <= enroll_port <= 65535):
+        log.error("OUTWARP_ENROLL_PORT must be between 1 and 65535, got %d", enroll_port)
+        return 1
 
     subnet = os.environ.get("OUTWARP_SUBNET", "10.0.0.0/24")
-    default_server_addr = subnet.rsplit(".", 1)[0] + ".1/24"
+    try:
+        network = ipaddress.ip_network(subnet, strict=False)
+        default_server_addr = f"{next(network.hosts())}/{network.prefixlen}"
+    except (ValueError, StopIteration) as exc:
+        log.error("OUTWARP_SUBNET is not a valid network: %s", exc)
+        return 1
     server_address = os.environ.get("OUTWARP_SERVER_ADDRESS", default_server_addr)
     upgrade_path = os.environ.get("OUTWARP_UPGRADE_PATH") or secrets.token_urlsafe(32)
 
@@ -85,6 +96,7 @@ def run_init(config_dir: Path) -> int:
         subnet=subnet,
         server_address=server_address,
         wg_listen_port=wg_listen_port,
+        enroll_port=enroll_port,
         clients=[],
     )
 
