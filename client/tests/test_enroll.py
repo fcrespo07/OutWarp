@@ -517,8 +517,10 @@ class TestEnrolViaTransport:
 
         cfg = _v4_cfg(tls=TlsConfig(cert_fingerprint_sha256="", verify="ca"))
         rung = build_ladder(cfg)[0]
-        cmd = _forward_command(rung, Path("/usr/bin/wstunnel"), 40001, 8444)
-        assert cmd[:2] == ["/usr/bin/wstunnel", "client"]
+        wstunnel = Path("/usr/bin/wstunnel")
+        cmd = _forward_command(rung, wstunnel, 40001, 8444)
+        # str(Path) is backslashed on Windows; compare through Path.
+        assert cmd[:2] == [str(wstunnel), "client"]
         assert "tcp://127.0.0.1:40001:127.0.0.1:8444" in cmd
         assert "--tls-verify-certificate" in cmd
         assert cmd[cmd.index("--http-upgrade-path-prefix") + 1] == "s3cret"
