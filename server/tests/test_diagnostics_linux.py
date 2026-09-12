@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -375,3 +376,28 @@ class TestEnrollListener:
         assert r.fix_kind == "manual"
         assert "serve" in r.remediation
 
+
+class TestListenInternalWs:
+    """The acme branch's loopback wstunnel. `ss` prints the *peer* column as
+    `0.0.0.0:*` on every listener row, so a substring test for "0.0.0.0"
+    reported every loopback socket as exposed — this check warned on every
+    healthy domain-branch server."""
+
+    _ROW = (
+        "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process\n"
+        'LISTEN 0 128 {local} 0.0.0.0:* users:(("wstunnel",pid=7,fd=4))\n'
+    )
+
+    def test_loopback_bind_passes(self) -> None:
+        cfg = replace(_config(), tls_mode="acme")
+        with patch("outwarp_server.diagnostics._run_linux",
+                   return_value=_completed(self._ROW.format(local="127.0.0.1:8080"))):
+            r = diagnostics.check_linux_listen_internal_ws(cfg)
+        assert r.status is Status.PASS
+
+    def test_public_bind_warns(self) -> None:
+        cfg = replace(_config(), tls_mode="acme")
+        with patch("outwarp_server.diagnostics._run_linux",
+                   return_value=_completed(self._ROW.format(local="0.0.0.0:8080"))):
+            r = diagnostics.check_linux_listen_internal_ws(cfg)
+        assert r.status is Status.WARN

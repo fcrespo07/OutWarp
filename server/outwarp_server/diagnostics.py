@@ -944,7 +944,7 @@ def check_linux_listen_internal_ws(config: ServerConfig) -> CheckResult:
     if any(f":{port}" in line for line in lines):
         # Binding 0.0.0.0 here would expose the un-TLS'd listener to the network
         # and let anyone who knows the path skip the front entirely.
-        exposed = any("0.0.0.0" in line or "*:" in line for line in lines)
+        exposed = any(_bound_publicly(line) for line in lines)
         if exposed:
             return CheckResult(
                 name=name,
