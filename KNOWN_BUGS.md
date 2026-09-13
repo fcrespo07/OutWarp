@@ -151,6 +151,12 @@ Leyenda de estado:
 **Fix:** `ServerManager.refresh_config()` (mtime de `server_config.json` y `clients.sqlite`); estado `pending` para slots sin clave; `get_status().service_control` (`full`/`restart`/`none`) y la API rechaza lo que no aplica.
 **Prevención:** Cualquier surface "companion" (panel, GUI junto a systemd) debe asumir que el estado lo escriben otros procesos y que el transporte puede no ser suyo.
 
+### ✅ B-022 — La gráfica de tráfico podía dejar de reflejar tráfico real tras un pico
+**Síntomas:** Reproducido en vivo: un speed test genera un pico de tráfico y, minutos después, ver un vídeo (tráfico real, confirmado con `wg show wg0 transfer` subiendo) se dibujaba como una línea plana en el sparkline del cliente y en la gráfica de Home.
+**Causa raíz:** El sparkline por cliente (`app.jsx`) y la gráfica de tráfico del Home (`AreaChart`, `dash-atoms.jsx`) escalaban su eje con un pico que decaía un 5% por muestra (2 s) sin límite ligado a la ventana visible. Cuanto mayor el pico, más tarda el decaimiento en caer por debajo del valor real actual — con un speed test contra un cliente normal, minutos. Mientras tanto, tráfico real pero menor se dibuja plano contra esa escala vieja.
+**Fix:** `window.DSfmt.makeBoundedPeak` (`dash-data.jsx`): en vez de decaer sin límite, recuerda el máximo de las últimas N muestras del máximo de la ventana. El tiempo de recuperación queda acotado (ventana + memoria, ~66 s con los valores por defecto) **independientemente de lo grande que fuera el pico**, y sigue suavizando tráfico realista con ráfagas (vídeo/descargas) sin "respirar" — verificado con simulación numérica de ambos escenarios antes de aplicar el cambio.
+**Prevención:** Cualquier "peak-hold" para escalar un eje debe tener una cota de memoria ligada al tamaño de la ventana que se muestra, nunca un decaimiento puramente exponencial sin límite — si no, el tiempo de recuperación crece con la magnitud del pico, que es exactamente el caso que un pico grande (una prueba de velocidad) hace peor.
+
 ---
 
 ## Abiertos
