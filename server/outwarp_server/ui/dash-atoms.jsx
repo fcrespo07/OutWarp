@@ -195,15 +195,15 @@ const Sparkline = ({ data, w = 72, h = 22, color = "var(--brand-2)", fill = true
 const AreaChart = ({ rx, tx, h = 150 }) => {
   const W = 1000, P = 4;
   const dataMax = Math.max(...rx, ...tx, 0.0001);
-  // Peak-hold with slow decay instead of the raw window max: rescaling the
-  // Y axis to the exact instantaneous max on every 2s tick made a perfectly
-  // steady trickle of traffic look like it was constantly surging and
-  // settling, because the axis itself was a moving target. A real spike
-  // still snaps the ceiling up immediately (never clips); it just isn't
-  // allowed to collapse the instant that one sample scrolls out of view.
-  const maxRef = React.useRef(dataMax);
-  maxRef.current = dataMax > maxRef.current ? dataMax : Math.max(dataMax, maxRef.current * 0.95);
-  const max = maxRef.current;
+  // Bounded peak-hold, not a decaying one: see window.DSfmt.makeBoundedPeak's
+  // comment (dash-data.jsx). A raw per-tick max made a steady trickle of
+  // traffic look like it was constantly surging and settling; an unboundedly
+  // decaying one (tried in 0.12.1) went too far the other way — a one-off
+  // spike (a speed test) could keep the axis pinned high for minutes after,
+  // long enough to draw real but smaller ongoing traffic as a flat line.
+  const holdRef = React.useRef(null);
+  if (holdRef.current === null) holdRef.current = window.DSfmt.makeBoundedPeak(10);
+  const max = holdRef.current(dataMax);
   const n = rx.length;
   const mid = h / 2;
   const line = (arr, mirror) => {

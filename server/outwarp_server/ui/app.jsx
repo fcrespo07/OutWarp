@@ -12,6 +12,13 @@
 const { useState, useEffect, useRef, useCallback } = React;
 const OW = window.OW;
 
+// Per-client sparkline: how many 2 s samples the visible ring holds, plus how
+// many *additional* window-max samples window.DSfmt.makeBoundedPeak below
+// remembers past that — see its own comment (dash-data.jsx) for why this
+// pairing matters.
+const SPARK_RING_LEN = 24;
+const SPARK_PEAK_MEMORY = 10;
+
 // ── confirm hook (pairs with window.ConfirmDialog from dash-extras) ────────
 function useConfirm(T) {
   const [pending, setPending] = useState(null);
@@ -44,7 +51,7 @@ function adaptClient(row, derived) {
     expiresAt: row.expires_at || "",
     rxBps: derived.rxBps || 0,
     txBps: derived.txBps || 0,
-    spark: derived.spark || new Array(24).fill(0),
+    spark: derived.spark || new Array(SPARK_RING_LEN).fill(0),
   };
 }
 
@@ -66,7 +73,7 @@ function useLiveData() {
   // used to collapse into one row of rate/sparkline state.
   const prevRef = useRef({});       // name -> {rx, tx, t}
   const sparkRef = useRef({});      // name -> number[]
-  const peakRef = useRef({});       // name -> decaying peak (sparkline scale)
+  const peakRef = useRef({});       // name -> boundedPeak() instance (sparkline scale)
 
   const onClients = useCallback((rows) => {
     const s = ref.current;
@@ -88,7 +95,7 @@ function useLiveData() {
         txBps = Math.max(0, (row.tx_bytes - prev.tx) / dt);
       }
       prevRef.current[row.name] = { rx: row.rx_bytes || 0, tx: row.tx_bytes || 0, t: sampledAt };
-      const ring = (sparkRef.current[row.name] || new Array(24).fill(0)).slice(1);
+      const ring = (sparkRef.current[row.name] || new Array(SPARK_RING_LEN).fill(0)).slice(1);
       ring.push(rxBps);
       sparkRef.current[row.name] = ring;
       const state = row.status === "unknown" ? "offline" : row.status;
@@ -96,13 +103,11 @@ function useLiveData() {
       else if (state === "idle") idle++;
       else if (state === "pending") pending++;
       else offline++;
-      // Normalize to 0..1 for the sparkline with the same decaying-peak
-      // trick as the throughput chart — a raw per-tick max makes a flat
-      // line look like it keeps spiking as old samples scroll out.
-      const prevPeak = peakRef.current[row.name] || 1;
-      const ringMax = Math.max(...ring, 1);
-      const peak = ringMax > prevPeak ? ringMax : Math.max(ringMax, prevPeak * 0.95);
-      peakRef.current[row.name] = peak;
+      // Normalize to 0..1 for the sparkline — see makeBoundedPeak's comment
+      // (dash-data.jsx) for why a bounded peak-hold, not a raw or decaying one.
+      const boundedPeak = peakRef.current[row.name] || window.DSfmt.makeBoundedPeak(SPARK_PEAK_MEMORY);
+      peakRef.current[row.name] = boundedPeak;
+      const peak = boundedPeak(Math.max(...ring, 1));
       const normSpark = ring.map((v) => v / peak);
       return adaptClient(row, { rxBps, txBps, spark: normSpark });
     });

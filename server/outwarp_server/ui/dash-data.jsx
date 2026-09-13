@@ -442,5 +442,37 @@ function nowClock() {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
 }
 
+// Bounded peak-hold for a rate-based chart's Y-axis scale.
+//
+// A raw per-tick max (recompute the scale from only what's on screen right
+// now) makes a genuinely steady rate look like it's constantly surging and
+// settling: real traffic arrives in bursts (TCP segments, video chunks), so
+// the instantaneous per-tick rate is naturally spiky even when the average
+// holds steady, and rescaling the axis to match every such blip makes the
+// whole chart's proportions visibly reshuffle tick to tick.
+//
+// The fix isn't "hold the peak, decay it slowly" — that was tried (0.12.1)
+// and traded one bug for another: with no bound tied to how much history is
+// actually visible, an exponential decay remembers a one-off spike (a speed
+// test) for exactly as long as it takes the math to fall below the real
+// current rate, which grows with how much bigger the spike was — for a
+// speed test against a normal client that can be minutes, during which
+// smaller-but-real ongoing traffic (a video call, a stream) draws as a flat
+// line even though the byte counters are genuinely moving.
+//
+// Instead, remember the maximum of the last `memory` window-max samples.
+// That bounds total memory to (window + memory) samples *regardless of how
+// large the spike was* — once the spike itself has scrolled out of the
+// window AND out of this trailing history, the scale reflects only what's
+// actually on screen, same as a fresh recompute, but without a single
+// bursty low sample being able to collapse it in between.
+function makeBoundedPeak(memory) {
+  let hist = new Array(memory).fill(1);
+  return (windowMax) => {
+    hist = [...hist.slice(1), windowMax];
+    return Math.max(...hist, 1);
+  };
+}
+
 window.DS_STR = DS_STR;
-window.DSfmt = { fmtBytes, fmtBps, fmtDuration, fmtAgo, tr, nowClock };
+window.DSfmt = { fmtBytes, fmtBps, fmtDuration, fmtAgo, tr, nowClock, makeBoundedPeak };

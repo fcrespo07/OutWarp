@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: minor bumps may carry user-visible changes).
 
+## [Unreleased]
+
+### Fixed
+- **Server dashboard: the per-client sparkline and the Home traffic chart
+  could hide real traffic for minutes after a one-off spike.** Both used a
+  peak-hold that decayed 5% per 2 s tick with no bound tied to how much
+  history was actually on screen — a large transient (a speed test) could
+  keep the Y-axis pinned high long after it ended, since how long the decay
+  took to fall below the current rate grew with how much bigger the spike
+  had been. Smaller-but-real ongoing traffic (a video stream, a call) then
+  drew as a flat line even though the byte counters were genuinely moving.
+  Replaced with a bounded peak-hold (`window.DSfmt.makeBoundedPeak`): it
+  remembers the maximum of a fixed number of recent window-max samples
+  instead of decaying indefinitely, so recovery time is capped (~66 s in the
+  default per-client sparkline, regardless of the spike's size) while still
+  smoothing genuinely bursty-but-steady traffic the same as before.
+
 ## [0.13.0] — 2026-09-12
 
 ### Changed
