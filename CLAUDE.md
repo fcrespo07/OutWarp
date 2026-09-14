@@ -24,7 +24,7 @@ OutWarp es una herramienta **genérica**: cualquier persona con un servidor prop
 ### Plataformas soportadas (cliente y servidor)
 
 - Windows 10/11
-- Linux (distros con systemd)
+- Linux (distros con systemd). Desde 2026-09-14, **Omarchy** (Arch + Hyprland/Wayland) es distro de referencia junto a Ubuntu/Mint: todo cambio en el cliente Linux (instalador, tray, GUI, notificaciones, servicio) tiene que funcionar ahí también. Ver "Criterio de 1.0.0".
 
 > **macOS queda fuera de alcance.** No se publicará ninguna versión para macOS. El dispatch por `sys.platform` solo contempla Windows y Linux; un arranque en Darwin lanza `PlatformError("Unsupported platform")`.
 
@@ -263,13 +263,31 @@ licencia de OutWarp.
 - **"WireGuard"** es trademark de Jason Donenfeld. No usar en el nombre del proyecto ni para implicar endorsement.
 - **"wstunnel"** — misma restricción (BSD-3-Clause cláusula 3). Por eso el proyecto se llama OutWarp.
 
-### Checklist antes de publicar la primera versión estable
+### Criterio de 1.0.0 — qué tiene que estar hecho antes de publicarla
 
-- [x] Confirmar licencia. *(PolyForm Noncommercial 1.0.0 — decisión del autor, quería excluir uso comercial explícitamente.)*
-- [x] Añadir fichero `LICENSE` en la raíz con el texto de PolyForm Noncommercial 1.0.0.
-- [x] Añadir fichero `THIRD_PARTY_LICENSES` con BSD-3-Clause de wstunnel + LGPL-3.0 de pystray + BSD-3-Clause de pywebview (+ Pillow, platformdirs, CPython, Geist como cortesía).
-- [x] Verificar que no queden referencias a `vpn.fcrespo.tech`, `ClaveSegura123`, `10.43.9.43`, `PortatilDesbloqueado` ni IPs del autor. *(El código está limpio; las únicas menciones viven en este checklist.)*
-- [ ] Firmar el instalador Windows (eliminar warnings de SmartScreen/UAC en primer arranque).
+**Decidido por el autor el 2026-09-14. Fuente de verdad: esta sección. `ROADMAP.md` → "Before 1.0" la replica en inglés. 1.0.0 NO sale sin todo lo de "Bloqueante" en verde; ningún agente la publica ni la propone sin comprobarlo.**
+
+Qué significa 1.0 aquí: no "perfecto", sino *"a partir de aquí, romper esto es cambio mayor"*. Queda congelado (cambiarlo = `feat!:` → 2.0, o migración y se queda en 1.x): el formato `.owcfg` v3, el protocolo de enrolamiento (`POST /enroll`, token de un solo uso), los subcomandos y flags documentados de `outwarp-cli` / `outwarp-server`, el canal de actualización (`SHA256SUMS.txt` + `.minisig`, clave `3E1FCD8BF652EC28`) y la forma de `config.json` / config del servidor. NO queda congelado: UI, TUI, escalera de fallback, mensajes, internos.
+
+Legado (hecho):
+- [x] Licencia PolyForm Noncommercial 1.0.0 confirmada; `LICENSE` y `THIRD_PARTY_LICENSES` en la raíz.
+- [x] Sin referencias del autor (`vpn.fcrespo.tech`, `ClaveSegura123`, `10.43.9.43`, `PortatilDesbloqueado`, IPs) en el código.
+
+**Bloqueante** (cada punto = una rama y un PR; orden recomendado):
+
+- [ ] **Prueba end-to-end en CI, bloqueante.** Cuarto job en `ci.yml` (solo Linux): dos contenedores Docker — `server` = la imagen real de `server/Dockerfile`, `client` = `python-slim` + `wireguard-tools` + wstunnel pinneado + wheel del cliente, como root (`platforms/linux.py` omite `sudo` con euid 0; helper vía `OUTWARP_HELPER`), ambos con `NET_ADMIN` + `/dev/net/tun`. Flujo: `add-client` → `import` (enrola por 443) → `connect` → handshake → `curl` a un HTTP que solo escucha en la IP de túnel del servidor + contadores de `wg show` suben → `ip route get 1.1.1.1` sale por `wg0` → token reutilizado rechazado → `disconnect` deja rutas e interfaz limpias. Cubre lo que se coló con CI en verde: B-017, B-018, B-019 y el drift de versión de wstunnel. No cubre Windows, systemd, k8s ni GUI (y se dice así en la doc). **Antes: spike de 1 h** para confirmar `wg-quick up` en Docker dentro de un runner de GitHub; si no funciona, plan B = network namespaces en el runner. Ficheros previstos: `e2e/compose.yml`, `e2e/client.Dockerfile`, `e2e/run.sh`.
+- [ ] **Kill switch + endpoint por hostname.** Con el kill switch enganchado, la reconexión resuelve el hostname por el DNS de la LAN, que está bloqueado → `FAILED` y el usuario sin red. Hay que decidir e implementar cómo se permite la resolución (UDP/53 a los resolvers mientras está enganchado, o resolver y cachear la IP antes de enganchar). Es un fallo en una feature de seguridad; no se firma "estable" con esto abierto.
+- [ ] **Cliente Linux con GUI de primera clase, no solo TUI.** Hoy la GUI pywebview en Linux es opt-in (`install.sh` → `OUTWARP_CLIENT_GUI=1`, extra `gui-linux`; `app.py` la excluye por marker PEP 508). Criterio: en una sesión de escritorio (`$WAYLAND_DISPLAY`/`$DISPLAY`) el instalador ofrece la GUI por defecto y la TUI sigue siendo el camino headless; `outwarp-cli gui` arranca sin pasos manuales; tray + ventana probados en X11 (GNOME/KDE) y Wayland (Hyprland, GNOME); `doctor` comprueba las deps de GUI y el backend del tray; README/`install.sh --help` lo documentan. Propuesta técnica (a confirmar al implementar): mantener el marker y el extra `gui-linux` (los wheels Linux no arrastran webkit2gtk) y cambiar el **default del instalador**, no el `pyproject`.
+- [ ] **Compatibilidad total con Omarchy** (Arch Linux + Hyprland/Wayland + waybar + mako + systemd + pacman). Criterio de aceptación, verificado en una instalación limpia de Omarchy: `install.sh` completa por la ruta `pacman` (paquetes: `python-pipx`, `wireguard-tools`, `python-gobject`, `webkit2gtk-4.1`, `libayatana-appindicator`); el tray aparece en waybar (StatusNotifierItem vía appindicator — el backend Xorg de pystray no vale en Wayland) y su menú funciona; la ventana pywebview abre bajo Wayland (GTK) sin X11; `notify-send` llega a mako; el `.desktop` sale en el lanzador de Omarchy con icono; la unit de usuario systemd + linger funciona; kill switch nftables funciona; `doctor` devuelve todo PASS. **Arch es rolling:** Omarchy lleva la Python más nueva (3.13/3.14) → la matriz de CI debe incluir la versión que Arch tenga en el momento del release, y `requires-python` no puede excluirla. Un `PKGBUILD` para AUR es el camino nativo, pero va como 1.x (ver `ROADMAP.md` "Native Linux packages"), no bloquea.
+- [ ] **Test runner de JS (vitest) + guardia de bundle.** Opción mínima: `package.json` en la raíz solo con devDeps (vitest, jsdom); helper de test que transpila un `.jsx` con esbuild y lo evalúa en un `window` falso; tests de lógica pura (`makeBoundedPeak` fija B-022; `fmtBytes`/`fmtBps`/`fmtAgo` con `now` inyectado). Más un test que reconstruye `bundle.js` con `scripts/build_ui.py` y falla si difiere del commiteado. Job `ui-tests` en CI (Node ya hace falta para `build_ui.py`). NO convertir la UI a módulos ES para esto: solo si algún día hacen falta tests de componentes.
+- [ ] **Retirar el fallback de manifiesto sin firmar.** `verify_download` en ambos updaters pasa a fail-closed: una release sin `SHA256SUMS.txt` + `.minisig` válidos se rechaza siempre.
+- [ ] **README y wizard honestos con el anti-DPI.** Sustituir la promesa de `README.md` ("corporate networks, captive Wi-Fi…") por la tabla de adversarios: la rama autofirmada pasa "UDP bloqueado / solo 443"; la rama Caddy+dominio pasa además inspección de certificado; **ninguna** pasa huella TLS (JA3/JA4) ni DPI del Upgrade (caso WIFI_EDU). En `setup`, presentar "tengo un dominio" como camino principal y el autofirmado como "sin dominio, solo contra UDP bloqueado". Añadir "Plataformas soportadas" y "Limitaciones conocidas" (DPI, SmartScreen sin firmar) y **quitar el banner "not yet ready for production"**. Descartado y no reabrir: uTLS/imitación de ClientHello (reescribir el transporte). Como spike futuro, solo con una red DPI real para probarlo: ECH (`--tls-ech-enable` de wstunnel + Caddy ≥ 2.10), que oculta el SNI pero no cambia la huella JA3.
+- [ ] **Release firmada y un ciclo sin hotfix.** 1.0.0 sale con `SHA256SUMS.txt.minisig` el mismo día (la clave está offline, en la máquina del autor; ver `docs/RELEASE_SIGNING.md`) y después de que la última 0.x lleve 2–4 semanas en producción (el pod k3s del autor) sin hotfix.
+
+**NO bloqueante** (tentación de creer que sí; no reabrir):
+- Certificado Authenticode para el instalador Windows: es dinero, no calidad. El aviso de SmartScreen se documenta en "Limitaciones conocidas".
+- Multi-perfil, split tunnelling, DDNS, auto-update del servidor, Prometheus, más idiomas: features; caben en 1.x sin romper nada.
+- Cliente móvil: otro producto.
 
 ## Convenciones de código
 
@@ -553,10 +571,7 @@ Fases del servidor (todas ✅): scaffolding + config, crypto (`crypto.py`), IP p
 
 ### Pendiente para la primera versión estable
 
-- ✅ `LICENSE` (PolyForm Noncommercial 1.0.0) y `THIRD_PARTY_LICENSES` en la raíz.
-- ⚠️ Instalador Windows sin firmar → warnings de SmartScreen/UAC en primer arranque.
-- ⚠️ README aún marcado como "under active development, not yet ready for production".
-- ✅ Sin referencias del autor (`vpn.fcrespo.tech`, `ClaveSegura123`, etc.) en el código.
+La lista completa y vinculante está en **"Criterio de 1.0.0"** (sección Licencia, más arriba). Resumen: e2e en CI · kill switch + hostname · GUI Linux de primera clase · compatibilidad Omarchy · vitest + guardia de bundle · fallback sin firma retirado · README/wizard honestos sin el banner "not ready" · release firmada tras un ciclo sin hotfix. El instalador Windows sin firmar **no** bloquea.
 
 El repo está en GitHub como privado: https://github.com/fcrespo07/OutWarp
 
