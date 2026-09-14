@@ -13,7 +13,8 @@ proposed implementation, what is explicitly *not* blocking) lives in
 `CLAUDE.md` → "Criterio de 1.0.0"; keep the two in sync.
 
 What 1.0 freezes: the `.owcfg` v3 format, the enrolment protocol, the
-documented CLI surface, the signed update channel and the config file shapes.
+documented CLI surface (`outwarp` / `outwarp-server`), the signed update
+channel and the config file shapes.
 Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration.
 
 - [ ] **End-to-end job in CI, blocking.** Two Docker containers (the real
@@ -23,6 +24,14 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       inside Docker on a GitHub runner.
 - [ ] **Kill switch + hostname endpoint.** Reconnect can't resolve the
       endpoint through the blocked LAN DNS → `FAILED` with no network.
+- [ ] **Rename the client command `outwarp-cli` → `outwarp`.** The client is
+      what most people use, so it gets the short name; the server already
+      carries its suffix, and the Windows executable is already
+      `outwarp.exe`. Must land before 1.0 because the CLI surface freezes
+      there. Ship `outwarp-cli` as a deprecated alias for one release (units,
+      `.desktop` files and completions on existing installs point at it) and
+      have `install.sh` / `service install` migrate them; drop the alias in
+      1.0.0.
 - [ ] **Linux client GUI as a first-class option.** Installer offers the
       pywebview GUI by default on desktop sessions (TUI stays the headless
       path); tested on X11 and Wayland; `doctor` checks the GUI stack.
