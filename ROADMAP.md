@@ -27,12 +27,18 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       pywebview GUI by default on desktop sessions (TUI stays the headless
       path); tested on X11 and Wayland; `doctor` checks the GUI stack.
 - [ ] **Full Omarchy compatibility** (Arch + Hyprland/Wayland + waybar +
-      mako + systemd + pacman): clean install via the `pacman` path, tray in
-      waybar (SNI/appindicator), GTK window under Wayland, notifications,
-      launcher entry, user unit + linger, nftables kill switch, `doctor` all
-      green. CI matrix must cover the Python version Arch ships at release
-      time. An AUR `PKGBUILD` is the native follow-up (1.x, see "Native Linux
-      packages"), not a blocker.
+      mako + systemd + pacman). Not just "it installs" — once installed it
+      has to feel native: clean install via the `pacman` path; tray icon in
+      waybar (SNI/appindicator) that **changes with tunnel state** and reads
+      well at bar size in light and dark themes, with a working menu; GTK
+      window under Wayland with a stable `app_id`, own icon, floating by
+      default (documented Hyprland `windowrule`); launcher entry with icon
+      that opens the GUI; mako notifications with icon; session autostart
+      (user unit + linger or Hyprland autostart — pick one); nftables kill
+      switch; `doctor` all green including a Wayland tray check. CI matrix
+      must cover the Python version Arch ships at release time. An AUR
+      `PKGBUILD` is the native follow-up (1.x, see "Native Linux packages"),
+      not a blocker.
 - [ ] **JS test runner (vitest) + bundle guard.** Pure-logic tests for the
       dashboard helpers (`makeBoundedPeak`, formatters) and a test that fails
       when `bundle.js` is stale. No ES-module rewrite of the UI.
