@@ -53,6 +53,12 @@ _TOGGLES: list[tuple[str, str, str]] = [
         "Auto-connect at launch",
         "Bring the tunnel up automatically when 'outwarp tui' starts.",
     ),
+    (
+        "kill_switch",
+        "Kill switch",
+        "Block all traffic outside the tunnel while it is unexpectedly down "
+        "(reconnecting / failed). Needs nftables and the privileged helper.",
+    ),
 ]
 
 # Pseudo-keys for Linux system-level toggles that don't map to settings.json.
@@ -235,6 +241,13 @@ class SettingsModal(ModalScreen[None]):
                 mgr.allow_tls_intercept = new_value
             elif key == "auto_reconnect":
                 mgr.auto_reconnect = new_value
+            elif key == "kill_switch":
+                mgr.kill_switch_enabled = new_value
+                if not new_value:
+                    # Always release on disable, as the GUI does.
+                    with contextlib.suppress(Exception):
+                        from outwarp.platforms import get_platform
+                        get_platform().release_kill_switch()
         self.query_one("#settings-status", Static).update(
             f"[{OK}]✓[/] {key.replace('_', ' ')} = {new_value}"
         )

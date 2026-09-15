@@ -917,3 +917,32 @@ def test_emit_failure_does_not_recurse_through_logger(caplog):
         api._emit("log", {"msg": "x"})
 
     assert caplog.records == []
+
+
+class TestWindowMinimizeOnWayland:
+    def _api(self):
+        from outwarp.api import Api
+
+        api = Api(MagicMock(), None)
+        api._window = MagicMock()
+        return api
+
+    def test_hides_to_tray_when_a_tray_exists(self, monkeypatch) -> None:
+        from outwarp import api as api_mod
+
+        monkeypatch.setattr(api_mod.sys, "platform", "linux")
+        api = self._api()
+        api.tray_available = lambda: True
+        api.window_minimize()
+        api._window.hide.assert_called_once()
+        api._window.minimize.assert_not_called()
+
+    def test_minimises_without_a_tray(self, monkeypatch) -> None:
+        from outwarp import api as api_mod
+
+        monkeypatch.setattr(api_mod.sys, "platform", "linux")
+        api = self._api()
+        api.tray_available = lambda: False
+        api.window_minimize()
+        api._window.minimize.assert_called_once()
+        api._window.hide.assert_not_called()

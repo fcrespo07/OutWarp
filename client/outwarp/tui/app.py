@@ -94,8 +94,14 @@ class OutWarpClientTUI(App):
         """
         try:
             self.config = ClientConfig.load(default_config_path())
-        except ConfigError:
+        except ConfigError as exc:
             self.config = None
+            if default_config_path().exists():
+                # A file that exists but does not parse is a different problem
+                # from "nothing imported yet" — say which (the CLI already did).
+                self._startup_error = f"Profile could not be loaded: {exc}"
+                self._push_unique("failed")
+                return
             self._push_unique("empty")
             return
         if self.service_managed or (sys.platform == "linux" and service_is_active()):

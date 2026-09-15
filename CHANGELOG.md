@@ -103,6 +103,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against a server that had pruned the peer. Import refuses an expired
   `.owcfg`, the manager goes straight to FAILED with the expiry date, and the
   TUI's failed screen says so.
+- **Closing the GUI window now stops the tunnel** like the tray's Quit did;
+  it used to exit leaving WireGuard, wstunnel and an engaged kill switch
+  behind with no UI to undo them. On Wayland the title-bar minimise button
+  hides to the tray (compositors have no iconify; on Hyprland it did
+  nothing).
+- TUI Settings gains the **kill switch** toggle (TUI-only installs had no way
+  to enable it) and reports a corrupt `config.json` instead of "no profile
+  imported yet". `install.sh` installs `nftables` for the client and
+  `doctor` checks for `nft`, since the kill switch cannot engage without it.
 - GUI settings are re-read from disk before each change, so a toggle flipped
   in the TUI or with `outwarp ui` while the window is open is no longer
   reverted. `install.sh` keeps a login-autostart entry the GUI wrote

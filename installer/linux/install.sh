@@ -400,6 +400,21 @@ ensure_wireguard() {
     ok "WireGuard installed"
 }
 
+ensure_nftables() {
+    # The client kill switch is an nftables table the privileged helper
+    # owns; without `nft` the switch silently cannot engage.
+    if command -v nft >/dev/null 2>&1; then
+        ok "nftables: ${BOLD}$(nft --version 2>/dev/null | head -1)${RESET}"
+        return
+    fi
+    info "Installing nftables (client kill switch)..."
+    case "$PKG_MANAGER" in
+        apt|dnf|pacman) $SUDO bash -c "$PKG_INSTALL_CMD nftables" \
+            || warn "Could not install nftables — the kill switch will be unavailable" ;;
+        *) warn "Install nftables by hand if you want the kill switch" ;;
+    esac
+}
+
 # ----------------------------------------------------------------------------
 # wstunnel binary
 # ----------------------------------------------------------------------------
@@ -1252,6 +1267,7 @@ install_client_completions() {
 install_client() {
     info "Installing OutWarp client (pipx layout: ${BOLD}${CLIENT_VENV}${RESET})"
 
+    ensure_nftables
     prepare_install_source "client"
 
     resolve_target_user

@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -225,7 +226,12 @@ def main() -> int:
             except Exception:
                 log.exception("could not show window from tray")
 
+        quit_done = threading.Event()
+
         def _on_quit() -> None:
+            if quit_done.is_set():
+                return
+            quit_done.set()
             log.info("Shutting down OutWarp client")
             api.shutdown()
             tray.stop()
@@ -235,6 +241,9 @@ def main() -> int:
         # Let apply_update() quit the app after launching the installer so it
         # can replace our files and relaunch us.
         api.set_quit_handler(_on_quit)
+        # Hyprland (and most Wayland compositors) have no minimise: the title
+        # bar button must hide to the tray instead, when there is one.
+        api.tray_available = lambda: getattr(tray, "_icon", None) is not None
 
         tray = TrayApp(
             manager=manager,
@@ -267,6 +276,11 @@ def main() -> int:
         _stage("tray running — about to hand off to webview.start()")
         webview.start(gui="edgechromium" if sys.platform == "win32" else None)
 
+        # The window's own close button ends webview.start() without going
+        # through the tray's Quit: without this the process exited leaving
+        # WireGuard (0.0.0.0/0), wstunnel and an engaged kill switch behind,
+        # with no UI left to undo them.
+        _on_quit()
         log.info("OutWarp client shut down cleanly")
         return 0
 

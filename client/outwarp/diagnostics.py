@@ -318,6 +318,22 @@ def _wg_install_cmd() -> str:
     return "install wireguard-tools with your package manager"
 
 
+def check_nftables() -> CheckResult:
+    """The kill switch is an nftables table the helper manages — no `nft`,
+    no switch (it used to fail only when the user flipped the toggle)."""
+    if shutil.which("nft"):
+        return CheckResult(name="nftables", status=Status.PASS, detail="nft on PATH")
+    pm = _wg_install_cmd().replace("wireguard-tools", "nftables")
+    return CheckResult(
+        name="nftables",
+        status=Status.WARN,
+        detail="nft not found — the kill switch cannot engage.",
+        remediation=f"Install nftables: {pm}",
+        remediation_command=pm,
+        fix_kind="interactive",
+    )
+
+
 def check_wg_kernel_module() -> CheckResult:
     """WireGuard kernel module must be loadable (Linux only)."""
     if not sys.platform.startswith("linux"):
@@ -641,6 +657,7 @@ def gather_checks() -> list[Check]:
             Check("sudoers", "Permissions", check_sudoers),
             Check("helper_version", "Permissions", check_helper_version),
             Check("kmod", "WireGuard", check_wg_kernel_module),
+            Check("nftables", "WireGuard", check_nftables),
             Check("systemd", "Service", check_systemd_unit),
             Check("notify", "Desktop", check_notify_send),
             Check("gui", "Desktop", check_gui_stack),

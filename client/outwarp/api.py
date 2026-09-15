@@ -259,9 +259,18 @@ class Api:
         self._maximized = False
         self._emit("window", {"maximized": False})
 
+    # Set by app.py once the tray exists; lets the minimise button hide to
+    # the tray on Wayland, where xdg-shell has no iconify (Hyprland ignores
+    # it — the button did nothing). Never hide without a tray to come back.
+    tray_available: Callable[[], bool] | None = None
+
     def window_minimize(self) -> None:
-        if self._window is not None:
-            self._window.minimize()
+        if self._window is None:
+            return
+        if sys.platform == "linux" and self.tray_available and self.tray_available():
+            self._window.hide()
+            return
+        self._window.minimize()
 
     def window_toggle_maximize(self) -> None:
         if self._window is None:
