@@ -1069,6 +1069,19 @@ EOF
     ok "sudoers rule installed"
 }
 
+warn_duplicate_user_install() {
+    # A per-user `pipx install outwarp-client` (in ~/.local/share/pipx) next
+    # to this system-wide one means two versions answer to `outwarp`
+    # depending on PATH order — exactly how a 0.5.8 venv kept shadowing a
+    # 0.13.0 one on a developer machine. Say so; removing it is the user's
+    # call (`outwarp doctor` keeps flagging it until then).
+    local user_venv="$TARGET_HOME/.local/share/pipx/venvs/outwarp-client"
+    [[ -d "$user_venv" ]] || return 0
+    warn "A per-user OutWarp client also exists at ${user_venv}."
+    warn "Two installs will shadow each other on PATH. Remove one, e.g. as ${TARGET_USER}:"
+    warn "    pipx uninstall outwarp-client        # drops the per-user copy"
+}
+
 migrate_client_unit_name() {
     # A user unit written before the rename execs `<venv>/bin/outwarp-cli
     # daemon`. The alias keeps it running for one release; rewrite it now so
@@ -1225,6 +1238,7 @@ install_client() {
     ok "outwarp installed: ${BOLD}$(${SUDO} ${CLIENT_BIN_LINK} --version 2>/dev/null | awk '{print $2}')${RESET}"
 
     migrate_client_unit_name
+    warn_duplicate_user_install
 
     write_client_helper
     write_client_sudoers

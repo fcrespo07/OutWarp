@@ -1,0 +1,63 @@
+# End-to-end: the real server image talking to a root client container over
+# a private Docker network. Driven by e2e/run.sh (locally or from CI).
+#
+# Both containers get NET_ADMIN + /dev/net/tun so wg-quick can create the
+# WireGuard interfaces (the host kernel module is used; ubuntu-latest runners
+# and any modern distro ship it). The server also needs ip_forward for NAT.
+name: outwarp-e2e
+
+networks:
+  owtest:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  shared: {}
+
+services:
+  server:
+    build:
+      context: ../server
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      OUTWARP_ENDPOINT: "172.30.0.10"
+      OUTWARP_PORT: "443"
+      OUTWARP_WG_PORT: "51820"
+      OUTWARP_SUBNET: "10.99.0.0/24"
+      OUTWARP_SERVER_ADDRESS: "10.99.0.1/24"
+    volumes:
+      - shared:/shared
+    networks:
+      owtest:
+        ipv4_address: 172.30.0.10
+
+  client:
+    build:
+      context: ..
+      dockerfile: e2e/client.Dockerfile
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      OUTWARP_HELPER: /usr/local/libexec/outwarp-priv
+      # Keep every client file inside the container's own dirs.
+      XDG_CONFIG_HOME: /root/.config
+      XDG_STATE_HOME: /root/.local/state
+    volumes:
+      - shared:/shared
+    networks:
+      owtest:
+        ipv4_address: 172.30.0.20
+    command: ["sleep", "infinity"]
+    depends_on:
+      - server

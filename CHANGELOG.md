@@ -34,6 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of failing at `webview.start()`. Both Settings screens expose the toggle
   (`preferred_ui` in `settings.json`); `outwarp doctor` gains a `gui` check.
 
+### Added
+- **End-to-end test in CI (`e2e/`), blocking.** Two Docker containers — the
+  real `server/Dockerfile` image and a root client built from the checkout
+  (pinned wstunnel, the privileged helper taken verbatim from `install.sh`) —
+  walk the full user flow over the wire: `add-client` → `outwarp import`
+  (enrolment through the tunnel port) → `connect` → WireGuard handshake →
+  an HTTP page that only listens on the server's tunnel address → default
+  route inside the tunnel → counters moving → the same token rejected a
+  second time → SIGTERM leaves no interface or route behind. Runs locally
+  with `e2e/run.sh` (`KEEP=1` keeps the containers). Not covered: Windows,
+  systemd units, Kubernetes, the GUI.
+
 ### Fixed
 - **Kill switch + hostname endpoint: reconnects no longer die at DNS.** With
   the switch engaged only the escape set is allowed out, so a profile whose

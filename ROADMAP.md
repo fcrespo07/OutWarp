@@ -17,7 +17,7 @@ documented CLI surface (`outwarp` / `outwarp-server`), the signed update
 channel and the config file shapes.
 Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration.
 
-- [ ] **End-to-end job in CI, blocking.** Two Docker containers (the real
+- [x] **End-to-end job in CI, blocking.** *(Landed 2026-09-15: `e2e/run.sh`; first GitHub-runner pass pending.)* Two Docker containers (the real
       `server/Dockerfile` image + a root client), full user flow: enrol over
       443 → connect → traffic through the tunnel → DNS routed inside →
       reused token rejected → clean disconnect. Spike first: `wg-quick up`
