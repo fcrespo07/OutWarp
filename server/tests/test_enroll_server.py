@@ -185,12 +185,27 @@ def test_wrong_path_is_not_a_route(running) -> None:
 
 
 def test_repeated_failures_are_rate_limited(running) -> None:
+    """Global ceiling on *distinct* bad tokens (brute-force bound)."""
     _, _, url = running
     codes = [
         _post(url, {"token": f"ow_enroll_bad{i}", "client_public_key": CLIENT_PUB})[0]
-        for i in range(8)
+        for i in range(24)
     ]
     assert 429 in codes, f"expected a lockout after repeated bad tokens, got {codes}"
+
+
+def test_one_bad_token_does_not_lock_everyone_out(running) -> None:
+    """After the forward every client is 127.0.0.1, so a per-IP bucket alone
+    was one shared bucket: a client retrying an expired token three times
+    used to push *other* clients' valid enrolments into 429 for a minute."""
+    config_dir, config_path, url = running
+    for _ in range(4):
+        code = _post(url, {"token": "ow_enroll_expired", "client_public_key": OTHER_PUB})[0]
+    assert code == 429, "the hammering client itself should be told to back off"
+
+    token = enrollment.issue(config_dir, "laptop")
+    status, body = _post(url, {"token": token, "client_public_key": CLIENT_PUB})
+    assert status == 200, f"a valid token must still enrol, got {status} {body}"
 
 
 def test_x_forwarded_for_cannot_pick_a_rate_limit_bucket(running) -> None:

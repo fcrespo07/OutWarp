@@ -45,6 +45,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   switch — that would leak every application's queries while the tunnel is
   down. Known limit: if the server's IP changes while the switch is engaged,
   the reconnect keeps failing until the switch is released.
+- **Enrolment rate limiter: one client's bad token no longer locks everyone
+  out.** Behind wstunnel's forward every request is the loopback peer, so the
+  per-IP bucket was one shared bucket: a client retrying an expired token a
+  few times pushed other clients' valid enrolments into `429` for a minute.
+  Failures are now counted per presented token (3 strikes → 60 s
+  `Retry-After` for that token only) with a wider global ceiling (20 distinct
+  failures / 5 min) as the brute-force bound.
 - **Tests no longer touch the developer's real client.** Both suites point
   platformdirs at a temp dir and the single-instance lock at a per-test
   name; `app.main()` tests used to append lines to

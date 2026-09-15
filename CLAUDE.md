@@ -346,7 +346,7 @@ Linux/systemd, Docker y k8s). Detalle en `CHANGELOG.md` (Unreleased) y
 Seguimientos apuntados (no hechos): kill switch + endpoint por hostname (la
 allowlist no cubre el DNS que la reconexión necesita); TOCTOU del pin en el
 enrolamiento (pin en una conexión, POST en otra — mismo modelo que el
-transporte); rate limiter del enrolamiento es un cubo global tras el forward.
+transporte); rate limiter del enrolamiento es un cubo global tras el forward *(resuelto 2026-09-15: bucket por token + techo global)*.
 
 ### Cambios en 0.12.0 (auditoría de seguridad completa + refactors de arquitectura)
 
