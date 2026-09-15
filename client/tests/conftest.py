@@ -38,6 +38,20 @@ def _isolate_user_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         d = home / sub
         d.mkdir(parents=True, exist_ok=True)
         monkeypatch.setenv(var, str(d))
+    # platformdirs on Windows asks the shell (ctypes) for the folders and only
+    # falls back to APPDATA/LOCALAPPDATA when that is unavailable, so the env
+    # vars above are not enough there: use the WIN_PD_OVERRIDE_* hook (4.10+)
+    # and force the env-var resolver for older releases.
+    monkeypatch.setenv("WIN_PD_OVERRIDE_APPDATA", str(home / "appdata"))
+    monkeypatch.setenv("WIN_PD_OVERRIDE_LOCAL_APPDATA", str(home / "localappdata"))
+    monkeypatch.setenv("WIN_PD_OVERRIDE_COMMON_APPDATA", str(home / "programdata"))
+    monkeypatch.setenv("ALLUSERSPROFILE", str(home / "programdata"))
+    (home / "programdata").mkdir(exist_ok=True)
+    import platformdirs.windows as _pdw
+
+    monkeypatch.setattr(
+        _pdw, "get_win_folder", _pdw.get_win_folder_from_env_vars, raising=False
+    )
 
     from outwarp import app as app_mod
 
