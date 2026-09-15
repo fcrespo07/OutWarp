@@ -75,6 +75,23 @@ _RESIZE_HT = {
 # in sync with `outwarp.settings.settings_path` — both must derive the file
 # from `default_config_path().parent / "settings.json"`; diverging silently
 # would let one UI write to a file the other UI never reads.
+_SERVICE_MANAGED_MSG = (
+    "The tunnel is run by the background service (outwarp-client.service). "
+    "Turn it off in Settings → System to control the tunnel from here."
+)
+_SERVICE_MANAGED_AUTOSTART_MSG = (
+    "The background service already starts the tunnel at login; "
+    "turn it off before enabling the tray at startup."
+)
+
+
+def _last_line(lines: list[str]) -> str:
+    for line in reversed(lines):
+        if line.strip():
+            return line.strip()
+    return ""
+
+
 def _settings_path() -> Path:
     return default_config_path().parent / "settings.json"
 
@@ -145,6 +162,7 @@ class Api:
         manager: TunnelManager | None,
         on_manager_replaced: Callable[[TunnelManager], None] | None = None,
         integrity_issues: list[IntegrityIssue] | None = None,
+            service_managed: bool = False,
     ) -> None:
         self._window: Any = None
         # Sticky kill-switch for the Python→JS bridge: flipped True the first
@@ -156,6 +174,10 @@ class Api:
         self._maximized = False
         self._memory_handler = memory_handler
         self._manager: TunnelManager | None = manager
+        # True while the systemd user unit owns the tunnel: this process only
+        # watches (status from the interface), and connect/disconnect are
+        # refused with a pointer to the service toggle.
+        self._service_managed = bool(service_managed)
         self._on_manager_replaced = on_manager_replaced
         # Computed once by app.py at startup; surfaced to the UI as a banner.
         # Empty list (default) means "no issues" — the UI hides the banner.
@@ -371,6 +393,12 @@ class Api:
     def _status_str(self) -> str:
         if self._manager is None:
             return "empty"
+        if self._service_managed:
+            # Viewer: the daemon owns the manager state; ask the interface.
+            try:
+                return "connected" if self._manager.is_active else "disconnected"
+            except Exception:
+                return "disconnected"
         return _STATE_TO_JS.get(self._manager.state, "disconnected")
 
     def _active_profile_id(self) -> str | None:
@@ -420,6 +448,8 @@ class Api:
     def connect(self, profile_id: str | None = None) -> dict[str, Any]:
         if self._manager is None:
             return {"ok": False, "error": "no profile imported"}
+        if self._service_managed:
+            return {"ok": False, "error": _SERVICE_MANAGED_MSG}
         if self._manager.config.is_expired():
             msg = (
                 f"Este perfil caducó el {self._manager.config.expires_at}. "
@@ -433,6 +463,8 @@ class Api:
     def disconnect(self) -> dict[str, Any]:
         if self._manager is None:
             return {"ok": False, "error": "no profile imported"}
+        if self._service_managed:
+            return {"ok": False, "error": _SERVICE_MANAGED_MSG}
         threading.Thread(
             target=self._manager.stop, daemon=True, name="api-disconnect"
         ).start()
@@ -1053,9 +1085,74 @@ class Api:
         finally:
             os._exit(0)
 
+    # ── background service (Linux systemd user unit) ─────────────────────────
+
+    def get_service_state(self) -> dict[str, Any]:
+        """What the Settings screen needs to render the service row."""
+        from outwarp.ownership import service_is_active
+        from outwarp.service import is_linger_enabled, service_supported
+
+        supported, why = service_supported()
+        return {
+            "supported": supported,
+            "reason": why,
+            "active": service_is_active() if supported else False,
+            "managed_here": self._service_managed,
+            "linger": is_linger_enabled(),
+        }
+
+    def set_service_enabled(self, enable: bool) -> dict[str, Any]:
+        """Hand the tunnel over to the systemd user unit (or take it back).
+
+        Enabling stops this process's manager first — the daemon would
+        otherwise bring the same interface up under it — then installs and
+        starts the unit and turns this GUI into a viewer. Disabling stops the
+        unit and restarts the in-process manager. XDG autostart of the GUI is
+        turned off when the service takes over: two tunnel owners at login is
+        exactly the fight this avoids.
+        """
+        from outwarp.service import install_service, uninstall_service
+
+        lines: list[str] = []
+        if enable:
+            if self._manager is not None and not self._service_managed:
+                self._manager.stop()
+            rc = install_service(echo=lines.append)
+            if rc != 0:
+                if self._manager is not None and not self._service_managed:
+                    self._manager.start()
+                return {"ok": False,
+                        "error": _last_line(lines) or f"service install failed (rc={rc})"}
+            self._service_managed = True
+            if bool(self._settings.get("start_at_boot", False)):
+                self.set_settings({"start_at_boot": False})
+        else:
+            rc = uninstall_service(echo=lines.append)
+            if rc != 0:
+                return {"ok": False,
+                        "error": _last_line(lines) or f"service uninstall failed (rc={rc})"}
+            self._service_managed = False
+            if self._manager is not None:
+                self._manager.start()
+        self._emit("status", self._status_payload())
+        return {"ok": True, "detail": _last_line(lines)}
+
     def set_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
+            # Re-read first: the TUI and `outwarp ui` write the same file
+            # while this window is open, and a stale in-memory copy would
+            # revert their changes on the next toggle here.
+            try:
+                self._settings = _load_settings()
+            except Exception:
+                log.warning("could not re-read settings.json before patching")
             before = dict(self._settings)
+            if (
+                isinstance(patch, dict)
+                and patch.get("start_at_boot")
+                and self._service_managed
+            ):
+                return {"ok": False, "error": _SERVICE_MANAGED_AUTOSTART_MSG}
             if isinstance(patch, dict):
                 for k, v in patch.items():
                     if k in self._settings:

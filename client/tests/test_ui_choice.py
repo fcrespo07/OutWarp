@@ -123,9 +123,12 @@ def test_gui_extra_requirements_reads_the_installed_metadata() -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux CLI path")
 def test_cli_ui_sets_and_reports(capsys, monkeypatch) -> None:
-    from outwarp import cli
+    from outwarp import cli, desktop_linux
 
     monkeypatch.setattr(ui_choice, "gui_available", lambda: (False, "pywebview not installed"))
+    # Importing GObject typelibs inside the test process is fragile; the probe
+    # has its own tests.
+    monkeypatch.setattr(desktop_linux, "tray_status", lambda: ("skip", "test"))
     assert cli.main(["ui", "tui"]) == 0
     out = capsys.readouterr().out
     assert "preferred_ui = tui" in out

@@ -30,6 +30,8 @@ def _error_hint(err: str) -> str:
         return "Connection timed out — check that the server is reachable and the port is open."
     if "refused" in low or "connection refused" in low:
         return "Connection refused — wstunnel may not be running on the server."
+    if "expired" in low:
+        return "Profile expired — import a fresh .owcfg from the server admin (i)."
     if "permission" in low or "operation not permitted" in low:
         return "Permission denied — run 'outwarp service install' or check sudo/sudoers."
     if "wstunnel" in low and ("not found" in low or "no such" in low):

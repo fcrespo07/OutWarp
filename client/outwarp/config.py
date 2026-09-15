@@ -366,6 +366,10 @@ def _finish_import(config: ClientConfig, dest: Path | None, enroll: bool) -> Cli
     imports stay clean: outwarp.enroll depends on this module.
     """
     target = dest or default_config_path()
+    if config.is_expired():
+        raise ConfigError(
+            f"this profile expired on {config.expires_at}; ask the server admin for a new one"
+        )
     if enroll:
         from outwarp.enroll import EnrollError, needs_enrollment
         from outwarp.enroll import enroll as _redeem

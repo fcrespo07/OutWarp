@@ -816,6 +816,17 @@ class TunnelManager:
         delays = self._config.reconnect.delays_seconds
         self._set_attempt(0)
 
+        # Shared gate (the GUI used to be the only surface checking): an
+        # expired profile has been pruned server-side, so every rung would
+        # fail its handshake and the daemon would restart forever.
+        if self._config.is_expired():
+            msg = (f"This profile expired on {self._config.expires_at} — "
+                   "ask the server admin for a new .owcfg")
+            log.error(msg)
+            self._set_error(msg)
+            self._set_state(TunnelState.FAILED)
+            return
+
         # Seed the ladder with whatever rung last worked on this network so a
         # repeat visit connects on the first attempt instead of re-walking it.
         signature = self._network_signature()

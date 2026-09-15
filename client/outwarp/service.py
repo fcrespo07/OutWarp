@@ -23,19 +23,23 @@ import signal
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from outwarp.config import ClientConfig, ConfigError, default_config_path
 from outwarp.killswitch import release_stale_async
 from outwarp.logs import setup_logging
 from outwarp.notify import notify as _notify
+from outwarp.ownership import SERVICE_NAME as _SERVICE_NAME
+from outwarp.ownership import TunnelOwnerLock, describe_owner
 from outwarp.settings import load_settings
 from outwarp.tunnel import TunnelManager, TunnelState
 
 log = logging.getLogger(__name__)
 
 
-SERVICE_NAME = "outwarp-client.service"
+SERVICE_NAME = _SERVICE_NAME
+EXIT_TUNNEL_OWNED = 4
 
 
 # ── daemon runtime ──────────────────────────────────────────────────────
@@ -69,6 +73,13 @@ def run_daemon(
         log.error("daemon: cannot start, no profile imported (%s)", exc)
         return 2
 
+    lock = TunnelOwnerLock()
+    if not lock.acquire():
+        # A GUI/TUI/`connect` already owns the interface. Exiting (with a
+        # code the unit does not restart on) beats bouncing their tunnel.
+        log.error("daemon: tunnel already owned by %s — not starting", describe_owner())
+        return EXIT_TUNNEL_OWNED
+
     settings = load_settings()
     kill_switch = bool(settings.get("kill_switch", False))
     if kill_switch:
@@ -81,7 +92,8 @@ def run_daemon(
         release_stale_async()
     manager = TunnelManager(
         config,
-        allow_tls_intercept=allow_tls_intercept,
+        # The unit carries no flags, so the toggle both UIs persist must count.
+        allow_tls_intercept=allow_tls_intercept or bool(settings.get("allow_tls_intercept", False)),
         auto_reconnect=True,
         kill_switch_enabled=kill_switch,
     )
@@ -130,6 +142,7 @@ def run_daemon(
     finally:
         log.info("daemon: stopping")
         manager.stop()
+        lock.release()
         log.info("daemon: stopped")
     return EXIT_GAVE_UP if gave_up.is_set() else 0
 
@@ -148,11 +161,14 @@ def _user_unit_dir() -> Path:
 def _resolve_daemon_executable() -> Path:
     """Return the absolute path that the unit's ExecStart= should point at.
 
-    Picks ``outwarp`` from PATH first so a system-wide pipx install at
-    /usr/local/bin wins over the in-repo dev script, then the deprecated
-    ``outwarp-cli`` alias (a venv installed before the rename that has not
-    been upgraded yet). Falls back to argv[0] when nothing is on PATH
-    (test/dev scenarios)."""
+    The venv that runs this code wins: ``<venv>/bin/outwarp`` next to the
+    interpreter (an in-place ``outwarp update`` creates it but never a new
+    PATH shim, and with two venvs on a box PATH order picked the wrong one).
+    Then ``outwarp`` on PATH, then the deprecated ``outwarp-cli`` alias, then
+    argv[0] (test/dev scenarios)."""
+    sibling = Path(sys.executable).with_name("outwarp")
+    if sibling.exists() and os.access(sibling, os.X_OK):
+        return sibling.resolve()
     for name in ("outwarp", "outwarp-cli"):
         exe = shutil.which(name)
         if exe:
@@ -197,6 +213,9 @@ def _unit_content(exe_path: Path) -> str:
         f"ExecStart={exe_str} daemon\n"
         "Restart=on-failure\n"
         "RestartSec=10\n"
+        # 2 = no profile imported, 4 = another OutWarp process owns the
+        # tunnel: retrying every 10 s changes nothing and floods the journal.
+        "RestartPreventExitStatus=2 4\n"
         # Tunnel state lives in $HOME/.config and $HOME/.local/state, so
         # no extra ReadWritePaths needed. The privileged helper is invoked
         # via sudo NOPASSWD from the running user's session.
@@ -224,8 +243,19 @@ def is_linger_enabled() -> bool:
     """
     if sys.platform != "linux":
         return False
-    user = os.environ.get("USER") or os.environ.get("LOGNAME", "")
+    user = _current_user()
     return bool(user) and Path(f"/var/lib/systemd/linger/{user}").exists()
+
+
+def _current_user() -> str:
+    """The calling uid's name — $USER lies under `sudo -E` / `su`, and a
+    wrong name turns set-self-linger into set-user-linger, which needs
+    polkit admin auth."""
+    try:
+        import pwd
+        return pwd.getpwuid(os.getuid()).pw_name
+    except (ImportError, KeyError, AttributeError):
+        return os.environ.get("USER") or os.environ.get("LOGNAME", "")
 
 
 def set_linger(enable: bool) -> tuple[bool, str]:
@@ -238,7 +268,7 @@ def set_linger(enable: bool) -> tuple[bool, str]:
     """
     if sys.platform != "linux":
         return False, "Linger management is only supported on Linux"
-    user = os.environ.get("USER") or os.environ.get("LOGNAME", "")
+    user = _current_user()
     if not user:
         return False, "Cannot determine current user"
     if shutil.which("loginctl") is None:
@@ -246,31 +276,63 @@ def set_linger(enable: bool) -> tuple[bool, str]:
 
     action = "enable-linger" if enable else "disable-linger"
     for cmd in (
-        ["loginctl", action, user],
-        ["sudo", "-n", "loginctl", action, user],
+        # --no-ask-password + no stdin: never let polkit spawn a tty agent
+        # over a Textual/GUI process waiting for a password nobody can type.
+        ["loginctl", "--no-ask-password", action, user],
+        ["sudo", "-n", "loginctl", "--no-ask-password", action, user],
     ):
         if cmd[0] == "sudo" and shutil.which("sudo") is None:
             continue
-        r = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL,
+        )
         if r.returncode == 0:
             return True, ""
 
     return False, f"Run as root: sudo loginctl {action} {user}"
 
 
-def install_service() -> int:
+def service_supported() -> tuple[bool, str]:
+    """Can `systemctl --user` manage a unit from this process at all?
+
+    Root has no user manager to talk to, and a session without a user bus
+    (plain SSH without a login session) fails every call with "Failed to
+    connect to user scope bus". Both used to surface as a truncated error
+    after the unit file had already been written.
+    """
+    if sys.platform != "linux":
+        return False, "Background service is only supported on Linux (systemd)."
+    if shutil.which("systemctl") is None:
+        return False, "systemctl not found — only systemd-based distros are supported."
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return False, "Run this as your desktop user, not root: the service is a user unit."
+    res = _systemctl("is-system-running")
+    if res.returncode != 0 and "offline" in (res.stdout + res.stderr):
+        return False, "No systemd user session (no user bus) — log in to a session first."
+    if res.returncode != 0 and "Failed to connect" in (res.stdout + res.stderr):
+        return False, "No systemd user session (no user bus) — log in to a session first."
+    return True, ""
+
+
+def install_service(*, echo: Callable[[str], None] = print) -> int:
     """Write the unit, reload the user manager, enable + start the service.
 
     Returns 0 on success, non-zero on the first failing step. Stays
     idempotent: re-running overwrites the unit and re-enables, which is
-    what users expect after editing their profile manually.
+    what users expect after editing their profile manually. Messages go
+    through ``echo`` so the TUI/GUI can show them without capturing stdout.
+
+    The caller is responsible for not owning the tunnel itself at this
+    point (the TUI/GUI stop their manager first); the daemon refuses to
+    start against another owner anyway.
     """
-    if sys.platform != "linux":
-        print("Service install is only supported on Linux for now.", file=sys.stderr)
-        print("On Windows, register OutWarp as a Service via the installer.", file=sys.stderr)
+    supported, why = service_supported()
+    if not supported:
+        echo(why)
         return 2
-    if shutil.which("systemctl") is None:
-        print("systemctl not found — only systemd-based distros are supported.", file=sys.stderr)
+    if not default_config_path().exists():
+        echo("No profile imported — import a .owcfg first, or the service will "
+             "have nothing to start.")
         return 2
 
     unit_dir = _user_unit_dir()
@@ -279,36 +341,35 @@ def install_service() -> int:
 
     exe_path = _resolve_daemon_executable()
     unit_path.write_text(_unit_content(exe_path), encoding="utf-8")
-    print(f"Wrote {unit_path}")
-    print(f"  ExecStart={exe_path.as_posix()} daemon")
+    echo(f"Wrote {unit_path}")
+    echo(f"  ExecStart={exe_path.as_posix()} daemon")
 
     for step in (("daemon-reload",), ("enable", "--now", SERVICE_NAME)):
         res = _systemctl(*step)
         if res.returncode != 0:
-            print(f"systemctl --user {' '.join(step)} failed:", file=sys.stderr)
-            print(res.stderr.strip() or res.stdout.strip(), file=sys.stderr)
+            detail = ((res.stderr.strip() or res.stdout.strip()).splitlines() or [""])[-1]
+            echo(f"systemctl --user {' '.join(step)} failed: {detail}")
             return res.returncode or 1
 
-    print("\nService enabled. Check status with:")
-    print(f"  systemctl --user status {SERVICE_NAME}")
+    echo(f"Service enabled. Check status with: systemctl --user status {SERVICE_NAME}")
 
     ok, hint = set_linger(True)
     if ok:
-        print("\nLinger enabled — service will start at boot before login.")
+        echo("Linger enabled — service will start at boot before login.")
     else:
-        print("\nTo start before login, run once as root:")
-        print(f"  sudo loginctl enable-linger {os.environ.get('USER', '<your-user>')}")
+        echo("To start before login, run once as root: "
+             f"sudo loginctl enable-linger {_current_user()}")
     return 0
 
 
-def uninstall_service() -> int:
+def uninstall_service(*, echo: Callable[[str], None] = print) -> int:
     """Stop + disable + remove the unit. Best-effort: continues past
     failures so a half-installed state can still be cleaned."""
     if sys.platform != "linux":
-        print("Service uninstall is only supported on Linux.", file=sys.stderr)
+        echo("Service uninstall is only supported on Linux.")
         return 2
     if shutil.which("systemctl") is None:
-        print("systemctl not found — nothing to uninstall.", file=sys.stderr)
+        echo("systemctl not found — nothing to uninstall.")
         return 0
 
     # Tolerate "unit not found" exits — we still want to delete the file.
@@ -317,13 +378,13 @@ def uninstall_service() -> int:
     unit_path = _user_unit_dir() / SERVICE_NAME
     if unit_path.exists():
         unit_path.unlink()
-        print(f"Removed {unit_path}")
+        echo(f"Removed {unit_path}")
     else:
-        print(f"No unit file at {unit_path}")
+        echo(f"No unit file at {unit_path}")
 
     _systemctl("daemon-reload")
     _systemctl("reset-failed", SERVICE_NAME)
-    print("Service uninstalled.")
+    echo("Service uninstalled.")
     return 0
 
 

@@ -58,6 +58,15 @@ class StatusCard(Container):
             widget.update(label)
             widget.set_classes(["value", tone] if tone else ["value"])
 
+    def set_managed_by_service(self, up: bool | None) -> None:
+        """Viewer mode: the daemon owns the tunnel; report the interface."""
+        label = "service · up" if up else ("service · down" if up is False else "service")
+        tone = "ok" if up else ("bad" if up is False else "")
+        with contextlib.suppress(Exception):
+            widget = self.query_one("#state", Static)
+            widget.update(label)
+            widget.set_classes(["value", tone] if tone else ["value"])
+
     def set_geo(self, label: str | None) -> None:
         self._geo = label
         with contextlib.suppress(Exception):

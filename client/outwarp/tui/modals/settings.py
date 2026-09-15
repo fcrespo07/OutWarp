@@ -18,7 +18,6 @@ for background-service management.
 from __future__ import annotations
 
 import contextlib
-import io
 import logging
 import subprocess
 import sys
@@ -110,18 +109,25 @@ class SettingsModal(ModalScreen[None]):
 
             # Linux-only: background service + linger management
             if sys.platform == "linux" and shutil.which("systemctl") is not None:
+                from outwarp.service import service_supported
+
+                supported, why = service_supported()
                 yield Static(
                     "\n[b]Background service (Linux)[/b]",
                     classes="settings-section-header",
                 )
                 with Horizontal(classes="settings-row"):
-                    yield Switch(value=_is_service_enabled(), id=f"switch-{_KEY_SVC}")
+                    yield Switch(
+                        value=_is_service_enabled(), id=f"switch-{_KEY_SVC}",
+                        disabled=not supported,
+                    )
                     with Container(classes="settings-text"):
                         yield Static("[b]Run as background daemon[/b]")
                         yield Static(
-                            "[dim]Install a systemd --user unit that runs the tunnel "
-                            "headlessly. Equivalent to "
-                            "[bold]outwarp service install[/bold].[/]"
+                            "[dim]Hand the tunnel to a systemd --user unit that keeps it up "
+                            "without this TUI (which then just shows its status). "
+                            "Equivalent to [bold]outwarp service install[/bold].[/]"
+                            + (f"\n[{BAD}]{why}[/]" if not supported else "")
                         )
                 with Horizontal(classes="settings-row"):
                     yield Switch(
@@ -234,26 +240,67 @@ class SettingsModal(ModalScreen[None]):
         )
 
     def _toggle_service(self, enable: bool) -> None:
-        """Install or uninstall the systemd user unit in a background thread."""
+        """Hand the tunnel over to the systemd user unit, or take it back.
+
+        Enabling used to just run `systemctl --user enable --now` next to
+        this TUI's own tunnel: the daemon's `wg-quick up` tore the TUI's
+        interface down, the TUI reconnected and tore the daemon's down, and
+        the two flapped the link. Now: stop our manager first, install the
+        unit, and become a viewer; on failure restart our manager. Disabling
+        stops the unit and reloads the config so this process owns the
+        tunnel again. Messages come back through `echo` (no stdout capture)
+        and the last line is shown in full.
+        """
         from outwarp.service import install_service, uninstall_service
 
         status = self.query_one("#settings-status", Static)
         status.update("[dim]Applying service change…[/]")
+        app = self.app
+        lines: list[str] = []
+
+        def _last() -> str:
+            for line in reversed(lines):
+                if line.strip():
+                    return line.strip()
+            return ""
 
         def _run() -> None:
-            buf = io.StringIO()
             try:
-                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                    rc = install_service() if enable else uninstall_service()
-                if rc == 0:
-                    msg = f"[{OK}]Service {'enabled' if enable else 'disabled'}.[/]"
+                if enable:
+                    mgr = getattr(app, "manager", None)
+                    if mgr is not None:
+                        mgr.stop()
+                    if getattr(app, "_owner_lock", None) is not None:
+                        app._owner_lock.release()
+                        app._owner_lock = None
+                    rc = install_service(echo=lines.append)
+                    if rc == 0:
+                        # XDG autostart of the GUI would make a second owner
+                        # at login; the service takes that role now.
+                        if self._settings.get("start_at_boot"):
+                            self._settings["start_at_boot"] = False
+                            with contextlib.suppress(Exception):
+                                save_settings(self._settings)
+                            with contextlib.suppress(Exception):
+                                from outwarp.platforms import get_platform
+                                get_platform().uninstall_autostart()
+                        msg = (f"[{OK}]Service enabled — the tunnel now runs in the background; "
+                               "this TUI shows its status.[/]")
+                        app.call_from_thread(app.enter_viewer_mode)
+                    else:
+                        msg = f"[{BAD}]{_last() or f'service install failed (rc={rc})'}[/]"
+                        app.call_from_thread(app.leave_viewer_mode)
                 else:
-                    out = buf.getvalue().strip()
-                    msg = f"[{BAD}]Error (rc={rc}): {out[:120]}[/]"
+                    rc = uninstall_service(echo=lines.append)
+                    if rc == 0:
+                        msg = f"[{OK}]Service disabled — this TUI runs the tunnel again.[/]"
+                        app.call_from_thread(app.leave_viewer_mode)
+                    else:
+                        msg = f"[{BAD}]{_last() or f'service uninstall failed (rc={rc})'}[/]"
             except Exception as exc:
                 log.exception("toggle_service failed")
                 msg = f"[{BAD}]{exc}[/]"
-            self.app.call_from_thread(
+            app.call_from_thread(
                 lambda: self.query_one("#settings-status", Static).update(msg)
             )
 

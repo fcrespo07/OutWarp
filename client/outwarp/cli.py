@@ -104,9 +104,28 @@ def _cmd_connect(args: argparse.Namespace) -> int:
     if config is None:
         return 1
 
+    from outwarp.killswitch import release_stale_async
+    from outwarp.ownership import OWNED_ELSEWHERE_HINT, TunnelOwnerLock, describe_owner
+    from outwarp.settings import load_settings
+
+    lock = TunnelOwnerLock()
+    if not lock.acquire():
+        _err(f"The tunnel is already run by {describe_owner()}. {OWNED_ELSEWHERE_HINT}")
+        return 1
+
+    # The toggles both UIs persist apply here too — a user who enabled the
+    # kill switch or TLS-intercept tolerance in the GUI/TUI and then runs
+    # `outwarp connect` from a terminal gets the same behaviour.
+    settings = load_settings()
+    kill_switch = bool(settings.get("kill_switch", False))
+    if not kill_switch:
+        release_stale_async()
     manager = TunnelManager(
         config,
-        allow_tls_intercept=args.allow_tls_intercept,
+        allow_tls_intercept=args.allow_tls_intercept
+        or bool(settings.get("allow_tls_intercept", False)),
+        auto_reconnect=bool(settings.get("auto_reconnect", True)),
+        kill_switch_enabled=kill_switch,
     )
 
     last_state: list[TunnelState] = [TunnelState.DISCONNECTED]
@@ -138,18 +157,21 @@ def _cmd_connect(args: argparse.Namespace) -> int:
     # Block until a stop signal arrives OR the manager hits FAILED. Polling
     # every 500 ms is plenty — we're not chasing latency here, just keeping
     # the foreground process alive without busy-spinning.
-    while not stop.is_set():
-        if manager.state == TunnelState.FAILED:
-            _err("Tunnel failed; giving up.")
-            manager.stop()
-            return 1
-        if stop.wait(0.5):
-            break
+    try:
+        while not stop.is_set():
+            if manager.state == TunnelState.FAILED:
+                _err("Tunnel failed; giving up.")
+                manager.stop()
+                return 1
+            if stop.wait(0.5):
+                break
 
-    _print("Disconnecting...")
-    manager.stop()
-    _print("Done.")
-    return 0
+        _print("Disconnecting...")
+        manager.stop()
+        _print("Done.")
+        return 0
+    finally:
+        lock.release()
 
 
 def _cmd_status(args: argparse.Namespace) -> int:

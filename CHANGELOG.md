@@ -70,6 +70,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - CI matrix adds Python 3.14 (what Arch ships).
 
 ### Fixed
+- **"Run as background daemon" no longer fights the UI that enabled it.**
+  The TUI toggle ran `systemctl --user enable --now` next to its own live
+  tunnel; the daemon's `wg-quick up` tore the TUI's interface down, the TUI
+  reconnected and tore the daemon's down, and the link flapped every few
+  seconds. Enabling is now a hand-over: the UI stops its manager, installs
+  the unit, and becomes a viewer (status read from the interface); disabling
+  gives the tunnel back. The GUI gets the same toggle (Settings → System);
+  turning the service on also turns off the GUI's login autostart, and the
+  reverse is refused, so there is never a second owner at login.
+- **One tunnel owner at a time, on every surface.** The GUI's single-instance
+  mutex is now shared by the TUI, `outwarp connect` and the daemon
+  (`outwarp/ownership.py`): a second owner is told who has the tunnel (pid or
+  the service) instead of bouncing its interface. A GUI/TUI opened while the
+  service runs shows its status instead of starting a second tunnel. The unit
+  gains `RestartPreventExitStatus=2 4` (no profile / owned elsewhere) so a
+  misconfigured service no longer restarts every 10 s.
+- The TUI service toggle now shows the real `systemctl` error (it truncated
+  at 120 chars, hiding it behind the "Wrote …" lines), refuses without a
+  profile, as root, or without a user session, and `loginctl` runs with
+  `--no-ask-password` and no stdin so polkit can never paint a password
+  prompt over the dashboard. `ExecStart=` now prefers the running venv's own
+  `outwarp` over whatever `PATH` finds (an in-place update never creates a
+  new shim, so the unit kept pointing at `outwarp-cli`).
+- **`outwarp connect` honours settings.json** (kill switch, auto-reconnect,
+  TLS-intercept tolerance) like the GUI/TUI/daemon; the daemon also honours
+  the TLS-intercept toggle (the unit carries no flags). GUI/TUI keep an
+  engaged kill switch across a restart when the switch is on, as the daemon
+  already did.
+- **Expired profiles fail fast everywhere.** Only the GUI checked; the TUI,
+  `outwarp import/connect` and the daemon walked the whole reconnect ladder
+  against a server that had pruned the peer. Import refuses an expired
+  `.owcfg`, the manager goes straight to FAILED with the expiry date, and the
+  TUI's failed screen says so.
+- GUI settings are re-read from disk before each change, so a toggle flipped
+  in the TUI or with `outwarp ui` while the window is open is no longer
+  reverted. `install.sh` keeps a login-autostart entry the GUI wrote
+  (`outwarp launch`) instead of deleting it on every upgrade.
 - **Kill switch + hostname endpoint: reconnects no longer die at DNS.** With
   the switch engaged only the escape set is allowed out, so a profile whose
   endpoint (or proxy) is a hostname could not resolve it on the next attempt

@@ -155,6 +155,14 @@ def test_unit_content_contains_required_directives():
 # ── install_service ────────────────────────────────────────────────────────
 
 
+def _profile_on_disk() -> None:
+    from outwarp.config import default_config_path
+
+    p = default_config_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{}")
+
+
 def test_install_service_writes_unit_and_runs_systemctl(fake_unit_dir, monkeypatch, capsys):
     """install_service should:
        1) create the unit dir if missing
@@ -162,8 +170,10 @@ def test_install_service_writes_unit_and_runs_systemctl(fake_unit_dir, monkeypat
        3) call `systemctl --user daemon-reload`
        4) call `systemctl --user enable --now outwarp-client.service`
     """
+    _profile_on_disk()
     monkeypatch.setattr(service.sys, "platform", "linux")
     monkeypatch.setattr(service.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(service, "set_linger", lambda enable: (True, ""))
     monkeypatch.setattr(
         service, "_resolve_daemon_executable", lambda: Path("/usr/local/bin/outwarp"),
     )
@@ -184,14 +194,17 @@ def test_install_service_writes_unit_and_runs_systemctl(fake_unit_dir, monkeypat
     body = unit_path.read_text(encoding="utf-8")
     assert "ExecStart=/usr/local/bin/outwarp daemon" in body
 
-    assert calls == [("daemon-reload",), ("enable", "--now", "outwarp-client.service")]
+    # is-system-running is the support probe; the two that matter follow it.
+    assert [c for c in calls if c != ("is-system-running",)] == [
+        ("daemon-reload",), ("enable", "--now", "outwarp-client.service"),
+    ]
 
 
 def test_install_service_refuses_on_non_linux(monkeypatch, capsys):
     monkeypatch.setattr(service.sys, "platform", "win32")
     rc = service.install_service()
     assert rc == 2
-    assert "Linux" in capsys.readouterr().err
+    assert "Linux" in capsys.readouterr().out
 
 
 def test_install_service_refuses_without_systemctl(monkeypatch, capsys):
@@ -199,7 +212,7 @@ def test_install_service_refuses_without_systemctl(monkeypatch, capsys):
     monkeypatch.setattr(service.shutil, "which", lambda _: None)
     rc = service.install_service()
     assert rc == 2
-    assert "systemctl" in capsys.readouterr().err
+    assert "systemctl" in capsys.readouterr().out
 
 
 def test_install_service_propagates_systemctl_failure(fake_unit_dir, monkeypatch, capsys):
@@ -210,13 +223,14 @@ def test_install_service_propagates_systemctl_failure(fake_unit_dir, monkeypatch
     monkeypatch.setattr(
         service, "_resolve_daemon_executable", lambda: Path("/usr/local/bin/outwarp"),
     )
+    _profile_on_disk()
     monkeypatch.setattr(
         service, "_systemctl",
         lambda *args: MagicMock(returncode=5, stderr="enable failed", stdout=""),
     )
     rc = service.install_service()
     assert rc != 0
-    assert "enable failed" in capsys.readouterr().err
+    assert "enable failed" in capsys.readouterr().out
 
 
 # ── uninstall_service ──────────────────────────────────────────────────────
@@ -309,7 +323,9 @@ class TestUnitUsesLegacyName:
     def test_missing_unit_is_not_legacy(self, tmp_path: Path) -> None:
         assert service.unit_uses_legacy_name(tmp_path / "nope.service") is False
 
-    def test_resolves_new_name_before_alias(self, monkeypatch) -> None:
+    def test_resolves_new_name_before_alias(self, monkeypatch, tmp_path: Path) -> None:
+        # No sibling `outwarp` next to the interpreter → PATH order decides.
+        monkeypatch.setattr(service.sys, "executable", str(tmp_path / "python"))
         order: list[str] = []
 
         def fake_which(name: str) -> str | None:

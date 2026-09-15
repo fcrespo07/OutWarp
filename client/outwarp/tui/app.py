@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import logging
+import sys
 import threading
 
 from textual.app import App
@@ -8,6 +10,12 @@ from textual.app import App
 from outwarp.config import ClientConfig, ConfigError, default_config_path
 from outwarp.killswitch import release_stale_async
 from outwarp.logs import setup_logging
+from outwarp.ownership import (
+    OWNED_ELSEWHERE_HINT,
+    TunnelOwnerLock,
+    describe_owner,
+    service_is_active,
+)
 from outwarp.settings import load_settings
 from outwarp.tui.screens.connecting import ConnectingScreen
 from outwarp.tui.screens.dashboard import DashboardScreen
@@ -60,10 +68,19 @@ class OutWarpClientTUI(App):
         # in start_manager so a setting flipped via the modal also takes effect
         # on a reconnect cycle.
         self._settings = load_settings()
+        # True while outwarp-client.service owns the tunnel and this TUI only
+        # watches it; the ownership lock is held whenever we run the tunnel.
+        self.service_managed = False
+        self._owner_lock: TunnelOwnerLock | None = None
 
     def on_mount(self) -> None:
         setup_logging()
-        release_stale_async()
+        if bool(self._settings.get("kill_switch", False)):
+            # Same rule as the daemon: an engaged rule is protection, not
+            # litter, while the switch is on. reconcile() releases it later.
+            log.info("kill switch enabled — leaving any engaged rule in place at startup")
+        else:
+            release_stale_async()
         self._app_thread_id = threading.get_ident()
         self.reload_config()
 
@@ -81,7 +98,37 @@ class OutWarpClientTUI(App):
             self.config = None
             self._push_unique("empty")
             return
+        if self.service_managed or (sys.platform == "linux" and service_is_active()):
+            # The background service owns the tunnel: watch it (StatsSampler
+            # reads the interface through the helper) instead of starting a
+            # second manager that would bounce its interface.
+            self.enter_viewer_mode()
+            return
+        if self._owner_lock is None:
+            lock = TunnelOwnerLock()
+            if not lock.acquire():
+                self._startup_error = (
+                    f"The tunnel is already run by {describe_owner()}. {OWNED_ELSEWHERE_HINT}"
+                )
+                self._push_unique("failed")
+                return
+            self._owner_lock = lock
         self.start_manager(auto=True)
+
+    def enter_viewer_mode(self) -> None:
+        """Show the dashboard for a tunnel owned by outwarp-client.service."""
+        if self.manager is not None:
+            with contextlib.suppress(Exception):
+                self.manager.stop()
+            self.manager = None
+        self.service_managed = True
+        self._startup_error = None
+        self._push_unique("dashboard")
+
+    def leave_viewer_mode(self) -> None:
+        """The service was disabled: take the tunnel back in this process."""
+        self.service_managed = False
+        self.reload_config()
 
     def start_manager(self, *, auto: bool = False) -> None:
         """Construct (or rebuild) the TunnelManager and, by default, start it.
@@ -195,6 +242,9 @@ class OutWarpClientTUI(App):
                 await loop.run_in_executor(None, self.manager.stop)
             except Exception:
                 log.exception("Error stopping manager on quit")
+        if self._owner_lock is not None:
+            self._owner_lock.release()
+            self._owner_lock = None
         self.exit(0)
 
     def on_unmount(self) -> None:

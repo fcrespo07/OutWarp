@@ -1106,8 +1106,11 @@ remove_client_autostart() {
     # to the TUI) might have left behind. Safe to call unconditionally:
     # a missing file is a no-op, and the entry is owned by us so removing
     # it does not surprise the user.
+    # Only the legacy entries go: one the GUI wrote via `start_at_boot`
+    # (`Exec=... outwarp launch`) is the user's choice and must survive an
+    # upgrade — deleting it left the GUI toggle ON with nothing autostarting.
     local desktop_file="$TARGET_HOME/.config/autostart/outwarp.desktop"
-    if [[ -f "$desktop_file" ]]; then
+    if [[ -f "$desktop_file" ]] && ! grep -q "outwarp launch" "$desktop_file"; then
         rm -f "$desktop_file"
         ok "Removed legacy autostart entry: $desktop_file"
     fi

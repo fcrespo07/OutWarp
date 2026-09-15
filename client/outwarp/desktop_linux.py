@@ -51,11 +51,16 @@ def is_hyprland() -> bool:
     )
 
 
+_app_id_set = False
+
+
 def set_app_id() -> None:
     """Give the GTK window a stable app_id / WM_CLASS. Must run before GTK
     initialises (i.e. before ``webview.start``); harmless elsewhere."""
-    if sys.platform != "linux":
+    global _app_id_set
+    if sys.platform != "linux" or _app_id_set:
         return
+    _app_id_set = True
     try:
         from gi.repository import GLib
 
@@ -79,7 +84,7 @@ def appindicator_available() -> tuple[bool, str]:
             gi.require_version(ns, "0.1")
             __import__("gi.repository", fromlist=[ns])
             return True, ns
-        except (ValueError, ImportError):
+        except Exception:  # ValueError/ImportError, or GI type clashes in odd processes
             continue
     return False, "no AppIndicator GObject typelib (libayatana-appindicator)"
 
