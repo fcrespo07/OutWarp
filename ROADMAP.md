@@ -5,6 +5,68 @@ fit into a single release — either because they are big reworks, need external
 resources (a paid certificate, an app-store account), or need hardware/network
 setups we can't validate in CI.
 
+## Before 1.0 — release gate
+
+Decided by the author on 2026-09-14. **1.0.0 does not ship until every item
+below is done.** The binding, more detailed version (acceptance criteria,
+proposed implementation, what is explicitly *not* blocking) lives in
+`CLAUDE.md` → "Criterio de 1.0.0"; keep the two in sync.
+
+What 1.0 freezes: the `.owcfg` v3 format, the enrolment protocol, the
+documented CLI surface (`outwarp` / `outwarp-server`), the signed update
+channel and the config file shapes.
+Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration.
+
+- [ ] **End-to-end job in CI, blocking.** Two Docker containers (the real
+      `server/Dockerfile` image + a root client), full user flow: enrol over
+      443 → connect → traffic through the tunnel → DNS routed inside →
+      reused token rejected → clean disconnect. Spike first: `wg-quick up`
+      inside Docker on a GitHub runner.
+- [ ] **Kill switch + hostname endpoint.** Reconnect can't resolve the
+      endpoint through the blocked LAN DNS → `FAILED` with no network.
+- [ ] **Rename the client command `outwarp-cli` → `outwarp`.** The client is
+      what most people use, so it gets the short name; the server already
+      carries its suffix, and the Windows executable is already
+      `outwarp.exe`. Must land before 1.0 because the CLI surface freezes
+      there. Ship `outwarp-cli` as a deprecated alias for one release (units,
+      `.desktop` files and completions on existing installs point at it) and
+      have `install.sh` / `service install` migrate them; drop the alias in
+      1.0.0.
+- [ ] **Linux client GUI as a first-class option.** Installer offers the
+      pywebview GUI by default on desktop sessions (TUI stays the headless
+      path); tested on X11 and Wayland; `doctor` checks the GUI stack.
+- [ ] **Full Omarchy compatibility** (Arch + Hyprland/Wayland + waybar +
+      mako + systemd + pacman). Not just "it installs" — once installed it
+      has to feel native: clean install via the `pacman` path; tray icon in
+      waybar (SNI/appindicator) that **changes with tunnel state** and reads
+      well at bar size in light and dark themes, with a working menu; GTK
+      window under Wayland with a stable `app_id`, own icon, floating by
+      default (documented Hyprland `windowrule`); launcher entry with icon
+      that opens the GUI; mako notifications with icon; session autostart
+      (user unit + linger or Hyprland autostart — pick one); nftables kill
+      switch; `doctor` all green including a Wayland tray check. CI matrix
+      must cover the Python version Arch ships at release time. An AUR
+      `PKGBUILD` is the native follow-up (1.x, see "Native Linux packages"),
+      not a blocker.
+- [ ] **JS test runner (vitest) + bundle guard.** Pure-logic tests for the
+      dashboard helpers (`makeBoundedPeak`, formatters) and a test that fails
+      when `bundle.js` is stale. No ES-module rewrite of the UI.
+- [ ] **Retire the unsigned-manifest fallback** in both updaters
+      (fail-closed; see "Security follow-ups").
+- [ ] **Honest README and wizard about DPI.** Replace the "corporate
+      networks / captive Wi-Fi" claim with the adversary table (self-signed:
+      UDP-blocked only; ACME branch: also certificate inspection; neither:
+      TLS fingerprint / Upgrade DPI). ACME as the recommended path in `setup`.
+      Add "Supported platforms" and "Known limitations"; drop the "not yet
+      ready for production" banner.
+- [ ] **Signed release after a quiet cycle.** `SHA256SUMS.txt.minisig` on
+      release day, after the last 0.x has run 2–4 weeks in production without
+      a hotfix.
+
+Explicitly **not** blocking 1.0: the Authenticode certificate (money, not
+quality — SmartScreen is documented as a known limitation), multi-profile,
+split tunnelling, DDNS, server auto-update, metrics, more languages, mobile.
+
 ## Shipped in 0.7.x
 
 - **Textual TUI** (`outwarp-cli tui` / `outwarp-server tui`): full terminal
@@ -83,7 +145,7 @@ carefully (bind address, auth).
 a client can update off releases that predate the manifest. Once the release key
 is configured (see `docs/RELEASE_SIGNING.md`) and no meaningfully-used version
 predates the first signed release, that branch should become fail-closed
-unconditionally in both updaters.
+unconditionally in both updaters. **Part of the 1.0 gate** (see "Before 1.0").
 
 ### uTLS / ClientHello mimicry
 The domain branch fixes what the certificate looks like, and the browser
@@ -92,7 +154,10 @@ rustls' — a JA3/JA4 that matches no browser. Fixing it means replacing the
 transport, since wstunnel does not do ClientHello mimicry. That is a rewrite of
 a layer, not an increment, so it is deliberately not scheduled. Note that the
 `--tls-ech-enable` flag wstunnel already exposes would hide the SNI when the
-front supports ECH, which is a cheaper partial step worth evaluating first.
+front supports ECH, which is a cheaper partial step worth evaluating first —
+but only against a real DPI network; CI cannot simulate one, and ECH does not
+change the JA3 either. Decision (2026-09-14): the transport rewrite stays
+unscheduled; the 1.0 answer is an honest README (see "Before 1.0").
 
 ### Signature verification in `install.sh`
 The Linux bootstrap checks the wheel against `SHA256SUMS.txt` but not its
@@ -111,9 +176,11 @@ GitHub. The in-app updaters, which run unattended, do verify.
 - **Code signing (a real certificate).** The build hook exists; an OV/EV
   Authenticode cert (paid, identity-verified) is needed to actually kill the
   SmartScreen/UAC warning. Tracked in the pre-1.0 checklist in `CLAUDE.md`.
-- **Native Linux packages (`.deb`/`.rpm`).** Today Linux installs from source
-  via `install.sh`. Producing distro packages (e.g. with `nfpm`) is doable;
-  hosting a repo is the extra step.
+- **Native Linux packages (`.deb`/`.rpm`/AUR).** Today Linux installs from
+  source via `install.sh`. Producing distro packages (e.g. with `nfpm`) is
+  doable; hosting a repo is the extra step. An AUR `PKGBUILD` is the natural
+  follow-up to the Omarchy work in the 1.0 gate — planned for 1.x, not a
+  blocker.
 - **winget / scoop / choco manifests.** Each needs a manifest plus a PR to an
   external community repository and stable release-asset URLs + hashes (the
   `SHA256SUMS.txt` we now publish helps here).
