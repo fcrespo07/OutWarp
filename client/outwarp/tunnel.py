@@ -26,6 +26,7 @@ from outwarp.fallback import (
     build_ladder,
     default_sticky_path,
     network_signature,
+    redact_command,
     reorder_for_sticky,
     strategy_to_command,
 )
@@ -515,7 +516,7 @@ class Tunnel:
 
     def _start_wstunnel(self, strat: ConnectionStrategy) -> None:
         cmd = strategy_to_command(strat, self._wstunnel_bin, _forward_spec(self._config))
-        log.info("Starting wstunnel: %s", " ".join(cmd))
+        log.info("Starting wstunnel: %s", redact_command(cmd))
         self._proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
