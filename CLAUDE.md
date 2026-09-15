@@ -46,7 +46,7 @@ Se valoró C# + WinForms (descartado: no cross-platform sin reescribir UI entera
 
 El HTML se sirve **desde el filesystem** (`file://…/ui/index.html`) directamente a la ventana pywebview, no por HTTP. La clase `Api` (`outwarp/api.py`) se expone con `js_api=api` al crear la ventana; el JS la invoca como `window.pywebview.api.<método>` y recibe eventos vía `window.addEventListener('outwarp:<name>', …)` (Python emite con `window.evaluate_js`). Sin FastAPI ni uvicorn — el JS bridge directo es el modelo definitivo.
 
-**TUI Textual** (ya implementada): cliente y servidor exponen además `outwarp-cli tui` / `outwarp-server tui`, una interfaz en terminal basada en [`textual`](https://textual.textualize.io/). Comparte el mismo `TunnelManager` / `ServerManager` que la GUI y el CLI headless, así que las tres rutas se cruzan sin duplicar lógica. La paleta TCSS replica los design tokens de `styles.css`; los glyphs son BMP-only (caja, bloques sparkline, formas, flechas) para correr en cualquier terminal — incluidos tmux, screen y SSH. La especificación visual vive en `design_handoff_outwarp/tui_linux/` (mockup HTML + `IMPLEMENTATION_PLAN.md`).
+**TUI Textual** (ya implementada): cliente y servidor exponen además `outwarp tui` / `outwarp-server tui`, una interfaz en terminal basada en [`textual`](https://textual.textualize.io/). Comparte el mismo `TunnelManager` / `ServerManager` que la GUI y el CLI headless, así que las tres rutas se cruzan sin duplicar lógica. La paleta TCSS replica los design tokens de `styles.css`; los glyphs son BMP-only (caja, bloques sparkline, formas, flechas) para correr en cualquier terminal — incluidos tmux, screen y SSH. La especificación visual vive en `design_handoff_outwarp/tui_linux/` (mockup HTML + `IMPLEMENTATION_PLAN.md`).
 
 ### Servidor
 
@@ -63,14 +63,14 @@ OutWarp/
 │   ├── outwarp/
 │   │   ├── app.py            # Entry point: crea Api, abre pywebview, arranca tray
 │   │   ├── api.py            # Clase Api expuesta como window.pywebview.api
-│   │   ├── cli.py            # outwarp-cli (única binary del cliente: subcomandos import/connect/status/profile/logs/forget-profile/uninstall/tui/gui/update)
+│   │   ├── cli.py            # outwarp (única binary del cliente: subcomandos import/connect/status/profile/logs/forget-profile/uninstall/tui/gui/update)
 │   │   ├── tray.py           # pystray + menú contextual
 │   │   ├── tunnel.py         # Gestión del proceso wstunnel + watchdog + reconexión
 │   │   ├── wireguard.py      # Fachada WireGuard (delega en platforms/)
 │   │   ├── network.py        # TCP probe + TLS fingerprint pinning
 │   │   ├── config.py         # Schema + I/O del .owcfg / config.json
 │   │   ├── logs.py           # Logger + rotación + MemoryLogHandler
-│   │   ├── uninstall.py      # Lógica del subcomando `outwarp-cli uninstall` (purga venv pipx + helper + sudoers + autostart)
+│   │   ├── uninstall.py      # Lógica del subcomando `outwarp uninstall` (purga venv pipx + helper + sudoers + autostart)
 │   │   ├── ui/               # HTML/JS de la UI (Claude Design — pywebview)
 │   │   │   ├── index.html    # Carga react + scripts (bundle JSX pre-compilado)
 │   │   │   ├── app.jsx       # Shell interactivo cableado al Api
@@ -80,7 +80,7 @@ OutWarp/
 │   │   │   ├── brand.jsx     # Logo + wordmark "OutWarp"
 │   │   │   └── styles.css    # Design tokens (light/dark)
 │   │   ├── tui/              # Textual TUI (Linux, terminal-only — sin GTK/WebKit)
-│   │   │   ├── app.py        # OutWarpClientTUI(App) — entry point de `outwarp-cli tui`
+│   │   │   ├── app.py        # OutWarpClientTUI(App) — entry point de `outwarp tui`
 │   │   │   ├── styles.tcss   # TCSS (paleta mirror de styles.css, glyphs BMP-only)
 │   │   │   ├── screens/      # empty / connecting / dashboard / logs / failed / profile
 │   │   │   ├── modals/       # import_owcfg / settings / help
@@ -275,15 +275,15 @@ Legado (hecho):
 
 **Bloqueante** (cada punto = una rama y un PR; orden recomendado):
 
-- [ ] **Prueba end-to-end en CI, bloqueante.** Cuarto job en `ci.yml` (solo Linux): dos contenedores Docker — `server` = la imagen real de `server/Dockerfile`, `client` = `python-slim` + `wireguard-tools` + wstunnel pinneado + wheel del cliente, como root (`platforms/linux.py` omite `sudo` con euid 0; helper vía `OUTWARP_HELPER`), ambos con `NET_ADMIN` + `/dev/net/tun`. Flujo: `add-client` → `import` (enrola por 443) → `connect` → handshake → `curl` a un HTTP que solo escucha en la IP de túnel del servidor + contadores de `wg show` suben → `ip route get 1.1.1.1` sale por `wg0` → token reutilizado rechazado → `disconnect` deja rutas e interfaz limpias. Cubre lo que se coló con CI en verde: B-017, B-018, B-019 y el drift de versión de wstunnel. No cubre Windows, systemd, k8s ni GUI (y se dice así en la doc). **Antes: spike de 1 h** para confirmar `wg-quick up` en Docker dentro de un runner de GitHub; si no funciona, plan B = network namespaces en el runner. Ficheros previstos: `e2e/compose.yml`, `e2e/client.Dockerfile`, `e2e/run.sh`.
-- [ ] **Kill switch + endpoint por hostname.** Con el kill switch enganchado, la reconexión resuelve el hostname por el DNS de la LAN, que está bloqueado → `FAILED` y el usuario sin red. Hay que decidir e implementar cómo se permite la resolución (UDP/53 a los resolvers mientras está enganchado, o resolver y cachear la IP antes de enganchar). Es un fallo en una feature de seguridad; no se firma "estable" con esto abierto.
-- [ ] **Renombrar el comando del cliente: `outwarp-cli` → `outwarp`.** Decisión del autor (2026-09-14): el cliente es lo que usa la mayoría y tiene que ser lo más fácil; el servidor ya lleva su sufijo (`outwarp-server`), así que el cliente no necesita ninguno. En Windows el ejecutable **ya** es `outwarp.exe` (`installer/windows/outwarp.iss`); solo Linux/pip arrastra `-cli` desde 0.5.0 (cuando `outwarp` era el binario de la GUI y se colapsó todo en uno). Tiene que ir **antes de 1.0** porque la superficie CLI se congela ahí. Plan:
+- [x] **Prueba end-to-end en CI, bloqueante.** *(Hecho 2026-09-15: `e2e/compose.yml` + `e2e/client.Dockerfile` + `e2e/run.sh`, job `e2e` en `ci.yml`. Pasa en local con Docker 29 / kernel 7.2; el primer run en el runner de GitHub confirma el spike de `wg-quick` en Docker.)* Cuarto job en `ci.yml` (solo Linux): dos contenedores Docker — `server` = la imagen real de `server/Dockerfile`, `client` = `python-slim` + `wireguard-tools` + wstunnel pinneado + wheel del cliente, como root (`platforms/linux.py` omite `sudo` con euid 0; helper vía `OUTWARP_HELPER`), ambos con `NET_ADMIN` + `/dev/net/tun`. Flujo: `add-client` → `import` (enrola por 443) → `connect` → handshake → `curl` a un HTTP que solo escucha en la IP de túnel del servidor + contadores de `wg show` suben → `ip route get 1.1.1.1` sale por `wg0` → token reutilizado rechazado → `disconnect` deja rutas e interfaz limpias. Cubre lo que se coló con CI en verde: B-017, B-018, B-019 y el drift de versión de wstunnel. No cubre Windows, systemd, k8s ni GUI (y se dice así en la doc). **Antes: spike de 1 h** para confirmar `wg-quick up` en Docker dentro de un runner de GitHub; si no funciona, plan B = network namespaces en el runner. Ficheros previstos: `e2e/compose.yml`, `e2e/client.Dockerfile`, `e2e/run.sh`.
+- [x] **Kill switch + endpoint por hostname.** *(Hecho 2026-09-15: caché de última resolución (`outwarp/dnscache.py`, `resolved_hosts.json`) usada por `_resolve_endpoints` y `_resolve_bypass_networks` cuando el DNS falla; no se abre UDP/53 por el switch (fugaría el DNS de todas las apps). Límite conocido: si la IP del servidor cambia con el switch enganchado, hay que soltarlo.)* Con el kill switch enganchado, la reconexión resuelve el hostname por el DNS de la LAN, que está bloqueado → `FAILED` y el usuario sin red. Hay que decidir e implementar cómo se permite la resolución (UDP/53 a los resolvers mientras está enganchado, o resolver y cachear la IP antes de enganchar). Es un fallo en una feature de seguridad; no se firma "estable" con esto abierto.
+- [x] **Renombrar el comando del cliente: `outwarp-cli` → `outwarp`.** *(Hecho 2026-09-15: `outwarp` es la entrada principal, `outwarp-cli` queda como alias deprecado hasta 1.0.0; `install.sh` migra unit/completions y `doctor` avisa de restos.)* Decisión del autor (2026-09-14): el cliente es lo que usa la mayoría y tiene que ser lo más fácil; el servidor ya lleva su sufijo (`outwarp-server`), así que el cliente no necesita ninguno. En Windows el ejecutable **ya** es `outwarp.exe` (`installer/windows/outwarp.iss`); solo Linux/pip arrastra `-cli` desde 0.5.0 (cuando `outwarp` era el binario de la GUI y se colapsó todo en uno). Tiene que ir **antes de 1.0** porque la superficie CLI se congela ahí. Plan:
   - `[project.scripts]` del cliente: `outwarp = "outwarp.cli:main"` como entrada principal; **mantener `outwarp-cli` una release como alias** que funciona igual y avisa una línea por stderr ("use `outwarp`"). Retirarlo en 1.0.0. Es una compatibilidad justificada: hay unidades systemd, `.desktop` y completions **en disco** en instalaciones existentes que apuntan al nombre viejo; el updater in-app (`updater.py`, `pip install` dentro del venv pipx) no las reescribe.
   - `service.py` (`ExecStart=`, `shutil.which`), `install.sh` (`CLIENT_BIN_LINK` vuelve a ser el link real, `.desktop` `Exec=`, completions bash/zsh, mensajes), `uninstall.py`, `diagnostics.py` (remedios), TUI/GUI (textos de ayuda, `FailedScreen`, settings), `updater.py`, `release.yml`/`release.sh`, `outwarp-client.spec` de PyInstaller (comprobar que el exe sigue siendo `outwarp.exe`), README, CHANGELOG, `docs/RELEASE_SIGNING.md`, y este fichero. ~220 referencias en ~45 ficheros: hacerlo con `grep`, no de memoria, y revisar `bundle.js` regenerado.
   - `service install` y `install.sh` tienen que **migrar** una unit/`.desktop`/completions existentes al nombre nuevo al actualizar (idempotente), y `doctor` avisar si aún apuntan a `outwarp-cli`.
   - Tests: `test_cli.py`, `test_service.py`, `test_wheel_contents.py` (los dos entry points presentes durante la release de transición; solo `outwarp` después).
-- [ ] **Cliente Linux con GUI de primera clase, no solo TUI.** Hoy la GUI pywebview en Linux es opt-in (`install.sh` → `OUTWARP_CLIENT_GUI=1`, extra `gui-linux`; `app.py` la excluye por marker PEP 508). Criterio: en una sesión de escritorio (`$WAYLAND_DISPLAY`/`$DISPLAY`) el instalador ofrece la GUI por defecto y la TUI sigue siendo el camino headless; `outwarp-cli gui` arranca sin pasos manuales; tray + ventana probados en X11 (GNOME/KDE) y Wayland (Hyprland, GNOME); `doctor` comprueba las deps de GUI y el backend del tray; README/`install.sh --help` lo documentan. Propuesta técnica (a confirmar al implementar): mantener el marker y el extra `gui-linux` (los wheels Linux no arrastran webkit2gtk) y cambiar el **default del instalador**, no el `pyproject`.
-- [ ] **Compatibilidad total con Omarchy** (Arch Linux + Hyprland/Wayland + waybar + mako + systemd + pacman). **No es solo que instale: es que, una vez instalado, se sienta parte del sistema** (petición literal del autor: "que salga arriba con los iconos y se integre bien una vez instalado"). Criterio de aceptación, verificado en una instalación limpia de Omarchy:
+- [~] **Cliente Linux con GUI de primera clase, no solo TUI.** *(Código hecho 2026-09-15: `install.sh` ofrece la GUI por defecto en sesión de escritorio, `sudo outwarp gui --install` la añade después, `outwarp ui gui|tui` elige lo que abre el lanzador (`outwarp launch`), `doctor` check `gui`. Pendiente: probar tray + ventana en X11 (GNOME/KDE) y Wayland (Hyprland, GNOME) en máquina real.)* Hoy la GUI pywebview en Linux es opt-in (`install.sh` → `OUTWARP_CLIENT_GUI=1`, extra `gui-linux`; `app.py` la excluye por marker PEP 508). Criterio: en una sesión de escritorio (`$WAYLAND_DISPLAY`/`$DISPLAY`) el instalador ofrece la GUI por defecto y la TUI sigue siendo el camino headless; `outwarp gui` arranca sin pasos manuales; tray + ventana probados en X11 (GNOME/KDE) y Wayland (Hyprland, GNOME); `doctor` comprueba las deps de GUI y el backend del tray; README/`install.sh --help` lo documentan. Propuesta técnica (a confirmar al implementar): mantener el marker y el extra `gui-linux` (los wheels Linux no arrastran webkit2gtk) y cambiar el **default del instalador**, no el `pyproject`.
+- [~] **Compatibilidad total con Omarchy** *(2026-09-15, verificado en vivo en la Omarchy 4 del autor: tray SNI con icono por estado en omarchy-shell (Omarchy 4 no usa waybar/mako sino omarchy-shell/Quickshell; notificaciones con icono vía notify-send), ventana GTK nativa Wayland con `app_id` `outwarp` flotante 1080×720 por regla Lua instalada en `~/.config/hypr/outwarp.lua`, XDG autostart honrado por uwsm, `doctor` con checks `tray`/`hyprland`, CI con 3.14. Pendiente: probar `install.sh` completo en una Omarchy limpia y el kill switch nftables allí.)* (Arch Linux + Hyprland/Wayland + waybar + mako + systemd + pacman). **No es solo que instale: es que, una vez instalado, se sienta parte del sistema** (petición literal del autor: "que salga arriba con los iconos y se integre bien una vez instalado"). Criterio de aceptación, verificado en una instalación limpia de Omarchy:
   - *Instalación:* `install.sh` completa por la ruta `pacman` (paquetes: `python-pipx`, `wireguard-tools`, `python-gobject`, `webkit2gtk-4.1`, `libayatana-appindicator`) e instala la GUI por defecto (ver punto anterior).
   - *Barra superior (waybar):* el icono de OutWarp aparece en el tray de waybar (StatusNotifierItem vía appindicator — el backend Xorg de pystray no vale en Wayland) y **cambia con el estado** (desconectado / conectando / conectado / reconectando / fallo), con iconos legibles al tamaño de waybar y coherentes en tema claro y oscuro; el menú del tray funciona con clic y todas sus entradas (conectar, desconectar, abrir GUI, logs, salir). Si el tray no puede arrancar, la GUI lo dice en pantalla en vez de fallar en silencio.
   - *Ventana:* la ventana pywebview abre bajo Wayland (GTK) sin X11, con título e icono propios (`app_id`/clase estable para que Hyprland le aplique reglas), tamaño sensato y **flotante** por defecto — documentar la `windowrule` de Hyprland recomendada, o instalarla si Omarchy tiene un sitio para ello.
@@ -313,7 +313,48 @@ Legado (hecho):
 
 ## Estado actual
 
-**Versión actual: `0.13.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
+**Versión actual: `0.14.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
+
+### Cambios en 0.14.0 — gate de 1.0 (2026-09-15)
+
+Cinco puntos bloqueantes del "Criterio de 1.0.0" cerrados o casi (ver la
+lista de esa sección) más los fallos que salieron al auditar GUI/TUI/CLI
+entre sí. Detalle en `CHANGELOG.md` → 0.14.0. Lo estructural:
+
+- **`outwarp-cli` → `outwarp`.** `outwarp-cli` queda como alias deprecado
+  (una línea por stderr) que se retira en 1.0.0; `install.sh` migra unit y
+  completions; `doctor` sección *Install* avisa de restos y de un segundo
+  venv en `PATH`.
+- **Un solo dueño del túnel** (`client/outwarp/ownership.py`): el mutex de
+  instancia única de la GUI lo comparten ahora TUI, `connect` y `daemon`
+  (`TunnelOwnerLock`, escribe el pid). Activar el servicio desde GUI o TUI
+  es una **cesión**: la UI para su manager, instala la unit y pasa a modo
+  visor (`service_managed`, estado leído de la interfaz); desactivarlo lo
+  recupera. Servicio activo y `start_at_boot` de la GUI son excluyentes. La
+  unit lleva `RestartPreventExitStatus=2 4` (sin perfil / dueño ajeno).
+- **GUI Linux de primera clase**: `install.sh` la ofrece por defecto con
+  sesión de escritorio (`OUTWARP_CLIENT_GUI=1|0`), venv pipx con
+  `--system-site-packages` para que pystray vea `gi`; `sudo outwarp gui
+  --install`, `outwarp ui [auto|gui|tui] [--hyprland-rule]`, `outwarp launch`
+  (lo que corre el `.desktop`). Lógica en `client/outwarp/ui_choice.py` y
+  `client/outwarp/desktop_linux.py` (`app_id` estable vía
+  `GLib.set_prgname`, regla Hyprland Lua/conf, checks `tray`/`hyprland`).
+- **e2e Docker en CI** (`e2e/`), **kill switch + hostname** (caché
+  `dnscache.py`), **rate limiter de enrolamiento por token**, y
+  `redact_command` para que el prefijo de upgrade no acabe en el log.
+- Paridad corregida: `connect` honra `settings.json`; gate de perfil
+  caducado en todas las superficies; cerrar la ventana con la X para el
+  túnel; minimizar oculta a la bandeja en Wayland; kill switch en el modal
+  de settings de la TUI; `nftables` en el instalador.
+
+Pendiente (auditoría parcial, 58 hallazgos, ver memoria de sesión): cliente
+Windows (exe solo GUI, desinstalador sin soltar kill switch, clave WG en
+claro vs. DPAPI prometido), servidor (`wg_listen_port` desde el panel
+reinicia wstunnel con `--restrict-to` viejo, `restart` en Windows, `restart`
+en Docker no-op, `run_setup` GUI incompleto en Linux), `k` en la TUI sale en
+vez de desconectar, strings en español fijo en la GUI.
+
+Cliente: 619 tests. Servidor: 526 tests. `ruff` limpio en ambos.
 
 ### Cambios en 0.13.0 — auditoría "qué sigue bloqueando"
 
@@ -346,7 +387,7 @@ Linux/systemd, Docker y k8s). Detalle en `CHANGELOG.md` (Unreleased) y
 Seguimientos apuntados (no hechos): kill switch + endpoint por hostname (la
 allowlist no cubre el DNS que la reconexión necesita); TOCTOU del pin en el
 enrolamiento (pin en una conexión, POST en otra — mismo modelo que el
-transporte); rate limiter del enrolamiento es un cubo global tras el forward.
+transporte); rate limiter del enrolamiento es un cubo global tras el forward *(resuelto 2026-09-15: bucket por token + techo global)*.
 
 ### Cambios en 0.12.0 (auditoría de seguridad completa + refactors de arquitectura)
 
@@ -416,7 +457,7 @@ se respeta, falta el row del modal).
   el kill switch se extrajo a `client/outwarp/killswitch.py` y lo dispara
   `TunnelManager._set_state` directamente (propiedad `kill_switch_enabled`,
   igual patrón que `allow_tls_intercept`) — antes solo vivía en `api.py` (el
-  bridge pywebview), así que el TUI y `outwarp-cli daemon` (el target real de
+  bridge pywebview), así que el TUI y `outwarp daemon` (el target real de
   systemd) nunca lo activaban ni liberaban.
 - **CONCEPTO-F** — tests de regresión extraídos de `KNOWN_BUGS.md` (B-005,
   B-012, B-016, B-017) para que las invariantes sobrevivan a un refactor.
@@ -535,7 +576,7 @@ Tres fallos corregidos, en el orden en que importan:
    wstunnel (proceso + unit systemd la renderizan de ahí; antes estaban
    duplicadas y podían divergir).
 
-Resumen de 0.8.0 (Linux UX + TUI feature pass + fixes de code review): notificaciones de escritorio vía `notify-send` (`outwarp/notify.py`, cableado en GUI/TUI/daemon), launcher `.desktop` + icono + completions bash/zsh instalados por `install.sh`, toggles de servicio systemd + linger en el settings modal de la TUI, `outwarp-cli doctor` + DoctorScreen del cliente (`outwarp/diagnostics.py`: wstunnel/pin/wg/helper/sudoers/kmod/systemd/notify-send), `outwarp-server rotate-client` (CLI + TUI con QR), filtros del log screen (`/` búsqueda, `e`/`w` nivel, `p` pausa), auto-scan de `.owcfg` en el import modal, sparklines rx/tx, hints de error + log inline en FailedScreen, columna expires + prune (`P`) en la tabla de clientes del servidor, copy endpoint (`c`). Seguridad: `add_client()` valida el nombre antes de construir el path del `.owcfg` (path traversal vía `../`). Resumen de 0.7.1: el `install.sh` de Linux instala la versión de wstunnel **pinneada** (antes bajaba la última de GitHub y aceptaba en silencio cualquier binario preexistente del PATH → un cliente derivó a 10.5.5 contra un servidor 10.5.2; el formato del WS upgrade cambió entre versiones → HTTP 400 y túnel sin tráfico, "conecta" pero solo sube). Versión centralizada en `installer/wstunnel-version.txt` (la leen `fetch_bundled_binaries.py` y el workflow de Docker; `install.sh` y `server/Dockerfile` la replican), con `server/tests/test_wstunnel_version_pin.py` como guardia anti-drift. Resumen de 0.7.0 (hardening tras auditoría de código + UX + CI del instalador Windows):
+Resumen de 0.8.0 (Linux UX + TUI feature pass + fixes de code review): notificaciones de escritorio vía `notify-send` (`outwarp/notify.py`, cableado en GUI/TUI/daemon), launcher `.desktop` + icono + completions bash/zsh instalados por `install.sh`, toggles de servicio systemd + linger en el settings modal de la TUI, `outwarp doctor` + DoctorScreen del cliente (`outwarp/diagnostics.py`: wstunnel/pin/wg/helper/sudoers/kmod/systemd/notify-send), `outwarp-server rotate-client` (CLI + TUI con QR), filtros del log screen (`/` búsqueda, `e`/`w` nivel, `p` pausa), auto-scan de `.owcfg` en el import modal, sparklines rx/tx, hints de error + log inline en FailedScreen, columna expires + prune (`P`) en la tabla de clientes del servidor, copy endpoint (`c`). Seguridad: `add_client()` valida el nombre antes de construir el path del `.owcfg` (path traversal vía `../`). Resumen de 0.7.1: el `install.sh` de Linux instala la versión de wstunnel **pinneada** (antes bajaba la última de GitHub y aceptaba en silencio cualquier binario preexistente del PATH → un cliente derivó a 10.5.5 contra un servidor 10.5.2; el formato del WS upgrade cambió entre versiones → HTTP 400 y túnel sin tráfico, "conecta" pero solo sube). Versión centralizada en `installer/wstunnel-version.txt` (la leen `fetch_bundled_binaries.py` y el workflow de Docker; `install.sh` y `server/Dockerfile` la replican), con `server/tests/test_wstunnel_version_pin.py` como guardia anti-drift. Resumen de 0.7.0 (hardening tras auditoría de código + UX + CI del instalador Windows):
 - **Seguridad de secretos**: `ClientConfig.save()` (y `config.original.json`) ahora escriben atómicamente a 0o600 (`_atomic_write_secret`) — antes `config.json` con la clave privada WG quedaba a la umask (world-readable en Linux). La WG conf del servidor (linux/kubernetes/windows) pasa por el mismo helper (sin ventana 0o644→chmod). Txn ID de la sonda DNS de `detect_hostile_network()` ahora aleatorio (`secrets`), no fijo.
 - **TUI responsiva**: el dashboard del cliente corre `StatsSampler.sample()` (subprocess `wg`/`ping`) en executor en vez de bloquear el event loop; `disconnect`/`reconnect`/`quit` ya no congelan la TUI mientras `mgr.stop()` hace join. Indicador de estado del túnel visible en `StatusCard` (antes el dashboard era idéntico conectado vs desconectado). Stepper de conexión con 5º paso "ready" como la GUI.
 - **Robustez**: validación de `reconnect.max_attempts`/`delays_seconds` en el parser (un `max_attempts=0` ya no provoca fallo instantáneo silencioso). `top_talkers()` usa `LAG()`+clamp (no `MAX-MIN`) para no inflar tras un reset de contador. Race de `_replace_manager` cerrado con `TunnelManager.remove_listener()`. Stats/latency loops hacen join al pararse. Lock en `_last_failure_message` del servidor.
@@ -543,7 +584,7 @@ Resumen de 0.8.0 (Linux UX + TUI feature pass + fixes de code review): notificac
 - **Tests**: +2 para `run_daemon` (sin perfil → exit 2; start→stop→0). Cliente 349 / servidor 283 en verde, ruff limpio.
 
 ### Cambios desde 0.5.x (0.6.0):
-- **Daemon mode**: nuevo subcomando `outwarp-cli daemon` — el `TunnelManager` headless que el `ExecStart=` de systemd/SCM invoca, silente en stdout (todo va al log file). Complementa: `outwarp-cli service install|uninstall|status` gestiona la unit user-level `~/.config/systemd/user/outwarp-client.service`. Windows queda con stub (el SCM wrapper llegará en un release posterior). Lógica en `outwarp/service.py`.
+- **Daemon mode**: nuevo subcomando `outwarp daemon` — el `TunnelManager` headless que el `ExecStart=` de systemd/SCM invoca, silente en stdout (todo va al log file). Complementa: `outwarp service install|uninstall|status` gestiona la unit user-level `~/.config/systemd/user/outwarp-client.service`. Windows queda con stub (el SCM wrapper llegará en un release posterior). Lógica en `outwarp/service.py`.
 - **Anti-DPI infra (parcial)**: `--websocket-ping-frequency 25s` siempre, omitir `:443` del `wss://` cuando es el puerto por defecto, y un toggle `hostile_mode` (auto/on/off) por perfil que activa `--dns-resolver dns://1.1.1.1 --dns-resolver-prefer-ipv4`. El modo `auto` corre `detect_hostile_network()` (compara DNS del sistema vs Cloudflare directo) en `Tunnel.connect()` y emite el evento `outwarp:hostile`. **No es suficiente para pasar redes con DPI agresivo como WIFI_EDU** — el firewall del instituto sigue devolviendo 400 al WS Upgrade aunque la huella TLS coincida con el cert real del server. Se considerará uTLS / Cloudflare-front en un release futuro.
 - **GUI `HostileBanner`**: pywebview muestra un banner cuando llega el evento `outwarp:hostile`, similar al `IntegrityBanner` pero con copy distinto según `mode`.
 - **TUI dashboard reactivity fix**: `TunnelCard` y `StatusCard` ya repintan tras editar el perfil. Causa: las screens registradas en `App.SCREENS` por clase se cachean → `compose()` corre una sola vez. Fix: `update_config()` en ambas tarjetas + `on_screen_resume()` en `DashboardScreen` que les pasa la config actual; el `StatsSampler` también se reconstruye si cambian `iface` o `endpoint`.
@@ -551,17 +592,17 @@ Resumen de 0.8.0 (Linux UX + TUI feature pass + fixes de code review): notificac
 
 ### Cambios desde 0.5.0:
 - **Docker + Kubernetes oficiales**: imagen multi-arch (`linux/amd64` + `linux/arm64`) publicada en `ghcr.io/<owner>/outwarp-server` desde `.github/workflows/docker-publish.yml`. Manifests listos en `deploy/kubernetes/` + helper `deploy/build-pi.sh` para k3s en Raspberry Pi 5. Guía end-to-end en `deploy/README.md`.
-- **TUI como UI primaria en Linux**: el `install.sh` ya no exige `libwebkit2gtk`; el autostart apunta a `outwarp-cli tui` por defecto y la GUI pywebview es opt-in. Editor de perfil completo dentro del TUI del cliente.
+- **TUI como UI primaria en Linux**: el `install.sh` ya no exige `libwebkit2gtk`; el autostart apunta a `outwarp tui` por defecto y la GUI pywebview es opt-in. Editor de perfil completo dentro del TUI del cliente.
 - **CI completo**: `.github/workflows/ci.yml` corre pytest + ruff + wheel build en `ubuntu-latest` y `windows-latest`; `docker-publish.yml` publica imágenes en cada push a main y en cada tag `v*`.
 - **Fixes contenedor**: el `wg-quick` PostUp ya no falla en pods sin `SYS_ADMIN` (sysctl despojado del PostUp) y la imagen incluye `procps` para que `wg-quick` encuentre `/usr/sbin/sysctl` cuando se ejecuta con `SYS_ADMIN`.
 - **Linux wheels + pipx** (desde 0.5.0): `/opt/pipx/venvs/outwarp-{client,server}/`. El `install.sh` migra desde la layout legacy `/opt/outwarp-*/.venv` y detecta el layout pipx 0.5.0+/1.12 al desinstalar.
-- **CLI unificada** (desde 0.5.0): solo `outwarp-cli` y `outwarp-server`. Subcomandos `gui` / `tui` / `uninstall` / `forget-profile` consolidados.
+- **CLI unificada** (desde 0.5.0): solo `outwarp` y `outwarp-server`. Subcomandos `gui` / `tui` / `uninstall` / `forget-profile` consolidados.
 - **Hardening de secretos** (desde 0.5.0): `.owcfg`, `server_config.json` y clave privada TLS con permisos 0o600. `install.sh` valida SHA256 de `wstunnel` contra el manifest de erebe.
 
 ### Cliente
 
 - **Windows**: ✅ completo y en producción. Instalador `.exe` (PyInstaller + Inno Setup) que bundlea WireGuard for Windows y `wstunnel.exe`. GUI pywebview + tray.
-- **Linux**: ✅ completo, validado end-to-end. `install.sh` con bootstrap (detecta/instala Python, crea venv, recrea venv corrupto, registra systemd unit). Incluye `outwarp-cli` headless para máquinas sin escritorio.
+- **Linux**: ✅ completo, validado end-to-end. `install.sh` con bootstrap (detecta/instala Python, crea venv, recrea venv corrupto, registra systemd unit). Incluye `outwarp` headless para máquinas sin escritorio.
 - **macOS**: ❌ fuera de alcance, no se implementará.
 
 Fases originales del cliente (todas ✅): scaffolding, schema/loader del `.owcfg`, abstracción de plataforma, orquestador del túnel (`tunnel.py`/`wireguard.py`/`network.py` con TLS pinning en Python), watchdog + reconexión (`TunnelManager` con máquina de estados `DISCONNECTED/CONNECTING/CONNECTED/RECONNECTING/FAILED`), tray + logs (rotación 512 KB + `MemoryLogHandler`), app.py end-to-end con mutex de instancia única (`CreateMutexW` en Windows, `fcntl.flock` en POSIX).
@@ -585,7 +626,7 @@ Fases del servidor (todas ✅): scaffolding + config, crypto (`crypto.py`), IP p
 
 ### Pendiente para la primera versión estable
 
-La lista completa y vinculante está en **"Criterio de 1.0.0"** (sección Licencia, más arriba). Resumen: e2e en CI · kill switch + hostname · renombrar `outwarp-cli` → `outwarp` · GUI Linux de primera clase · compatibilidad Omarchy · vitest + guardia de bundle · fallback sin firma retirado · README/wizard honestos sin el banner "not ready" · release firmada tras un ciclo sin hotfix. El instalador Windows sin firmar **no** bloquea.
+La lista completa y vinculante está en **"Criterio de 1.0.0"** (sección Licencia, más arriba). Resumen: e2e en CI · kill switch + hostname · renombrar `outwarp-cli` → `outwarp` (hecho) · GUI Linux de primera clase · compatibilidad Omarchy · vitest + guardia de bundle · fallback sin firma retirado · README/wizard honestos sin el banner "not ready" · release firmada tras un ciclo sin hotfix. El instalador Windows sin firmar **no** bloquea.
 
 El repo está en GitHub como privado: https://github.com/fcrespo07/OutWarp
 

@@ -380,3 +380,27 @@ def test_non_ca_rungs_do_not_pass_the_verify_flag(mode):
     )
     cmd = strategy_to_command(strat, Path("/usr/bin/wstunnel"), "udp://51820:10.0.0.1:51820")
     assert "--tls-verify-certificate" not in cmd
+
+
+class TestRedactCommand:
+    def test_masks_upgrade_prefix_and_proxy_password(self) -> None:
+        from outwarp.fallback import redact_command
+
+        cmd = [
+            "wstunnel", "client", "-L", "udp://127.0.0.1:1:127.0.0.1:1",
+            "--http-upgrade-path-prefix", "s3cr3t-prefix",
+            "--http-proxy", "http://alice:hunter2@proxy.corp:3128",
+            "wss://203.0.113.42",
+        ]
+        line = redact_command(cmd)
+        assert "s3cr3t-prefix" not in line
+        assert "hunter2" not in line
+        assert "--http-upgrade-path-prefix <redacted>" in line
+        assert "http://<redacted>@proxy.corp:3128" in line
+        assert line.endswith("wss://203.0.113.42")
+
+    def test_plain_command_unchanged(self) -> None:
+        from outwarp.fallback import redact_command
+
+        cmd = ["wstunnel", "client", "wss://example.org"]
+        assert redact_command(cmd) == "wstunnel client wss://example.org"

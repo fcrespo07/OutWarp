@@ -22,6 +22,7 @@ same picture with Caddy in front of wstunnel.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -42,6 +43,12 @@ _WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$")
 _MAX_BODY = 4096
 
 
+def _token_bucket(token: str) -> str:
+    """Limiter key for a presented token: a hash, never the token itself, so
+    the in-memory failure table cannot hand back secrets."""
+    return "tok:" + hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
 class _EnrollServer(ThreadingHTTPServer):
     daemon_threads = True
     # Without this a restart within TIME_WAIT fails to bind, which for a
@@ -57,7 +64,16 @@ class _EnrollServer(ThreadingHTTPServer):
     ) -> None:
         super().__init__(address, _EnrollHandler)
         self.config_path = config_path
+        # Two limiters, because after wstunnel's forward every request is the
+        # loopback peer and a single per-IP bucket is one shared bucket:
+        #   - rate_limiter: the global brute-force ceiling on *distinct*
+        #     failures. Wide enough that one misbehaving client cannot lock
+        #     everyone else out of enrolment for a minute at a time.
+        #   - token_limiter: per presented token. A client hammering an
+        #     expired or already-used token gets its own Retry-After without
+        #     touching anyone else's attempt.
         self.rate_limiter = rate_limiter
+        self.token_limiter = RateLimiter(max_failures=3, window=300.0, lockout=60.0)
         self.on_enrolled = on_enrolled
         # Redeem-then-register must not interleave: two clients enrolling at the
         # same moment would otherwise read the same config and one write would
@@ -140,10 +156,19 @@ class _EnrollHandler(BaseHTTPRequestHandler):
             )
             return
 
-        with self.ctx.enroll_lock:
-            self._redeem(ip, token, public_key)
+        token_key = _token_bucket(token)
+        wait = self.ctx.token_limiter.retry_after(token_key)
+        if wait > 0:
+            self.send_response(HTTPStatus.TOO_MANY_REQUESTS)
+            self.send_header("Retry-After", str(int(wait) + 1))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
 
-    def _redeem(self, ip: str, token: str, public_key: str) -> None:
+        with self.ctx.enroll_lock:
+            self._redeem(ip, token, public_key, token_key)
+
+    def _redeem(self, ip: str, token: str, public_key: str, token_key: str) -> None:
         config_path = self.ctx.config_path
         config_dir = config_path.parent
         try:
@@ -153,6 +178,7 @@ class _EnrollHandler(BaseHTTPRequestHandler):
             # wire; the message is kept because "already used" is exactly the
             # signal a legitimate client needs to see.
             self.ctx.rate_limiter.register_failure(ip)
+            self.ctx.token_limiter.register_failure(token_key)
             log.warning("enrolment refused from %s: %s", ip, exc)
             self._send_json(HTTPStatus.FORBIDDEN, {"error": str(exc)})
             return
@@ -176,6 +202,7 @@ class _EnrollHandler(BaseHTTPRequestHandler):
             return
 
         self.ctx.rate_limiter.reset(ip)
+        self.ctx.token_limiter.reset(token_key)
         log.info(
             "Client '%s' enrolled from %s (%s)",
             record.client_name, ip,
@@ -217,8 +244,13 @@ def serve(
     (wstunnel's own certificate, or Caddy's in front of it), and the only
     thing that can reach this socket is wstunnel's restricted forward.
     """
+    # Global ceiling: 20 distinct failed redemptions in 5 min → 60 s lockout.
+    # Tokens are 15-minute, single-use, high-entropy secrets, so this is
+    # about bounding noise, not about the guess rate being dangerous; the
+    # per-token limiter (3 strikes) is what an individual bad client hits.
     httpd = _EnrollServer(
-        (LISTEN_HOST, config.enroll_port), config_path, RateLimiter(), on_enrolled,
+        (LISTEN_HOST, config.enroll_port), config_path,
+        RateLimiter(max_failures=20, window=300.0, lockout=60.0), on_enrolled,
     )
     threading.Thread(
         target=httpd.serve_forever, name="outwarp-enroll", daemon=True

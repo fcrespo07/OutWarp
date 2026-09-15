@@ -6,7 +6,7 @@ display and for systemd-managed deployments.
 
 Designed to mirror the `outwarp-server` CLI ergonomics: argparse subcommands,
 a privileged helper for system mutations (already installed by
-installer/linux/install.sh), no daemonisation — `outwarp-cli connect` blocks
+installer/linux/install.sh), no daemonisation — `outwarp connect` blocks
 until SIGTERM/Ctrl+C, which is the model OpenVPN/wg-quick/systemd users
 expect.
 """
@@ -65,7 +65,7 @@ def _load_config() -> ClientConfig | None:
         return ClientConfig.load(path)
     except ConfigError as exc:
         _err(f"Error: {exc}")
-        _err("Run 'outwarp-cli import <path-to-.owcfg>' first.")
+        _err("Run 'outwarp import <path-to-.owcfg>' first.")
         return None
 
 
@@ -94,7 +94,7 @@ def _cmd_import(args: argparse.Namespace) -> int:
     _print(f"  WG addr:   {config.wireguard.client_address}")
     _print(f"  Signature: {trust_verdict.message}")
     _print("")
-    _print("Start the tunnel with: outwarp-cli connect")
+    _print("Start the tunnel with: outwarp connect")
     return 0
 
 
@@ -104,9 +104,28 @@ def _cmd_connect(args: argparse.Namespace) -> int:
     if config is None:
         return 1
 
+    from outwarp.killswitch import release_stale_async
+    from outwarp.ownership import OWNED_ELSEWHERE_HINT, TunnelOwnerLock, describe_owner
+    from outwarp.settings import load_settings
+
+    lock = TunnelOwnerLock()
+    if not lock.acquire():
+        _err(f"The tunnel is already run by {describe_owner()}. {OWNED_ELSEWHERE_HINT}")
+        return 1
+
+    # The toggles both UIs persist apply here too — a user who enabled the
+    # kill switch or TLS-intercept tolerance in the GUI/TUI and then runs
+    # `outwarp connect` from a terminal gets the same behaviour.
+    settings = load_settings()
+    kill_switch = bool(settings.get("kill_switch", False))
+    if not kill_switch:
+        release_stale_async()
     manager = TunnelManager(
         config,
-        allow_tls_intercept=args.allow_tls_intercept,
+        allow_tls_intercept=args.allow_tls_intercept
+        or bool(settings.get("allow_tls_intercept", False)),
+        auto_reconnect=bool(settings.get("auto_reconnect", True)),
+        kill_switch_enabled=kill_switch,
     )
 
     last_state: list[TunnelState] = [TunnelState.DISCONNECTED]
@@ -138,18 +157,21 @@ def _cmd_connect(args: argparse.Namespace) -> int:
     # Block until a stop signal arrives OR the manager hits FAILED. Polling
     # every 500 ms is plenty — we're not chasing latency here, just keeping
     # the foreground process alive without busy-spinning.
-    while not stop.is_set():
-        if manager.state == TunnelState.FAILED:
-            _err("Tunnel failed; giving up.")
-            manager.stop()
-            return 1
-        if stop.wait(0.5):
-            break
+    try:
+        while not stop.is_set():
+            if manager.state == TunnelState.FAILED:
+                _err("Tunnel failed; giving up.")
+                manager.stop()
+                return 1
+            if stop.wait(0.5):
+                break
 
-    _print("Disconnecting...")
-    manager.stop()
-    _print("Done.")
-    return 0
+        _print("Disconnecting...")
+        manager.stop()
+        _print("Done.")
+        return 0
+    finally:
+        lock.release()
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
@@ -157,7 +179,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
     if not path.exists():
         _print("No profile imported.")
         _print(f"  Expected config at: {path}")
-        _print("  Run: outwarp-cli import <path-to-.owcfg>")
+        _print("  Run: outwarp import <path-to-.owcfg>")
         return 0
 
     config = _load_config()
@@ -265,7 +287,7 @@ def _cmd_forget_profile(args: argparse.Namespace) -> int:
     """Remove the imported profile and its baseline snapshot.
 
     Does NOT touch the helper script, sudoers rule, autostart entry, or the
-    pipx venv — for a full purge use ``outwarp-cli uninstall`` instead.
+    pipx venv — for a full purge use ``outwarp uninstall`` instead.
     """
     cfg = default_config_path()
     baseline = original_config_path(cfg)
@@ -294,7 +316,7 @@ def _cmd_forget_profile(args: argparse.Namespace) -> int:
                 _err(
                     f"Refusing to remove profile while tunnel "
                     f"'{config.wireguard.tunnel_name}' is active. "
-                    "Stop it first: kill the 'outwarp-cli connect' process."
+                    "Stop it first: kill the 'outwarp connect' process."
                 )
                 return 1
         except (ConfigError, PlatformError) as exc:
@@ -327,7 +349,7 @@ def _cmd_forget_profile(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="outwarp-cli",
+        prog="outwarp",
         description="OutWarp client — WireGuard-over-WebSocket tunnel (console mode)",
     )
     parser.add_argument(
@@ -362,7 +384,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Tolerate TLS fingerprint mismatch — same as on `connect`.",
     )
 
-    # `outwarp-cli service install/uninstall/status` manages the systemd
+    # `outwarp service install/uninstall/status` manages the systemd
     # user unit that drives `daemon`. On Windows this command stub-exits
     # and tells the user to use the installer's SCM registration.
     p_service = sub.add_parser(
@@ -403,9 +425,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Launch the interactive Textual UI (Linux / headless)",
     )
 
-    sub.add_parser(
+    p_gui = sub.add_parser(
         "gui",
         help="Launch the tray/pywebview GUI (was the 'outwarp' binary in 0.4.x)",
+    )
+    p_gui.add_argument(
+        "--install", action="store_true",
+        help="Linux: add the GUI stack (GTK/WebKit packages + pywebview) to this "
+             "install instead of launching. Needs root.",
+    )
+
+    p_ui = sub.add_parser(
+        "ui",
+        help="Show or set which UI 'outwarp launch' and the app menu open (auto/gui/tui)",
+    )
+    p_ui.add_argument("choice", nargs="?", choices=["auto", "gui", "tui"])
+    p_ui.add_argument(
+        "--hyprland-rule", action="store_true",
+        help="Hyprland: install the window rule that floats and centres the OutWarp "
+             "window (~/.config/hypr/outwarp.lua or .conf, hooked from your config)",
+    )
+
+    sub.add_parser(
+        "launch",
+        help="Open the preferred UI: the GUI when installed and wanted, else the TUI "
+             "(in a terminal window when started from a launcher)",
     )
 
     p_update = sub.add_parser(
@@ -449,10 +493,80 @@ def _cmd_gui(args: argparse.Namespace) -> int:
     """Delegate to outwarp.app:main — the pywebview tray entry-point.
 
     Was the dedicated ``outwarp`` binary in 0.4.x; collapsed into a subcommand
-    in 0.5.0 so the Linux install surface is a single executable.
+    in 0.5.0 so the Linux install surface is a single executable. On Linux
+    the GUI stack is optional: ``--install`` adds it, and launching without it
+    says so before falling back to the TUI instead of doing it silently.
     """
+    from outwarp import ui_choice
+
+    if getattr(args, "install", False):
+        if sys.platform == "linux" and os.geteuid() != 0:
+            _err(f"Root required to install packages into the venv. Run: {ui_choice.INSTALL_HINT}")
+            return 2
+        return ui_choice.install_gui(echo=_print)
+
+    if sys.platform == "linux":
+        ok, why = ui_choice.gui_available()
+        if not ok:
+            _err(f"GUI not available: {why}. Opening the TUI instead.")
+            return _cmd_tui(args)
     from outwarp.app import main as _gui_main
     return _gui_main() or 0
+
+
+def _cmd_ui(args: argparse.Namespace) -> int:
+    from outwarp import ui_choice
+
+    if args.choice:
+        ui_choice.set_preferred_ui(args.choice)
+        _print(f"preferred_ui = {args.choice}")
+    ok, why = ui_choice.gui_available()
+    pref = ui_choice.preferred_ui()
+    _print(f"Preferred UI: {pref}")
+    _print(f"GUI stack:    {'available' if ok else 'not installed'} ({why})")
+    _print(f"`outwarp launch` opens: {ui_choice.resolve_ui(available=ok)}")
+    if not ok and sys.platform == "linux":
+        _print(f"Add the GUI with: {ui_choice.INSTALL_HINT}")
+    if sys.platform == "linux":
+        from outwarp import desktop_linux as dl
+
+        tray_state, tray_detail = dl.tray_status()
+        if tray_state != "skip":
+            _print(f"Tray:         {'ok' if tray_state == 'ok' else 'WARN'} ({tray_detail})")
+        if getattr(args, "hyprland_rule", False):
+            try:
+                _print("Hyprland:     " + dl.install_hyprland_rule())
+            except OSError as exc:
+                _err(f"Could not install the Hyprland rule: {exc}")
+                return 1
+        elif dl.is_hyprland():
+            if dl.hyprland_rule_installed():
+                _print("Hyprland:     window rule installed")
+            else:
+                _print("Hyprland:     no window rule (window opens tiled) — run "
+                       "`outwarp ui --hyprland-rule`")
+    return 0
+
+
+def _cmd_launch(args: argparse.Namespace) -> int:
+    """What the .desktop entry runs: pick the UI, and give the TUI a terminal
+    when there is none (launchers start us without a tty)."""
+    from outwarp import ui_choice
+
+    if ui_choice.resolve_ui() == "gui":
+        from outwarp.app import main as _gui_main
+        return _gui_main() or 0
+    if sys.stdin.isatty():
+        return _cmd_tui(args)
+    if sys.platform == "win32":
+        return _cmd_tui(args)
+    tui_argv = [sys.argv[0], "tui"] if sys.argv else ["outwarp", "tui"]
+    cmd = ui_choice.terminal_command(tui_argv)
+    if cmd is None:
+        _err("No terminal emulator found to host the TUI; set $TERMINAL or run "
+             "`outwarp tui` from a terminal.")
+        return 1
+    return subprocess.call(cmd)
 
 
 def _cmd_uninstall(args: argparse.Namespace) -> int:
@@ -474,7 +588,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
     Without --check-only, the actual ``pip install --upgrade`` step needs to
     write into the pipx-managed venv at /opt/pipx/venvs/outwarp-client, so the
     command refuses to run unless invoked with root (typically via
-    ``sudo outwarp-cli update``).
+    ``sudo outwarp update``).
     """
     import contextlib
     import tempfile
@@ -511,7 +625,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
     _print(f"  Release: {info.get('html_url', '')}")
 
     if args.check_only:
-        _print("Run 'sudo outwarp-cli update' to install.")
+        _print("Run 'sudo outwarp update' to install.")
         return 0
 
     wheel_url = info.get("wheel_url", "")
@@ -523,9 +637,9 @@ def _cmd_update(args: argparse.Namespace) -> int:
     # ``geteuid`` is POSIX-only but the client is shipped only on Linux for
     # the Python wheel flow, so anchor the gate on the platform explicitly.
     # On Windows the installer ships the GUI wheel separately and there's no
-    # ``outwarp-cli update`` flow yet.
+    # ``outwarp update`` flow yet.
     if sys.platform == "linux" and os.geteuid() != 0:
-        _err("Root required to upgrade the venv. Run: sudo outwarp-cli update")
+        _err("Root required to upgrade the venv. Run: sudo outwarp update")
         return 1
 
     tmp_dir = Path(tempfile.mkdtemp())
@@ -570,7 +684,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
             return 1
 
         _print(f"\nUpdated to v{latest}.")
-        _print("Restart 'outwarp-cli connect' (or the tray app) for changes to take effect.")
+        _print("Restart 'outwarp connect' (or the tray app) for changes to take effect.")
         return 0
     finally:
         with contextlib.suppress(OSError):
@@ -605,8 +719,23 @@ _COMMANDS = {
     "doctor":         _cmd_doctor,
     "tui":            _cmd_tui,
     "gui":            _cmd_gui,
+    "ui":             _cmd_ui,
+    "launch":         _cmd_launch,
     "update":         _cmd_update,
 }
+
+
+def main_legacy_alias(argv: list[str] | None = None) -> int:
+    """``outwarp-cli`` — the pre-1.0 command name, kept one release as an alias.
+
+    Behaves exactly like ``outwarp`` (same parser, same exit codes) and prints
+    a single stderr line so scripts and units still pointing at the old name
+    keep working while their owners notice. Removed in 1.0.0.
+    """
+    _err("outwarp-cli is deprecated and will be removed in 1.0.0 — use `outwarp` "
+         "(run `outwarp service install` / re-run install.sh to migrate units, "
+         "launchers and completions).")
+    return main(argv)
 
 
 def main(argv: list[str] | None = None) -> int:

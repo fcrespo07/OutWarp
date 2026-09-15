@@ -99,7 +99,11 @@ class DashboardScreen(Screen):
         # disconnected (or reconnecting) tunnel is visible at a glance.
         mgr = self.app.manager
         with contextlib.suppress(Exception):
-            self.query_one(StatusCard).set_state(mgr.state if mgr is not None else None)
+            card = self.query_one(StatusCard)
+            if mgr is None and getattr(self.app, "service_managed", False):
+                card.set_managed_by_service(self._sampler.interface_up())
+            else:
+                card.set_state(mgr.state if mgr is not None else None)
         # StatsSampler.sample() shells out to `wg` and `ping` (blocking up to a
         # few seconds). Run it off the event loop so the TUI stays responsive.
         if self._sampling:
@@ -163,6 +167,10 @@ class DashboardScreen(Screen):
         asyncio.create_task(self._async_disconnect(), name="tui-disconnect")
 
     async def _async_disconnect(self) -> None:
+        if getattr(self.app, "service_managed", False):
+            self.notify("Tunnel is run by outwarp-client.service — turn it off in Settings (s).",
+                        severity="warning")
+            return
         mgr = self.app.manager
         if mgr is not None:
             loop = asyncio.get_running_loop()
@@ -174,6 +182,10 @@ class DashboardScreen(Screen):
         asyncio.create_task(self._async_reconnect(), name="tui-reconnect")
 
     async def _async_reconnect(self) -> None:
+        if getattr(self.app, "service_managed", False):
+            self.notify("Tunnel is run by outwarp-client.service — restart it with "
+                        "`systemctl --user restart outwarp-client`.", severity="warning")
+            return
         mgr = self.app.manager
         if mgr is None:
             return

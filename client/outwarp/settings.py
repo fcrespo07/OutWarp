@@ -70,6 +70,11 @@ def default_settings() -> dict[str, Any]:
         # launch if a profile is imported and not expired. Off → land on the
         # dashboard disconnected, user reconnects manually.
         "auto_connect": True,
+        # Linux: which UI `outwarp launch` (the .desktop entry) opens.
+        # "auto" = the GUI when its stack is installed and a display is
+        # present, the TUI otherwise; "gui"/"tui" force one. Consumed by
+        # outwarp.ui_choice.resolve_ui; both UIs expose the toggle.
+        "preferred_ui": "auto",
     }
 
 

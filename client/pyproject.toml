@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "outwarp-client"
-version = "0.13.0"
+version = "0.14.0"
 description = "Cliente de bandeja multiplataforma para tuneles WireGuard sobre WebSocket (wstunnel)"
 requires-python = ">=3.11"
 authors = [
@@ -59,10 +59,13 @@ gui-linux = [
 ]
 
 [project.scripts]
-# Single Linux entry-point as of 0.5.0. The tray/GUI now lives behind
-# ``outwarp-cli gui`` and the legacy ``outwarp-uninstall`` is reachable as
-# ``outwarp-cli uninstall``.
-outwarp-cli = "outwarp.cli:main"
+# `outwarp` is the client command (the server keeps its `-server` suffix;
+# Windows already shipped `outwarp.exe`). `outwarp-cli` is the pre-1.0 name:
+# it stays one release as a deprecated alias because systemd units,
+# .desktop files and shell completions on existing installs point at it and
+# the in-venv updater does not rewrite them. Drop the alias in 1.0.0.
+outwarp = "outwarp.cli:main"
+outwarp-cli = "outwarp.cli:main_legacy_alias"
 
 [tool.hatch.build.targets.wheel]
 packages = ["outwarp"]

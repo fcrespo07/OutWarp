@@ -18,6 +18,7 @@ from threading import Event, Lock, Thread
 
 from platformdirs import user_data_dir
 
+from outwarp import dnscache
 from outwarp.config import ClientConfig
 from outwarp.fallback import (
     HOSTILE_DNS_RESOLVER_IP,
@@ -26,6 +27,7 @@ from outwarp.fallback import (
     build_ladder,
     default_sticky_path,
     network_signature,
+    redact_command,
     reorder_for_sticky,
     strategy_to_command,
 )
@@ -169,6 +171,7 @@ def _resolve_endpoints(endpoints, *, resolver_ip: str = "") -> dict[str, str]:
             answer = _query_dns_a_record_via(resolver_ip, ep)
             if answer:
                 out[ep] = answer
+                dnscache.remember(ep, answer)
                 continue
             log.warning(
                 "Public resolver %s gave no answer for %s; using the system one",
@@ -177,10 +180,20 @@ def _resolve_endpoints(endpoints, *, resolver_ip: str = "") -> dict[str, str]:
         try:
             infos = socket.getaddrinfo(ep, None, family=socket.AF_INET, type=socket.SOCK_STREAM)
         except OSError as exc:
-            log.warning("Could not pre-resolve %s (wstunnel will resolve it itself): %s", ep, exc)
+            cached = dnscache.lookup(ep)
+            if cached:
+                # Typical under an engaged kill switch: DNS is blocked but the
+                # server's last known address is allowed through.
+                log.warning("Could not resolve %s (%s); using last known address %s",
+                            ep, exc, cached)
+                out[ep] = cached
+            else:
+                log.warning("Could not pre-resolve %s (wstunnel will resolve it itself): %s",
+                            ep, exc)
             continue
         if infos:
             out[ep] = infos[0][4][0]
+            dnscache.remember(ep, out[ep])
     return out
 
 
@@ -515,7 +528,7 @@ class Tunnel:
 
     def _start_wstunnel(self, strat: ConnectionStrategy) -> None:
         cmd = strategy_to_command(strat, self._wstunnel_bin, _forward_spec(self._config))
-        log.info("Starting wstunnel: %s", " ".join(cmd))
+        log.info("Starting wstunnel: %s", redact_command(cmd))
         self._proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -802,6 +815,17 @@ class TunnelManager:
         max_attempts = self._config.reconnect.max_attempts
         delays = self._config.reconnect.delays_seconds
         self._set_attempt(0)
+
+        # Shared gate (the GUI used to be the only surface checking): an
+        # expired profile has been pruned server-side, so every rung would
+        # fail its handshake and the daemon would restart forever.
+        if self._config.is_expired():
+            msg = (f"This profile expired on {self._config.expires_at} — "
+                   "ask the server admin for a new .owcfg")
+            log.error(msg)
+            self._set_error(msg)
+            self._set_state(TunnelState.FAILED)
+            return
 
         # Seed the ladder with whatever rung last worked on this network so a
         # repeat visit connects on the first attempt instead of re-walking it.

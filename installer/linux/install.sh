@@ -60,6 +60,8 @@ readonly GITHUB_REPO_URL="https://github.com/${GITHUB_REPO}"
 readonly PIPX_HOME="/opt/pipx"
 readonly PIPX_BIN_DIR="/usr/local/bin"
 readonly CLIENT_BIN_LINK="${PIPX_BIN_DIR}/outwarp"
+# Pre-1.0 name of the client command; the wheel still ships it as a
+# deprecated alias for one release (see client/pyproject.toml).
 readonly CLIENT_CLI_BIN_LINK="${PIPX_BIN_DIR}/outwarp-cli"
 readonly SERVER_BIN_LINK="${PIPX_BIN_DIR}/outwarp-server"
 readonly SERVER_GUI_BIN_LINK="${PIPX_BIN_DIR}/outwarp-server-gui"
@@ -398,6 +400,21 @@ ensure_wireguard() {
     ok "WireGuard installed"
 }
 
+ensure_nftables() {
+    # The client kill switch is an nftables table the privileged helper
+    # owns; without `nft` the switch silently cannot engage.
+    if command -v nft >/dev/null 2>&1; then
+        ok "nftables: ${BOLD}$(nft --version 2>/dev/null | head -1)${RESET}"
+        return
+    fi
+    info "Installing nftables (client kill switch)..."
+    case "$PKG_MANAGER" in
+        apt|dnf|pacman) $SUDO bash -c "$PKG_INSTALL_CMD nftables" \
+            || warn "Could not install nftables — the kill switch will be unavailable" ;;
+        *) warn "Install nftables by hand if you want the kill switch" ;;
+    esac
+}
+
 # ----------------------------------------------------------------------------
 # wstunnel binary
 # ----------------------------------------------------------------------------
@@ -711,7 +728,7 @@ migrate_legacy_install() {
 # both fresh installs and in-place upgrades (so re-running the script after
 # `OUTWARP_VERSION=vX.Y.Z` was bumped just works).
 pipx_install_app() {
-    local app="$1" source="$2" extras="$3"
+    local app="$1" source="$2" extras="$3" system_site="${4:-0}"
 
     local spec
     if [[ -n "$extras" ]]; then
@@ -742,8 +759,13 @@ pipx_install_app() {
         "install"
         "--force"
         "--pip-args=--disable-pip-version-check"
-        "$spec"
     )
+    # The GUI needs the distro's GObject bindings (python-gobject / python3-gi):
+    # pip cannot build them into a venv, so the venv must see system
+    # site-packages. Without this pywebview's GTK backend cannot start and
+    # pystray silently falls back to Xorg — no tray under Wayland.
+    [[ "$system_site" == "1" ]] && pipx_args+=("--system-site-packages")
+    pipx_args+=("$spec")
     pipx_run "${pipx_args[@]}"
 }
 
@@ -762,14 +784,41 @@ want_server_gui() {
     esac
 }
 
+desktop_session_detected() {
+    # Is there a graphical session for the target user? Under `sudo` the
+    # DISPLAY variables are usually stripped, so also look for the Wayland
+    # socket in the user's runtime dir and for an X11 socket.
+    [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]] && return 0
+    local uid
+    uid=$(id -u "${TARGET_USER:-$USER}" 2>/dev/null) || return 1
+    compgen -G "/run/user/${uid}/wayland-*" >/dev/null 2>&1 && return 0
+    compgen -G "/tmp/.X11-unix/X*" >/dev/null 2>&1 && return 0
+    return 1
+}
+
 want_client_gui() {
-    # Mirror of want_server_gui — see the comment there. The TUI is the
-    # default on Linux; this gate (OUTWARP_CLIENT_GUI=1) opts into the
-    # webkitgtk + appindicator stack and pulls pywebview via gui-linux.
-    case "${OUTWARP_CLIENT_GUI:-0}" in
+    # The TUI is always installed. The graphical window + tray (pywebview on
+    # GTK/WebKit + appindicator) is offered by default when a desktop session
+    # is detected and skipped on headless boxes. OUTWARP_CLIENT_GUI=1/0
+    # forces either way (CI, scripted installs); otherwise the question is
+    # asked when a terminal is available. Either choice can be revisited
+    # later: `sudo outwarp gui --install` adds the GUI, `outwarp ui tui|gui`
+    # picks what the launcher opens.
+    case "${OUTWARP_CLIENT_GUI:-}" in
         1|true|yes) return 0 ;;
-        *) return 1 ;;
+        0|false|no) return 1 ;;
     esac
+    local default="n"
+    desktop_session_detected && default="y"
+    if [[ -r /dev/tty ]]; then
+        local reply
+        reply=$(ask "Install the graphical window + tray icon too? (the terminal UI is always installed) [y/n]" "$default")
+        case "$reply" in
+            y|Y|yes) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+    [[ "$default" == "y" ]]
 }
 
 ensure_server_gui_system_deps() {
@@ -781,17 +830,17 @@ ensure_server_gui_system_deps() {
                 webkit_pkg="gir1.2-webkit2-4.0"
                 warn "gir1.2-webkit2-4.1 not available - falling back to 4.0"
             fi
-            $SUDO bash -c "$PKG_INSTALL_CMD python3-gi gir1.2-gtk-3.0 $webkit_pkg gir1.2-ayatanaappindicator3-0.1" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python3-gi gir1.2-gtk-3.0 $webkit_pkg gir1.2-ayatanaappindicator3-0.1 libnotify-bin" \
                 || warn "Some GUI deps failed - the GUI may not start (CLI is unaffected)"
             ;;
         dnf)
-            $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.1 libappindicator-gtk3" \
-                || $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.0 libappindicator-gtk3" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.1 libappindicator-gtk3 libnotify" \
+                || $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.0 libappindicator-gtk3 libnotify" \
                 || warn "Some GUI deps failed - the GUI may not start (CLI is unaffected)"
             ;;
         pacman)
-            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk-4.1 libayatana-appindicator" \
-                || $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk-4.1 libayatana-appindicator libnotify" \
+                || $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3 libnotify" \
                 || warn "Some GUI deps failed - the GUI may not start (CLI is unaffected)"
             ;;
     esac
@@ -866,17 +915,17 @@ ensure_client_system_deps() {
                 webkit_pkg="gir1.2-webkit2-4.0"
                 warn "gir1.2-webkit2-4.1 not available - falling back to 4.0"
             fi
-            $SUDO bash -c "$PKG_INSTALL_CMD python3-gi gir1.2-gtk-3.0 $webkit_pkg gir1.2-ayatanaappindicator3-0.1" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python3-gi gir1.2-gtk-3.0 $webkit_pkg gir1.2-ayatanaappindicator3-0.1 libnotify-bin" \
                 || warn "Some GUI deps failed - the window may not open (tray will still work with reduced features)"
             ;;
         dnf)
-            $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.1 libappindicator-gtk3" \
-                || $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.0 libappindicator-gtk3" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.1 libappindicator-gtk3 libnotify" \
+                || $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.0 libappindicator-gtk3 libnotify" \
                 || warn "Some GUI deps failed"
             ;;
         pacman)
-            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk-4.1 libayatana-appindicator" \
-                || $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk-4.1 libayatana-appindicator libnotify" \
+                || $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3 libnotify" \
                 || warn "Some GUI deps failed"
             ;;
     esac
@@ -917,7 +966,7 @@ write_client_helper() {
 set -euo pipefail
 
 WG_CONF_DIR="/etc/wireguard-outwarp"
-# Bumped whenever a subcommand's contract changes; `outwarp-cli doctor`
+# Bumped whenever a subcommand's contract changes; `outwarp doctor`
 # compares it against the version the client was built for.
 HELPER_VERSION=2
 NAME_RE='^[A-Za-z0-9_=+.-]{1,15}$'
@@ -1040,14 +1089,43 @@ EOF
     ok "sudoers rule installed"
 }
 
+warn_duplicate_user_install() {
+    # A per-user `pipx install outwarp-client` (in ~/.local/share/pipx) next
+    # to this system-wide one means two versions answer to `outwarp`
+    # depending on PATH order — exactly how a 0.5.8 venv kept shadowing a
+    # 0.13.0 one on a developer machine. Say so; removing it is the user's
+    # call (`outwarp doctor` keeps flagging it until then).
+    local user_venv="$TARGET_HOME/.local/share/pipx/venvs/outwarp-client"
+    [[ -d "$user_venv" ]] || return 0
+    warn "A per-user OutWarp client also exists at ${user_venv}."
+    warn "Two installs will shadow each other on PATH. Remove one, e.g. as ${TARGET_USER}:"
+    warn "    pipx uninstall outwarp-client        # drops the per-user copy"
+}
+
+migrate_client_unit_name() {
+    # A user unit written before the rename execs `<venv>/bin/outwarp-cli
+    # daemon`. The alias keeps it running for one release; rewrite it now so
+    # the user is not left with a dead unit when the alias goes away in 1.0.
+    # Only the ExecStart= line changes; anything else the user edited stays.
+    local unit="$TARGET_HOME/.config/systemd/user/outwarp-client.service"
+    [[ -f "$unit" ]] || return 0
+    grep -qE '^ExecStart=.*/outwarp-cli daemon' "$unit" || return 0
+    sed -i -E 's#^(ExecStart=.*)/outwarp-cli daemon#\1/outwarp daemon#' "$unit"
+    chown "$TARGET_USER" "$unit" 2>/dev/null || true
+    ok "Migrated ${unit} to the \`outwarp\` command (restart it: systemctl --user restart outwarp-client)"
+}
+
 remove_client_autostart() {
     # Deletes the XDG autostart entry that pre-0.5.x installs (or a
     # OUTWARP_CLIENT_GUI=1 install on this machine before the user flipped
     # to the TUI) might have left behind. Safe to call unconditionally:
     # a missing file is a no-op, and the entry is owned by us so removing
     # it does not surprise the user.
+    # Only the legacy entries go: one the GUI wrote via `start_at_boot`
+    # (`Exec=... outwarp launch`) is the user's choice and must survive an
+    # upgrade — deleting it left the GUI toggle ON with nothing autostarting.
     local desktop_file="$TARGET_HOME/.config/autostart/outwarp.desktop"
-    if [[ -f "$desktop_file" ]]; then
+    if [[ -f "$desktop_file" ]] && ! grep -q "outwarp launch" "$desktop_file"; then
         rm -f "$desktop_file"
         ok "Removed legacy autostart entry: $desktop_file"
     fi
@@ -1065,7 +1143,19 @@ install_client_desktop() {
 
     if [[ -n "$icon_src" && -f "$icon_src" ]]; then
         $SUDO install -Dm 0644 "$icon_src" /usr/share/pixmaps/outwarp.png
-        $SUDO install -Dm 0644 "$icon_src" /usr/share/icons/hicolor/128x128/apps/outwarp.png
+        $SUDO install -Dm 0644 "$icon_src" /usr/share/icons/hicolor/512x512/apps/outwarp.png
+        # Bars, launchers and notification daemons pick the nearest hicolor
+        # size; a lone 512px entry renders blurry at 22px in a bar. Pillow is
+        # a client dependency, so the venv can produce the set.
+        local size
+        for size in 16 22 24 32 48 64 128 256; do
+            "${CLIENT_VENV}/bin/python" - "$icon_src" "$size" <<'PYEOF' 2>/dev/null | $SUDO install -Dm 0644 /dev/stdin "/usr/share/icons/hicolor/${size}x${size}/apps/outwarp.png" || true
+import sys
+from PIL import Image
+src, size = sys.argv[1], int(sys.argv[2])
+Image.open(src).convert("RGBA").resize((size, size), Image.LANCZOS).save(sys.stdout.buffer, "PNG")
+PYEOF
+        done
         if command -v gtk-update-icon-cache >/dev/null 2>&1; then
             $SUDO gtk-update-icon-cache -qf /usr/share/icons/hicolor 2>/dev/null || true
         fi
@@ -1074,17 +1164,20 @@ install_client_desktop() {
         warn "Could not locate app_icon.png — launcher will use a generic icon"
     fi
 
-    # Write the .desktop file. Terminal=true tells the DE to open a terminal
-    # emulator — the right behaviour for a TUI application.
+    # Write the .desktop file. `outwarp launch` picks the GUI when it is
+    # installed and preferred, otherwise opens the TUI in the user's terminal
+    # emulator itself — so one static entry serves both choices and the user
+    # can flip between them after install (`outwarp ui gui|tui`).
     $SUDO install -Dm 0644 /dev/stdin /usr/share/applications/outwarp.desktop <<'DESKTOP_EOF'
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=OutWarp
 Comment=WireGuard-over-WebSocket VPN tunnel client
-Exec=outwarp-cli tui
+Exec=outwarp launch
 Icon=outwarp
-Terminal=true
+Terminal=false
+StartupWMClass=outwarp
 Categories=Network;VPN;System;
 Keywords=wireguard;vpn;wstunnel;tunnel;
 StartupNotify=false
@@ -1094,6 +1187,33 @@ DESKTOP_EOF
         $SUDO update-desktop-database /usr/share/applications 2>/dev/null || true
     fi
     ok "Launcher installed: /usr/share/applications/outwarp.desktop"
+}
+
+run_as_target_user() {
+    # Run a command as the desktop user with their HOME (we may be root
+    # already, in which case $SUDO is empty and `sudo -u` is not the tool).
+    if [[ -n "$SUDO" ]]; then
+        $SUDO -u "$TARGET_USER" env HOME="$TARGET_HOME" "$@"
+    elif command -v runuser >/dev/null 2>&1; then
+        runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" "$@"
+    else
+        su "$TARGET_USER" -c "$(printf '%q ' env HOME="$TARGET_HOME" "$@")"
+    fi
+}
+
+install_hyprland_rule() {
+    # Hyprland tiles every window unless a rule says otherwise; the OutWarp
+    # window wants to float centred. The rule lives in the user's own config
+    # (~/.config/hypr/outwarp.lua on Hyprland ≥ 0.55 / Omarchy, .conf on
+    # hyprlang setups) and is written by `outwarp ui --hyprland-rule` as the
+    # desktop user, so ownership and idempotence stay in one place.
+    local hypr="$TARGET_HOME/.config/hypr"
+    [[ -f "$hypr/hyprland.lua" || -f "$hypr/hyprland.conf" ]] || return 0
+    if run_as_target_user "$CLIENT_BIN_LINK" ui --hyprland-rule >/dev/null 2>&1; then
+        ok "Hyprland window rule installed in ${hypr}/ (floating, centred)"
+    else
+        warn "Could not install the Hyprland window rule — run: outwarp ui --hyprland-rule"
+    fi
 }
 
 remove_client_desktop() {
@@ -1122,16 +1242,24 @@ install_client_completions() {
     reg="${CLIENT_VENV}/bin/register-python-argcomplete"
     [[ -x "$reg" ]] || return 0
 
+    # Pre-1.0 installs registered completions under the old command name.
+    for old in /etc/bash_completion.d/outwarp-cli /usr/share/zsh/site-functions/_outwarp-cli; do
+        if [[ -f "$old" ]]; then
+            $SUDO rm -f "$old"
+            ok "Removed completions for the deprecated name: $old"
+        fi
+    done
+
     if [[ -d /etc/bash_completion.d ]]; then
-        "$reg" outwarp-cli > /etc/bash_completion.d/outwarp-cli 2>/dev/null \
-            && ok "bash completions: /etc/bash_completion.d/outwarp-cli" \
+        "$reg" outwarp > /etc/bash_completion.d/outwarp 2>/dev/null \
+            && ok "bash completions: /etc/bash_completion.d/outwarp" \
             || warn "Could not write bash completions (non-fatal)"
     fi
 
     local zsh_dir="/usr/share/zsh/site-functions"
     if [[ -d "$zsh_dir" ]]; then
-        "$reg" --shell zsh outwarp-cli > "${zsh_dir}/_outwarp-cli" 2>/dev/null \
-            && ok "zsh completions: ${zsh_dir}/_outwarp-cli" \
+        "$reg" --shell zsh outwarp > "${zsh_dir}/_outwarp" 2>/dev/null \
+            && ok "zsh completions: ${zsh_dir}/_outwarp" \
             || true
     fi
 }
@@ -1139,6 +1267,7 @@ install_client_completions() {
 install_client() {
     info "Installing OutWarp client (pipx layout: ${BOLD}${CLIENT_VENV}${RESET})"
 
+    ensure_nftables
     prepare_install_source "client"
 
     resolve_target_user
@@ -1152,11 +1281,13 @@ install_client() {
         extras="tui,gui-linux"
         ensure_client_system_deps
     else
-        info "Installing TUI-only build (Textual). The default UI is ${BOLD}outwarp-cli tui${RESET}."
-        info "Set ${BOLD}OUTWARP_CLIENT_GUI=1${RESET} to also install the pywebview tray (webkit2gtk + appindicator)."
+        info "Installing the terminal UI only (${BOLD}outwarp tui${RESET})."
+        info "Add the graphical window later with ${BOLD}sudo outwarp gui --install${RESET}."
     fi
 
-    pipx_install_app "outwarp-client" "$INSTALL_SOURCE" "$extras"
+    local system_site=0
+    [[ "$extras" == *gui-linux* ]] && system_site=1
+    pipx_install_app "outwarp-client" "$INSTALL_SOURCE" "$extras" "$system_site"
 
     # Only purge the legacy /opt/outwarp-client install AFTER pipx confirmed
     # the new venv works. Doing it before means a pipx failure leaves the
@@ -1165,12 +1296,15 @@ install_client() {
     # upgraders during the --pip-args incident).
     migrate_legacy_install "client"
 
-    # 0.5.0 collapse: the only entry-point pipx ships is outwarp-cli; the GUI
-    # lives behind `outwarp-cli gui`. Old `outwarp` / `outwarp-uninstall` bins
-    # are removed automatically by `pipx reinstall` on upgrade.
-    [[ -x "$CLIENT_CLI_BIN_LINK" ]] \
-        || die "pipx finished but $CLIENT_CLI_BIN_LINK is missing - investigate /usr/local/bin/"
-    ok "outwarp-cli installed: ${BOLD}$(${SUDO} ${CLIENT_CLI_BIN_LINK} --version 2>/dev/null | awk '{print $2}')${RESET}"
+    # `outwarp` is the client command; the wheel also exposes the deprecated
+    # `outwarp-cli` alias until 1.0. Old `outwarp-uninstall` bins are removed
+    # automatically by `pipx reinstall` on upgrade.
+    [[ -x "$CLIENT_BIN_LINK" ]] \
+        || die "pipx finished but $CLIENT_BIN_LINK is missing - investigate /usr/local/bin/"
+    ok "outwarp installed: ${BOLD}$(${SUDO} ${CLIENT_BIN_LINK} --version 2>/dev/null | awk '{print $2}')${RESET}"
+
+    migrate_client_unit_name
+    warn_duplicate_user_install
 
     write_client_helper
     write_client_sudoers
@@ -1181,7 +1315,8 @@ install_client() {
     remove_client_autostart
     # Install system-wide application launcher entry (GNOME, KDE, etc.).
     install_client_desktop
-    # Register shell completions (bash, zsh) for outwarp-cli.
+    install_hyprland_rule
+    # Register shell completions (bash, zsh) for outwarp.
     install_client_completions
 
     cat <<EOF
@@ -1190,22 +1325,24 @@ ${BOLD}${GREEN}Client installed.${RESET}
 
   ${BOLD}Quick start:${RESET}
     1. Drop your ${BOLD}.owcfg${RESET} file somewhere accessible by ${TARGET_USER}.
-    2. Launch ${BOLD}outwarp-cli tui${RESET} — interactive terminal UI.
-       The first run prompts for the .owcfg via the import modal.
-    3. Or find ${BOLD}OutWarp${RESET} in your application launcher (GNOME, KDE, etc.).
+    2. Find ${BOLD}OutWarp${RESET} in your application launcher, or run
+       ${BOLD}outwarp gui${RESET} (window + tray) / ${BOLD}outwarp tui${RESET} (terminal).
+       The first run prompts for the .owcfg via the import screen.
+    3. Pick what the launcher opens with ${BOLD}outwarp ui gui${RESET} or ${BOLD}outwarp ui tui${RESET};
+       add the graphical window later with ${BOLD}sudo outwarp gui --install${RESET}.
 
   ${BOLD}Headless / SSH / systemd:${RESET}
-    1. ${BOLD}outwarp-cli import /path/to/profile.owcfg${RESET}
-    2. ${BOLD}outwarp-cli connect${RESET}            # foreground, Ctrl+C to stop
-       ${BOLD}outwarp-cli service install${RESET}    # background daemon (systemd --user)
-       ${BOLD}outwarp-cli status${RESET}             # one-shot state probe
-       ${BOLD}outwarp-cli logs --follow${RESET}      # tail -f the log file
+    1. ${BOLD}outwarp import /path/to/profile.owcfg${RESET}
+    2. ${BOLD}outwarp connect${RESET}            # foreground, Ctrl+C to stop
+       ${BOLD}outwarp service install${RESET}    # background daemon (systemd --user)
+       ${BOLD}outwarp status${RESET}             # one-shot state probe
+       ${BOLD}outwarp logs --follow${RESET}      # tail -f the log file
 
-  ${DIM}Uninstall:        outwarp-cli uninstall${RESET}
+  ${DIM}Uninstall:        outwarp uninstall${RESET}
   ${DIM}Privileged helper: $CLIENT_HELPER${RESET}
   ${DIM}Sudoers rule: $CLIENT_SUDOERS  (revoke with: sudo rm $CLIENT_SUDOERS)${RESET}
   ${DIM}pipx venv: $CLIENT_VENV${RESET}
-  ${DIM}Want the tray GUI too? Re-run with OUTWARP_CLIENT_GUI=1 (installs webkitgtk + pywebview).${RESET}
+  ${DIM}Scripted installs: OUTWARP_CLIENT_GUI=1|0 skips the GUI question.${RESET}
 
 EOF
 }

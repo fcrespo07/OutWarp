@@ -1,4 +1,4 @@
-"""Client-side health checks for `outwarp-cli doctor` and the TUI doctor screen."""
+"""Client-side health checks for `outwarp doctor` and the TUI doctor screen."""
 from __future__ import annotations
 
 import logging
@@ -182,7 +182,7 @@ EXPECTED_HELPER_VERSION = 2
 def check_helper_version() -> CheckResult:
     """The installed helper must speak the contract this client expects.
 
-    Wheel upgrades (`outwarp-cli update`, pipx) don't touch the helper, so a
+    Wheel upgrades (`outwarp update`, pipx) don't touch the helper, so a
     client can outrun it; the kill switch then fails to engage (fail-open).
     """
     if not sys.platform.startswith("linux"):
@@ -318,6 +318,22 @@ def _wg_install_cmd() -> str:
     return "install wireguard-tools with your package manager"
 
 
+def check_nftables() -> CheckResult:
+    """The kill switch is an nftables table the helper manages — no `nft`,
+    no switch (it used to fail only when the user flipped the toggle)."""
+    if shutil.which("nft"):
+        return CheckResult(name="nftables", status=Status.PASS, detail="nft on PATH")
+    pm = _wg_install_cmd().replace("wireguard-tools", "nftables")
+    return CheckResult(
+        name="nftables",
+        status=Status.WARN,
+        detail="nft not found — the kill switch cannot engage.",
+        remediation=f"Install nftables: {pm}",
+        remediation_command=pm,
+        fix_kind="interactive",
+    )
+
+
 def check_wg_kernel_module() -> CheckResult:
     """WireGuard kernel module must be loadable (Linux only)."""
     if not sys.platform.startswith("linux"):
@@ -383,8 +399,8 @@ def check_systemd_unit() -> CheckResult:
             name="systemd user unit",
             status=Status.WARN,
             detail=f"status={enabled} — background daemon won't autostart.",
-            remediation="Enable with: outwarp-cli service install",
-            remediation_command="outwarp-cli service install",
+            remediation="Enable with: outwarp service install",
+            remediation_command="outwarp service install",
             fix_kind="manual",
         )
     # Not installed (not-found)
@@ -392,8 +408,8 @@ def check_systemd_unit() -> CheckResult:
         name="systemd user unit",
         status=Status.WARN,
         detail="outwarp-client.service not installed.",
-        remediation="Install with: outwarp-cli service install",
-        remediation_command="outwarp-cli service install",
+        remediation="Install with: outwarp service install",
+        remediation_command="outwarp service install",
         fix_kind="manual",
     )
 
@@ -412,13 +428,81 @@ def check_notify_send() -> CheckResult:
             status=Status.PASS,
             detail="notify-send on PATH",
         )
+    pkg = _notify_pkg_cmd()
     return CheckResult(
         name="notify-send",
         status=Status.WARN,
         detail="notify-send not found — desktop notifications will be silent.",
-        remediation="Install libnotify-bin: apt install libnotify-bin",
-        remediation_command="apt install libnotify-bin",
+        remediation=f"Install libnotify: {pkg}",
+        remediation_command=pkg,
         fix_kind="interactive",
+    )
+
+
+def _notify_pkg_cmd() -> str:
+    if shutil.which("apt"):
+        return "apt install libnotify-bin"
+    if shutil.which("dnf"):
+        return "dnf install libnotify"
+    if shutil.which("pacman"):
+        return "pacman -S libnotify"
+    if shutil.which("zypper"):
+        return "zypper install libnotify-tools"
+    return "install libnotify with your package manager"
+
+
+def check_tray_backend() -> CheckResult:
+    """Will the tray icon show up in this session's bar?
+
+    Verified on Omarchy: pystray's appindicator backend registers a
+    StatusNotifierItem with omarchy-shell's watcher and the icon follows the
+    tunnel state — but only when the GObject bindings are importable from
+    the venv. Without them pystray falls back to Xorg and nothing appears
+    under Wayland."""
+    from outwarp.desktop_linux import tray_status
+
+    state, detail = tray_status()
+    if state == "skip":
+        return CheckResult(name="tray", status=Status.SKIP, detail=detail)
+    if state == "ok":
+        return CheckResult(name="tray", status=Status.PASS, detail=detail)
+    return CheckResult(
+        name="tray",
+        status=Status.WARN,
+        detail=detail,
+        remediation="`sudo outwarp gui --install` installs the AppIndicator stack "
+                    "and lets this venv see it; on GNOME add the AppIndicator "
+                    "extension. The window and `outwarp tui` work without a tray.",
+        remediation_command="sudo outwarp gui --install",
+        fix_kind="interactive",
+    )
+
+
+def check_hyprland_rule() -> CheckResult:
+    """Hyprland tiles the OutWarp window unless a rule floats it."""
+    from outwarp.desktop_linux import (
+        hyprland_config_kind,
+        hyprland_rule_installed,
+        hyprland_rule_snippet,
+        is_hyprland,
+    )
+
+    if not is_hyprland():
+        return CheckResult(name="hyprland", status=Status.SKIP, detail="Not a Hyprland session.")
+    if hyprland_config_kind() is None:
+        return CheckResult(name="hyprland", status=Status.WARN,
+                           detail="Hyprland session but no ~/.config/hypr/hyprland.{lua,conf}.")
+    if hyprland_rule_installed():
+        return CheckResult(name="hyprland", status=Status.PASS,
+                           detail="Window rule installed (floating, centred).")
+    return CheckResult(
+        name="hyprland",
+        status=Status.WARN,
+        detail="No window rule for class `outwarp` — the window opens tiled.",
+        remediation="Run `outwarp ui --hyprland-rule` (writes ~/.config/hypr/outwarp.* "
+                    "and hooks it in), or add:\n" + hyprland_rule_snippet().rstrip(),
+        remediation_command="outwarp ui --hyprland-rule",
+        fix_kind="auto",
     )
 
 
@@ -435,10 +519,128 @@ def check_config_present() -> CheckResult:
     return CheckResult(
         name="Profile imported",
         status=Status.FAIL,
-        detail="No profile found — run 'outwarp-cli import <path.owcfg>'.",
-        remediation="outwarp-cli import <path-to.owcfg>",
-        remediation_command="outwarp-cli import <path-to.owcfg>",
+        detail="No profile found — run 'outwarp import <path.owcfg>'.",
+        remediation="outwarp import <path-to.owcfg>",
+        remediation_command="outwarp import <path-to.owcfg>",
         fix_kind="manual",
+    )
+
+
+def _which_all(name: str) -> list[Path]:
+    """Every ``name`` on PATH, first match first (``which -a``), deduplicated
+    by resolved target so two symlinks to one venv count once."""
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if not d:
+            continue
+        cand = Path(d) / name
+        if cand.is_file() and os.access(cand, os.X_OK):
+            real = cand.resolve()
+            if real not in seen:
+                seen.add(real)
+                out.append(cand)
+    return out
+
+
+def _binary_version(path: Path) -> str:
+    try:
+        proc = _run([str(path), "--version"])
+    except (OSError, subprocess.TimeoutExpired):
+        return "?"
+    text = (proc.stdout or proc.stderr).strip().splitlines()
+    return text[-1].split()[-1] if text else "?"
+
+
+def check_duplicate_binaries() -> CheckResult:
+    """More than one `outwarp` on PATH is how a stale venv keeps answering.
+
+    Seen on the author's laptop: install.sh's /opt/pipx venv at 0.5.8 and a
+    user pipx venv at 0.13.0 both exposed as `outwarp-cli`; which one a shell
+    or a unit picked depended on PATH order."""
+    found = [(p, _binary_version(p)) for p in _which_all("outwarp")]
+    seen = {p.resolve() for p, _ in found}
+    found += [(p, _binary_version(p)) for p in _which_all("outwarp-cli")
+              if p.resolve() not in seen]
+    if not found:
+        return CheckResult(
+            name="binaries",
+            status=Status.WARN,
+            detail="No `outwarp` on PATH (running from a venv or the source tree).",
+        )
+    versions = {v for _, v in found}
+    listing = ", ".join(f"{p} ({v})" for p, v in found)
+    if len(found) > 1 and len(versions) > 1:
+        return CheckResult(
+            name="binaries",
+            status=Status.WARN,
+            detail=f"Several client installs answer on PATH: {listing}",
+            remediation="Remove the stale one (pipx uninstall outwarp-client in "
+                        "that venv, or delete /opt/pipx/venvs/outwarp-client) so "
+                        "shells, units and launchers agree on a version.",
+        )
+    return CheckResult(name="binaries", status=Status.PASS, detail=listing)
+
+
+_LEGACY_NAME_FILES: tuple[tuple[str, Path], ...] = (
+    ("bash completions", Path("/etc/bash_completion.d/outwarp-cli")),
+    ("zsh completions", Path("/usr/share/zsh/site-functions/_outwarp-cli")),
+)
+_SYSTEM_LAUNCHER = Path("/usr/share/applications/outwarp.desktop")
+
+
+def check_legacy_cli_name() -> CheckResult:
+    """Anything on disk still wired to the pre-1.0 `outwarp-cli` name.
+
+    The alias keeps those working for one release; this is the nudge to
+    migrate before it disappears."""
+    from outwarp.service import unit_uses_legacy_name
+
+    stale: list[str] = []
+    if unit_uses_legacy_name():
+        stale.append("systemd user unit (ExecStart)")
+    try:
+        if "outwarp-cli" in _SYSTEM_LAUNCHER.read_text():
+            stale.append(f"launcher {_SYSTEM_LAUNCHER}")
+    except OSError:
+        pass
+    stale += [f"{label} {path}" for label, path in _LEGACY_NAME_FILES if path.exists()]
+    if not stale:
+        return CheckResult(
+            name="cli_name", status=Status.PASS,
+            detail="Nothing references the deprecated `outwarp-cli` name.",
+        )
+    return CheckResult(
+        name="cli_name",
+        status=Status.WARN,
+        detail="Still pointing at deprecated `outwarp-cli`: " + "; ".join(stale),
+        remediation="Run `outwarp service install` for the unit and re-run "
+                    "install.sh for the launcher/completions (alias goes away in 1.0).",
+        remediation_command="outwarp service install",
+    )
+
+
+def check_gui_stack() -> CheckResult:
+    """Can `outwarp gui` open here? Linux ships the window as an optional
+    stack; on a headless box its absence is expected, not a problem."""
+    from outwarp.ui_choice import INSTALL_HINT, desktop_session, gui_available, preferred_ui
+
+    ok, why = gui_available()
+    pref = preferred_ui()
+    if ok:
+        return CheckResult(name="gui", status=Status.PASS,
+                           detail=f"{why}; preferred_ui={pref}")
+    if not desktop_session() and pref != "gui":
+        return CheckResult(name="gui", status=Status.SKIP,
+                           detail=f"No display session; TUI only ({why}).")
+    return CheckResult(
+        name="gui",
+        status=Status.WARN,
+        detail=f"Graphical window not available: {why}",
+        remediation=f"Install the GUI stack: {INSTALL_HINT}  (or `outwarp ui tui` "
+                    "to keep the terminal UI on purpose)",
+        remediation_command=INSTALL_HINT,
+        fix_kind="interactive",
     )
 
 
@@ -455,8 +657,14 @@ def gather_checks() -> list[Check]:
             Check("sudoers", "Permissions", check_sudoers),
             Check("helper_version", "Permissions", check_helper_version),
             Check("kmod", "WireGuard", check_wg_kernel_module),
+            Check("nftables", "WireGuard", check_nftables),
             Check("systemd", "Service", check_systemd_unit),
             Check("notify", "Desktop", check_notify_send),
+            Check("gui", "Desktop", check_gui_stack),
+            Check("tray", "Desktop", check_tray_backend),
+            Check("hyprland", "Desktop", check_hyprland_rule),
+            Check("binaries", "Install", check_duplicate_binaries),
+            Check("cli_name", "Install", check_legacy_cli_name),
         ]
     return checks
 

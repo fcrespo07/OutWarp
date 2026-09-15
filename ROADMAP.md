@@ -17,14 +17,14 @@ documented CLI surface (`outwarp` / `outwarp-server`), the signed update
 channel and the config file shapes.
 Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration.
 
-- [ ] **End-to-end job in CI, blocking.** Two Docker containers (the real
+- [x] **End-to-end job in CI, blocking.** *(Landed 2026-09-15: `e2e/run.sh`; first GitHub-runner pass pending.)* Two Docker containers (the real
       `server/Dockerfile` image + a root client), full user flow: enrol over
       443 → connect → traffic through the tunnel → DNS routed inside →
       reused token rejected → clean disconnect. Spike first: `wg-quick up`
       inside Docker on a GitHub runner.
-- [ ] **Kill switch + hostname endpoint.** Reconnect can't resolve the
+- [x] **Kill switch + hostname endpoint.** *(Done 2026-09-15 via a last-known-address cache; DNS stays blocked while engaged.)* Reconnect can't resolve the
       endpoint through the blocked LAN DNS → `FAILED` with no network.
-- [ ] **Rename the client command `outwarp-cli` → `outwarp`.** The client is
+- [x] **Rename the client command `outwarp-cli` → `outwarp`.** *(Done 2026-09-15; alias kept until 1.0.0.)* The client is
       what most people use, so it gets the short name; the server already
       carries its suffix, and the Windows executable is already
       `outwarp.exe`. Must land before 1.0 because the CLI surface freezes
@@ -32,10 +32,10 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       `.desktop` files and completions on existing installs point at it) and
       have `install.sh` / `service install` migrate them; drop the alias in
       1.0.0.
-- [ ] **Linux client GUI as a first-class option.** Installer offers the
+- [~] **Linux client GUI as a first-class option.** *(Code landed 2026-09-15 — installer default, `gui --install`, `ui`, `launch`, doctor check; real-desktop testing on X11/Wayland still pending.)* Installer offers the
       pywebview GUI by default on desktop sessions (TUI stays the headless
       path); tested on X11 and Wayland; `doctor` checks the GUI stack.
-- [ ] **Full Omarchy compatibility** (Arch + Hyprland/Wayland + waybar +
+- [~] **Full Omarchy compatibility** *(2026-09-15: window app_id + Hyprland rule, SNI tray with state icon, notification icon, system-site-packages venv, doctor checks, Python 3.14 in CI — all verified on a live Omarchy 4 session; clean-install run still pending.)* (Arch + Hyprland/Wayland + waybar +
       mako + systemd + pacman). Not just "it installs" — once installed it
       has to feel native: clean install via the `pacman` path; tray icon in
       waybar (SNI/appindicator) that **changes with tunnel state** and reads

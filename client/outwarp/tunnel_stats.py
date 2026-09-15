@@ -179,13 +179,20 @@ class StatsSampler:
         self._latency_source = latency_source or (lambda: _ping_once(self._peer))
         self._clock = clock
         self._last_sample: tuple[float, int, int] | None = None
+        self._iface_up: bool | None = None
         self._rx_bps: deque[float] = deque(maxlen=history)
         self._tx_bps: deque[float] = deque(maxlen=history)
         self._ping_ms: deque[float] = deque(maxlen=history)
 
+    def interface_up(self) -> bool | None:
+        """Whether the last sample found the interface (None before any sample).
+        Lets a viewer-mode dashboard report a service-owned tunnel."""
+        return self._iface_up
+
     def sample(self) -> TunnelStats:
         now = self._clock()
         transfer = self._transfer_source()
+        self._iface_up = transfer is not None
         if transfer is None:
             return TunnelStats(0, 0, 0.0, 0.0, None, None)
         rx_total, tx_total, last_hs = transfer

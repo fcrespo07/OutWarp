@@ -407,7 +407,7 @@ def test_pick_delay_empty_falls_back_to_5():
 #
 # TunnelManager now owns this reconciliation itself (via outwarp.killswitch),
 # instead of it living only in outwarp.api.Api — the pywebview GUI bridge,
-# which the TUI and `outwarp-cli daemon` never go through. Testing it here,
+# which the TUI and `outwarp daemon` never go through. Testing it here,
 # against the real TunnelManager, is what proves it now also works for those
 # two surfaces.
 

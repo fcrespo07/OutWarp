@@ -129,7 +129,7 @@ def test_dump_falls_back_to_direct_when_helper_lacks_dump(tmp_path: Path) -> Non
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux-only helper bridge")
 def test_dump_skips_helper_when_root(tmp_path: Path) -> None:
-    """Running as root (e.g. `sudo outwarp-cli tui`) bypasses the helper."""
+    """Running as root (e.g. `sudo outwarp tui`) bypasses the helper."""
     fake_wg = tmp_path / "wg"
     fake_wg.write_text("#!/bin/sh\necho ok\n")
     fake_wg.chmod(0o755)

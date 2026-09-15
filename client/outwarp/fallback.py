@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +43,32 @@ from typing import Any
 from outwarp.config import ClientConfig, StrategyConfig
 
 log = logging.getLogger(__name__)
+
+_SECRET_FLAGS = frozenset({"--http-upgrade-path-prefix"})
+_URL_USERINFO_RE = re.compile(r"^([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
+
+
+def redact_command(cmd: list[str]) -> str:
+    """Render a wstunnel argv for a log line without its secrets.
+
+    The upgrade path prefix *is* the credential that gates the server (anyone
+    holding it can reach the tunnel), and a proxy rung may carry
+    ``user:password@`` in its URL. Both used to land verbatim in outwarp.log,
+    which the GUI/TUI log views show and diagnostic dumps copy around.
+    """
+    out: list[str] = []
+    mask_next = False
+    for arg in cmd:
+        if mask_next:
+            out.append("<redacted>")
+            mask_next = False
+            continue
+        if arg in _SECRET_FLAGS:
+            out.append(arg)
+            mask_next = True
+            continue
+        out.append(_URL_USERINFO_RE.sub(r"\1<redacted>@", arg))
+    return " ".join(out)
 
 # A common desktop-Chrome UA. The point of S2 is to stop looking like the
 # fingerprint-less default request; the exact string only needs to be plausible.

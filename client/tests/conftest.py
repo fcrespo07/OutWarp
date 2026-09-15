@@ -2,9 +2,66 @@
 
 from __future__ import annotations
 
+import os
+import uuid
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Keep every test away from the developer's real OutWarp installation.
+
+    platformdirs resolves ``user_config_dir`` / ``user_log_dir`` from the
+    environment at call time, so pointing the XDG_* (Linux) and APPDATA /
+    LOCALAPPDATA (Windows) variables at ``tmp_path`` moves config.json,
+    settings.json, known_servers.json and outwarp.log for the whole suite
+    without patching every ``from outwarp.config import default_config_path``
+    import site by hand. Before this, ``app.main()`` tests appended
+    ``<MagicMock ...>`` lines to ``~/.local/state/OutWarp/log/outwarp.log``.
+
+    The single-instance lock gets a per-test name for the same reason: with a
+    real client connected on the machine, the default lock file was already
+    held and ``app.main()`` bailed with "Another instance is already running".
+    """
+    home = tmp_path / "userdirs"
+    for var, sub in (
+        ("XDG_CONFIG_HOME", "config"),
+        ("XDG_STATE_HOME", "state"),
+        ("XDG_DATA_HOME", "data"),
+        ("XDG_CACHE_HOME", "cache"),
+        ("APPDATA", "appdata"),
+        ("LOCALAPPDATA", "localappdata"),
+    ):
+        d = home / sub
+        d.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv(var, str(d))
+    # platformdirs on Windows asks the shell (ctypes) for the folders and only
+    # falls back to APPDATA/LOCALAPPDATA when that is unavailable, so the env
+    # vars above are not enough there: use the WIN_PD_OVERRIDE_* hook (4.10+)
+    # and force the env-var resolver for older releases.
+    monkeypatch.setenv("WIN_PD_OVERRIDE_APPDATA", str(home / "appdata"))
+    monkeypatch.setenv("WIN_PD_OVERRIDE_LOCAL_APPDATA", str(home / "localappdata"))
+    monkeypatch.setenv("WIN_PD_OVERRIDE_COMMON_APPDATA", str(home / "programdata"))
+    monkeypatch.setenv("ALLUSERSPROFILE", str(home / "programdata"))
+    (home / "programdata").mkdir(exist_ok=True)
+    import platformdirs.windows as _pdw
+
+    monkeypatch.setattr(
+        _pdw, "get_win_folder", _pdw.get_win_folder_from_env_vars, raising=False
+    )
+
+    from outwarp import app as app_mod
+
+    tag = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    monkeypatch.setattr(
+        app_mod._SingleInstanceLock.__init__,
+        "__defaults__",
+        (f"Local\\OutWarpClient-test-{tag}", f"outwarp-client-test-{tag}.lock"),
+    )
+    yield
 
 
 @pytest.fixture(autouse=True)

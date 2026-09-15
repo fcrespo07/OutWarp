@@ -346,7 +346,7 @@ def download_installer(
 # ── Linux wheel updates ──────────────────────────────────────────────────────
 #
 # On Linux we don't ship an .exe — releases include `outwarp_{client,server}-*.whl`
-# assets instead, and the in-venv updater (outwarp-cli update / outwarp-server
+# assets instead, and the in-venv updater (outwarp update / outwarp-server
 # update) reuses the same SHA256SUMS.txt verification flow.
 
 _LINUX_CLIENT_WHEEL_RE = re.compile(r"^outwarp[_-]client-[0-9].*\.whl$", re.IGNORECASE)
@@ -427,14 +427,14 @@ def apply_linux_update(
     """Install `wheel_path` into the current venv via ``pip install --upgrade``.
 
     Uses ``sys.executable`` so the upgrade always targets the venv that's
-    running this code, even under ``sudo outwarp-cli update``. Under the
+    running this code, even under ``sudo outwarp update``. Under the
     pipx-managed layout (``PIPX_HOME=/opt/pipx``), that venv lives at
     ``/opt/pipx/venvs/outwarp-client/`` and pip inside it is fully functional
     — we deliberately do NOT shell out to ``pipx upgrade`` here because that
     would re-bootstrap the venv from the original spec and discard local
     state (e.g. a manually-injected debug package). The in-place
     ``pip install --upgrade`` is the surgical option and matches the
-    semantics ``outwarp-cli update`` advertises. Raises
+    semantics ``outwarp update`` advertises. Raises
     ``subprocess.CalledProcessError`` on pip failure or
     ``subprocess.TimeoutExpired`` when the install runs longer than
     ``timeout`` seconds.

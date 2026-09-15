@@ -124,7 +124,7 @@ The sequence is therefore:
 not verify the signature — it would need the `minisign` binary present before
 OutWarp is installed. That path is bootstrapped with `curl … | sudo bash` from
 `raw.githubusercontent.com`, so it already extends full trust to GitHub and a
-signature would add little there. The in-app updaters (`outwarp-cli update`,
+signature would add little there. The in-app updaters (`outwarp update`,
 `outwarp-server update`, and the GUI's update button) are the paths that matter,
 because they run unattended on machines that are already installed, and those do
 verify.

@@ -90,3 +90,11 @@ package-lock.json
 # Design handoff (proporcionado por el autor, no forma parte del repo)
 OutWarp.zip
 design_handoff_web_dashboard/
+
+# Client profiles: each one carries the secret upgrade path (and, with
+# --embed-key, the WireGuard private key). Only the documented example is tracked.
+*.owcfg
+!config.example.owcfg
+
+# Ad-hoc diagnostic dumps (full logs, endpoints, argv with secrets)
+outwarp-diag-*.txt

@@ -8,7 +8,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-09-15
+
+### Changed
+- **The client command is now `outwarp`** (Linux/pip; Windows already shipped
+  `outwarp.exe`). `outwarp-cli` keeps working for **one release** as a
+  deprecated alias that prints a single stderr line, because systemd units,
+  launchers and shell completions on existing installs point at it and the
+  in-venv updater does not rewrite them. `install.sh` migrates the user unit's
+  `ExecStart=`, replaces the `outwarp-cli` completions with `outwarp` ones,
+  and `outwarp service install` re-renders the unit; `outwarp doctor` gains an
+  **Install** section that flags anything still on the old name and any
+  second client install answering on `PATH` (a stale `/opt/pipx` venv at an
+  older version was found doing exactly that). **The alias is removed in
+  1.0.0.**
+- `outwarp uninstall` now also removes the shell completions and the
+  system-wide launcher/icon that `install.sh` writes.
+- **Linux: GUI or TUI is a choice you can change after installing.**
+  `install.sh` offers the graphical window + tray by default when it detects
+  a desktop session (X11/Wayland socket) and skips it on headless boxes;
+  `OUTWARP_CLIENT_GUI=1|0` answers for scripted installs. New subcommands:
+  `sudo outwarp gui --install` adds the GTK/WebKit packages and pywebview to
+  an existing install, `outwarp ui [auto|gui|tui]` shows/sets what the app
+  menu opens, and `outwarp launch` (what the `.desktop` entry now runs)
+  honours it — opening the TUI in your terminal emulator when the GUI is not
+  wanted. `outwarp gui` without the stack says why and opens the TUI instead
+  of failing at `webview.start()`. Both Settings screens expose the toggle
+  (`preferred_ui` in `settings.json`); `outwarp doctor` gains a `gui` check.
+
+### Added
+- **End-to-end test in CI (`e2e/`), blocking.** Two Docker containers — the
+  real `server/Dockerfile` image and a root client built from the checkout
+  (pinned wstunnel, the privileged helper taken verbatim from `install.sh`) —
+  walk the full user flow over the wire: `add-client` → `outwarp import`
+  (enrolment through the tunnel port) → `connect` → WireGuard handshake →
+  an HTTP page that only listens on the server's tunnel address → default
+  route inside the tunnel → counters moving → the same token rejected a
+  second time → SIGTERM leaves no interface or route behind. Runs locally
+  with `e2e/run.sh` (`KEEP=1` keeps the containers). Not covered: Windows,
+  systemd units, Kubernetes, the GUI.
+
+- **Omarchy / Hyprland / Wayland integration for the Linux GUI**, verified on
+  a live Omarchy 4 session (Hyprland 0.56, omarchy-shell):
+  - The window gets a stable `app_id` (`outwarp`) — it used to be the Python
+    script name, so no window rule or `StartupWMClass` could target it.
+  - `outwarp ui --hyprland-rule` (run by `install.sh` as the desktop user)
+    writes `~/.config/hypr/outwarp.lua` (`o.window(...)`, Hyprland ≥ 0.55) or
+    `outwarp.conf` (`windowrulev2`, hyprlang) and hooks it from your config:
+    the window opens floating and centred instead of tiled.
+  - The tray is a StatusNotifierItem via pystray's AppIndicator backend and
+    its icon/tooltip follow tunnel state in the Omarchy bar. For that the
+    venv must see the distro's GObject bindings: `install.sh` now creates the
+    pipx venv with `--system-site-packages` when the GUI is chosen, and
+    `outwarp gui --install` flips the flag on an existing venv.
+  - `notify-send` gets the app icon (`-i`); `libnotify` joins the GUI
+    package set on every distro.
+  - hicolor icons at 16–512 px (was a single 128 px file) and
+    `StartupWMClass=outwarp` in the launcher entry.
+  - `outwarp doctor` gains `tray` (backend + StatusNotifierWatcher on the
+    bus) and `hyprland` (rule present) checks; `outwarp ui` reports both.
+  - GUI `start_at_boot` on Linux registers `outwarp launch` (honours the
+    GUI/TUI preference); XDG autostart is honoured by uwsm sessions.
+  - CI matrix adds Python 3.14 (what Arch ships).
+
 ### Fixed
+- **"Run as background daemon" no longer fights the UI that enabled it.**
+  The TUI toggle ran `systemctl --user enable --now` next to its own live
+  tunnel; the daemon's `wg-quick up` tore the TUI's interface down, the TUI
+  reconnected and tore the daemon's down, and the link flapped every few
+  seconds. Enabling is now a hand-over: the UI stops its manager, installs
+  the unit, and becomes a viewer (status read from the interface); disabling
+  gives the tunnel back. The GUI gets the same toggle (Settings → System);
+  turning the service on also turns off the GUI's login autostart, and the
+  reverse is refused, so there is never a second owner at login.
+- **One tunnel owner at a time, on every surface.** The GUI's single-instance
+  mutex is now shared by the TUI, `outwarp connect` and the daemon
+  (`outwarp/ownership.py`): a second owner is told who has the tunnel (pid or
+  the service) instead of bouncing its interface. A GUI/TUI opened while the
+  service runs shows its status instead of starting a second tunnel. The unit
+  gains `RestartPreventExitStatus=2 4` (no profile / owned elsewhere) so a
+  misconfigured service no longer restarts every 10 s.
+- The TUI service toggle now shows the real `systemctl` error (it truncated
+  at 120 chars, hiding it behind the "Wrote …" lines), refuses without a
+  profile, as root, or without a user session, and `loginctl` runs with
+  `--no-ask-password` and no stdin so polkit can never paint a password
+  prompt over the dashboard. `ExecStart=` now prefers the running venv's own
+  `outwarp` over whatever `PATH` finds (an in-place update never creates a
+  new shim, so the unit kept pointing at `outwarp-cli`).
+- **`outwarp connect` honours settings.json** (kill switch, auto-reconnect,
+  TLS-intercept tolerance) like the GUI/TUI/daemon; the daemon also honours
+  the TLS-intercept toggle (the unit carries no flags). GUI/TUI keep an
+  engaged kill switch across a restart when the switch is on, as the daemon
+  already did.
+- **Expired profiles fail fast everywhere.** Only the GUI checked; the TUI,
+  `outwarp import/connect` and the daemon walked the whole reconnect ladder
+  against a server that had pruned the peer. Import refuses an expired
+  `.owcfg`, the manager goes straight to FAILED with the expiry date, and the
+  TUI's failed screen says so.
+- **Closing the GUI window now stops the tunnel** like the tray's Quit did;
+  it used to exit leaving WireGuard, wstunnel and an engaged kill switch
+  behind with no UI to undo them. On Wayland the title-bar minimise button
+  hides to the tray (compositors have no iconify; on Hyprland it did
+  nothing).
+- TUI Settings gains the **kill switch** toggle (TUI-only installs had no way
+  to enable it) and reports a corrupt `config.json` instead of "no profile
+  imported yet". `install.sh` installs `nftables` for the client and
+  `doctor` checks for `nft`, since the kill switch cannot engage without it.
+- GUI settings are re-read from disk before each change, so a toggle flipped
+  in the TUI or with `outwarp ui` while the window is open is no longer
+  reverted. `install.sh` keeps a login-autostart entry the GUI wrote
+  (`outwarp launch`) instead of deleting it on every upgrade.
+- **Kill switch + hostname endpoint: reconnects no longer die at DNS.** With
+  the switch engaged only the escape set is allowed out, so a profile whose
+  endpoint (or proxy) is a hostname could not resolve it on the next attempt
+  and ended in `FAILED` with no network. Every successful resolution is now
+  remembered (`resolved_hosts.json`, next to the sticky-rung store) and used
+  when the lookup fails, both for the rung's dial address and for the kill
+  switch allowlist itself. DNS is deliberately *not* opened through the
+  switch — that would leak every application's queries while the tunnel is
+  down. Known limit: if the server's IP changes while the switch is engaged,
+  the reconnect keeps failing until the switch is released.
+- **Enrolment rate limiter: one client's bad token no longer locks everyone
+  out.** Behind wstunnel's forward every request is the loopback peer, so the
+  per-IP bucket was one shared bucket: a client retrying an expired token a
+  few times pushed other clients' valid enrolments into `429` for a minute.
+  Failures are now counted per presented token (3 strikes → 60 s
+  `Retry-After` for that token only) with a wider global ceiling (20 distinct
+  failures / 5 min) as the brute-force bound.
+- **Tests no longer touch the developer's real client.** Both suites point
+  platformdirs at a temp dir and the single-instance lock at a per-test
+  name; `app.main()` tests used to append lines to
+  `~/.local/state/OutWarp/log/outwarp.log` and bail on the lock of a running
+  client.
+- **The wstunnel command line is logged without its secrets.** The upgrade
+  path prefix (the server's access credential) and any proxy password were
+  written verbatim to `outwarp.log`, shown in the GUI/TUI log views and
+  copied into diagnostic dumps.
 - **Server dashboard: the per-client sparkline and the Home traffic chart
   could hide real traffic for minutes after a one-off spike.** Both used a
   peak-hold that decayed 5% per 2 s tick with no bound tied to how much

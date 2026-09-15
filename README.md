@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/li
 The installer will ask whether you want to set up the **client** or the **server** and guide you through the rest. On Linux the primary interface is a **Textual TUI** that runs in any terminal (GNOME Terminal, Konsole, Alacritty, kitty, foot, tmux, SSH) — no GUI dependencies, no display server required.
 
 ```bash
-outwarp-cli tui          # client dashboard: live status, traffic, logs, profile editor
+outwarp tui          # client dashboard: live status, traffic, logs, profile editor
 sudo outwarp-server tui  # server admin: clients table, add/revoke, doctor checks
 ```
 
@@ -74,19 +74,43 @@ container; install it on the machine that needs the tunnel.
 
 ## Linux client at a glance
 
-After `outwarp-cli import path/to/profile.owcfg`:
+After `outwarp import path/to/profile.owcfg`:
 
 | Action | How |
 |---|---|
-| Foreground connect (Ctrl+C to stop) | `outwarp-cli connect` |
-| Headless status probe | `outwarp-cli status` |
-| Tail the log file (`tail -f` style) | `outwarp-cli logs --follow` |
-| Interactive TUI (recommended) | `outwarp-cli tui` |
-| Tray window (still available via webkitgtk) | `outwarp-cli gui` |
+| Foreground connect (Ctrl+C to stop) | `outwarp connect` |
+| Headless status probe | `outwarp status` |
+| Tail the log file (`tail -f` style) | `outwarp logs --follow` |
+| Interactive TUI (recommended) | `outwarp tui` |
+| Tray window (still available via webkitgtk) | `outwarp gui` |
 | Edit MTU / DNS / address / routing | TUI → **s** Settings → **p** Profile (or **p** from the dashboard) |
-| Check for updates | `sudo outwarp-cli update` |
+| Check for updates | `sudo outwarp update` |
 
-The autostart entry installed by `install.sh` launches the GUI tray by default; switch it to the TUI by pointing `Exec=` at `outwarp-cli tui` in `~/.config/autostart/outwarp.desktop`.
+### GUI or TUI on Linux — your call, before or after installing
+
+The terminal UI (`outwarp tui`) is always installed. The graphical window +
+tray icon (`outwarp gui`, the same pywebview UI as Windows) is offered by
+`install.sh` when it detects a desktop session, and skipped on headless boxes
+(`OUTWARP_CLIENT_GUI=1|0` answers the question for scripted installs).
+
+Nothing is final:
+
+| I want to… | Run |
+|---|---|
+| Add the graphical window to a TUI-only install | `sudo outwarp gui --install` (distro GTK/WebKit packages + pywebview into the existing venv) |
+| Make the app-menu entry open the window / the terminal UI | `outwarp ui gui` / `outwarp ui tui` (`outwarp ui auto` = GUI when installed and a display is present) |
+| See what is installed and what the launcher will open | `outwarp ui` or `outwarp doctor` |
+
+On **Hyprland / Omarchy** the window floats and centres itself through a rule
+that `install.sh` (or `outwarp ui --hyprland-rule`) writes to
+`~/.config/hypr/outwarp.lua` (`outwarp.conf` on hyprlang setups); the tray
+icon lives in the bar as a StatusNotifierItem and follows the tunnel state.
+`outwarp doctor` tells you if either piece is missing.
+
+The application launcher runs `outwarp launch`, which honours that choice and
+opens the TUI in your terminal emulator (`$TERMINAL`, then the usual
+suspects) when the GUI is not wanted. Both UIs expose the same toggle in
+their Settings screen.
 
 ---
 

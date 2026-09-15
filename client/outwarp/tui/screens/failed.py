@@ -30,13 +30,15 @@ def _error_hint(err: str) -> str:
         return "Connection timed out — check that the server is reachable and the port is open."
     if "refused" in low or "connection refused" in low:
         return "Connection refused — wstunnel may not be running on the server."
+    if "expired" in low:
+        return "Profile expired — import a fresh .owcfg from the server admin (i)."
     if "permission" in low or "operation not permitted" in low:
-        return "Permission denied — run 'outwarp-cli service install' or check sudo/sudoers."
+        return "Permission denied — run 'outwarp service install' or check sudo/sudoers."
     if "wstunnel" in low and ("not found" in low or "no such" in low):
-        return "wstunnel binary missing — reinstall OutWarp or run 'outwarp-cli doctor'."
+        return "wstunnel binary missing — reinstall OutWarp or run 'outwarp doctor'."
     if "wireguard" in low or "wg-quick" in low:
-        return "WireGuard error — check 'outwarp-cli doctor' for kernel module and tool status."
-    return "Run 'outwarp-cli doctor' or press [b]l[/b] to view full logs."
+        return "WireGuard error — check 'outwarp doctor' for kernel module and tool status."
+    return "Run 'outwarp doctor' or press [b]l[/b] to view full logs."
 
 
 class FailedScreen(Screen):

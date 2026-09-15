@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import sys
-import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -11,85 +11,25 @@ from outwarp import __version__
 from outwarp.config import ClientConfig, ConfigError, default_config_path
 from outwarp.killswitch import release_stale_async
 from outwarp.logs import install_crash_logging, setup_logging
+from outwarp.ownership import (
+    LOCK_NAME,
+    MUTEX_NAME,
+    TunnelOwnerLock,
+    describe_owner,
+    service_is_active,
+)
+from outwarp.settings import load_settings
 
 log = logging.getLogger(__name__)
 
-_LOCK_NAME = "outwarp-client.lock"
+_LOCK_NAME = LOCK_NAME
 _WINDOW_TITLE = "OutWarp"
-_DEFAULT_MUTEX_NAME = "Global\\OutWarpClient"
+_DEFAULT_MUTEX_NAME = MUTEX_NAME
 
 
-class _SingleInstanceLock:
-    """Cross-platform mutex to prevent running two instances.
-
-    `mutex_name` / `lock_file` are exposed so tests can use unique names
-    instead of colliding with a running production instance."""
-
-    def __init__(
-        self,
-        mutex_name: str = _DEFAULT_MUTEX_NAME,
-        lock_file: str = _LOCK_NAME,
-    ) -> None:
-        self._handle: object | None = None
-        self._lock_path: Path | None = None
-        self._mutex_name = mutex_name
-        self._lock_file = lock_file
-
-    def acquire(self) -> bool:
-        if sys.platform == "win32":
-            return self._acquire_windows()
-        return self._acquire_posix()
-
-    def release(self) -> None:
-        if sys.platform == "win32":
-            self._release_windows()
-        else:
-            self._release_posix()
-
-    def _acquire_windows(self) -> bool:
-        import ctypes
-        handle = ctypes.windll.kernel32.CreateMutexW(None, True, self._mutex_name)
-        last_error = ctypes.windll.kernel32.GetLastError()
-        if last_error == 183:  # ERROR_ALREADY_EXISTS
-            if handle:
-                ctypes.windll.kernel32.CloseHandle(handle)
-            return False
-        self._handle = handle
-        return True
-
-    def _release_windows(self) -> None:
-        if self._handle is not None:
-            import ctypes
-            ctypes.windll.kernel32.ReleaseMutex(self._handle)
-            ctypes.windll.kernel32.CloseHandle(self._handle)
-            self._handle = None
-
-    def _acquire_posix(self) -> bool:
-        import fcntl
-        self._lock_path = Path(tempfile.gettempdir()) / self._lock_file
-        try:
-            self._handle = open(self._lock_path, "w")  # noqa: SIM115
-            fcntl.flock(self._handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except OSError:
-            if self._handle:
-                self._handle.close()
-                self._handle = None
-            return False
-
-    def _release_posix(self) -> None:
-        if self._handle is not None:
-            import fcntl
-            try:
-                fcntl.flock(self._handle, fcntl.LOCK_UN)
-                self._handle.close()
-            except Exception:
-                pass
-            self._handle = None
-            if self._lock_path and self._lock_path.exists():
-                with contextlib.suppress(Exception):
-                    self._lock_path.unlink()
-
+# Kept under its old name: tests and conftest patch `_SingleInstanceLock`;
+# every surface (GUI, TUI, connect, daemon) now shares this one lock.
+_SingleInstanceLock = TunnelOwnerLock
 
 def _try_load_config() -> ClientConfig | None:
     path = default_config_path()
@@ -138,10 +78,17 @@ def main() -> int:
     # to render anything. Redirect to the TUI rather than crash — users who
     # genuinely want the tray GUI on Linux opt into it via
     # `pip install 'outwarp-client[gui-linux]'` and that import then resolves.
+    # Only the import is probed here (the deeper GTK/WebKit check lives in
+    # outwarp.ui_choice.gui_available and runs in `outwarp gui` / `launch`
+    # before reaching this point); tests stub `webview` to get past it.
     if sys.platform == "linux":
         try:
             import webview  # noqa: F401 — presence test only
         except ImportError:
+            from outwarp.ui_choice import INSTALL_HINT
+
+            print(f"OutWarp GUI not installed ({INSTALL_HINT}). Opening the TUI.",
+                  file=sys.stderr)
             from outwarp.cli import main as _cli_main
             return _cli_main(["tui"])
 
@@ -156,15 +103,32 @@ def main() -> int:
         log.info("startup [%5.2fs] %s", time.monotonic() - t0, label)
 
     _stage(f"OutWarp client v{__version__} starting")
-    release_stale_async()
+    startup_settings = load_settings()
+    if bool(startup_settings.get("kill_switch", False)):
+        # Same rule as the daemon: with the switch on, a rule left by a
+        # crashed session is protection, not litter. reconcile() releases it
+        # on CONNECTED / a clean stop.
+        log.info("kill switch enabled — leaving any engaged rule in place at startup")
+    else:
+        release_stale_async()
 
+    # The background service owns the tunnel while it runs: open as a viewer
+    # (no TunnelManager.start(), status read from the interface) instead of
+    # fighting it for the interface. Any other holder means a second GUI/TUI/
+    # `connect` — exit and say who.
+    service_managed = sys.platform == "linux" and service_is_active()
     lock = _SingleInstanceLock()
-    if not lock.acquire():
-        log.error("Another instance is already running — exiting")
+    if not service_managed and not lock.acquire():
+        log.error("Another instance is already running (%s) — exiting", describe_owner())
         return 1
-    _stage("single-instance lock acquired")
+    _stage("service-managed viewer" if service_managed else "single-instance lock acquired")
 
     try:
+        if sys.platform == "linux":
+            # Before GTK initialises: otherwise Hyprland/GNOME see the window
+            # as `python3` / the script name and no window rule can target it.
+            from outwarp.desktop_linux import set_app_id
+            set_app_id()
         import webview
         _stage("imported pywebview")
 
@@ -198,6 +162,7 @@ def main() -> int:
         api = Api(
             memory_handler,
             manager,
+            service_managed=service_managed,
             on_manager_replaced=on_manager_replaced,
             integrity_issues=integrity_issues,
         )
@@ -261,7 +226,12 @@ def main() -> int:
             except Exception:
                 log.exception("could not show window from tray")
 
+        quit_done = threading.Event()
+
         def _on_quit() -> None:
+            if quit_done.is_set():
+                return
+            quit_done.set()
             log.info("Shutting down OutWarp client")
             api.shutdown()
             tray.stop()
@@ -271,6 +241,9 @@ def main() -> int:
         # Let apply_update() quit the app after launching the installer so it
         # can replace our files and relaunch us.
         api.set_quit_handler(_on_quit)
+        # Hyprland (and most Wayland compositors) have no minimise: the title
+        # bar button must hide to the tray instead, when there is one.
+        api.tray_available = lambda: getattr(tray, "_icon", None) is not None
 
         tray = TrayApp(
             manager=manager,
@@ -286,7 +259,9 @@ def main() -> int:
         # schedule). Importing/editing a profile still connects via
         # on_manager_replaced regardless of this setting.
         if manager is not None:
-            if not bool(settings.get("auto_connect", True)):
+            if service_managed:
+                log.info("tunnel managed by outwarp-client.service — GUI is a viewer")
+            elif not bool(settings.get("auto_connect", True)):
                 log.info("auto_connect=off — not connecting at launch (use Connect)")
             elif manager.config.is_expired():
                 log.warning(
@@ -301,6 +276,11 @@ def main() -> int:
         _stage("tray running — about to hand off to webview.start()")
         webview.start(gui="edgechromium" if sys.platform == "win32" else None)
 
+        # The window's own close button ends webview.start() without going
+        # through the tray's Quit: without this the process exited leaving
+        # WireGuard (0.0.0.0/0), wstunnel and an engaged kill switch behind,
+        # with no UI left to undo them.
+        _on_quit()
         log.info("OutWarp client shut down cleanly")
         return 0
 

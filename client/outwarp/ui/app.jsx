@@ -1576,6 +1576,22 @@ const Settings = ({ T, api, settings, onSetting }) => {
     const r = await onSetting(k, v);
     if (r && r.ok === false && r.error) setError(r.error);
   };
+  const [isLinux, setIsLinux] = useState(false);
+  const [svc, setSvc] = useState(null);
+  useEffect(() => {
+    if (!api) return;
+    let alive = true;
+    api.get_app_info().then((d) => { if (alive && d) setIsLinux(String(d.platform || "").toLowerCase().startsWith("linux")); });
+    if (api.get_service_state) api.get_service_state().then((s) => { if (alive && s) setSvc(s); });
+    return () => { alive = false; };
+  }, [api]);
+  const applyService = async (v) => {
+    setError("");
+    if (!api || !api.set_service_enabled) return;
+    const r = await api.set_service_enabled(v);
+    if (r && r.ok === false && r.error) setError(r.error);
+    if (api.get_service_state) api.get_service_state().then((s) => { if (s) setSvc(s); });
+  };
 
   const groups = [
     { key: "appearance", title: T.set_groupAppearance, rows: [
@@ -1612,6 +1628,16 @@ const Settings = ({ T, api, settings, onSetting }) => {
       { title: T.set_minimizeTray, sub: T.set_minimizeTraySub, control: (
         <window.Toggle on={!!settings.minimize_to_tray} onChange={(v) => apply("minimize_to_tray", v)}/>
       )},
+      // Linux only: the .desktop entry runs `outwarp launch`, which honours
+      // preferred_ui. On Windows the GUI is the only UI, so the row is noise.
+      ...(isLinux ? [{ title: T.set_preferTui, sub: T.set_preferTuiSub, control: (
+        <window.Toggle on={settings.preferred_ui === "tui"} onChange={(v) => apply("preferred_ui", v ? "tui" : "auto")}/>
+      )}] : []),
+      // Linux only: hand the tunnel to the systemd user unit (same toggle as
+      // the TUI). Not a settings.json key — it is system state read live.
+      ...(isLinux && svc && svc.supported ? [{ title: T.set_service, sub: T.set_serviceSub + (svc.active ? " " + T.set_serviceActive : ""), control: (
+        <window.Toggle on={!!svc.active} onChange={applyService}/>
+      )}] : []),
     ]},
   ];
 
