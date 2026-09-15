@@ -46,6 +46,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `e2e/run.sh` (`KEEP=1` keeps the containers). Not covered: Windows,
   systemd units, Kubernetes, the GUI.
 
+- **Omarchy / Hyprland / Wayland integration for the Linux GUI**, verified on
+  a live Omarchy 4 session (Hyprland 0.56, omarchy-shell):
+  - The window gets a stable `app_id` (`outwarp`) — it used to be the Python
+    script name, so no window rule or `StartupWMClass` could target it.
+  - `outwarp ui --hyprland-rule` (run by `install.sh` as the desktop user)
+    writes `~/.config/hypr/outwarp.lua` (`o.window(...)`, Hyprland ≥ 0.55) or
+    `outwarp.conf` (`windowrulev2`, hyprlang) and hooks it from your config:
+    the window opens floating and centred instead of tiled.
+  - The tray is a StatusNotifierItem via pystray's AppIndicator backend and
+    its icon/tooltip follow tunnel state in the Omarchy bar. For that the
+    venv must see the distro's GObject bindings: `install.sh` now creates the
+    pipx venv with `--system-site-packages` when the GUI is chosen, and
+    `outwarp gui --install` flips the flag on an existing venv.
+  - `notify-send` gets the app icon (`-i`); `libnotify` joins the GUI
+    package set on every distro.
+  - hicolor icons at 16–512 px (was a single 128 px file) and
+    `StartupWMClass=outwarp` in the launcher entry.
+  - `outwarp doctor` gains `tray` (backend + StatusNotifierWatcher on the
+    bus) and `hyprland` (rule present) checks; `outwarp ui` reports both.
+  - GUI `start_at_boot` on Linux registers `outwarp launch` (honours the
+    GUI/TUI preference); XDG autostart is honoured by uwsm sessions.
+  - CI matrix adds Python 3.14 (what Arch ships).
+
 ### Fixed
 - **Kill switch + hostname endpoint: reconnects no longer die at DNS.** With
   the switch engaged only the escape set is allowed out, so a profile whose

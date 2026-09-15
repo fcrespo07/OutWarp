@@ -35,7 +35,7 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
 - [~] **Linux client GUI as a first-class option.** *(Code landed 2026-09-15 — installer default, `gui --install`, `ui`, `launch`, doctor check; real-desktop testing on X11/Wayland still pending.)* Installer offers the
       pywebview GUI by default on desktop sessions (TUI stays the headless
       path); tested on X11 and Wayland; `doctor` checks the GUI stack.
-- [ ] **Full Omarchy compatibility** (Arch + Hyprland/Wayland + waybar +
+- [~] **Full Omarchy compatibility** *(2026-09-15: window app_id + Hyprland rule, SNI tray with state icon, notification icon, system-site-packages venv, doctor checks, Python 3.14 in CI — all verified on a live Omarchy 4 session; clean-install run still pending.)* (Arch + Hyprland/Wayland + waybar +
       mako + systemd + pacman). Not just "it installs" — once installed it
       has to feel native: clean install via the `pacman` path; tray icon in
       waybar (SNI/appindicator) that **changes with tunnel state** and reads

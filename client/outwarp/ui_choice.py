@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, Literal
 
 from outwarp.settings import load_settings, save_settings
@@ -109,11 +110,11 @@ def resolve_ui(
 
 _GUI_PACKAGES: dict[str, list[str]] = {
     "apt": ["python3-gi", "gir1.2-gtk-3.0", "gir1.2-webkit2-4.1",
-            "gir1.2-ayatanaappindicator3-0.1"],
-    "dnf": ["python3-gobject", "gtk3", "webkit2gtk4.1", "libappindicator-gtk3"],
-    "pacman": ["python-gobject", "webkit2gtk-4.1", "libayatana-appindicator"],
+            "gir1.2-ayatanaappindicator3-0.1", "libnotify-bin"],
+    "dnf": ["python3-gobject", "gtk3", "webkit2gtk4.1", "libappindicator-gtk3", "libnotify"],
+    "pacman": ["python-gobject", "webkit2gtk-4.1", "libayatana-appindicator", "libnotify"],
     "zypper": ["python3-gobject", "typelib-1_0-WebKit2-4_1", "typelib-1_0-Gtk-3_0",
-               "typelib-1_0-AyatanaAppIndicator3-0_1"],
+               "typelib-1_0-AyatanaAppIndicator3-0_1", "libnotify-tools"],
 }
 _PKG_INSTALL: dict[str, list[str]] = {
     "apt": ["apt-get", "install", "-y"],
@@ -153,6 +154,39 @@ def venv_writable() -> bool:
     return os.access(sys.prefix, os.W_OK) and os.access(site, os.W_OK)
 
 
+def enable_system_site_packages(prefix: str | None = None) -> bool:
+    """Let this venv import the distro's GObject bindings.
+
+    PyGObject (``gi``) only ships as a system package; pip cannot build it
+    into a venv without the whole GTK toolchain. A pipx venv created without
+    ``--system-site-packages`` therefore has pywebview but no ``gi`` — the
+    window cannot open and pystray falls back to the Xorg backend, which
+    shows nothing under Wayland. Flipping the flag in pyvenv.cfg is exactly
+    what ``pipx install --system-site-packages`` would have done.
+    Returns True when the file now has the flag (changed or already set).
+    """
+    cfg = Path(prefix or sys.prefix) / "pyvenv.cfg"
+    try:
+        lines = cfg.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    out: list[str] = []
+    seen = False
+    for line in lines:
+        if line.split("=", 1)[0].strip() == "include-system-site-packages":
+            out.append("include-system-site-packages = true")
+            seen = True
+        else:
+            out.append(line)
+    if not seen:
+        out.append("include-system-site-packages = true")
+    try:
+        cfg.write_text("\n".join(out) + "\n", encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
 def install_gui(
     *, run: Any = subprocess.run, echo: Any = print,
 ) -> int:
@@ -178,17 +212,26 @@ def install_gui(
     if run(sys_cmd, check=False).returncode != 0:
         echo("System package install failed — see the package manager output above.")
         return 1
+    if enable_system_site_packages():
+        echo(f"Enabled system site-packages in {sys.prefix} (for the GObject bindings).")
     pip_cmd = [sys.executable, "-m", "pip", "install", "--quiet",
                "--disable-pip-version-check", *gui_extra_requirements()]
     echo("Installing into the venv: " + " ".join(pip_cmd[4:]))
     if run(pip_cmd, check=False).returncode != 0:
         echo("pip install failed.")
         return 1
-    ok, why = gui_available()
-    if not ok:
-        echo(f"Installed, but the GUI still cannot start: {why}")
+    # This interpreter already resolved its sys.path; re-check in a child so
+    # the freshly enabled system site-packages are visible.
+    probe = run(
+        [sys.executable, "-c",
+         "from outwarp.ui_choice import gui_available; ok, why = gui_available(); "
+         "print(why); raise SystemExit(0 if ok else 1)"],
+        check=False,
+    )
+    if getattr(probe, "returncode", 1) != 0:
+        echo("Installed, but the GUI still cannot start — run `outwarp doctor` for details.")
         return 1
-    echo(f"GUI ready ({why}). Open it with `outwarp gui`; `outwarp ui gui` makes it the default.")
+    echo("GUI ready. Open it with `outwarp gui`; `outwarp ui gui` makes it the default.")
     return 0
 
 
@@ -197,6 +240,7 @@ def install_gui(
 _TERMINALS: tuple[tuple[str, list[str]], ...] = (
     # (binary, args before the command). Every one here accepts the command
     # as trailing argv after `-e` (or its own equivalent).
+    ("xdg-terminal-exec", []),  # Omarchy sets $TERMINAL to this; takes argv directly
     ("x-terminal-emulator", ["-e"]),
     ("alacritty", ["-e"]),
     ("kitty", ["--"]),

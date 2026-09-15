@@ -412,13 +412,81 @@ def check_notify_send() -> CheckResult:
             status=Status.PASS,
             detail="notify-send on PATH",
         )
+    pkg = _notify_pkg_cmd()
     return CheckResult(
         name="notify-send",
         status=Status.WARN,
         detail="notify-send not found — desktop notifications will be silent.",
-        remediation="Install libnotify-bin: apt install libnotify-bin",
-        remediation_command="apt install libnotify-bin",
+        remediation=f"Install libnotify: {pkg}",
+        remediation_command=pkg,
         fix_kind="interactive",
+    )
+
+
+def _notify_pkg_cmd() -> str:
+    if shutil.which("apt"):
+        return "apt install libnotify-bin"
+    if shutil.which("dnf"):
+        return "dnf install libnotify"
+    if shutil.which("pacman"):
+        return "pacman -S libnotify"
+    if shutil.which("zypper"):
+        return "zypper install libnotify-tools"
+    return "install libnotify with your package manager"
+
+
+def check_tray_backend() -> CheckResult:
+    """Will the tray icon show up in this session's bar?
+
+    Verified on Omarchy: pystray's appindicator backend registers a
+    StatusNotifierItem with omarchy-shell's watcher and the icon follows the
+    tunnel state — but only when the GObject bindings are importable from
+    the venv. Without them pystray falls back to Xorg and nothing appears
+    under Wayland."""
+    from outwarp.desktop_linux import tray_status
+
+    state, detail = tray_status()
+    if state == "skip":
+        return CheckResult(name="tray", status=Status.SKIP, detail=detail)
+    if state == "ok":
+        return CheckResult(name="tray", status=Status.PASS, detail=detail)
+    return CheckResult(
+        name="tray",
+        status=Status.WARN,
+        detail=detail,
+        remediation="`sudo outwarp gui --install` installs the AppIndicator stack "
+                    "and lets this venv see it; on GNOME add the AppIndicator "
+                    "extension. The window and `outwarp tui` work without a tray.",
+        remediation_command="sudo outwarp gui --install",
+        fix_kind="interactive",
+    )
+
+
+def check_hyprland_rule() -> CheckResult:
+    """Hyprland tiles the OutWarp window unless a rule floats it."""
+    from outwarp.desktop_linux import (
+        hyprland_config_kind,
+        hyprland_rule_installed,
+        hyprland_rule_snippet,
+        is_hyprland,
+    )
+
+    if not is_hyprland():
+        return CheckResult(name="hyprland", status=Status.SKIP, detail="Not a Hyprland session.")
+    if hyprland_config_kind() is None:
+        return CheckResult(name="hyprland", status=Status.WARN,
+                           detail="Hyprland session but no ~/.config/hypr/hyprland.{lua,conf}.")
+    if hyprland_rule_installed():
+        return CheckResult(name="hyprland", status=Status.PASS,
+                           detail="Window rule installed (floating, centred).")
+    return CheckResult(
+        name="hyprland",
+        status=Status.WARN,
+        detail="No window rule for class `outwarp` — the window opens tiled.",
+        remediation="Run `outwarp ui --hyprland-rule` (writes ~/.config/hypr/outwarp.* "
+                    "and hooks it in), or add:\n" + hyprland_rule_snippet().rstrip(),
+        remediation_command="outwarp ui --hyprland-rule",
+        fix_kind="auto",
     )
 
 
@@ -576,6 +644,8 @@ def gather_checks() -> list[Check]:
             Check("systemd", "Service", check_systemd_unit),
             Check("notify", "Desktop", check_notify_send),
             Check("gui", "Desktop", check_gui_stack),
+            Check("tray", "Desktop", check_tray_backend),
+            Check("hyprland", "Desktop", check_hyprland_rule),
             Check("binaries", "Install", check_duplicate_binaries),
             Check("cli_name", "Install", check_legacy_cli_name),
         ]

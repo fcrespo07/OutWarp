@@ -418,6 +418,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show or set which UI 'outwarp launch' and the app menu open (auto/gui/tui)",
     )
     p_ui.add_argument("choice", nargs="?", choices=["auto", "gui", "tui"])
+    p_ui.add_argument(
+        "--hyprland-rule", action="store_true",
+        help="Hyprland: install the window rule that floats and centres the OutWarp "
+             "window (~/.config/hypr/outwarp.lua or .conf, hooked from your config)",
+    )
 
     sub.add_parser(
         "launch",
@@ -500,6 +505,24 @@ def _cmd_ui(args: argparse.Namespace) -> int:
     _print(f"`outwarp launch` opens: {ui_choice.resolve_ui(available=ok)}")
     if not ok and sys.platform == "linux":
         _print(f"Add the GUI with: {ui_choice.INSTALL_HINT}")
+    if sys.platform == "linux":
+        from outwarp import desktop_linux as dl
+
+        tray_state, tray_detail = dl.tray_status()
+        if tray_state != "skip":
+            _print(f"Tray:         {'ok' if tray_state == 'ok' else 'WARN'} ({tray_detail})")
+        if getattr(args, "hyprland_rule", False):
+            try:
+                _print("Hyprland:     " + dl.install_hyprland_rule())
+            except OSError as exc:
+                _err(f"Could not install the Hyprland rule: {exc}")
+                return 1
+        elif dl.is_hyprland():
+            if dl.hyprland_rule_installed():
+                _print("Hyprland:     window rule installed")
+            else:
+                _print("Hyprland:     no window rule (window opens tiled) — run "
+                       "`outwarp ui --hyprland-rule`")
     return 0
 
 

@@ -13,6 +13,14 @@ import threading
 _APP_NAME = "OutWarp"
 
 
+def _icon() -> object:
+    """Absolute path to the bundled PNG: works whether or not the hicolor
+    icon was installed, and mako/omarchy-shell/dunst all take a path."""
+    from outwarp.desktop_linux import icon_path
+
+    return icon_path()
+
+
 def notify(
     title: str,
     body: str = "",
@@ -30,7 +38,8 @@ def notify(
         import contextlib
         with contextlib.suppress(FileNotFoundError, OSError):
             subprocess.Popen(
-                ["notify-send", "-a", _APP_NAME, "-u", urgency, "--", title, body],
+                ["notify-send", "-a", _APP_NAME, "-i", str(_icon()), "-u", urgency,
+                 "--", title, body],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )

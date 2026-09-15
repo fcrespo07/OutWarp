@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -97,6 +98,11 @@ def _autostart_command() -> list[str]:
 
     if getattr(sys, "frozen", False):
         return [sys.executable]
+    if sys.platform == "linux":
+        # `outwarp launch` honours preferred_ui and the GUI/TUI availability
+        # at login time; `python -m outwarp` would hard-code the GUI.
+        exe = shutil.which("outwarp") or str(Path(sys.executable).with_name("outwarp"))
+        return [exe, "launch"]
     return [sys.executable, "-m", "outwarp"]
 
 

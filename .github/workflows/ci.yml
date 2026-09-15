@@ -35,7 +35,8 @@ jobs:
         # stdlib change (e.g. `subprocess.CompletedProcess` repr) gets caught
         # before a user hits it.
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        # 3.14 = what Arch/Omarchy ship today (the author's desktop).
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         exclude:
           # Cuts the Windows leg to a single Python version — full matrix on
           # the OS that actually ships installers, smoke-only on Windows.
@@ -44,6 +45,8 @@ jobs:
             python-version: "3.11"
           - os: windows-latest
             python-version: "3.13"
+          - os: windows-latest
+            python-version: "3.14"
 
     steps:
       - uses: actions/checkout@v4

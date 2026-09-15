@@ -172,6 +172,11 @@ def main() -> int:
     _stage("single-instance lock acquired")
 
     try:
+        if sys.platform == "linux":
+            # Before GTK initialises: otherwise Hyprland/GNOME see the window
+            # as `python3` / the script name and no window rule can target it.
+            from outwarp.desktop_linux import set_app_id
+            set_app_id()
         import webview
         _stage("imported pywebview")
 

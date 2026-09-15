@@ -713,7 +713,7 @@ migrate_legacy_install() {
 # both fresh installs and in-place upgrades (so re-running the script after
 # `OUTWARP_VERSION=vX.Y.Z` was bumped just works).
 pipx_install_app() {
-    local app="$1" source="$2" extras="$3"
+    local app="$1" source="$2" extras="$3" system_site="${4:-0}"
 
     local spec
     if [[ -n "$extras" ]]; then
@@ -744,8 +744,13 @@ pipx_install_app() {
         "install"
         "--force"
         "--pip-args=--disable-pip-version-check"
-        "$spec"
     )
+    # The GUI needs the distro's GObject bindings (python-gobject / python3-gi):
+    # pip cannot build them into a venv, so the venv must see system
+    # site-packages. Without this pywebview's GTK backend cannot start and
+    # pystray silently falls back to Xorg — no tray under Wayland.
+    [[ "$system_site" == "1" ]] && pipx_args+=("--system-site-packages")
+    pipx_args+=("$spec")
     pipx_run "${pipx_args[@]}"
 }
 
@@ -810,17 +815,17 @@ ensure_server_gui_system_deps() {
                 webkit_pkg="gir1.2-webkit2-4.0"
                 warn "gir1.2-webkit2-4.1 not available - falling back to 4.0"
             fi
-            $SUDO bash -c "$PKG_INSTALL_CMD python3-gi gir1.2-gtk-3.0 $webkit_pkg gir1.2-ayatanaappindicator3-0.1" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python3-gi gir1.2-gtk-3.0 $webkit_pkg gir1.2-ayatanaappindicator3-0.1 libnotify-bin" \
                 || warn "Some GUI deps failed - the GUI may not start (CLI is unaffected)"
             ;;
         dnf)
-            $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.1 libappindicator-gtk3" \
-                || $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.0 libappindicator-gtk3" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.1 libappindicator-gtk3 libnotify" \
+                || $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.0 libappindicator-gtk3 libnotify" \
                 || warn "Some GUI deps failed - the GUI may not start (CLI is unaffected)"
             ;;
         pacman)
-            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk-4.1 libayatana-appindicator" \
-                || $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk-4.1 libayatana-appindicator libnotify" \
+                || $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3 libnotify" \
                 || warn "Some GUI deps failed - the GUI may not start (CLI is unaffected)"
             ;;
     esac
@@ -895,17 +900,17 @@ ensure_client_system_deps() {
                 webkit_pkg="gir1.2-webkit2-4.0"
                 warn "gir1.2-webkit2-4.1 not available - falling back to 4.0"
             fi
-            $SUDO bash -c "$PKG_INSTALL_CMD python3-gi gir1.2-gtk-3.0 $webkit_pkg gir1.2-ayatanaappindicator3-0.1" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python3-gi gir1.2-gtk-3.0 $webkit_pkg gir1.2-ayatanaappindicator3-0.1 libnotify-bin" \
                 || warn "Some GUI deps failed - the window may not open (tray will still work with reduced features)"
             ;;
         dnf)
-            $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.1 libappindicator-gtk3" \
-                || $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.0 libappindicator-gtk3" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.1 libappindicator-gtk3 libnotify" \
+                || $SUDO bash -c "$PKG_INSTALL_CMD python3-gobject gtk3 webkit2gtk4.0 libappindicator-gtk3 libnotify" \
                 || warn "Some GUI deps failed"
             ;;
         pacman)
-            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk-4.1 libayatana-appindicator" \
-                || $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3" \
+            $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk-4.1 libayatana-appindicator libnotify" \
+                || $SUDO bash -c "$PKG_INSTALL_CMD python-gobject webkit2gtk libappindicator-gtk3 libnotify" \
                 || warn "Some GUI deps failed"
             ;;
     esac
@@ -1120,7 +1125,19 @@ install_client_desktop() {
 
     if [[ -n "$icon_src" && -f "$icon_src" ]]; then
         $SUDO install -Dm 0644 "$icon_src" /usr/share/pixmaps/outwarp.png
-        $SUDO install -Dm 0644 "$icon_src" /usr/share/icons/hicolor/128x128/apps/outwarp.png
+        $SUDO install -Dm 0644 "$icon_src" /usr/share/icons/hicolor/512x512/apps/outwarp.png
+        # Bars, launchers and notification daemons pick the nearest hicolor
+        # size; a lone 512px entry renders blurry at 22px in a bar. Pillow is
+        # a client dependency, so the venv can produce the set.
+        local size
+        for size in 16 22 24 32 48 64 128 256; do
+            "${CLIENT_VENV}/bin/python" - "$icon_src" "$size" <<'PYEOF' 2>/dev/null | $SUDO install -Dm 0644 /dev/stdin "/usr/share/icons/hicolor/${size}x${size}/apps/outwarp.png" || true
+import sys
+from PIL import Image
+src, size = sys.argv[1], int(sys.argv[2])
+Image.open(src).convert("RGBA").resize((size, size), Image.LANCZOS).save(sys.stdout.buffer, "PNG")
+PYEOF
+        done
         if command -v gtk-update-icon-cache >/dev/null 2>&1; then
             $SUDO gtk-update-icon-cache -qf /usr/share/icons/hicolor 2>/dev/null || true
         fi
@@ -1142,6 +1159,7 @@ Comment=WireGuard-over-WebSocket VPN tunnel client
 Exec=outwarp launch
 Icon=outwarp
 Terminal=false
+StartupWMClass=outwarp
 Categories=Network;VPN;System;
 Keywords=wireguard;vpn;wstunnel;tunnel;
 StartupNotify=false
@@ -1151,6 +1169,33 @@ DESKTOP_EOF
         $SUDO update-desktop-database /usr/share/applications 2>/dev/null || true
     fi
     ok "Launcher installed: /usr/share/applications/outwarp.desktop"
+}
+
+run_as_target_user() {
+    # Run a command as the desktop user with their HOME (we may be root
+    # already, in which case $SUDO is empty and `sudo -u` is not the tool).
+    if [[ -n "$SUDO" ]]; then
+        $SUDO -u "$TARGET_USER" env HOME="$TARGET_HOME" "$@"
+    elif command -v runuser >/dev/null 2>&1; then
+        runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" "$@"
+    else
+        su "$TARGET_USER" -c "$(printf '%q ' env HOME="$TARGET_HOME" "$@")"
+    fi
+}
+
+install_hyprland_rule() {
+    # Hyprland tiles every window unless a rule says otherwise; the OutWarp
+    # window wants to float centred. The rule lives in the user's own config
+    # (~/.config/hypr/outwarp.lua on Hyprland ≥ 0.55 / Omarchy, .conf on
+    # hyprlang setups) and is written by `outwarp ui --hyprland-rule` as the
+    # desktop user, so ownership and idempotence stay in one place.
+    local hypr="$TARGET_HOME/.config/hypr"
+    [[ -f "$hypr/hyprland.lua" || -f "$hypr/hyprland.conf" ]] || return 0
+    if run_as_target_user "$CLIENT_BIN_LINK" ui --hyprland-rule >/dev/null 2>&1; then
+        ok "Hyprland window rule installed in ${hypr}/ (floating, centred)"
+    else
+        warn "Could not install the Hyprland window rule — run: outwarp ui --hyprland-rule"
+    fi
 }
 
 remove_client_desktop() {
@@ -1221,7 +1266,9 @@ install_client() {
         info "Add the graphical window later with ${BOLD}sudo outwarp gui --install${RESET}."
     fi
 
-    pipx_install_app "outwarp-client" "$INSTALL_SOURCE" "$extras"
+    local system_site=0
+    [[ "$extras" == *gui-linux* ]] && system_site=1
+    pipx_install_app "outwarp-client" "$INSTALL_SOURCE" "$extras" "$system_site"
 
     # Only purge the legacy /opt/outwarp-client install AFTER pipx confirmed
     # the new venv works. Doing it before means a pipx failure leaves the
@@ -1249,6 +1296,7 @@ install_client() {
     remove_client_autostart
     # Install system-wide application launcher entry (GNOME, KDE, etc.).
     install_client_desktop
+    install_hyprland_rule
     # Register shell completions (bash, zsh) for outwarp.
     install_client_completions
 

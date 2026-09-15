@@ -101,6 +101,12 @@ Nothing is final:
 | Make the app-menu entry open the window / the terminal UI | `outwarp ui gui` / `outwarp ui tui` (`outwarp ui auto` = GUI when installed and a display is present) |
 | See what is installed and what the launcher will open | `outwarp ui` or `outwarp doctor` |
 
+On **Hyprland / Omarchy** the window floats and centres itself through a rule
+that `install.sh` (or `outwarp ui --hyprland-rule`) writes to
+`~/.config/hypr/outwarp.lua` (`outwarp.conf` on hyprlang setups); the tray
+icon lives in the bar as a StatusNotifierItem and follows the tunnel state.
+`outwarp doctor` tells you if either piece is missing.
+
 The application launcher runs `outwarp launch`, which honours that choice and
 opens the TUI in your terminal emulator (`$TERMINAL`, then the usual
 suspects) when the GUI is not wanted. Both UIs expose the same toggle in

@@ -267,12 +267,22 @@ class TrayApp:
         except Exception as exc:
             self._icon = None
             if sys.platform == "linux":
-                log.warning(
-                    "Tray icon unavailable: %s. "
+                from outwarp.desktop_linux import appindicator_available, is_wayland
+
+                backend_ok, why = appindicator_available()
+                hint = (
+                    "Wayland needs the AppIndicator backend (python3-gi + "
+                    "libayatana-appindicator, and a venv that can see them — "
+                    "`sudo outwarp gui --install` sets both up)"
+                    if is_wayland() and not backend_ok else
                     "On GNOME, install the 'AppIndicator and KStatusNotifierItem "
                     "Support' extension from extensions.gnome.org and restart the "
-                    "session. The tunnel still works — use 'outwarp tui' instead.",
-                    exc,
+                    "session"
+                )
+                log.warning(
+                    "Tray icon unavailable: %s (%s). %s. The tunnel still works — "
+                    "use the window or 'outwarp tui'.",
+                    exc, why, hint,
                 )
             else:
                 raise
