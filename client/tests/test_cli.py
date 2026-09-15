@@ -1,4 +1,4 @@
-"""Tests for the outwarp-cli entry point.
+"""Tests for the outwarp entry point.
 
 These exercise the argument parser plus the import/status/profile/uninstall
 flows. `connect` and `logs --follow` are intentionally NOT covered here —
@@ -168,7 +168,7 @@ def test_profile_show(imported_profile, capsys):
 def test_profile_without_config(isolated_config, capsys):
     rc = cli.main(["profile"])
     assert rc == 1
-    assert "Run 'outwarp-cli import" in capsys.readouterr().err
+    assert "Run 'outwarp import" in capsys.readouterr().err
 
 
 # ── logs ────────────────────────────────────────────────────────────────────
@@ -224,7 +224,7 @@ def test_forget_profile_refuses_while_active(imported_profile, capsys):
 
 
 def test_uninstall_subcommand_delegates_to_uninstall_main(isolated_config):
-    """The new ``outwarp-cli uninstall`` is the system-wide purge that 0.4.x
+    """The new ``outwarp uninstall`` is the system-wide purge that 0.4.x
     shipped as a separate ``outwarp-uninstall`` binary. Verify the dispatch
     forwards to ``outwarp.uninstall.main`` and propagates --yes."""
     with patch("outwarp.uninstall.main", return_value=0) as mock_main:
@@ -246,10 +246,29 @@ def test_uninstall_subcommand_without_yes_forwards_none(isolated_config):
 
 
 def test_gui_subcommand_delegates_to_app_main(isolated_config):
-    """``outwarp-cli gui`` replaces the standalone ``outwarp`` gui-script.
+    """``outwarp gui`` replaces the standalone ``outwarp`` gui-script.
     The dispatch table forwards to ``outwarp.app.main`` so the boot logic
     only lives in one place."""
     with patch("outwarp.app.main", return_value=0) as mock_main:
         rc = cli.main(["gui"])
     assert rc == 0
     mock_main.assert_called_once_with()
+
+
+def test_legacy_alias_warns_once_and_delegates(monkeypatch, capsys) -> None:
+    """``outwarp-cli`` (pre-1.0 name) must behave exactly like ``outwarp`` and
+    only add one stderr line pointing at the new name."""
+    from outwarp import cli
+
+    seen: list[list[str] | None] = []
+
+    def fake_main(argv=None):
+        seen.append(argv)
+        return 7
+
+    monkeypatch.setattr(cli, "main", fake_main)
+    assert cli.main_legacy_alias(["status"]) == 7
+    assert seen == [["status"]]
+    err = capsys.readouterr().err
+    assert "deprecated" in err and "outwarp-cli" in err
+    assert err.count("\n") == 1

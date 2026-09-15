@@ -39,7 +39,7 @@ _PRIVILEGED_COMMANDS = frozenset({
 # ``update`` is intentionally NOT in the privileged set: ``--check-only`` is a
 # read-only network call that anyone should be able to run, and ``_cmd_update``
 # enforces root itself just before the pip-install step. Mirrors the client's
-# ``outwarp-cli update`` flow.
+# ``outwarp update`` flow.
 
 
 def _require_root(command: str) -> None:

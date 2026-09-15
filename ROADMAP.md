@@ -24,7 +24,7 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       inside Docker on a GitHub runner.
 - [ ] **Kill switch + hostname endpoint.** Reconnect can't resolve the
       endpoint through the blocked LAN DNS → `FAILED` with no network.
-- [ ] **Rename the client command `outwarp-cli` → `outwarp`.** The client is
+- [x] **Rename the client command `outwarp-cli` → `outwarp`.** *(Done 2026-09-15; alias kept until 1.0.0.)* The client is
       what most people use, so it gets the short name; the server already
       carries its suffix, and the Windows executable is already
       `outwarp.exe`. Must land before 1.0 because the CLI surface freezes

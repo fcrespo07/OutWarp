@@ -1,5 +1,5 @@
 """Tests for ``outwarp.uninstall`` — the cleanup logic behind
-``outwarp-cli uninstall``. We mainly care about the path-detection helpers
+``outwarp uninstall``. We mainly care about the path-detection helpers
 because that's where the 0.4.x → 0.5.x pipx migration introduced regressions
 (both layouts can coexist on a machine that upgraded in place)."""
 from __future__ import annotations
@@ -50,8 +50,8 @@ def test_client_prefixes_empty_when_nothing_installed() -> None:
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux path layout")
 def test_client_shims_detects_all_known_entry_points() -> None:
-    """0.4.x shipped three shims (outwarp, outwarp-cli, outwarp-uninstall);
-    0.5.0 only ships outwarp-cli but in-place upgrades leave the old shims
+    """0.4.x shipped three shims (outwarp, outwarp, outwarp-uninstall);
+    0.5.0 only ships outwarp but in-place upgrades leave the old shims
     behind. The uninstall pass must reach all three."""
     real_exists = Path.exists
     targets = {
@@ -73,7 +73,7 @@ def test_client_shims_detects_all_known_entry_points() -> None:
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux path layout")
 def test_extra_artifacts_includes_helper_and_sudoers() -> None:
     """0.5.0 install.sh writes /usr/local/libexec/outwarp-priv (privileged
-    helper used by the unprivileged outwarp-cli) plus /etc/sudoers.d/outwarp.
+    helper used by the unprivileged outwarp) plus /etc/sudoers.d/outwarp.
     Both must be cleaned — leaving the sudoers file behind is a security
     smell (NOPASSWD rule pointing at a now-missing binary)."""
     real_exists = Path.exists
@@ -96,14 +96,14 @@ def test_extra_artifacts_includes_helper_and_sudoers() -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux pkill pattern")
 def test_kill_pattern_does_not_match_the_uninstall_command_itself() -> None:
-    """`pkill -f outwarp` used to match this very `outwarp-cli uninstall`
+    """`pkill -f outwarp` used to match this very `outwarp uninstall`
     process (pkill only excludes its own PID, never its caller's) and kill it
     with no SIGTERM handler on this path — before a single file was removed."""
     with patch("subprocess.run") as run:
         uninstall._kill_running()
     pattern = run.call_args.args[0][2]  # ["pkill", "-f", <pattern>]
-    assert not re.search(pattern, "/usr/bin/python3 /usr/local/bin/outwarp-cli uninstall")
-    assert not re.search(pattern, "/usr/bin/python3 /usr/local/bin/outwarp-cli uninstall -y")
+    assert not re.search(pattern, "/usr/bin/python3 /usr/local/bin/outwarp uninstall")
+    assert not re.search(pattern, "/usr/bin/python3 /usr/local/bin/outwarp uninstall -y")
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux pkill pattern")
@@ -114,7 +114,7 @@ def test_kill_pattern_still_matches_a_live_client_process(subcommand: str) -> No
     with patch("subprocess.run") as run:
         uninstall._kill_running()
     pattern = run.call_args.args[0][2]
-    assert re.search(pattern, f"/usr/bin/python3 /usr/local/bin/outwarp-cli {subcommand}")
+    assert re.search(pattern, f"/usr/bin/python3 /usr/local/bin/outwarp {subcommand}")
 
 
 # --- FIX-06b: releasing the kill switch / tunnel must not depend on a live process ---

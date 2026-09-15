@@ -104,7 +104,7 @@ jobs:
             echo '```'
             echo "Or upgrade in place:"
             echo '```'
-            echo "sudo outwarp-cli update      # client"
+            echo "sudo outwarp update      # client"
             echo "sudo outwarp-server update   # server"
             echo '```'
             echo

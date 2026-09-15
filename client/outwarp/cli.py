@@ -6,7 +6,7 @@ display and for systemd-managed deployments.
 
 Designed to mirror the `outwarp-server` CLI ergonomics: argparse subcommands,
 a privileged helper for system mutations (already installed by
-installer/linux/install.sh), no daemonisation — `outwarp-cli connect` blocks
+installer/linux/install.sh), no daemonisation — `outwarp connect` blocks
 until SIGTERM/Ctrl+C, which is the model OpenVPN/wg-quick/systemd users
 expect.
 """
@@ -65,7 +65,7 @@ def _load_config() -> ClientConfig | None:
         return ClientConfig.load(path)
     except ConfigError as exc:
         _err(f"Error: {exc}")
-        _err("Run 'outwarp-cli import <path-to-.owcfg>' first.")
+        _err("Run 'outwarp import <path-to-.owcfg>' first.")
         return None
 
 
@@ -94,7 +94,7 @@ def _cmd_import(args: argparse.Namespace) -> int:
     _print(f"  WG addr:   {config.wireguard.client_address}")
     _print(f"  Signature: {trust_verdict.message}")
     _print("")
-    _print("Start the tunnel with: outwarp-cli connect")
+    _print("Start the tunnel with: outwarp connect")
     return 0
 
 
@@ -157,7 +157,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
     if not path.exists():
         _print("No profile imported.")
         _print(f"  Expected config at: {path}")
-        _print("  Run: outwarp-cli import <path-to-.owcfg>")
+        _print("  Run: outwarp import <path-to-.owcfg>")
         return 0
 
     config = _load_config()
@@ -265,7 +265,7 @@ def _cmd_forget_profile(args: argparse.Namespace) -> int:
     """Remove the imported profile and its baseline snapshot.
 
     Does NOT touch the helper script, sudoers rule, autostart entry, or the
-    pipx venv — for a full purge use ``outwarp-cli uninstall`` instead.
+    pipx venv — for a full purge use ``outwarp uninstall`` instead.
     """
     cfg = default_config_path()
     baseline = original_config_path(cfg)
@@ -294,7 +294,7 @@ def _cmd_forget_profile(args: argparse.Namespace) -> int:
                 _err(
                     f"Refusing to remove profile while tunnel "
                     f"'{config.wireguard.tunnel_name}' is active. "
-                    "Stop it first: kill the 'outwarp-cli connect' process."
+                    "Stop it first: kill the 'outwarp connect' process."
                 )
                 return 1
         except (ConfigError, PlatformError) as exc:
@@ -327,7 +327,7 @@ def _cmd_forget_profile(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="outwarp-cli",
+        prog="outwarp",
         description="OutWarp client — WireGuard-over-WebSocket tunnel (console mode)",
     )
     parser.add_argument(
@@ -362,7 +362,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Tolerate TLS fingerprint mismatch — same as on `connect`.",
     )
 
-    # `outwarp-cli service install/uninstall/status` manages the systemd
+    # `outwarp service install/uninstall/status` manages the systemd
     # user unit that drives `daemon`. On Windows this command stub-exits
     # and tells the user to use the installer's SCM registration.
     p_service = sub.add_parser(
@@ -474,7 +474,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
     Without --check-only, the actual ``pip install --upgrade`` step needs to
     write into the pipx-managed venv at /opt/pipx/venvs/outwarp-client, so the
     command refuses to run unless invoked with root (typically via
-    ``sudo outwarp-cli update``).
+    ``sudo outwarp update``).
     """
     import contextlib
     import tempfile
@@ -511,7 +511,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
     _print(f"  Release: {info.get('html_url', '')}")
 
     if args.check_only:
-        _print("Run 'sudo outwarp-cli update' to install.")
+        _print("Run 'sudo outwarp update' to install.")
         return 0
 
     wheel_url = info.get("wheel_url", "")
@@ -523,9 +523,9 @@ def _cmd_update(args: argparse.Namespace) -> int:
     # ``geteuid`` is POSIX-only but the client is shipped only on Linux for
     # the Python wheel flow, so anchor the gate on the platform explicitly.
     # On Windows the installer ships the GUI wheel separately and there's no
-    # ``outwarp-cli update`` flow yet.
+    # ``outwarp update`` flow yet.
     if sys.platform == "linux" and os.geteuid() != 0:
-        _err("Root required to upgrade the venv. Run: sudo outwarp-cli update")
+        _err("Root required to upgrade the venv. Run: sudo outwarp update")
         return 1
 
     tmp_dir = Path(tempfile.mkdtemp())
@@ -570,7 +570,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
             return 1
 
         _print(f"\nUpdated to v{latest}.")
-        _print("Restart 'outwarp-cli connect' (or the tray app) for changes to take effect.")
+        _print("Restart 'outwarp connect' (or the tray app) for changes to take effect.")
         return 0
     finally:
         with contextlib.suppress(OSError):
@@ -607,6 +607,19 @@ _COMMANDS = {
     "gui":            _cmd_gui,
     "update":         _cmd_update,
 }
+
+
+def main_legacy_alias(argv: list[str] | None = None) -> int:
+    """``outwarp-cli`` — the pre-1.0 command name, kept one release as an alias.
+
+    Behaves exactly like ``outwarp`` (same parser, same exit codes) and prints
+    a single stderr line so scripts and units still pointing at the old name
+    keep working while their owners notice. Removed in 1.0.0.
+    """
+    _err("outwarp-cli is deprecated and will be removed in 1.0.0 — use `outwarp` "
+         "(run `outwarp service install` / re-run install.sh to migrate units, "
+         "launchers and completions).")
+    return main(argv)
 
 
 def main(argv: list[str] | None = None) -> int:

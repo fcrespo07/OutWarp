@@ -92,7 +92,7 @@ class TestMainEntryPoint:
     def test_linux_redirects_to_tui_when_webview_missing(self) -> None:
         """On Linux, pywebview is excluded from the wheel by a PEP 508 marker
         (see client/pyproject.toml). app.main() must spot the ImportError and
-        hand off to `outwarp-cli tui` instead of crashing. Without this guard
+        hand off to `outwarp tui` instead of crashing. Without this guard
         the entry-point would explode the first time the legacy `outwarp` shim
         was double-clicked on a default Linux install."""
         from outwarp import app as app_mod

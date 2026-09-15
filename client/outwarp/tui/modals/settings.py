@@ -52,7 +52,7 @@ _TOGGLES: list[tuple[str, str, str]] = [
     (
         "auto_connect",
         "Auto-connect at launch",
-        "Bring the tunnel up automatically when 'outwarp-cli tui' starts.",
+        "Bring the tunnel up automatically when 'outwarp tui' starts.",
     ),
 ]
 
@@ -120,7 +120,7 @@ class SettingsModal(ModalScreen[None]):
                         yield Static(
                             "[dim]Install a systemd --user unit that runs the tunnel "
                             "headlessly. Equivalent to "
-                            "[bold]outwarp-cli service install[/bold].[/]"
+                            "[bold]outwarp service install[/bold].[/]"
                         )
                 with Horizontal(classes="settings-row"):
                     yield Switch(

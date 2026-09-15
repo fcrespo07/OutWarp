@@ -145,8 +145,8 @@ def test_run_daemon_releases_stale_kill_switch_only_when_the_switch_is_off(monke
 def test_unit_content_contains_required_directives():
     """The generated unit must reference the exact executable + 'daemon' verb;
     a regression here would silently break service install on every distro."""
-    content = service._unit_content(Path("/opt/pipx/venvs/outwarp-client/bin/outwarp-cli"))
-    assert "ExecStart=/opt/pipx/venvs/outwarp-client/bin/outwarp-cli daemon" in content
+    content = service._unit_content(Path("/opt/pipx/venvs/outwarp-client/bin/outwarp"))
+    assert "ExecStart=/opt/pipx/venvs/outwarp-client/bin/outwarp daemon" in content
     assert "Restart=on-failure" in content
     assert "WantedBy=default.target" in content
     assert "Type=simple" in content
@@ -158,14 +158,14 @@ def test_unit_content_contains_required_directives():
 def test_install_service_writes_unit_and_runs_systemctl(fake_unit_dir, monkeypatch, capsys):
     """install_service should:
        1) create the unit dir if missing
-       2) write outwarp-client.service with ExecStart pointing at outwarp-cli
+       2) write outwarp-client.service with ExecStart pointing at outwarp
        3) call `systemctl --user daemon-reload`
        4) call `systemctl --user enable --now outwarp-client.service`
     """
     monkeypatch.setattr(service.sys, "platform", "linux")
     monkeypatch.setattr(service.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(
-        service, "_resolve_daemon_executable", lambda: Path("/usr/local/bin/outwarp-cli"),
+        service, "_resolve_daemon_executable", lambda: Path("/usr/local/bin/outwarp"),
     )
 
     calls = []
@@ -182,7 +182,7 @@ def test_install_service_writes_unit_and_runs_systemctl(fake_unit_dir, monkeypat
     unit_path = fake_unit_dir / "outwarp-client.service"
     assert unit_path.exists()
     body = unit_path.read_text(encoding="utf-8")
-    assert "ExecStart=/usr/local/bin/outwarp-cli daemon" in body
+    assert "ExecStart=/usr/local/bin/outwarp daemon" in body
 
     assert calls == [("daemon-reload",), ("enable", "--now", "outwarp-client.service")]
 
@@ -208,7 +208,7 @@ def test_install_service_propagates_systemctl_failure(fake_unit_dir, monkeypatch
     monkeypatch.setattr(service.sys, "platform", "linux")
     monkeypatch.setattr(service.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(
-        service, "_resolve_daemon_executable", lambda: Path("/usr/local/bin/outwarp-cli"),
+        service, "_resolve_daemon_executable", lambda: Path("/usr/local/bin/outwarp"),
     )
     monkeypatch.setattr(
         service, "_systemctl",
@@ -261,7 +261,7 @@ def test_uninstall_service_tolerates_missing_unit(fake_unit_dir, monkeypatch, ca
 
 
 def test_cli_daemon_dispatch_forwards_to_run_daemon():
-    """`outwarp-cli daemon --allow-tls-intercept` must hand the flag through
+    """`outwarp daemon --allow-tls-intercept` must hand the flag through
     to outwarp.service.run_daemon — otherwise the systemd unit can't opt
     into the TLS-intercept escape hatch."""
     from outwarp import cli
@@ -293,3 +293,29 @@ def test_cli_service_dispatch_status():
         rc = cli.main(["service", "status"])
     assert rc == 0
     mock_st.assert_called_once_with()
+
+
+class TestUnitUsesLegacyName:
+    def test_detects_old_execstart(self, tmp_path: Path) -> None:
+        unit = tmp_path / "outwarp-client.service"
+        unit.write_text(service._unit_content(Path("/opt/pipx/venvs/outwarp-client/bin/outwarp-cli")))
+        assert service.unit_uses_legacy_name(unit) is True
+
+    def test_new_name_is_clean(self, tmp_path: Path) -> None:
+        unit = tmp_path / "outwarp-client.service"
+        unit.write_text(service._unit_content(Path("/usr/local/bin/outwarp")))
+        assert service.unit_uses_legacy_name(unit) is False
+
+    def test_missing_unit_is_not_legacy(self, tmp_path: Path) -> None:
+        assert service.unit_uses_legacy_name(tmp_path / "nope.service") is False
+
+    def test_resolves_new_name_before_alias(self, monkeypatch) -> None:
+        order: list[str] = []
+
+        def fake_which(name: str) -> str | None:
+            order.append(name)
+            return "/usr/local/bin/outwarp-cli" if name == "outwarp-cli" else None
+
+        monkeypatch.setattr(service.shutil, "which", fake_which)
+        assert service._resolve_daemon_executable() == Path("/usr/local/bin/outwarp-cli").resolve()
+        assert order == ["outwarp", "outwarp-cli"]

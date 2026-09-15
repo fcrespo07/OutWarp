@@ -148,13 +148,36 @@ def _user_unit_dir() -> Path:
 def _resolve_daemon_executable() -> Path:
     """Return the absolute path that the unit's ExecStart= should point at.
 
-    Picks ``outwarp-cli`` from PATH first so a system-wide pipx install at
-    /usr/local/bin wins over the in-repo dev script. Falls back to argv[0]
-    when nothing is on PATH (test/dev scenarios)."""
-    exe = shutil.which("outwarp-cli")
-    if exe:
-        return Path(exe).resolve()
+    Picks ``outwarp`` from PATH first so a system-wide pipx install at
+    /usr/local/bin wins over the in-repo dev script, then the deprecated
+    ``outwarp-cli`` alias (a venv installed before the rename that has not
+    been upgraded yet). Falls back to argv[0] when nothing is on PATH
+    (test/dev scenarios)."""
+    for name in ("outwarp", "outwarp-cli"):
+        exe = shutil.which(name)
+        if exe:
+            return Path(exe).resolve()
     return Path(sys.argv[0]).resolve()
+
+
+LEGACY_CLI_NAME = "outwarp-cli"
+
+
+def unit_uses_legacy_name(unit_path: Path | None = None) -> bool:
+    """True when the installed user unit still execs ``outwarp-cli daemon``.
+
+    ``service install`` re-renders the unit, so the migration is just running
+    it again; this predicate lets ``doctor`` and ``service status`` say so
+    instead of leaving the alias warning buried in the journal."""
+    path = unit_path or (_user_unit_dir() / SERVICE_NAME)
+    try:
+        body = path.read_text()
+    except OSError:
+        return False
+    for line in body.splitlines():
+        if line.startswith("ExecStart=") and f"/{LEGACY_CLI_NAME} " in line + " ":
+            return True
+    return False
 
 
 def _unit_content(exe_path: Path) -> str:
@@ -314,6 +337,12 @@ def service_status() -> int:
         print("systemctl not found.", file=sys.stderr)
         return 2
 
+    if unit_uses_legacy_name():
+        print(
+            f"note: {SERVICE_NAME} still runs the deprecated `{LEGACY_CLI_NAME}`; "
+            "run `outwarp service install` to migrate it.",
+            file=sys.stderr,
+        )
     # Use call (not run) so the output streams to the terminal in real
     # time — matches the UX of a direct ``systemctl --user status`` call.
     return subprocess.call(

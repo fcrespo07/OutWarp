@@ -1,4 +1,4 @@
-"""outwarp-cli uninstall — purges every artifact installed by install.ps1 / install.sh.
+"""outwarp uninstall — purges every artifact installed by install.ps1 / install.sh.
 
 Layout we need to clean on Linux (handles both the 0.4.x legacy and the 0.5.x
 pipx-managed install, since users may upgrade in place):
@@ -6,12 +6,12 @@ pipx-managed install, since users may upgrade in place):
   Legacy (≤ 0.4.x)
     /opt/outwarp-client/             venv prefix
     /usr/local/bin/outwarp           tray launcher
-    /usr/local/bin/outwarp-cli       headless CLI
+    /usr/local/bin/outwarp       headless CLI
     /usr/local/bin/outwarp-uninstall the standalone uninstaller binary
 
   Pipx (≥ 0.5.0)
     /opt/pipx/venvs/outwarp-client/  pipx-managed venv
-    /usr/local/bin/outwarp-cli       single entry-point
+    /usr/local/bin/outwarp       single entry-point
 
   Shared
     /usr/local/libexec/outwarp-priv  privileged helper (added in 0.5.0)
@@ -34,12 +34,12 @@ def _require_admin() -> None:
         if not ctypes.windll.shell32.IsUserAnAdmin():
             print("Error: run this command from an elevated (Administrator) prompt.")
             print("  Right-click PowerShell → 'Run as administrator', then:")
-            print("  outwarp-cli uninstall")
+            print("  outwarp uninstall")
             raise SystemExit(1)
     else:
         if os.geteuid() != 0:
             print("Error: run with sudo.")
-            print("  sudo outwarp-cli uninstall")
+            print("  sudo outwarp uninstall")
             raise SystemExit(1)
 
 
@@ -126,6 +126,15 @@ def _extra_artifacts() -> list[Path]:
     paths = [
         Path("/usr/local/libexec/outwarp-priv"),
         Path("/etc/sudoers.d/outwarp"),
+        # Shell completions and the system launcher, under both the current
+        # command name and the pre-1.0 `outwarp-cli` one.
+        Path("/etc/bash_completion.d/outwarp"),
+        Path("/etc/bash_completion.d/outwarp-cli"),
+        Path("/usr/share/zsh/site-functions/_outwarp"),
+        Path("/usr/share/zsh/site-functions/_outwarp-cli"),
+        Path("/usr/share/applications/outwarp.desktop"),
+        Path("/usr/share/pixmaps/outwarp.png"),
+        Path("/usr/share/icons/hicolor/128x128/apps/outwarp.png"),
     ]
     target_user = os.environ.get("SUDO_USER") or os.environ.get("USER")
     if target_user and target_user != "root":
@@ -173,12 +182,12 @@ def _kill_running() -> None:
 
     Must not match this uninstall command's own argv. `pkill -f` only
     excludes the `pkill` child process's own PID — never its caller's — so a
-    naive `pkill -f outwarp` matches this very `outwarp-cli uninstall`
-    process (its argv is literally `.../outwarp-cli uninstall`) and kills it
+    naive `pkill -f outwarp` matches this very `outwarp uninstall`
+    process (its argv is literally `.../outwarp uninstall`) and kills it
     with no SIGTERM handler installed on this path, before a single byte of
     config, a shim, the sudoers rule or the venv gets removed (FIX-06a). Same
     story on Windows: `outwarp.exe` predates the 0.5.0 single-entry-point
-    consolidation (project.scripts only ships `outwarp-cli` now) and no
+    consolidation (project.scripts only ships `outwarp` now) and no
     longer names anything running, so the old taskkill call was a silent
     no-op rather than self-destructive — fixed here too since it's the same
     "what actually names a live client process" bug.
@@ -187,13 +196,13 @@ def _kill_running() -> None:
         if sys.platform == "win32":
             import subprocess
             subprocess.run(
-                ["taskkill", "/F", "/IM", "outwarp-cli.exe"],
+                ["taskkill", "/F", "/IM", "outwarp.exe"],
                 capture_output=True,
             )
         else:
             import subprocess
             subprocess.run(
-                ["pkill", "-f", r"outwarp-cli (gui|connect|tui|daemon)\b"],
+                ["pkill", "-f", r"outwarp(-cli)? (gui|connect|tui|daemon)\b"],
                 capture_output=True,
             )
     except Exception:
@@ -287,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="outwarp-cli uninstall",
+        prog="outwarp uninstall",
         description="Remove all OutWarp client files installed by the official installer.",
     )
     parser.add_argument(

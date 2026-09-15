@@ -8,7 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The client command is now `outwarp`** (Linux/pip; Windows already shipped
+  `outwarp.exe`). `outwarp-cli` keeps working for **one release** as a
+  deprecated alias that prints a single stderr line, because systemd units,
+  launchers and shell completions on existing installs point at it and the
+  in-venv updater does not rewrite them. `install.sh` migrates the user unit's
+  `ExecStart=`, replaces the `outwarp-cli` completions with `outwarp` ones,
+  and `outwarp service install` re-renders the unit; `outwarp doctor` gains an
+  **Install** section that flags anything still on the old name and any
+  second client install answering on `PATH` (a stale `/opt/pipx` venv at an
+  older version was found doing exactly that). **The alias is removed in
+  1.0.0.**
+- `outwarp uninstall` now also removes the shell completions and the
+  system-wide launcher/icon that `install.sh` writes.
+
 ### Fixed
+- **Tests no longer touch the developer's real client.** Both suites point
+  platformdirs at a temp dir and the single-instance lock at a per-test
+  name; `app.main()` tests used to append lines to
+  `~/.local/state/OutWarp/log/outwarp.log` and bail on the lock of a running
+  client.
+- **The wstunnel command line is logged without its secrets.** The upgrade
+  path prefix (the server's access credential) and any proxy password were
+  written verbatim to `outwarp.log`, shown in the GUI/TUI log views and
+  copied into diagnostic dumps.
 - **Server dashboard: the per-client sparkline and the Home traffic chart
   could hide real traffic for minutes after a one-off spike.** Both used a
   peak-hold that decayed 5% per 2 s tick with no bound tied to how much

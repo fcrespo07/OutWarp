@@ -60,6 +60,8 @@ readonly GITHUB_REPO_URL="https://github.com/${GITHUB_REPO}"
 readonly PIPX_HOME="/opt/pipx"
 readonly PIPX_BIN_DIR="/usr/local/bin"
 readonly CLIENT_BIN_LINK="${PIPX_BIN_DIR}/outwarp"
+# Pre-1.0 name of the client command; the wheel still ships it as a
+# deprecated alias for one release (see client/pyproject.toml).
 readonly CLIENT_CLI_BIN_LINK="${PIPX_BIN_DIR}/outwarp-cli"
 readonly SERVER_BIN_LINK="${PIPX_BIN_DIR}/outwarp-server"
 readonly SERVER_GUI_BIN_LINK="${PIPX_BIN_DIR}/outwarp-server-gui"
@@ -917,7 +919,7 @@ write_client_helper() {
 set -euo pipefail
 
 WG_CONF_DIR="/etc/wireguard-outwarp"
-# Bumped whenever a subcommand's contract changes; `outwarp-cli doctor`
+# Bumped whenever a subcommand's contract changes; `outwarp doctor`
 # compares it against the version the client was built for.
 HELPER_VERSION=2
 NAME_RE='^[A-Za-z0-9_=+.-]{1,15}$'
@@ -1040,6 +1042,19 @@ EOF
     ok "sudoers rule installed"
 }
 
+migrate_client_unit_name() {
+    # A user unit written before the rename execs `<venv>/bin/outwarp-cli
+    # daemon`. The alias keeps it running for one release; rewrite it now so
+    # the user is not left with a dead unit when the alias goes away in 1.0.
+    # Only the ExecStart= line changes; anything else the user edited stays.
+    local unit="$TARGET_HOME/.config/systemd/user/outwarp-client.service"
+    [[ -f "$unit" ]] || return 0
+    grep -qE '^ExecStart=.*/outwarp-cli daemon' "$unit" || return 0
+    sed -i -E 's#^(ExecStart=.*)/outwarp-cli daemon#\1/outwarp daemon#' "$unit"
+    chown "$TARGET_USER" "$unit" 2>/dev/null || true
+    ok "Migrated ${unit} to the \`outwarp\` command (restart it: systemctl --user restart outwarp-client)"
+}
+
 remove_client_autostart() {
     # Deletes the XDG autostart entry that pre-0.5.x installs (or a
     # OUTWARP_CLIENT_GUI=1 install on this machine before the user flipped
@@ -1082,7 +1097,7 @@ Version=1.0
 Type=Application
 Name=OutWarp
 Comment=WireGuard-over-WebSocket VPN tunnel client
-Exec=outwarp-cli tui
+Exec=outwarp tui
 Icon=outwarp
 Terminal=true
 Categories=Network;VPN;System;
@@ -1122,16 +1137,24 @@ install_client_completions() {
     reg="${CLIENT_VENV}/bin/register-python-argcomplete"
     [[ -x "$reg" ]] || return 0
 
+    # Pre-1.0 installs registered completions under the old command name.
+    for old in /etc/bash_completion.d/outwarp-cli /usr/share/zsh/site-functions/_outwarp-cli; do
+        if [[ -f "$old" ]]; then
+            $SUDO rm -f "$old"
+            ok "Removed completions for the deprecated name: $old"
+        fi
+    done
+
     if [[ -d /etc/bash_completion.d ]]; then
-        "$reg" outwarp-cli > /etc/bash_completion.d/outwarp-cli 2>/dev/null \
-            && ok "bash completions: /etc/bash_completion.d/outwarp-cli" \
+        "$reg" outwarp > /etc/bash_completion.d/outwarp 2>/dev/null \
+            && ok "bash completions: /etc/bash_completion.d/outwarp" \
             || warn "Could not write bash completions (non-fatal)"
     fi
 
     local zsh_dir="/usr/share/zsh/site-functions"
     if [[ -d "$zsh_dir" ]]; then
-        "$reg" --shell zsh outwarp-cli > "${zsh_dir}/_outwarp-cli" 2>/dev/null \
-            && ok "zsh completions: ${zsh_dir}/_outwarp-cli" \
+        "$reg" --shell zsh outwarp > "${zsh_dir}/_outwarp" 2>/dev/null \
+            && ok "zsh completions: ${zsh_dir}/_outwarp" \
             || true
     fi
 }
@@ -1152,7 +1175,7 @@ install_client() {
         extras="tui,gui-linux"
         ensure_client_system_deps
     else
-        info "Installing TUI-only build (Textual). The default UI is ${BOLD}outwarp-cli tui${RESET}."
+        info "Installing TUI-only build (Textual). The default UI is ${BOLD}outwarp tui${RESET}."
         info "Set ${BOLD}OUTWARP_CLIENT_GUI=1${RESET} to also install the pywebview tray (webkit2gtk + appindicator)."
     fi
 
@@ -1165,12 +1188,14 @@ install_client() {
     # upgraders during the --pip-args incident).
     migrate_legacy_install "client"
 
-    # 0.5.0 collapse: the only entry-point pipx ships is outwarp-cli; the GUI
-    # lives behind `outwarp-cli gui`. Old `outwarp` / `outwarp-uninstall` bins
-    # are removed automatically by `pipx reinstall` on upgrade.
-    [[ -x "$CLIENT_CLI_BIN_LINK" ]] \
-        || die "pipx finished but $CLIENT_CLI_BIN_LINK is missing - investigate /usr/local/bin/"
-    ok "outwarp-cli installed: ${BOLD}$(${SUDO} ${CLIENT_CLI_BIN_LINK} --version 2>/dev/null | awk '{print $2}')${RESET}"
+    # `outwarp` is the client command; the wheel also exposes the deprecated
+    # `outwarp-cli` alias until 1.0. Old `outwarp-uninstall` bins are removed
+    # automatically by `pipx reinstall` on upgrade.
+    [[ -x "$CLIENT_BIN_LINK" ]] \
+        || die "pipx finished but $CLIENT_BIN_LINK is missing - investigate /usr/local/bin/"
+    ok "outwarp installed: ${BOLD}$(${SUDO} ${CLIENT_BIN_LINK} --version 2>/dev/null | awk '{print $2}')${RESET}"
+
+    migrate_client_unit_name
 
     write_client_helper
     write_client_sudoers
@@ -1181,7 +1206,7 @@ install_client() {
     remove_client_autostart
     # Install system-wide application launcher entry (GNOME, KDE, etc.).
     install_client_desktop
-    # Register shell completions (bash, zsh) for outwarp-cli.
+    # Register shell completions (bash, zsh) for outwarp.
     install_client_completions
 
     cat <<EOF
@@ -1190,18 +1215,18 @@ ${BOLD}${GREEN}Client installed.${RESET}
 
   ${BOLD}Quick start:${RESET}
     1. Drop your ${BOLD}.owcfg${RESET} file somewhere accessible by ${TARGET_USER}.
-    2. Launch ${BOLD}outwarp-cli tui${RESET} — interactive terminal UI.
+    2. Launch ${BOLD}outwarp tui${RESET} — interactive terminal UI.
        The first run prompts for the .owcfg via the import modal.
     3. Or find ${BOLD}OutWarp${RESET} in your application launcher (GNOME, KDE, etc.).
 
   ${BOLD}Headless / SSH / systemd:${RESET}
-    1. ${BOLD}outwarp-cli import /path/to/profile.owcfg${RESET}
-    2. ${BOLD}outwarp-cli connect${RESET}            # foreground, Ctrl+C to stop
-       ${BOLD}outwarp-cli service install${RESET}    # background daemon (systemd --user)
-       ${BOLD}outwarp-cli status${RESET}             # one-shot state probe
-       ${BOLD}outwarp-cli logs --follow${RESET}      # tail -f the log file
+    1. ${BOLD}outwarp import /path/to/profile.owcfg${RESET}
+    2. ${BOLD}outwarp connect${RESET}            # foreground, Ctrl+C to stop
+       ${BOLD}outwarp service install${RESET}    # background daemon (systemd --user)
+       ${BOLD}outwarp status${RESET}             # one-shot state probe
+       ${BOLD}outwarp logs --follow${RESET}      # tail -f the log file
 
-  ${DIM}Uninstall:        outwarp-cli uninstall${RESET}
+  ${DIM}Uninstall:        outwarp uninstall${RESET}
   ${DIM}Privileged helper: $CLIENT_HELPER${RESET}
   ${DIM}Sudoers rule: $CLIENT_SUDOERS  (revoke with: sudo rm $CLIENT_SUDOERS)${RESET}
   ${DIM}pipx venv: $CLIENT_VENV${RESET}

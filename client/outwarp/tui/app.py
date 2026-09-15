@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 
 class OutWarpClientTUI(App):
-    """Textual app entry point — `outwarp-cli tui` instantiates and runs this."""
+    """Textual app entry point — `outwarp tui` instantiates and runs this."""
 
     CSS_PATH = "styles.tcss"
     TITLE = "OutWarp · client"

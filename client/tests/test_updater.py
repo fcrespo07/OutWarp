@@ -336,7 +336,7 @@ def test_apply_linux_update_passes_timeout_to_subprocess(tmp_path):
 
 
 def test_apply_linux_update_uses_pip_in_current_venv_not_pipx(tmp_path):
-    """Regression for the pipx migration: ``outwarp-cli update`` must keep
+    """Regression for the pipx migration: ``outwarp update`` must keep
     upgrading in place via ``sys.executable -m pip install --upgrade`` so the
     update inherits the running process's privileges (root via sudo, etc.).
     Calling ``pipx upgrade`` would re-bootstrap the venv from the original

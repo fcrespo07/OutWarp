@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/li
 The installer will ask whether you want to set up the **client** or the **server** and guide you through the rest. On Linux the primary interface is a **Textual TUI** that runs in any terminal (GNOME Terminal, Konsole, Alacritty, kitty, foot, tmux, SSH) — no GUI dependencies, no display server required.
 
 ```bash
-outwarp-cli tui          # client dashboard: live status, traffic, logs, profile editor
+outwarp tui          # client dashboard: live status, traffic, logs, profile editor
 sudo outwarp-server tui  # server admin: clients table, add/revoke, doctor checks
 ```
 
@@ -74,19 +74,19 @@ container; install it on the machine that needs the tunnel.
 
 ## Linux client at a glance
 
-After `outwarp-cli import path/to/profile.owcfg`:
+After `outwarp import path/to/profile.owcfg`:
 
 | Action | How |
 |---|---|
-| Foreground connect (Ctrl+C to stop) | `outwarp-cli connect` |
-| Headless status probe | `outwarp-cli status` |
-| Tail the log file (`tail -f` style) | `outwarp-cli logs --follow` |
-| Interactive TUI (recommended) | `outwarp-cli tui` |
-| Tray window (still available via webkitgtk) | `outwarp-cli gui` |
+| Foreground connect (Ctrl+C to stop) | `outwarp connect` |
+| Headless status probe | `outwarp status` |
+| Tail the log file (`tail -f` style) | `outwarp logs --follow` |
+| Interactive TUI (recommended) | `outwarp tui` |
+| Tray window (still available via webkitgtk) | `outwarp gui` |
 | Edit MTU / DNS / address / routing | TUI → **s** Settings → **p** Profile (or **p** from the dashboard) |
-| Check for updates | `sudo outwarp-cli update` |
+| Check for updates | `sudo outwarp update` |
 
-The autostart entry installed by `install.sh` launches the GUI tray by default; switch it to the TUI by pointing `Exec=` at `outwarp-cli tui` in `~/.config/autostart/outwarp.desktop`.
+The autostart entry installed by `install.sh` launches the GUI tray by default; switch it to the TUI by pointing `Exec=` at `outwarp tui` in `~/.config/autostart/outwarp.desktop`.
 
 ---
 

@@ -46,7 +46,7 @@ read_dunder_version() {
     # Greps `__version__ = "x.y.z"` from a package __init__.py — the runtime
     # source of truth that the updater compares against `latest` on GitHub.
     # If this drifts from pyproject.toml, the wheel ships v0.4.2 but
-    # `outwarp-cli --version` keeps reporting 0.4.1 and `update --check-only`
+    # `outwarp --version` keeps reporting 0.4.1 and `update --check-only`
     # never proposes upgrading off the published release.
     grep -m1 '^__version__ = ' "$1" | tr -d '\r' | sed -E 's/^__version__ = "([^"]+)"$/\1/'
 }
@@ -183,7 +183,7 @@ curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/li
 \`\`\`
 Or upgrade in place:
 \`\`\`
-sudo outwarp-cli update      # client
+sudo outwarp update      # client
 sudo outwarp-server update   # server
 \`\`\`
 

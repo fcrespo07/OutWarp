@@ -71,18 +71,18 @@ def test_wheel_contains(built_wheel: Path, path: str) -> None:
 
 
 def test_wheel_has_entry_points(built_wheel: Path) -> None:
-    """0.5.0 collapsed the client onto a single ``outwarp-cli`` entry-point.
-    The tray (``outwarp-cli gui``) and full-purge (``outwarp-cli uninstall``)
-    are subcommands, not separate binaries. Asserting the OLD names are
-    absent catches accidental re-additions in pyproject.toml."""
+    """The client command is ``outwarp`` (``outwarp.cli:main``); ``outwarp-cli``
+    ships one more release as a deprecated alias wired to
+    ``main_legacy_alias`` so existing units and launchers keep working. The
+    tray (``outwarp gui``) and full-purge (``outwarp uninstall``) are
+    subcommands, not separate binaries. Drop the alias assertion together
+    with the alias in 1.0.0."""
     with zipfile.ZipFile(built_wheel) as zf:
         ep_paths = [n for n in zf.namelist() if n.endswith("/entry_points.txt")]
         assert ep_paths, "no entry_points.txt in wheel"
         content = zf.read(ep_paths[0]).decode()
-    assert "outwarp-cli" in content
-    # Defensive: these 0.4.x entry-points must NOT exist in 0.5.0+ wheels.
-    assert "outwarp =" not in content and "\noutwarp=" not in content, \
-        "stray 0.4.x `outwarp` gui-script entry-point in wheel"
+    assert "outwarp = outwarp.cli:main\n" in content
+    assert "outwarp-cli = outwarp.cli:main_legacy_alias" in content
     assert "outwarp-uninstall" not in content, \
         "stray 0.4.x `outwarp-uninstall` script entry-point in wheel"
 

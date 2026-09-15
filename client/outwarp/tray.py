@@ -271,7 +271,7 @@ class TrayApp:
                     "Tray icon unavailable: %s. "
                     "On GNOME, install the 'AppIndicator and KStatusNotifierItem "
                     "Support' extension from extensions.gnome.org and restart the "
-                    "session. The tunnel still works — use 'outwarp-cli tui' instead.",
+                    "session. The tunnel still works — use 'outwarp tui' instead.",
                     exc,
                 )
             else:

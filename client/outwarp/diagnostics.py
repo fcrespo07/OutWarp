@@ -1,4 +1,4 @@
-"""Client-side health checks for `outwarp-cli doctor` and the TUI doctor screen."""
+"""Client-side health checks for `outwarp doctor` and the TUI doctor screen."""
 from __future__ import annotations
 
 import logging
@@ -182,7 +182,7 @@ EXPECTED_HELPER_VERSION = 2
 def check_helper_version() -> CheckResult:
     """The installed helper must speak the contract this client expects.
 
-    Wheel upgrades (`outwarp-cli update`, pipx) don't touch the helper, so a
+    Wheel upgrades (`outwarp update`, pipx) don't touch the helper, so a
     client can outrun it; the kill switch then fails to engage (fail-open).
     """
     if not sys.platform.startswith("linux"):
@@ -383,8 +383,8 @@ def check_systemd_unit() -> CheckResult:
             name="systemd user unit",
             status=Status.WARN,
             detail=f"status={enabled} — background daemon won't autostart.",
-            remediation="Enable with: outwarp-cli service install",
-            remediation_command="outwarp-cli service install",
+            remediation="Enable with: outwarp service install",
+            remediation_command="outwarp service install",
             fix_kind="manual",
         )
     # Not installed (not-found)
@@ -392,8 +392,8 @@ def check_systemd_unit() -> CheckResult:
         name="systemd user unit",
         status=Status.WARN,
         detail="outwarp-client.service not installed.",
-        remediation="Install with: outwarp-cli service install",
-        remediation_command="outwarp-cli service install",
+        remediation="Install with: outwarp service install",
+        remediation_command="outwarp service install",
         fix_kind="manual",
     )
 
@@ -435,10 +435,104 @@ def check_config_present() -> CheckResult:
     return CheckResult(
         name="Profile imported",
         status=Status.FAIL,
-        detail="No profile found — run 'outwarp-cli import <path.owcfg>'.",
-        remediation="outwarp-cli import <path-to.owcfg>",
-        remediation_command="outwarp-cli import <path-to.owcfg>",
+        detail="No profile found — run 'outwarp import <path.owcfg>'.",
+        remediation="outwarp import <path-to.owcfg>",
+        remediation_command="outwarp import <path-to.owcfg>",
         fix_kind="manual",
+    )
+
+
+def _which_all(name: str) -> list[Path]:
+    """Every ``name`` on PATH, first match first (``which -a``), deduplicated
+    by resolved target so two symlinks to one venv count once."""
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if not d:
+            continue
+        cand = Path(d) / name
+        if cand.is_file() and os.access(cand, os.X_OK):
+            real = cand.resolve()
+            if real not in seen:
+                seen.add(real)
+                out.append(cand)
+    return out
+
+
+def _binary_version(path: Path) -> str:
+    try:
+        proc = _run([str(path), "--version"])
+    except (OSError, subprocess.TimeoutExpired):
+        return "?"
+    text = (proc.stdout or proc.stderr).strip().splitlines()
+    return text[-1].split()[-1] if text else "?"
+
+
+def check_duplicate_binaries() -> CheckResult:
+    """More than one `outwarp` on PATH is how a stale venv keeps answering.
+
+    Seen on the author's laptop: install.sh's /opt/pipx venv at 0.5.8 and a
+    user pipx venv at 0.13.0 both exposed as `outwarp-cli`; which one a shell
+    or a unit picked depended on PATH order."""
+    found = [(p, _binary_version(p)) for p in _which_all("outwarp")]
+    seen = {p.resolve() for p, _ in found}
+    found += [(p, _binary_version(p)) for p in _which_all("outwarp-cli")
+              if p.resolve() not in seen]
+    if not found:
+        return CheckResult(
+            name="binaries",
+            status=Status.WARN,
+            detail="No `outwarp` on PATH (running from a venv or the source tree).",
+        )
+    versions = {v for _, v in found}
+    listing = ", ".join(f"{p} ({v})" for p, v in found)
+    if len(found) > 1 and len(versions) > 1:
+        return CheckResult(
+            name="binaries",
+            status=Status.WARN,
+            detail=f"Several client installs answer on PATH: {listing}",
+            remediation="Remove the stale one (pipx uninstall outwarp-client in "
+                        "that venv, or delete /opt/pipx/venvs/outwarp-client) so "
+                        "shells, units and launchers agree on a version.",
+        )
+    return CheckResult(name="binaries", status=Status.PASS, detail=listing)
+
+
+_LEGACY_NAME_FILES: tuple[tuple[str, Path], ...] = (
+    ("bash completions", Path("/etc/bash_completion.d/outwarp-cli")),
+    ("zsh completions", Path("/usr/share/zsh/site-functions/_outwarp-cli")),
+)
+_SYSTEM_LAUNCHER = Path("/usr/share/applications/outwarp.desktop")
+
+
+def check_legacy_cli_name() -> CheckResult:
+    """Anything on disk still wired to the pre-1.0 `outwarp-cli` name.
+
+    The alias keeps those working for one release; this is the nudge to
+    migrate before it disappears."""
+    from outwarp.service import unit_uses_legacy_name
+
+    stale: list[str] = []
+    if unit_uses_legacy_name():
+        stale.append("systemd user unit (ExecStart)")
+    try:
+        if "outwarp-cli" in _SYSTEM_LAUNCHER.read_text():
+            stale.append(f"launcher {_SYSTEM_LAUNCHER}")
+    except OSError:
+        pass
+    stale += [f"{label} {path}" for label, path in _LEGACY_NAME_FILES if path.exists()]
+    if not stale:
+        return CheckResult(
+            name="cli_name", status=Status.PASS,
+            detail="Nothing references the deprecated `outwarp-cli` name.",
+        )
+    return CheckResult(
+        name="cli_name",
+        status=Status.WARN,
+        detail="Still pointing at deprecated `outwarp-cli`: " + "; ".join(stale),
+        remediation="Run `outwarp service install` for the unit and re-run "
+                    "install.sh for the launcher/completions (alias goes away in 1.0).",
+        remediation_command="outwarp service install",
     )
 
 
@@ -457,6 +551,8 @@ def gather_checks() -> list[Check]:
             Check("kmod", "WireGuard", check_wg_kernel_module),
             Check("systemd", "Service", check_systemd_unit),
             Check("notify", "Desktop", check_notify_send),
+            Check("binaries", "Install", check_duplicate_binaries),
+            Check("cli_name", "Install", check_legacy_cli_name),
         ]
     return checks
 

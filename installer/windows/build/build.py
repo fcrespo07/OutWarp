@@ -40,7 +40,7 @@ SPECS = [
     BUILD_DIR / "outwarp-server.spec",
 ]
 
-# Canonical version source — what `outwarp-cli --version` reports. Used as the
+# Canonical version source — what `outwarp --version` reports. Used as the
 # default for --version and to regenerate the PyInstaller version_info_*.txt
 # files just before each build so the .exe metadata never drifts behind the
 # wheel.

@@ -391,7 +391,7 @@ def test_default_settings_include_kill_switch_off(tmp_path):
 
 # Engage/release-on-state-change behaviour now lives in TunnelManager itself
 # (outwarp.killswitch, wired from tunnel.py's _set_state) rather than only in
-# Api, so it also works for the TUI and `outwarp-cli daemon` — neither goes
+# Api, so it also works for the TUI and `outwarp daemon` — neither goes
 # through Api at all. See TestKillSwitch in test_tunnel_manager.py. What
 # remains here is Api-specific: the settings.json toggle's immediate-effect
 # path and cleanup on shutdown.
