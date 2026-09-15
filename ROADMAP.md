@@ -22,7 +22,7 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       443 → connect → traffic through the tunnel → DNS routed inside →
       reused token rejected → clean disconnect. Spike first: `wg-quick up`
       inside Docker on a GitHub runner.
-- [ ] **Kill switch + hostname endpoint.** Reconnect can't resolve the
+- [x] **Kill switch + hostname endpoint.** *(Done 2026-09-15 via a last-known-address cache; DNS stays blocked while engaged.)* Reconnect can't resolve the
       endpoint through the blocked LAN DNS → `FAILED` with no network.
 - [x] **Rename the client command `outwarp-cli` → `outwarp`.** *(Done 2026-09-15; alias kept until 1.0.0.)* The client is
       what most people use, so it gets the short name; the server already

@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from outwarp import dnscache
 from outwarp.config import ClientConfig
 from outwarp.routing import escape_set
 from outwarp.tunnel_stats import _read_wg_transfer
@@ -83,10 +84,18 @@ def _resolve_bypass_networks(bypass_ips: list[str]) -> list[ipaddress.IPv4Networ
         try:
             infos = socket.getaddrinfo(entry, None, family=socket.AF_INET)
         except OSError as exc:
-            log.warning("Could not resolve bypass host %r (skipping exclusion): %s", entry, exc)
+            cached = dnscache.lookup(entry)
+            if cached:
+                log.warning("Could not resolve bypass host %r (%s); using last known %s",
+                            entry, exc, cached)
+                _add(ipaddress.ip_network(f"{cached}/32"))
+            else:
+                log.warning("Could not resolve bypass host %r (skipping exclusion): %s", entry, exc)
             continue
         for info in infos:
             _add(ipaddress.ip_network(f"{info[4][0]}/32"))
+        if infos:
+            dnscache.remember(entry, infos[0][4][0])
     return nets
 
 

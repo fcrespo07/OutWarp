@@ -18,6 +18,7 @@ from threading import Event, Lock, Thread
 
 from platformdirs import user_data_dir
 
+from outwarp import dnscache
 from outwarp.config import ClientConfig
 from outwarp.fallback import (
     HOSTILE_DNS_RESOLVER_IP,
@@ -170,6 +171,7 @@ def _resolve_endpoints(endpoints, *, resolver_ip: str = "") -> dict[str, str]:
             answer = _query_dns_a_record_via(resolver_ip, ep)
             if answer:
                 out[ep] = answer
+                dnscache.remember(ep, answer)
                 continue
             log.warning(
                 "Public resolver %s gave no answer for %s; using the system one",
@@ -178,10 +180,20 @@ def _resolve_endpoints(endpoints, *, resolver_ip: str = "") -> dict[str, str]:
         try:
             infos = socket.getaddrinfo(ep, None, family=socket.AF_INET, type=socket.SOCK_STREAM)
         except OSError as exc:
-            log.warning("Could not pre-resolve %s (wstunnel will resolve it itself): %s", ep, exc)
+            cached = dnscache.lookup(ep)
+            if cached:
+                # Typical under an engaged kill switch: DNS is blocked but the
+                # server's last known address is allowed through.
+                log.warning("Could not resolve %s (%s); using last known address %s",
+                            ep, exc, cached)
+                out[ep] = cached
+            else:
+                log.warning("Could not pre-resolve %s (wstunnel will resolve it itself): %s",
+                            ep, exc)
             continue
         if infos:
             out[ep] = infos[0][4][0]
+            dnscache.remember(ep, out[ep])
     return out
 
 

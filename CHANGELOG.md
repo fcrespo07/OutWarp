@@ -35,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`preferred_ui` in `settings.json`); `outwarp doctor` gains a `gui` check.
 
 ### Fixed
+- **Kill switch + hostname endpoint: reconnects no longer die at DNS.** With
+  the switch engaged only the escape set is allowed out, so a profile whose
+  endpoint (or proxy) is a hostname could not resolve it on the next attempt
+  and ended in `FAILED` with no network. Every successful resolution is now
+  remembered (`resolved_hosts.json`, next to the sticky-rung store) and used
+  when the lookup fails, both for the rung's dial address and for the kill
+  switch allowlist itself. DNS is deliberately *not* opened through the
+  switch — that would leak every application's queries while the tunnel is
+  down. Known limit: if the server's IP changes while the switch is engaged,
+  the reconnect keeps failing until the switch is released.
 - **Tests no longer touch the developer's real client.** Both suites point
   platformdirs at a temp dir and the single-instance lock at a per-test
   name; `app.main()` tests used to append lines to
