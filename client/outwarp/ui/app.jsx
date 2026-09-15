@@ -1576,6 +1576,13 @@ const Settings = ({ T, api, settings, onSetting }) => {
     const r = await onSetting(k, v);
     if (r && r.ok === false && r.error) setError(r.error);
   };
+  const [isLinux, setIsLinux] = useState(false);
+  useEffect(() => {
+    if (!api) return;
+    let alive = true;
+    api.get_app_info().then((d) => { if (alive && d) setIsLinux(String(d.platform || "").toLowerCase().startsWith("linux")); });
+    return () => { alive = false; };
+  }, [api]);
 
   const groups = [
     { key: "appearance", title: T.set_groupAppearance, rows: [
@@ -1612,6 +1619,11 @@ const Settings = ({ T, api, settings, onSetting }) => {
       { title: T.set_minimizeTray, sub: T.set_minimizeTraySub, control: (
         <window.Toggle on={!!settings.minimize_to_tray} onChange={(v) => apply("minimize_to_tray", v)}/>
       )},
+      // Linux only: the .desktop entry runs `outwarp launch`, which honours
+      // preferred_ui. On Windows the GUI is the only UI, so the row is noise.
+      ...(isLinux ? [{ title: T.set_preferTui, sub: T.set_preferTuiSub, control: (
+        <window.Toggle on={settings.preferred_ui === "tui"} onChange={(v) => apply("preferred_ui", v ? "tui" : "auto")}/>
+      )}] : []),
     ]},
   ];
 

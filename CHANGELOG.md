@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1.0.0.**
 - `outwarp uninstall` now also removes the shell completions and the
   system-wide launcher/icon that `install.sh` writes.
+- **Linux: GUI or TUI is a choice you can change after installing.**
+  `install.sh` offers the graphical window + tray by default when it detects
+  a desktop session (X11/Wayland socket) and skips it on headless boxes;
+  `OUTWARP_CLIENT_GUI=1|0` answers for scripted installs. New subcommands:
+  `sudo outwarp gui --install` adds the GTK/WebKit packages and pywebview to
+  an existing install, `outwarp ui [auto|gui|tui]` shows/sets what the app
+  menu opens, and `outwarp launch` (what the `.desktop` entry now runs)
+  honours it — opening the TUI in your terminal emulator when the GUI is not
+  wanted. `outwarp gui` without the stack says why and opens the TUI instead
+  of failing at `webview.start()`. Both Settings screens expose the toggle
+  (`preferred_ui` in `settings.json`); `outwarp doctor` gains a `gui` check.
 
 ### Fixed
 - **Tests no longer touch the developer's real client.** Both suites point

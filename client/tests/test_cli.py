@@ -9,6 +9,7 @@ test_tunnel_manager.py already covers.
 from __future__ import annotations
 
 import json
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -249,10 +250,28 @@ def test_gui_subcommand_delegates_to_app_main(isolated_config):
     """``outwarp gui`` replaces the standalone ``outwarp`` gui-script.
     The dispatch table forwards to ``outwarp.app.main`` so the boot logic
     only lives in one place."""
-    with patch("outwarp.app.main", return_value=0) as mock_main:
+    with (
+        patch("outwarp.ui_choice.gui_available", return_value=(True, "stubbed")),
+        patch("outwarp.app.main", return_value=0) as mock_main,
+    ):
         rc = cli.main(["gui"])
     assert rc == 0
     mock_main.assert_called_once_with()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux-only GUI stack")
+def test_gui_subcommand_falls_back_to_tui_with_a_reason(isolated_config, capsys):
+    """Without the GTK/WebKit stack, ``outwarp gui`` says why and opens the
+    TUI instead of failing at webview.start() or switching silently."""
+    with (
+        patch("outwarp.ui_choice.gui_available", return_value=(False, "pywebview not installed")),
+        patch("outwarp.cli._cmd_tui", return_value=0) as tui,
+        patch("outwarp.app.main") as app_main,
+    ):
+        assert cli.main(["gui"]) == 0
+    tui.assert_called_once()
+    app_main.assert_not_called()
+    assert "pywebview not installed" in capsys.readouterr().err
 
 
 def test_legacy_alias_warns_once_and_delegates(monkeypatch, capsys) -> None:

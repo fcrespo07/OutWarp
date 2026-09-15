@@ -32,7 +32,7 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       `.desktop` files and completions on existing installs point at it) and
       have `install.sh` / `service install` migrate them; drop the alias in
       1.0.0.
-- [ ] **Linux client GUI as a first-class option.** Installer offers the
+- [~] **Linux client GUI as a first-class option.** *(Code landed 2026-09-15 — installer default, `gui --install`, `ui`, `launch`, doctor check; real-desktop testing on X11/Wayland still pending.)* Installer offers the
       pywebview GUI by default on desktop sessions (TUI stays the headless
       path); tested on X11 and Wayland; `doctor` checks the GUI stack.
 - [ ] **Full Omarchy compatibility** (Arch + Hyprland/Wayland + waybar +

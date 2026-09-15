@@ -536,6 +536,30 @@ def check_legacy_cli_name() -> CheckResult:
     )
 
 
+def check_gui_stack() -> CheckResult:
+    """Can `outwarp gui` open here? Linux ships the window as an optional
+    stack; on a headless box its absence is expected, not a problem."""
+    from outwarp.ui_choice import INSTALL_HINT, desktop_session, gui_available, preferred_ui
+
+    ok, why = gui_available()
+    pref = preferred_ui()
+    if ok:
+        return CheckResult(name="gui", status=Status.PASS,
+                           detail=f"{why}; preferred_ui={pref}")
+    if not desktop_session() and pref != "gui":
+        return CheckResult(name="gui", status=Status.SKIP,
+                           detail=f"No display session; TUI only ({why}).")
+    return CheckResult(
+        name="gui",
+        status=Status.WARN,
+        detail=f"Graphical window not available: {why}",
+        remediation=f"Install the GUI stack: {INSTALL_HINT}  (or `outwarp ui tui` "
+                    "to keep the terminal UI on purpose)",
+        remediation_command=INSTALL_HINT,
+        fix_kind="interactive",
+    )
+
+
 def gather_checks() -> list[Check]:
     checks = [
         Check("config", "Config", check_config_present),
@@ -551,6 +575,7 @@ def gather_checks() -> list[Check]:
             Check("kmod", "WireGuard", check_wg_kernel_module),
             Check("systemd", "Service", check_systemd_unit),
             Check("notify", "Desktop", check_notify_send),
+            Check("gui", "Desktop", check_gui_stack),
             Check("binaries", "Install", check_duplicate_binaries),
             Check("cli_name", "Install", check_legacy_cli_name),
         ]

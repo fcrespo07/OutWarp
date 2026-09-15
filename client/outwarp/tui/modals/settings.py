@@ -60,6 +60,7 @@ _TOGGLES: list[tuple[str, str, str]] = [
 # Prefixed with "_" so the generic settings handler recognises them as special.
 _KEY_SVC = "_svc_enabled"
 _KEY_LINGER = "_linger_enabled"
+_KEY_PREFER_GUI = "_prefer_gui"
 
 
 def _is_service_enabled() -> bool:
@@ -133,6 +134,33 @@ class SettingsModal(ModalScreen[None]):
                             "before the first login (requires root or sudo NOPASSWD).[/]"
                         )
 
+            if sys.platform == "linux":
+                from outwarp.ui_choice import INSTALL_HINT, gui_available
+
+                gui_ok, gui_why = gui_available()
+                yield Static("\n[b]Interface (Linux)[/b]", classes="settings-section-header")
+                if gui_ok:
+                    with Horizontal(classes="settings-row"):
+                        yield Switch(
+                            value=self._settings.get("preferred_ui") != "tui",
+                            id=f"switch-{_KEY_PREFER_GUI}",
+                        )
+                        with Container(classes="settings-text"):
+                            yield Static("[b]Open the graphical window from the app menu[/b]")
+                            yield Static(
+                                "[dim]On: the launcher opens the tray + window "
+                                f"({gui_why}). Off: it opens this terminal UI. "
+                                "Same as [bold]outwarp ui gui[/bold] / "
+                                "[bold]outwarp ui tui[/bold].[/]"
+                            )
+                else:
+                    yield Static(
+                        f"[dim]Graphical window not installed ({gui_why}).\n"
+                        f"Add it with [bold]{INSTALL_HINT}[/bold]; this terminal UI "
+                        "stays available either way.[/]",
+                        classes="settings-row",
+                    )
+
             # Connection-config editing lives on its own screen (room for the
             # 7 editable fields + validation feedback). The modal just exposes
             # the entry point so users discover it from the same surface where
@@ -161,6 +189,22 @@ class SettingsModal(ModalScreen[None]):
             return
         if key == _KEY_LINGER:
             self._toggle_linger(new_value)
+            return
+        if key == _KEY_PREFER_GUI:
+            # Switch ON = let the launcher pick the GUI ("auto" keeps the
+            # headless/SSH fallback); OFF = always the TUI.
+            self._settings["preferred_ui"] = "auto" if new_value else "tui"
+            try:
+                save_settings(self._settings)
+            except OSError as exc:
+                log.exception("Could not save settings.json")
+                self.query_one("#settings-status", Static).update(
+                    f"[{BAD}]Could not save: {exc}[/]"
+                )
+                return
+            self.query_one("#settings-status", Static).update(
+                f"[{OK}]✓[/] launcher opens the {'GUI' if new_value else 'TUI'}"
+            )
             return
 
         # Standard settings.json path

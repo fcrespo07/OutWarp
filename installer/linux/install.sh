@@ -764,14 +764,41 @@ want_server_gui() {
     esac
 }
 
+desktop_session_detected() {
+    # Is there a graphical session for the target user? Under `sudo` the
+    # DISPLAY variables are usually stripped, so also look for the Wayland
+    # socket in the user's runtime dir and for an X11 socket.
+    [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]] && return 0
+    local uid
+    uid=$(id -u "${TARGET_USER:-$USER}" 2>/dev/null) || return 1
+    compgen -G "/run/user/${uid}/wayland-*" >/dev/null 2>&1 && return 0
+    compgen -G "/tmp/.X11-unix/X*" >/dev/null 2>&1 && return 0
+    return 1
+}
+
 want_client_gui() {
-    # Mirror of want_server_gui — see the comment there. The TUI is the
-    # default on Linux; this gate (OUTWARP_CLIENT_GUI=1) opts into the
-    # webkitgtk + appindicator stack and pulls pywebview via gui-linux.
-    case "${OUTWARP_CLIENT_GUI:-0}" in
+    # The TUI is always installed. The graphical window + tray (pywebview on
+    # GTK/WebKit + appindicator) is offered by default when a desktop session
+    # is detected and skipped on headless boxes. OUTWARP_CLIENT_GUI=1/0
+    # forces either way (CI, scripted installs); otherwise the question is
+    # asked when a terminal is available. Either choice can be revisited
+    # later: `sudo outwarp gui --install` adds the GUI, `outwarp ui tui|gui`
+    # picks what the launcher opens.
+    case "${OUTWARP_CLIENT_GUI:-}" in
         1|true|yes) return 0 ;;
-        *) return 1 ;;
+        0|false|no) return 1 ;;
     esac
+    local default="n"
+    desktop_session_detected && default="y"
+    if [[ -r /dev/tty ]]; then
+        local reply
+        reply=$(ask "Install the graphical window + tray icon too? (the terminal UI is always installed) [y/n]" "$default")
+        case "$reply" in
+            y|Y|yes) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+    [[ "$default" == "y" ]]
 }
 
 ensure_server_gui_system_deps() {
@@ -1089,17 +1116,19 @@ install_client_desktop() {
         warn "Could not locate app_icon.png — launcher will use a generic icon"
     fi
 
-    # Write the .desktop file. Terminal=true tells the DE to open a terminal
-    # emulator — the right behaviour for a TUI application.
+    # Write the .desktop file. `outwarp launch` picks the GUI when it is
+    # installed and preferred, otherwise opens the TUI in the user's terminal
+    # emulator itself — so one static entry serves both choices and the user
+    # can flip between them after install (`outwarp ui gui|tui`).
     $SUDO install -Dm 0644 /dev/stdin /usr/share/applications/outwarp.desktop <<'DESKTOP_EOF'
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=OutWarp
 Comment=WireGuard-over-WebSocket VPN tunnel client
-Exec=outwarp tui
+Exec=outwarp launch
 Icon=outwarp
-Terminal=true
+Terminal=false
 Categories=Network;VPN;System;
 Keywords=wireguard;vpn;wstunnel;tunnel;
 StartupNotify=false
@@ -1175,8 +1204,8 @@ install_client() {
         extras="tui,gui-linux"
         ensure_client_system_deps
     else
-        info "Installing TUI-only build (Textual). The default UI is ${BOLD}outwarp tui${RESET}."
-        info "Set ${BOLD}OUTWARP_CLIENT_GUI=1${RESET} to also install the pywebview tray (webkit2gtk + appindicator)."
+        info "Installing the terminal UI only (${BOLD}outwarp tui${RESET})."
+        info "Add the graphical window later with ${BOLD}sudo outwarp gui --install${RESET}."
     fi
 
     pipx_install_app "outwarp-client" "$INSTALL_SOURCE" "$extras"
@@ -1215,9 +1244,11 @@ ${BOLD}${GREEN}Client installed.${RESET}
 
   ${BOLD}Quick start:${RESET}
     1. Drop your ${BOLD}.owcfg${RESET} file somewhere accessible by ${TARGET_USER}.
-    2. Launch ${BOLD}outwarp tui${RESET} — interactive terminal UI.
-       The first run prompts for the .owcfg via the import modal.
-    3. Or find ${BOLD}OutWarp${RESET} in your application launcher (GNOME, KDE, etc.).
+    2. Find ${BOLD}OutWarp${RESET} in your application launcher, or run
+       ${BOLD}outwarp gui${RESET} (window + tray) / ${BOLD}outwarp tui${RESET} (terminal).
+       The first run prompts for the .owcfg via the import screen.
+    3. Pick what the launcher opens with ${BOLD}outwarp ui gui${RESET} or ${BOLD}outwarp ui tui${RESET};
+       add the graphical window later with ${BOLD}sudo outwarp gui --install${RESET}.
 
   ${BOLD}Headless / SSH / systemd:${RESET}
     1. ${BOLD}outwarp import /path/to/profile.owcfg${RESET}
@@ -1230,7 +1261,7 @@ ${BOLD}${GREEN}Client installed.${RESET}
   ${DIM}Privileged helper: $CLIENT_HELPER${RESET}
   ${DIM}Sudoers rule: $CLIENT_SUDOERS  (revoke with: sudo rm $CLIENT_SUDOERS)${RESET}
   ${DIM}pipx venv: $CLIENT_VENV${RESET}
-  ${DIM}Want the tray GUI too? Re-run with OUTWARP_CLIENT_GUI=1 (installs webkitgtk + pywebview).${RESET}
+  ${DIM}Scripted installs: OUTWARP_CLIENT_GUI=1|0 skips the GUI question.${RESET}
 
 EOF
 }

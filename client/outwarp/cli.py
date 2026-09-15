@@ -403,9 +403,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Launch the interactive Textual UI (Linux / headless)",
     )
 
-    sub.add_parser(
+    p_gui = sub.add_parser(
         "gui",
         help="Launch the tray/pywebview GUI (was the 'outwarp' binary in 0.4.x)",
+    )
+    p_gui.add_argument(
+        "--install", action="store_true",
+        help="Linux: add the GUI stack (GTK/WebKit packages + pywebview) to this "
+             "install instead of launching. Needs root.",
+    )
+
+    p_ui = sub.add_parser(
+        "ui",
+        help="Show or set which UI 'outwarp launch' and the app menu open (auto/gui/tui)",
+    )
+    p_ui.add_argument("choice", nargs="?", choices=["auto", "gui", "tui"])
+
+    sub.add_parser(
+        "launch",
+        help="Open the preferred UI: the GUI when installed and wanted, else the TUI "
+             "(in a terminal window when started from a launcher)",
     )
 
     p_update = sub.add_parser(
@@ -449,10 +466,62 @@ def _cmd_gui(args: argparse.Namespace) -> int:
     """Delegate to outwarp.app:main — the pywebview tray entry-point.
 
     Was the dedicated ``outwarp`` binary in 0.4.x; collapsed into a subcommand
-    in 0.5.0 so the Linux install surface is a single executable.
+    in 0.5.0 so the Linux install surface is a single executable. On Linux
+    the GUI stack is optional: ``--install`` adds it, and launching without it
+    says so before falling back to the TUI instead of doing it silently.
     """
+    from outwarp import ui_choice
+
+    if getattr(args, "install", False):
+        if sys.platform == "linux" and os.geteuid() != 0:
+            _err(f"Root required to install packages into the venv. Run: {ui_choice.INSTALL_HINT}")
+            return 2
+        return ui_choice.install_gui(echo=_print)
+
+    if sys.platform == "linux":
+        ok, why = ui_choice.gui_available()
+        if not ok:
+            _err(f"GUI not available: {why}. Opening the TUI instead.")
+            return _cmd_tui(args)
     from outwarp.app import main as _gui_main
     return _gui_main() or 0
+
+
+def _cmd_ui(args: argparse.Namespace) -> int:
+    from outwarp import ui_choice
+
+    if args.choice:
+        ui_choice.set_preferred_ui(args.choice)
+        _print(f"preferred_ui = {args.choice}")
+    ok, why = ui_choice.gui_available()
+    pref = ui_choice.preferred_ui()
+    _print(f"Preferred UI: {pref}")
+    _print(f"GUI stack:    {'available' if ok else 'not installed'} ({why})")
+    _print(f"`outwarp launch` opens: {ui_choice.resolve_ui(available=ok)}")
+    if not ok and sys.platform == "linux":
+        _print(f"Add the GUI with: {ui_choice.INSTALL_HINT}")
+    return 0
+
+
+def _cmd_launch(args: argparse.Namespace) -> int:
+    """What the .desktop entry runs: pick the UI, and give the TUI a terminal
+    when there is none (launchers start us without a tty)."""
+    from outwarp import ui_choice
+
+    if ui_choice.resolve_ui() == "gui":
+        from outwarp.app import main as _gui_main
+        return _gui_main() or 0
+    if sys.stdin.isatty():
+        return _cmd_tui(args)
+    if sys.platform == "win32":
+        return _cmd_tui(args)
+    tui_argv = [sys.argv[0], "tui"] if sys.argv else ["outwarp", "tui"]
+    cmd = ui_choice.terminal_command(tui_argv)
+    if cmd is None:
+        _err("No terminal emulator found to host the TUI; set $TERMINAL or run "
+             "`outwarp tui` from a terminal.")
+        return 1
+    return subprocess.call(cmd)
 
 
 def _cmd_uninstall(args: argparse.Namespace) -> int:
@@ -605,6 +674,8 @@ _COMMANDS = {
     "doctor":         _cmd_doctor,
     "tui":            _cmd_tui,
     "gui":            _cmd_gui,
+    "ui":             _cmd_ui,
+    "launch":         _cmd_launch,
     "update":         _cmd_update,
 }
 

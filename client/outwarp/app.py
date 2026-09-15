@@ -138,10 +138,17 @@ def main() -> int:
     # to render anything. Redirect to the TUI rather than crash — users who
     # genuinely want the tray GUI on Linux opt into it via
     # `pip install 'outwarp-client[gui-linux]'` and that import then resolves.
+    # Only the import is probed here (the deeper GTK/WebKit check lives in
+    # outwarp.ui_choice.gui_available and runs in `outwarp gui` / `launch`
+    # before reaching this point); tests stub `webview` to get past it.
     if sys.platform == "linux":
         try:
             import webview  # noqa: F401 — presence test only
         except ImportError:
+            from outwarp.ui_choice import INSTALL_HINT
+
+            print(f"OutWarp GUI not installed ({INSTALL_HINT}). Opening the TUI.",
+                  file=sys.stderr)
             from outwarp.cli import main as _cli_main
             return _cli_main(["tui"])
 

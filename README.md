@@ -86,7 +86,25 @@ After `outwarp import path/to/profile.owcfg`:
 | Edit MTU / DNS / address / routing | TUI → **s** Settings → **p** Profile (or **p** from the dashboard) |
 | Check for updates | `sudo outwarp update` |
 
-The autostart entry installed by `install.sh` launches the GUI tray by default; switch it to the TUI by pointing `Exec=` at `outwarp tui` in `~/.config/autostart/outwarp.desktop`.
+### GUI or TUI on Linux — your call, before or after installing
+
+The terminal UI (`outwarp tui`) is always installed. The graphical window +
+tray icon (`outwarp gui`, the same pywebview UI as Windows) is offered by
+`install.sh` when it detects a desktop session, and skipped on headless boxes
+(`OUTWARP_CLIENT_GUI=1|0` answers the question for scripted installs).
+
+Nothing is final:
+
+| I want to… | Run |
+|---|---|
+| Add the graphical window to a TUI-only install | `sudo outwarp gui --install` (distro GTK/WebKit packages + pywebview into the existing venv) |
+| Make the app-menu entry open the window / the terminal UI | `outwarp ui gui` / `outwarp ui tui` (`outwarp ui auto` = GUI when installed and a display is present) |
+| See what is installed and what the launcher will open | `outwarp ui` or `outwarp doctor` |
+
+The application launcher runs `outwarp launch`, which honours that choice and
+opens the TUI in your terminal emulator (`$TERMINAL`, then the usual
+suspects) when the GUI is not wanted. Both UIs expose the same toggle in
+their Settings screen.
 
 ---
 
