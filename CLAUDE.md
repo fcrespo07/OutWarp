@@ -313,7 +313,48 @@ Legado (hecho):
 
 ## Estado actual
 
-**Versión actual: `0.13.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
+**Versión actual: `0.14.0`** (en código). Changelog de cara al usuario en `CHANGELOG.md` (raíz).
+
+### Cambios en 0.14.0 — gate de 1.0 (2026-09-15)
+
+Cinco puntos bloqueantes del "Criterio de 1.0.0" cerrados o casi (ver la
+lista de esa sección) más los fallos que salieron al auditar GUI/TUI/CLI
+entre sí. Detalle en `CHANGELOG.md` → 0.14.0. Lo estructural:
+
+- **`outwarp-cli` → `outwarp`.** `outwarp-cli` queda como alias deprecado
+  (una línea por stderr) que se retira en 1.0.0; `install.sh` migra unit y
+  completions; `doctor` sección *Install* avisa de restos y de un segundo
+  venv en `PATH`.
+- **Un solo dueño del túnel** (`client/outwarp/ownership.py`): el mutex de
+  instancia única de la GUI lo comparten ahora TUI, `connect` y `daemon`
+  (`TunnelOwnerLock`, escribe el pid). Activar el servicio desde GUI o TUI
+  es una **cesión**: la UI para su manager, instala la unit y pasa a modo
+  visor (`service_managed`, estado leído de la interfaz); desactivarlo lo
+  recupera. Servicio activo y `start_at_boot` de la GUI son excluyentes. La
+  unit lleva `RestartPreventExitStatus=2 4` (sin perfil / dueño ajeno).
+- **GUI Linux de primera clase**: `install.sh` la ofrece por defecto con
+  sesión de escritorio (`OUTWARP_CLIENT_GUI=1|0`), venv pipx con
+  `--system-site-packages` para que pystray vea `gi`; `sudo outwarp gui
+  --install`, `outwarp ui [auto|gui|tui] [--hyprland-rule]`, `outwarp launch`
+  (lo que corre el `.desktop`). Lógica en `client/outwarp/ui_choice.py` y
+  `client/outwarp/desktop_linux.py` (`app_id` estable vía
+  `GLib.set_prgname`, regla Hyprland Lua/conf, checks `tray`/`hyprland`).
+- **e2e Docker en CI** (`e2e/`), **kill switch + hostname** (caché
+  `dnscache.py`), **rate limiter de enrolamiento por token**, y
+  `redact_command` para que el prefijo de upgrade no acabe en el log.
+- Paridad corregida: `connect` honra `settings.json`; gate de perfil
+  caducado en todas las superficies; cerrar la ventana con la X para el
+  túnel; minimizar oculta a la bandeja en Wayland; kill switch en el modal
+  de settings de la TUI; `nftables` en el instalador.
+
+Pendiente (auditoría parcial, 58 hallazgos, ver memoria de sesión): cliente
+Windows (exe solo GUI, desinstalador sin soltar kill switch, clave WG en
+claro vs. DPAPI prometido), servidor (`wg_listen_port` desde el panel
+reinicia wstunnel con `--restrict-to` viejo, `restart` en Windows, `restart`
+en Docker no-op, `run_setup` GUI incompleto en Linux), `k` en la TUI sale en
+vez de desconectar, strings en español fijo en la GUI.
+
+Cliente: 619 tests. Servidor: 526 tests. `ruff` limpio en ambos.
 
 ### Cambios en 0.13.0 — auditoría "qué sigue bloqueando"
 
