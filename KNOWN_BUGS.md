@@ -162,6 +162,41 @@ Leyenda de estado:
 ## Abiertos
 
 *(Ninguno conocido actualmente.)*
+### 🔴 B-023 — Windows: el servicio del túnel queda en `Automatic` y WireGuard se levanta solo en el siguiente arranque
+**Síntomas:** Tras apagar, suspender o reiniciar Windows con OutWarp conectado, en el arranque siguiente WireGuard aparece activo sin haber abierto OutWarp — incluso con "Iniciar al iniciar sesión" desactivado, y antes de iniciar sesión. `Get-Service *ireguard*` muestra:
+
+
+**Causa raíz:** `wireguard.exe /installtunnelservice` registra el servicio del túnel con `StartType = Automatic` — es el comportamiento de wireguard-windows (`manager.InstallTunnel`), no un parámetro que OutWarp pase. `WindowsPlatform.install_wg_tunnel` lo invoca tal cual y nunca reajusta el tipo de arranque; el servicio sólo desaparece en `uninstall_wg_tunnel`, es decir, en un `disconnect()` limpio. Si el equipo se apaga con el túnel levantado, el servicio sobrevive registrado y el SCM lo arranca en el siguiente boot. Es un mecanismo **distinto** del autostart de la app (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, ajuste `start_at_boot`): desactivar ese toggle no impide nada de esto, que es lo que hace el diagnóstico confuso.
+
+**Impacto:** El adaptador WG queda activo con `AllowedIPs` ≈ `0.0.0.0/0` y `Endpoint = 127.0.0.1:<local_port>`, pero sin wstunnel escuchando en ese puerto: no hay handshake y, como el driver WireGuard-NT captura el tráfico antes de consultar la tabla de rutas (ver comentario en `_allowed_ips_excluding`), el equipo se queda efectivamente sin salida a internet hasta abrir OutWarp — que detecta el servicio stale, lo desinstala y lo reinstala — o parar el servicio a mano. Para el usuario esto se ve como "WireGuard se enciende solo y no tengo red".
+
+**Mitigación (usuario):**
+
+```powershell
+# quitar el arranque automático sin cortar la conexión actual
+Set-Service -Name 'WireGuardTunnel$OutWarp' -StartupType Manual
+
+# o eliminar el servicio residual por completo
+& "C:\Program Files\WireGuard\wireguard.exe" /uninstalltunnelservice OutWarp
+```
+
+Ambas son temporales: la siguiente conexión recrea el servicio y vuelve a dejarlo en `Automatic`.
+
+**Fix propuesto:** en `client/outwarp/platforms/windows.py`, tras el `/installtunnelservice` correcto, forzar arranque bajo demanda. El servicio lo arranca siempre el propio `install_wg_tunnel` (que además ya limpia cualquier servicio stale antes de reinstalar), así que no se depende en ningún momento del autoarranque del SCM:
+
+```python
+# /installtunnelservice lo registra como Automatic: un túnel que quede
+# instalado tras un apagado sucio vuelve solo en el siguiente boot, sin
+# OutWarp y sin wstunnel debajo. Lo (re)instalamos y arrancamos nosotros en
+# cada connect, así que demand start es suficiente.
+_run(["sc.exe", "config", f"WireGuardTunnel${name}", "start=", "demand"])
+```
+
+Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructura que los `test_windows_install_autostart_*`: verificar que la secuencia de llamadas incluye el `sc.exe config ... start= demand` después del install.
+
+**Nota:** el servidor Windows (`server/outwarp_server/platforms/windows.py`) usa la misma llamada, pero allí el arranque automático **sí** es el comportamiento deseado — el fix es sólo para el cliente.
+
+**Prevención:** Al delegar la creación de un servicio en un binario de terceros, no asumir su tipo de arranque por defecto. Si el ciclo de vida lo gestiona la app (instalar al conectar / desinstalar al desconectar), el servicio debe quedar en `demand`, para que un apagado sucio no lo convierta de facto en un servicio de arranque del sistema. Mismo razonamiento que B-016: el estado que deja el SCM sobrevive al proceso que lo creó.
 
 ---
 
