@@ -84,13 +84,11 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
 - [ ] **Multiple (non-simultaneous) profiles in one client.** Moved out of
       "not blocking": it changes the `config.json` shape that 1.0 freezes.
       See "Multi-profile support" below.
-- [ ] **UI in the world's 5 most spoken languages**, not just Spanish and
-      English: English, Mandarin Chinese (Simplified), Hindi, Spanish and
-      Standard Arabic (Ethnologue, total speakers). All surfaces (GUIs, web
-      panel, TUIs, CLI, notifications), system-language detection plus a
-      manual picker, RTL layout for Arabic, fallback fonts (Geist has no
-      CJK/Devanagari/Arabic glyphs), native-speaker review. Moved out of
-      "not blocking".
+- [ ] **UI in 5 languages**, not just Spanish and English: English,
+      Mandarin Chinese (Simplified), Spanish, French and Portuguese. All
+      surfaces (GUIs, web panel, TUIs, CLI, notifications), system-language
+      detection plus a manual picker, CJK fallback font (Geist has no CJK
+      glyphs), native-speaker review. Moved out of "not blocking".
 - [ ] **General audit right before 1.0** (security, UI/UX, bugs,
       robustness) on the release candidate; critical/high findings fixed
       before shipping, the rest explicitly deferred to 1.x.
