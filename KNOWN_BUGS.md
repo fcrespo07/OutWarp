@@ -161,7 +161,6 @@ Leyenda de estado:
 
 ## Abiertos
 
-*(Ninguno conocido actualmente.)*
 ### 🔴 B-023 — Windows: el servicio del túnel queda en `Automatic` y WireGuard se levanta solo en el siguiente arranque
 **Síntomas:** Tras apagar, suspender o reiniciar Windows con OutWarp conectado, en el arranque siguiente WireGuard aparece activo sin haber abierto OutWarp — incluso con "Iniciar al iniciar sesión" desactivado, y antes de iniciar sesión. `Get-Service *ireguard*` muestra:
 

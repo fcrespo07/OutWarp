@@ -59,12 +59,40 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       TLS fingerprint / Upgrade DPI). ACME as the recommended path in `setup`.
       Add "Supported platforms" and "Known limitations"; drop the "not yet
       ready for production" banner.
+*Added by the author on 2026-09-25:*
+
+- [ ] **No open 🔴 bugs in `KNOWN_BUGS.md`** on release day (today: B-023).
+      The 0.14.0 partial-audit findings move into `KNOWN_BUGS.md` so this
+      gate covers them.
+- [ ] **Enable/disable clients from the dashboard.** A reversible `disabled`
+      state, distinct from the final `revoked`: the peer leaves `wg0.conf`
+      but keeps name, IP, keys, PSK and expiry. GUI, web panel, TUI and CLI
+      (`disable-client` / `enable-client`, names TBC).
+- [ ] **Study: handshakes vs. remote-desktop drops.** Find out whether
+      handshake frequency drops long RDP sessions and lower it if so. WG's
+      ~120 s rekey is protocol-fixed; ours to look at: `PersistentKeepalive`,
+      the WebSocket ping, the wstunnel watchdog, proxy idle timeouts, TCP
+      head-of-line blocking. Reproduce with a real RDP session first.
+- [ ] **General UI/UX polish** across client/server GUI, web panel and TUIs.
+- [ ] **Better dashboard login than the admin token** (password + optional
+      TOTP, passkeys, or a CLI-issued one-time login link; sessions that
+      survive a panel restart). Changes the server config shape.
+- [ ] **Windows server via Docker as the recommended path.** Docker Desktop
+      (WSL2) + the `server/Dockerfile` image, a ready `compose.yml` and a
+      guide in `deploy/README.md`; native SCM stays as the alternative. The
+      image is already published to ghcr.io — make sure it is pullable.
+- [ ] **Multiple (non-simultaneous) profiles in one client.** Moved out of
+      "not blocking": it changes the `config.json` shape that 1.0 freezes.
+      See "Multi-profile support" below.
+- [ ] **General audit right before 1.0** (security, UI/UX, bugs,
+      robustness) on the release candidate; critical/high findings fixed
+      before shipping, the rest explicitly deferred to 1.x.
 - [ ] **Signed release after a quiet cycle.** `SHA256SUMS.txt.minisig` on
       release day, after the last 0.x has run 2–4 weeks in production without
       a hotfix.
 
 Explicitly **not** blocking 1.0: the Authenticode certificate (money, not
-quality — SmartScreen is documented as a known limitation), multi-profile,
+quality — SmartScreen is documented as a known limitation),
 split tunnelling, DDNS, server auto-update, metrics, more languages, mobile.
 
 ## Shipped in 0.7.x
@@ -102,6 +130,8 @@ These landed as code with tests:
 ## Planned — larger reworks
 
 ### Multi-profile support
+**Part of the 1.0 gate since 2026-09-25** (non-simultaneous: one active
+tunnel at a time).
 Today the client holds a single active `config.json`. The API methods
 (`list_profiles`, `set_active_profile`, `remove_profile`) exist as single-profile
 stubs so the UI renders uniformly; the real work is a profile store on disk
