@@ -936,6 +936,14 @@ class Api:
             or f"{subnet.split('/')[0].rsplit('.', 1)[0]}.1/24"
         ).strip()
 
+        # A native Linux install ends with systemd units (B-031), which only
+        # root can write. Refuse up front rather than fail after the keys.
+        platform = get_server_platform()
+        if platform.os_managed_transport and hasattr(os, "geteuid") and os.geteuid() != 0:
+            err = "setup installs system services: run `sudo outwarp-server gui`"
+            self._emit("setup_done", {"ok": False, "error": err})
+            return {"ok": False, "error": err}
+
         # Phase: deps
         self._emit_setup("deps", "running")
         wstunnel_bin = find_wstunnel()
@@ -984,8 +992,12 @@ class Api:
             return {"ok": False, "error": f"crypto: {exc}"}
         self._emit_setup("cert", "ok", fingerprint)
 
-        # Phase: systemd (write config to disk + replace manager — the actual
-        # service install happens later when the user clicks Start)
+        # Phase: systemd. On a native Linux install this writes the config and
+        # installs the same services the CLI wizard does (WireGuard, wstunnel
+        # and enrolment units, forwarding, ufw): the server must outlive this
+        # window and come back at boot. Elsewhere (Windows) this app is what
+        # runs wstunnel, so only the config is written. The GUI only offers the
+        # self-signed branch; a domain + Caddy front is `outwarp-server setup`.
         self._emit_setup("systemd", "running")
         new_config = ServerConfig(
             schema_version=1,
@@ -1003,14 +1015,30 @@ class Api:
             wg_listen_port=wg_listen_port,
             clients=[],
         )
+        config_path = default_config_path()
         try:
-            new_config.save(default_config_path())
+            new_config.save(config_path)
         except OSError as exc:
             self._emit_setup("systemd", "fail", str(exc))
             self._emit("setup_done", {"ok": False, "error": f"could not save config: {exc}"})
             return {"ok": False, "error": f"could not save config: {exc}"}
 
-        new_manager = ServerManager(new_config)
+        if platform.os_managed_transport:
+            from outwarp_server.service_install import install_services
+
+            failures: list[str] = []
+
+            def _report(step: str, ok: bool, detail: str) -> None:
+                if not ok:
+                    failures.append(f"{step}: {detail}")
+
+            if not install_services(new_config, config_path, Path(wstunnel_bin), _report):
+                err = "; ".join(failures) or "service install failed"
+                self._emit_setup("systemd", "fail", err)
+                self._emit("setup_done", {"ok": False, "error": err})
+                return {"ok": False, "error": err}
+
+        new_manager = ServerManager(new_config, config_path=config_path)
         new_manager.add_listener(self._on_state_change)
         self._manager = new_manager
         if self._on_manager_replaced is not None:

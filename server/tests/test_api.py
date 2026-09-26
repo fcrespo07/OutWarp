@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import base64
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from outwarp_server.api import Api
 from outwarp_server.config import ClientEntry, ServerConfig
@@ -271,6 +274,15 @@ def test_run_setup_validates_port_range():
     assert api.run_setup({"endpoint": "1.2.3.4", "port": 70000})["ok"] is False
 
 
+def _gui_platform(*, os_managed: bool):
+    from outwarp_server.platforms.base import PrerequisiteResult, PrerequisiteStatus
+
+    plat = MagicMock()
+    plat.os_managed_transport = os_managed
+    plat.check_prerequisites.return_value = PrerequisiteResult(status=PrerequisiteStatus.OK)
+    return plat
+
+
 def test_run_setup_happy_path(tmp_path):
     api, _ = _make_api()
     captured = {}
@@ -289,6 +301,8 @@ def test_run_setup_happy_path(tmp_path):
         patch("outwarp_server.api.find_wstunnel", return_value=Path("/usr/bin/wstunnel")),
         patch("outwarp_server.api.find_wg", return_value=Path("/usr/bin/wg")),
         patch.object(ServerConfig, "save", fake_save),
+        patch("outwarp_server.api.get_server_platform",
+              return_value=_gui_platform(os_managed=False)),
     ):
         r = api.run_setup({
             "endpoint": "1.2.3.4",
@@ -776,6 +790,8 @@ def test_run_setup_emits_progress_and_done_events(tmp_path):
         patch("outwarp_server.api.find_wg", return_value=Path("/usr/bin/wg")),
         patch.object(ServerConfig, "save", fake_save),
         patch.object(Api, "_run_setup_probe"),  # don't hit network in tests
+        patch("outwarp_server.api.get_server_platform",
+              return_value=_gui_platform(os_managed=False)),
     ):
         r = api.run_setup({
             "endpoint": "1.2.3.4", "port": 443, "wg_listen_port": 51820,
@@ -1020,3 +1036,77 @@ def test_update_server_config_saves_to_the_managers_config_path(tmp_path):
     assert r["ok"] is True
     assert ServerConfig.load(own).endpoint == "198.51.100.7"
     assert not (tmp_path / "default.json").exists()
+
+
+def _setup_patches(tmp_path, plat):
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    for target, value in (
+        ("outwarp_server.api.default_config_dir", tmp_path),
+        ("outwarp_server.api.default_config_path", tmp_path / "srv.json"),
+        ("outwarp_server.api.generate_tls_cert",
+         (tmp_path / "c.pem", tmp_path / "k.pem", "FP:FP", "SPKI")),
+        ("outwarp_server.api.generate_wg_keypair", ("priv", "pub")),
+        ("outwarp_server.api.find_wstunnel", Path("/usr/bin/wstunnel")),
+        ("outwarp_server.api.find_wg", Path("/usr/bin/wg")),
+        ("outwarp_server.api.get_server_platform", plat),
+    ):
+        stack.enter_context(patch(target, return_value=value))
+    stack.enter_context(patch.object(ServerConfig, "save"))
+    stack.enter_context(patch.object(Api, "_run_setup_probe"))
+    return stack
+
+
+_SETUP = {"endpoint": "203.0.113.9", "port": 443, "wg_listen_port": 51820,
+          "subnet": "10.0.0.0/24", "server_address": "10.0.0.1/24"}
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX only")
+def test_run_setup_installs_the_services_on_linux(tmp_path, monkeypatch):
+    # B-031: the GUI setup only saved the config; the tunnel then lived and
+    # died with the window and nothing brought it back at boot.
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    api, _ = _make_api()
+    api._on_manager_replaced = lambda m: None
+    with (
+        _setup_patches(tmp_path, _gui_platform(os_managed=True)),
+        patch("outwarp_server.service_install.install_services", return_value=True) as inst,
+    ):
+        r = api.run_setup(dict(_SETUP))
+
+    assert r["ok"] is True
+    inst.assert_called_once()
+    cfg, cfg_path, wstunnel_bin, _report = inst.call_args.args
+    assert cfg.endpoint == "203.0.113.9"
+    assert cfg_path == tmp_path / "srv.json"
+    assert wstunnel_bin == Path("/usr/bin/wstunnel")
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX only")
+def test_run_setup_reports_a_failed_service_install(tmp_path, monkeypatch):
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    api, _ = _make_api()
+
+    def _fail(cfg, path, bin_, report):
+        report("wstunnel", False, "unit write denied")
+        return False
+
+    with (
+        _setup_patches(tmp_path, _gui_platform(os_managed=True)),
+        patch("outwarp_server.service_install.install_services", side_effect=_fail),
+    ):
+        r = api.run_setup(dict(_SETUP))
+
+    assert r == {"ok": False, "error": "wstunnel: unit write denied"}
+    assert api._manager is None
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX only")
+def test_run_setup_on_linux_requires_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    api, _ = _make_api()
+    with _setup_patches(tmp_path, _gui_platform(os_managed=True)):
+        r = api.run_setup(dict(_SETUP))
+    assert r["ok"] is False
+    assert "sudo outwarp-server gui" in r["error"]

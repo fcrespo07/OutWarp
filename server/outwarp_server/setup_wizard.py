@@ -5,7 +5,6 @@ import os
 import secrets
 import shutil
 import socket
-import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -17,10 +16,9 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 
 from outwarp_server.config import ServerConfig
 from outwarp_server.crypto import generate_tls_cert, generate_wg_keypair
-from outwarp_server.platforms import PlatformError, get_server_platform
+from outwarp_server.platforms import get_server_platform
 from outwarp_server.platforms.base import PrerequisiteStatus
-from outwarp_server.server_manager import build_enroll_listener_command, build_wstunnel_command
-from outwarp_server.wireguard import build_server_wg_conf
+from outwarp_server.service_install import install_services
 
 log = logging.getLogger(__name__)
 console = Console()
@@ -236,53 +234,24 @@ def run_setup(config_dir: Path) -> int:
     config.save(config_path)
     console.print(f"  [green]✓[/green] Server config saved to {config_path}")
 
-    # Enable IP forwarding persistently (survives reboots).
-    # PostUp in wg0.conf handles the runtime activation; this covers the
-    # window between boot and wg-quick bringing the interface up.
-    _enable_ip_forwarding(config_dir)
-
-    # Install services via platform
-    platform = get_server_platform()
     console.print("\n[bold]Installing services...[/bold]")
+    labels = {
+        "wireguard": ("WireGuard interface up", "WireGuard"),
+        "ufw": ("ufw configured (port opened, forwarding allowed)", "ufw"),
+        "wstunnel": ("wstunnel service enabled", "wstunnel"),
+        "enroll": ("enrolment listener enabled", "enrolment listener"),
+    }
 
-    try:
-        wg_conf = build_server_wg_conf(config)
-        # If the interface was already up (re-running setup), a hot reload via
-        # wg syncconf doesn't re-run PostUp — force a full restart so the
-        # iptables/forwarding rules are guaranteed to be applied. reconcile()
-        # also guarantees NAT/forwarding (Windows) are set up here rather than
-        # waiting for the service's first start to create them.
-        was_active = platform.is_wg_active()
-        platform.reconcile(
-            wg_conf, subnet=config.subnet, wss_port=port, force_restart=was_active,
-        )
-        console.print("  [green]✓[/green] WireGuard interface up")
-    except PlatformError as exc:
-        console.print(f"  [red]✗[/red] WireGuard: {exc}")
-        return 1
+    def _report(step: str, ok: bool, detail: str) -> None:
+        if step not in labels:
+            return
+        done, name = labels[step]
+        if ok:
+            console.print(f"  [green]✓[/green] {done}")
+        else:
+            console.print(f"  [red]✗[/red] {name}: {detail}")
 
-    # ufw blocks FORWARD by default; allow the wstunnel port and enable forwarding.
-    _configure_ufw_if_active(port)
-
-    try:
-        platform.install_wstunnel_service(
-            " ".join(build_wstunnel_command(config, wstunnel_bin))
-        )
-        console.print("  [green]✓[/green] wstunnel service enabled")
-    except PlatformError as exc:
-        console.print(f"  [red]✗[/red] wstunnel: {exc}")
-        return 1
-
-    # Without this, enrolment profiles are dead on a systemd install: nothing
-    # else runs the token listener once the wizard exits (it lives inside
-    # ServerManager, which only `serve`/the GUI keep alive).
-    try:
-        platform.install_enroll_service(
-            " ".join(build_enroll_listener_command(config_path))
-        )
-        console.print("  [green]✓[/green] enrolment listener enabled")
-    except PlatformError as exc:
-        console.print(f"  [red]✗[/red] enrolment listener: {exc}")
+    if not install_services(config, config_path, wstunnel_bin, _report):
         return 1
 
     if use_domain:
@@ -357,57 +326,6 @@ def _configure_caddy(config: ServerConfig) -> None:
         console.print(f"  [yellow]⚠[/yellow]  {w}")
     if not warnings:
         console.print("  [green]✓[/green] Caddy reloaded")
-
-
-def _configure_ufw_if_active(wss_port: int) -> None:
-    """If ufw is active, open the wstunnel port and allow IP forwarding."""
-    if sys.platform != "linux":
-        return
-    try:
-        result = subprocess.run(
-            ["ufw", "status"], capture_output=True, text=True, check=False
-        )
-    except FileNotFoundError:
-        return
-    if "Status: active" not in result.stdout:
-        return
-
-    console.print("  [yellow]ufw detected[/yellow] — opening port and enabling forwarding...")
-    subprocess.run(["ufw", "allow", f"{wss_port}/tcp"], capture_output=True, check=False)
-
-    ufw_default = Path("/etc/default/ufw")
-    if ufw_default.exists():
-        try:
-            content = ufw_default.read_text(encoding="utf-8")
-            if 'DEFAULT_FORWARD_POLICY="DROP"' in content:
-                ufw_default.write_text(
-                    content.replace(
-                        'DEFAULT_FORWARD_POLICY="DROP"',
-                        'DEFAULT_FORWARD_POLICY="ACCEPT"',
-                    ),
-                    encoding="utf-8",
-                )
-                subprocess.run(["ufw", "reload"], capture_output=True, check=False)
-        except OSError as exc:
-            log.warning("Could not update ufw default forward policy: %s", exc)
-
-    console.print("  [green]✓[/green] ufw configured")
-
-
-def _enable_ip_forwarding(config_dir: Path) -> None:
-    """Write a sysctl drop-in so ip_forward survives reboots (Linux only)."""
-    if sys.platform != "linux":
-        return
-    sysctl_path = Path("/etc/sysctl.d/99-outwarp.conf")
-    try:
-        sysctl_path.write_text("net.ipv4.ip_forward = 1\n", encoding="utf-8")
-        import subprocess as _sp
-        _sp.run(["sysctl", "-p", str(sysctl_path)], capture_output=True, check=False)
-        log.info("IP forwarding enabled persistently via %s", sysctl_path)
-    except OSError as exc:
-        log.warning(
-            "Could not write %s: %s — IP forwarding must be enabled manually", sysctl_path, exc,
-        )
 
 
 def _probe_localhost(port: int) -> bool:
