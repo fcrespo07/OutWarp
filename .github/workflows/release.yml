@@ -1,18 +1,22 @@
 name: Release
 
-# Builds the Linux wheels and creates (or refreshes) the GitHub Release for a
-# tag — the CI counterpart of scripts/release.sh for environments without a
-# local `gh` login.
+# Builds the Linux wheels, creates (or refreshes) the **draft** GitHub Release
+# for a tag, then builds the Windows installers into the same draft — the CI
+# counterpart of scripts/release.sh for environments without a local `gh`
+# login.
+#
+# Releases are immutable once published (repo setting): assets and tag are
+# frozen. So nothing here publishes. The maintainer signs SHA256SUMS.txt
+# offline, uploads the .minisig and publishes with scripts/publish-release.sh,
+# which checks every asset against the signed manifest first.
+# See docs/RELEASE_SIGNING.md.
 #
 # Triggers:
-#   - push of a v* tag      → publishes that tag automatically.
-#   - workflow_dispatch     → (re)publish any existing tag.
+#   - push of a v* tag      → drafts that tag.
+#   - workflow_dispatch     → (re)draft any tag that is not published yet.
 #
 # Release notes come from the matching `## [x.y.z]` section in CHANGELOG.md,
-# same extraction as release.sh. Note: a release created here with
-# GITHUB_TOKEN does NOT fire the `release: published` trigger of
-# windows-installer.yml (GitHub blocks workflow-to-workflow recursion) —
-# dispatch that workflow manually with the same tag to attach the .exe files.
+# same extraction as release.sh.
 
 on:
   push:
@@ -20,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to (re)publish, e.g. v0.8.0"
+        description: "Tag to (re)draft, e.g. v0.15.0 (must not be published yet)"
         required: true
 
 permissions:
@@ -29,6 +33,11 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      # A draft only creates its tag when published: without one, the Windows
+      # job builds the same commit by SHA.
+      ref: ${{ steps.tag.outputs.ref }}
     steps:
       - name: Resolve tag
         id: tag
@@ -112,19 +121,32 @@ jobs:
             echo 'Verify any asset against `SHA256SUMS.txt`.'
           } >> notes.md
 
-      - name: Create or update the GitHub Release
+      - name: Create or update the draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ steps.tag.outputs.tag }}"
           target="${{ steps.tag.outputs.target }}"
           assets="dist/outwarp_client-*.whl dist/outwarp_server-*.whl dist/SHA256SUMS.txt"
-          if gh release view "$tag" >/dev/null 2>&1; then
+          if draft=$(gh release view "$tag" --json isDraft -q .isDraft 2>/dev/null); then
+            if [ "$draft" != "true" ]; then
+              echo "::error::$tag is already published; releases are immutable. Bump the version instead." >&2
+              exit 1
+            fi
             gh release edit "$tag" --notes-file notes.md
             # shellcheck disable=SC2086
             gh release upload "$tag" $assets --clobber
           else
             # shellcheck disable=SC2086
-            gh release create "$tag" --title "$tag" --notes-file notes.md \
+            gh release create "$tag" --draft --title "$tag" --notes-file notes.md \
               ${target:+--target "$target"} $assets
           fi
+
+  windows:
+    needs: release
+    uses: ./.github/workflows/windows-installer.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+      ref: ${{ needs.release.outputs.ref }}
+    permissions:
+      contents: write

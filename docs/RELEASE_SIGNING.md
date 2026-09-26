@@ -62,27 +62,45 @@ downloads by hand.
 
 ## Every release
 
-After the release's `SHA256SUMS.txt` is final (on Windows the installer workflow
-merges its checksums into the existing manifest, so wait until that job has
-finished):
+Releases are **immutable once published** (repository setting "Enable release
+immutability"): after publishing, no asset can be added, replaced or deleted
+and the tag cannot move. So everything — wheels, installers, the final
+`SHA256SUMS.txt` and its `.minisig` — goes into a **draft**, and publishing is
+the last step. Drafts are invisible to the updaters (`releases/latest` skips
+them), so nobody is offered a half-finished release.
 
-```bash
-tag=v0.11.0
+1. **Draft.** Push the tag (`bash scripts/release.sh` does it, or
+   `git tag vX.Y.Z && git push origin vX.Y.Z`). The *Release* workflow builds
+   the wheels into a draft and then runs the Windows installer job, which adds
+   the three `.exe` editions and merges their hashes into `SHA256SUMS.txt`.
+   Wait for both jobs to finish: the manifest is final only then.
 
-# 1. Fetch the final manifest.
-gh release download "$tag" --pattern SHA256SUMS.txt --clobber
+2. **Sign**, on your machine:
 
-# 2. Sign it, with a trusted comment that names the release.
-minisign -S -s ~/.minisign/outwarp-release.key \
-         -m SHA256SUMS.txt \
-         -t "OutWarp $tag"
+   ```bash
+   tag=v0.15.0
 
-# 3. Attach the signature.
-gh release upload "$tag" SHA256SUMS.txt.minisig --clobber
+   # Fetch the final manifest from the draft.
+   gh release download "$tag" --pattern SHA256SUMS.txt --clobber
 
-# 4. Sanity check with the committed public key.
-minisign -V -p outwarp-release.pub -m SHA256SUMS.txt
-```
+   # Sign it, with a trusted comment that names the release.
+   minisign -S -s ~/.minisign/outwarp-release.key \
+            -m SHA256SUMS.txt \
+            -t "OutWarp $tag"
+
+   # Attach the signature to the draft.
+   gh release upload "$tag" SHA256SUMS.txt.minisig --clobber
+   ```
+
+3. **Publish**: `bash scripts/publish-release.sh "$tag"`. It downloads the
+   draft and refuses to publish unless both wheels and a Windows installer for
+   that version are there, every asset is listed in `SHA256SUMS.txt` with a
+   matching hash, and the `.minisig` verifies against `outwarp-release.pub`
+   with a trusted comment naming `$tag`. Only then does it flip the draft to
+   published (and *latest*).
+
+If anything is wrong after publishing, the release cannot be fixed: ship the
+next patch version instead.
 
 `minisign -S` writes `SHA256SUMS.txt.minisig`; the asset name matters, both
 updaters look for exactly that.

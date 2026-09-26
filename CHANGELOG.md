@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The client UI bundle is about a third smaller: two unused design previews
   were still being compiled into it. No visible change.
+- **Releases are drafted, then published once complete and signed.** GitHub
+  release immutability is on, so wheels, Windows installers, `SHA256SUMS.txt`
+  and its signature all go into a draft first; the Release workflow now also
+  builds the Windows installers itself (no manual dispatch). The new
+  `scripts/publish-release.sh` publishes only after checking every asset
+  against the signed manifest.
 - Repository cleanup now that it is public: old release notes, design specs
   and superseded plans removed; the resolved 0.12 audit moved to
   `docs/history/`.

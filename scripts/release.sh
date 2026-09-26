@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # OutWarp - Linux release helper
 #
-# Builds the client and server wheels and publishes them as GitHub Release
-# assets. The version is read from client/pyproject.toml (must match server's).
+# Builds the client and server wheels and attaches them to a **draft** GitHub
+# Release. The version is read from client/pyproject.toml (must match server's).
+#
+# Releases are immutable once published, so this never publishes: pushing the
+# tag also runs release.yml, which builds the Windows installers into the same
+# draft. Then sign SHA256SUMS.txt and publish with scripts/publish-release.sh
+# (docs/RELEASE_SIGNING.md).
 #
 # Usage:
-#   bash scripts/release.sh              # build + tag + publish
+#   bash scripts/release.sh              # build + tag + draft
 #   bash scripts/release.sh --dry-run    # build only (wheels left in dist/)
 #
 # Requires: python3.11+, the 'build' PyPI package (auto-installed if missing),
@@ -198,23 +203,27 @@ ASSETS=(
     "$DIST_DIR/SHA256SUMS.txt"
 )
 
-if gh -R "$GH_REPO" release view "$TAG" >/dev/null 2>&1; then
-    info "Release $TAG exists - refreshing notes + uploading wheel assets (--clobber)..."
+if IS_DRAFT=$(gh -R "$GH_REPO" release view "$TAG" --json isDraft -q .isDraft 2>/dev/null); then
+    [[ "$IS_DRAFT" == "true" ]] \
+        || die "Release $TAG is already published; releases are immutable. Bump the version instead."
+    info "Draft $TAG exists - refreshing notes + uploading wheel assets (--clobber)..."
     gh -R "$GH_REPO" release edit "$TAG" --notes-file "$NOTES_FILE" >/dev/null
     gh -R "$GH_REPO" release upload "$TAG" "${ASSETS[@]}" --clobber
-    ok "Notes refreshed and assets uploaded to existing release"
+    ok "Notes refreshed and assets uploaded to the draft"
 else
-    info "Creating release $TAG..."
+    info "Creating draft release $TAG..."
     gh -R "$GH_REPO" release create "$TAG" \
+        --draft \
         --title "$TAG" \
         --notes-file "$NOTES_FILE" \
         "${ASSETS[@]}"
-    ok "Release $TAG created"
+    ok "Draft $TAG created"
 fi
 
 echo
-printf '%s%s[DONE]%s OutWarp %s published.\n' "$BOLD" "$GREEN" "$RESET" "$TAG"
-printf '  %sClient wheel:%s https://github.com/%s/releases/download/%s/outwarp_client-%s-py3-none-any.whl\n' \
-    "$DIM" "$RESET" "$GH_REPO" "$TAG" "$VERSION"
-printf '  %sServer wheel:%s https://github.com/%s/releases/download/%s/outwarp_server-%s-py3-none-any.whl\n' \
-    "$DIM" "$RESET" "$GH_REPO" "$TAG" "$VERSION"
+printf '%s%s[DONE]%s OutWarp %s drafted (not published yet).\n' "$BOLD" "$GREEN" "$RESET" "$TAG"
+echo "  Next:"
+echo "    1. Wait for the Release workflow to attach the Windows installers:"
+echo "       gh -R $GH_REPO run watch \$(gh -R $GH_REPO run list -w release.yml -L1 --json databaseId -q '.[0].databaseId')"
+echo "    2. Sign SHA256SUMS.txt and upload the .minisig (docs/RELEASE_SIGNING.md)."
+echo "    3. bash scripts/publish-release.sh $TAG"

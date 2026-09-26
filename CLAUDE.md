@@ -346,6 +346,7 @@ Legado (hecho):
 - En Linux el `.conf` del cliente vive en `/etc/wireguard-outwarp` (otros gestores escanean `/etc/wireguard`).
 - `daemon`/`serve` salen con código 3 en `FAILED`/`ERROR`.
 - Versión de wstunnel **pinneada** en `installer/wstunnel-version.txt`, con guardia anti-drift en `server/tests/test_wstunnel_version_pin.py`.
+- **Releases inmutables** (ajuste del repo): una release publicada no admite cambios de assets ni de tag. `release.yml` / `release.sh` solo crean **borradores** (wheels + instaladores Windows vía `windows-installer.yml` como workflow reutilizable); el autor firma `SHA256SUMS.txt` y publica con `scripts/publish-release.sh`, que verifica assets, hashes y firma antes. Ningún agente publica una release. Detalle en `docs/RELEASE_SIGNING.md`.
 
 **Servidor**
 - `build_wstunnel_command()` es la **única** definición de la invocación de wstunnel (proceso y unit systemd).

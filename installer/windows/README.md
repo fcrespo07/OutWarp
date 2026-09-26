@@ -84,27 +84,29 @@ The version surfaces in three places — keep them aligned:
 
 ## Publishing a release
 
-Automated. `.github/workflows/windows-installer.yml` runs on every published
-GitHub Release: it spins up a `windows-latest` runner, executes
-`installer/windows/build/build.py` against the released tag, and uploads the
-three `OutWarpSetup-*.exe` editions plus a merged `SHA256SUMS.txt` (wheel +
-installer hashes) to the Release. So the normal flow is just:
+Automated, into a **draft**: releases are immutable once published, so every
+asset has to be attached before that (see `docs/RELEASE_SIGNING.md`). Pushing
+a `v*` tag runs `.github/workflows/release.yml`, which drafts the release
+with the wheels and then calls `windows-installer.yml`: a `windows-latest`
+runner executes `installer/windows/build/build.py` against the tag and uploads
+the three `OutWarpSetup-*.exe` editions plus a merged `SHA256SUMS.txt` (wheel +
+installer hashes) to the draft. Then sign the manifest and publish with
+`scripts/publish-release.sh`.
 
-1. `bash scripts/release.sh` (Linux) — builds wheels, tags, and creates the
-   Release. Publishing the Release triggers the Windows installer build.
-
-To build the installer for an existing tag (or rerun after a hiccup):
+To rebuild the installers into an existing draft (e.g. after a runner hiccup):
 
 ```bash
-gh workflow run windows-installer.yml -f tag=v0.6.1
+gh workflow run windows-installer.yml -f tag=v0.15.0
 ```
+
+The workflow refuses a release that is already published.
 
 Manual fallback (on a Windows box, no Actions):
 
 1. Tag the commit: `git tag v0.1.0 && git push origin v0.1.0`.
 2. Run `python installer\windows\build\build.py --version 0.1.0`.
 3. Upload `installer\windows\output\OutWarpSetup-*.exe` to the
-   GitHub Release named `v0.1.0`.
+   **draft** GitHub Release named `v0.1.0`, before it is published.
 
 End users download the `.exe` from the Release page and double-click
 it. UAC asks for permission, Inno Setup takes over from there — no

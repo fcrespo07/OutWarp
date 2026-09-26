@@ -1,26 +1,44 @@
 name: Windows installer
 
 # Builds the OutWarp Windows installers (full + client + server editions) and
-# attaches them to the GitHub Release, so the .exe stops being a manual step.
+# attaches them to the draft GitHub Release, so the .exe stops being a manual
+# step.
+#
+# Releases are immutable once published (repo setting), so every asset —
+# wheels, installers, SHA256SUMS.txt and its .minisig — has to land while the
+# release is still a draft. Hence no `release: published` trigger: by then it
+# is too late to attach anything. See docs/RELEASE_SIGNING.md.
 #
 # Triggers:
-#   - release: published  → fires automatically when scripts/release.sh creates
-#     a GitHub Release (the local PAT trigger re-runs Actions, unlike GITHUB_TOKEN).
-#   - workflow_dispatch   → manual run against any existing tag (e.g. to build
-#     0.6.1 retroactively, or to rebuild after a runner hiccup).
+#   - workflow_call       → from release.yml, right after it creates the draft.
+#   - workflow_dispatch   → manual run against an existing draft (e.g. after a
+#     runner hiccup, or after scripts/release.sh created the draft locally).
 #
 # The build itself (UI bundle → fetch wstunnel/WireGuard → PyInstaller → Inno
 # Setup → checksums) lives in installer/windows/build/build.py; this workflow
 # only provides the Windows runner + toolchain and uploads the artifacts.
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: "Draft release tag to attach the installers to"
+        required: true
+        type: string
+      ref:
+        description: "Git ref to build (defaults to the tag; a SHA when the tag only exists once the draft is published)"
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to build and attach the installer to (e.g. v0.6.1)"
+        description: "Draft release tag to build and attach the installer to (e.g. v0.15.0)"
         required: true
+      ref:
+        description: "Git ref to build (leave empty to build the tag)"
+        required: false
+        default: ""
 
 permissions:
   contents: write   # upload assets to the release
@@ -29,20 +47,30 @@ jobs:
   build-windows-installer:
     runs-on: windows-latest
     steps:
-      - name: Resolve tag
+      - name: Resolve tag and refuse a published release
         id: tag
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          $tag = "${{ github.event.release.tag_name }}"
-          if (-not $tag) { $tag = "${{ github.event.inputs.tag }}" }
-          if (-not $tag) { throw "no tag resolved from event or input" }
+          $tag = "${{ inputs.tag }}"
+          if (-not $tag) { throw "no tag given" }
+          $ref = "${{ inputs.ref }}"
+          if (-not $ref) { $ref = $tag }
+          $draft = gh release view $tag --json isDraft -q .isDraft
+          if ($LASTEXITCODE -ne 0) { throw "no release for $tag - create the draft first (release.yml or scripts/release.sh)" }
+          if ($draft -ne "true") {
+            throw "$tag is already published; releases are immutable, so its assets cannot change. Ship a new version instead."
+          }
           "tag=$tag" >> $env:GITHUB_OUTPUT
-          Write-Host "Building installers for $tag"
+          "ref=$ref" >> $env:GITHUB_OUTPUT
+          Write-Host "Building installers for draft $tag from $ref"
 
-      - name: Checkout the released sources
+      - name: Checkout the release sources
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.tag.outputs.tag }}
+          ref: ${{ steps.tag.outputs.ref }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -72,6 +100,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           $tag = "${{ steps.tag.outputs.tag }}"
           # Both updaters read ONE SHA256SUMS.txt per release and look an asset up
@@ -86,10 +115,11 @@ jobs:
           Write-Host "Merged manifest:"
           Get-Content installer/windows/output/SHA256SUMS.txt
 
-      - name: Upload installers + merged checksums to the release
+      - name: Upload installers + merged checksums to the draft
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           $tag = "${{ steps.tag.outputs.tag }}"
           $exes = Get-ChildItem installer/windows/output/OutWarpSetup-*.exe
@@ -107,7 +137,7 @@ jobs:
           # Signing happens on the maintainer's machine, never here: a key CI
           # could reach would be a key an attacker who owns CI could reach, and
           # the signature would prove nothing. See docs/RELEASE_SIGNING.md.
-          Write-Host "::notice::SHA256SUMS.txt is final. Sign it locally and upload SHA256SUMS.txt.minisig — see docs/RELEASE_SIGNING.md"
+          Write-Host "::notice::SHA256SUMS.txt is final. Sign it locally, upload SHA256SUMS.txt.minisig and publish with scripts/publish-release.sh — see docs/RELEASE_SIGNING.md"
 
       - name: Upload installers as workflow artifacts (debugging)
         uses: actions/upload-artifact@v4
