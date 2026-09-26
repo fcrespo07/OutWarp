@@ -811,7 +811,9 @@ def test_run_setup_fails_when_deps_missing(tmp_path):
     fake_window = MagicMock()
     api._window = fake_window
     with patch("outwarp_server.api.find_wstunnel", return_value=None), \
-         patch("outwarp_server.api.find_wg", return_value=None):
+         patch("outwarp_server.api.find_wg", return_value=None), \
+         patch("outwarp_server.api.get_server_platform",
+               return_value=_gui_platform(os_managed=False)):
         r = api.run_setup({"endpoint": "1.2.3.4"})
     assert r["ok"] is False
     assert "missing dependencies" in r["error"]
