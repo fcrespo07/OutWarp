@@ -856,6 +856,7 @@ class TestServe:
         mgr.stop.assert_called_once()
 
 
+@pytest.mark.skipif(not hasattr(__import__("signal"), "SIGHUP"), reason="POSIX signal")
 class TestServeReload:
     """B-030: `restart` inside the container used to be a no-op reported as
     done. It now signals serve, which reloads and restarts the transport."""
@@ -887,6 +888,7 @@ class TestServeReload:
         mgr.stop.assert_called_once()
 
 
+@pytest.mark.skipif(not hasattr(__import__("signal"), "SIGHUP"), reason="POSIX signal")
 class TestContainerRestart:
     def test_restart_signals_the_serve_process(self, monkeypatch) -> None:
         import signal as _signal

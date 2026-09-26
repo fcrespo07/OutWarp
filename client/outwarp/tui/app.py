@@ -216,7 +216,9 @@ class OutWarpClientTUI(App):
             self._push_unique("dashboard")
         elif state == TunnelState.FAILED:
             self._push_unique("failed")
-        elif state == TunnelState.DISCONNECTED and prev is not None:
+        elif state == TunnelState.DISCONNECTED and prev is not None and self.is_running:
+            # Not while shutting down: quitting stops the manager, and by then
+            # the screens are gone.
             self._push_unique("dashboard")
 
     def show_disconnected(self) -> None:

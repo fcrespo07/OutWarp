@@ -486,15 +486,26 @@ async def test_k_on_connecting_cancels_and_returns_to_dashboard() -> None:
     app.exit.assert_not_called()
 
 
-def test_disconnected_state_routes_to_dashboard() -> None:
-    from unittest.mock import patch
+def _route(running: bool):
+    from unittest.mock import PropertyMock, patch
 
     from outwarp.tunnel import TunnelState
 
     app = OutWarpClientTUI()
     with patch.object(app, "_push_unique") as push, \
-         patch.object(app, "_notify_state"):
+         patch.object(app, "_notify_state"), \
+         patch.object(OutWarpClientTUI, "is_running", new_callable=PropertyMock,
+                      return_value=running):
         app._route_state(TunnelState.CONNECTING)
         app._route_state(TunnelState.DISCONNECTED)
+    return push
 
-    assert push.call_args_list[-1].args == ("dashboard",)
+
+def test_disconnected_state_routes_to_dashboard() -> None:
+    assert _route(running=True).call_args_list[-1].args == ("dashboard",)
+
+
+def test_disconnect_during_shutdown_does_not_push_a_screen() -> None:
+    # Quitting stops the manager; the DISCONNECTED it reports arrives after the
+    # screens are gone.
+    assert _route(running=False).call_args_list[-1].args == ("connecting",)
