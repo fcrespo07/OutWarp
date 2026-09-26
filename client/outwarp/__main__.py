@@ -1,5 +1,5 @@
 import sys
 
-from outwarp.app import main
+from outwarp.cli import main
 
 sys.exit(main())

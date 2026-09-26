@@ -122,7 +122,8 @@ silent-install flow. Regular users should not need it.
 C:\Program Files\OutWarp\
 ├── wstunnel.exe                    ← shared transport binary
 ├── client\
-│   ├── outwarp.exe                 ← tray app
+│   ├── outwarp-gui.exe             ← tray app (what the shortcuts open)
+│   ├── outwarp.exe                 ← console CLI: `outwarp status`, `connect`…
 │   └── _internal\…                 ← Python runtime + ui/ + resources/
 └── server\
     ├── outwarp-server-gui.exe      ← admin GUI + tray (the default)
@@ -138,6 +139,11 @@ stays dormant until the user flips **Settings → "CLI de consola"**, which adds
 needs PATH — it finds `wstunnel.exe` in `{app}` and `wg.exe` in the WireGuard
 install dir directly.
 
+The client CLI (`client\outwarp.exe`) is not on PATH either; run it by its
+full path from a terminal (an elevated one for `connect`). Until 0.15.0
+`outwarp.exe` was the tray app and ignored its arguments; a bare `outwarp.exe`
+still opens the tray app, so shortcuts from older versions keep working.
+
 User data (config, logs, settings) stays under
 `%LOCALAPPDATA%\OutWarp\` and survives upgrades / uninstalls.
 
@@ -147,7 +153,8 @@ If you want to verify a PyInstaller build before running Inno Setup:
 
 ```powershell
 python installer\windows\build\build.py --no-installer
-.\dist\outwarp-client\outwarp.exe
+.\dist\outwarp-client\outwarp-gui.exe
+.\dist\outwarp-client\outwarp.exe --help
 .\dist\outwarp-server\outwarp-server-gui.exe
 .\dist\outwarp-server\outwarp-server.exe --help
 ```

@@ -186,17 +186,15 @@ def _kill_running() -> None:
     process (its argv is literally `.../outwarp uninstall`) and kills it
     with no SIGTERM handler installed on this path, before a single byte of
     config, a shim, the sudoers rule or the venv gets removed (FIX-06a). Same
-    story on Windows: `outwarp.exe` predates the 0.5.0 single-entry-point
-    consolidation (project.scripts only ships `outwarp` now) and no
-    longer names anything running, so the old taskkill call was a silent
-    no-op rather than self-destructive — fixed here too since it's the same
-    "what actually names a live client process" bug.
+    story on Windows: since 0.15.0 `outwarp.exe` is the console CLI running
+    this very command, and the tray app is `outwarp-gui.exe` (B-027), so only
+    the latter may be killed.
     """
     try:
         if sys.platform == "win32":
             import subprocess
             subprocess.run(
-                ["taskkill", "/F", "/IM", "outwarp.exe"],
+                ["taskkill", "/F", "/IM", "outwarp-gui.exe"],
                 capture_output=True,
             )
         else:

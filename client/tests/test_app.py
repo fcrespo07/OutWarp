@@ -242,3 +242,36 @@ class TestMainEntryPoint:
         assert rc == 0
         kwargs = fake_webview.create_window.call_args.kwargs
         assert kwargs["hidden"] is False
+
+
+class TestRefreshWindowsAutostart:
+    """B-027: the login entry of pre-0.15.0 installs points at outwarp.exe,
+    which is the console CLI now."""
+
+    def _run(self, monkeypatch, *, platform: str, frozen: bool, start_at_boot: bool):
+        from unittest.mock import MagicMock
+
+        from outwarp import app
+
+        plat = MagicMock()
+        monkeypatch.setattr(app.sys, "platform", platform)
+        if frozen:
+            monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+        else:
+            monkeypatch.delattr(app.sys, "frozen", raising=False)
+        monkeypatch.setattr(app.sys, "executable", r"C:\OutWarp\client\outwarp-gui.exe")
+        monkeypatch.setattr("outwarp.platforms.get_platform", lambda: plat)
+        app._refresh_windows_autostart({"start_at_boot": start_at_boot})
+        return plat
+
+    def test_rewrites_the_entry_for_the_gui_exe(self, monkeypatch) -> None:
+        plat = self._run(monkeypatch, platform="win32", frozen=True, start_at_boot=True)
+        plat.install_autostart.assert_called_once_with([r"C:\OutWarp\client\outwarp-gui.exe"])
+
+    def test_leaves_it_alone_when_start_at_boot_is_off(self, monkeypatch) -> None:
+        plat = self._run(monkeypatch, platform="win32", frozen=True, start_at_boot=False)
+        plat.install_autostart.assert_not_called()
+
+    def test_only_touches_frozen_windows_builds(self, monkeypatch) -> None:
+        plat = self._run(monkeypatch, platform="win32", frozen=False, start_at_boot=True)
+        plat.install_autostart.assert_not_called()

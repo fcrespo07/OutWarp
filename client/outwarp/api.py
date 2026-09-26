@@ -893,7 +893,7 @@ class Api:
         The slim client installer omits the server bundle, so applying it over a
         machine that runs both apps would leave the server stale. In that case
         prefer the combined installer. Only meaningful in a frozen one-folder
-        build, where sys.executable is {app}\\client\\outwarp.exe and the server
+        build, where sys.executable is {app}\\client\\outwarp-gui.exe and the server
         (if installed) is {app}\\server\\.
         """
         if sys.platform != "win32" or not getattr(sys, "frozen", False):
@@ -1034,7 +1034,7 @@ class Api:
         Setup probes our AppMutex (Global\\OutWarpClient, see outwarp.iss) at
         startup, and /VERYSILENT mode has no retry dialog. If the mutex is
         still held when Inno checks it — and api.shutdown() can take a second
-        or two — Inno silently skips locked files (outwarp.exe and the mapped
+        or two — Inno silently skips locked files (outwarp-gui.exe and the mapped
         _internal/*.pyd next to it) and the "updated" install keeps running
         the old binary. The user sees the app close and reopen at the OLD
         version. This bit users updating v0.3.0 → v0.4.0.

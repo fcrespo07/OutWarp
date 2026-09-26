@@ -738,6 +738,24 @@ def main_legacy_alias(argv: list[str] | None = None) -> int:
     return main(argv)
 
 
+def _launch_windows_gui() -> int:
+    """Bare `outwarp` on Windows opens the app, as it did before 0.15.0.
+
+    Since then `outwarp.exe` is the console CLI and the GUI is
+    `outwarp-gui.exe` (B-027). Shortcuts and autostart entries written by older
+    versions still point at `outwarp.exe` with no arguments; hand them over to
+    the GUI next to it instead of printing usage into a console that closes.
+    """
+    if getattr(sys, "frozen", False):
+        gui = Path(sys.executable).with_name("outwarp-gui.exe")
+        if gui.exists():
+            os.startfile(gui)  # type: ignore[attr-defined]  # ShellExecute honours its UAC manifest
+            return 0
+    from outwarp.app import main as gui_main
+
+    return gui_main()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     try:
@@ -745,6 +763,8 @@ def main(argv: list[str] | None = None) -> int:
         argcomplete.autocomplete(parser)
     except ImportError:
         pass
+    if sys.platform == "win32" and not (sys.argv[1:] if argv is None else argv):
+        return _launch_windows_gui()
     args = parser.parse_args(argv)
     handler = _COMMANDS.get(args.command)
     if handler is None:

@@ -5,7 +5,9 @@
 ; Requires Inno Setup 6+ — https://jrsoftware.org/isinfo.php
 ;
 ; Layout the script expects (produced by build.py beforehand):
-;   dist\outwarp-client\           PyInstaller one-folder for the client GUI
+;   dist\outwarp-client\           PyInstaller one-folder for the client
+;                                  (outwarp-gui.exe + console outwarp.exe
+;                                   sharing one _internal)
 ;   dist\outwarp-server\           PyInstaller one-folder for the server
 ;                                  (outwarp-server-gui.exe + dormant
 ;                                   outwarp-server.exe sharing one _internal)
@@ -30,7 +32,7 @@
 #define AppName        "OutWarp"
 #define AppPublisher   "Ferran Crespo"
 #define AppURL         "https://github.com/fcrespo07/OutWarp"
-#define ClientExeName  "outwarp.exe"
+#define ClientExeName  "outwarp-gui.exe"
 #define ServerGuiExe   "outwarp-server-gui.exe"
 
 #define RepoRoot       "..\.."

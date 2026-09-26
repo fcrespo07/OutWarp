@@ -33,6 +33,26 @@ _DEFAULT_MUTEX_NAME = MUTEX_NAME
 # every surface (GUI, TUI, connect, daemon) now shares this one lock.
 _SingleInstanceLock = TunnelOwnerLock
 
+def _refresh_windows_autostart(settings: dict) -> None:
+    """Re-point the login entry at the running exe when start-at-boot is on.
+
+    Before 0.15.0 the tray app was `outwarp.exe`; it is `outwarp-gui.exe` now
+    and `outwarp.exe` is the console CLI (B-027). The registry value written by
+    the old version would still work (a bare CLI hands over to the GUI) but
+    flashes a console at every login, so rewrite it. Idempotent.
+    """
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    if not bool(settings.get("start_at_boot", False)):
+        return
+    try:
+        from outwarp.platforms import get_platform
+
+        get_platform().install_autostart([sys.executable])
+    except Exception as exc:  # noqa: BLE001 — never block startup on this
+        log.warning("could not refresh the autostart entry: %s", exc)
+
+
 def _try_load_config() -> ClientConfig | None:
     path = default_config_path()
     if not path.exists():
@@ -106,6 +126,7 @@ def main() -> int:
 
     _stage(f"OutWarp client v{__version__} starting")
     startup_settings = load_settings()
+    _refresh_windows_autostart(startup_settings)
     if bool(startup_settings.get("kill_switch", False)):
         # Same rule as the daemon: with the switch on, a rule left by a
         # crashed session is protection, not litter. reconcile() releases it

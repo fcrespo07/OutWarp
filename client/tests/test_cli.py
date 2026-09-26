@@ -65,11 +65,43 @@ def imported_profile(isolated_config):
 # ── argparse plumbing ───────────────────────────────────────────────────────
 
 
-def test_parser_help_no_command(capsys):
+def test_parser_help_no_command(capsys, monkeypatch):
     """No subcommand → argparse exits with code 2 and prints usage."""
+    monkeypatch.setattr(cli.sys, "platform", "linux")
     with pytest.raises(SystemExit) as excinfo:
         cli.main([])
     assert excinfo.value.code == 2
+
+
+def test_bare_outwarp_on_windows_hands_over_to_the_gui_exe(monkeypatch, tmp_path):
+    # B-027: outwarp.exe is the console CLI now; shortcuts and autostart entries
+    # from older versions still run it with no arguments.
+    (tmp_path / "outwarp-gui.exe").write_text("")
+    started = []
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(cli.sys, "executable", str(tmp_path / "outwarp.exe"))
+    monkeypatch.setattr(cli.os, "startfile", started.append, raising=False)
+
+    assert cli.main([]) == 0
+    assert started == [tmp_path / "outwarp-gui.exe"]
+
+
+def test_bare_outwarp_on_windows_from_source_runs_the_gui(monkeypatch):
+    import outwarp.app
+
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.delattr(cli.sys, "frozen", raising=False)
+    monkeypatch.setattr(outwarp.app, "main", lambda: 7)
+
+    assert cli.main([]) == 7
+
+
+def test_windows_subcommands_still_parse(monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--version"])
+    assert excinfo.value.code == 0
 
 
 def test_parser_unknown_command(capsys):
