@@ -229,9 +229,32 @@ Filename: "sc.exe"; Parameters: "stop WireGuardTunnel$OutWarp-Server"; \
     Flags: runhidden; RunOnceId: "StopWGServer"
 Filename: "sc.exe"; Parameters: "delete WireGuardTunnel$OutWarp-Server"; \
     Flags: runhidden; RunOnceId: "DeleteWGServer"
+#if HasClient
+; B-026: if the client died with the kill switch engaged, the firewall's default
+; outbound action is still Block, and uninstalling would leave the machine with
+; no network and no OutWarp to undo it. Put the policy back only when one of our
+; rules is still there (a policy the user set themselves is left alone), then
+; drop the rules (names from client/outwarp/platforms/windows.py) and the client
+; tunnel service. All best-effort and harmless when nothing is set.
+Filename: "powershell.exe"; \
+    Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""if (Get-NetFirewallRule -DisplayName 'OutWarp-KillSwitch-*' -ErrorAction SilentlyContinue) {{ Set-NetFirewallProfile -All -DefaultOutboundAction Allow }"""; \
+    Flags: runhidden; RunOnceId: "KillSwitchPolicy"
+Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=OutWarp-KillSwitch-Allow"; \
+    Flags: runhidden; RunOnceId: "KillSwitchAllow"
+Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=OutWarp-KillSwitch-Tunnel"; \
+    Flags: runhidden; RunOnceId: "KillSwitchTunnel"
+Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=OutWarp-KillSwitch-Block"; \
+    Flags: runhidden; RunOnceId: "KillSwitchBlock"
+Filename: "{commonpf}\WireGuard\wireguard.exe"; Parameters: "/uninstalltunnelservice OutWarp"; \
+    Flags: runhidden skipifdoesntexist; RunOnceId: "RemoveWGClient"
+#endif
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\bundle"
+#if HasClient
+; The client's tunnel .conf holds its private key (B-025).
+Type: files; Name: "{commonappdata}\WireGuard\*.conf"
+#endif
 ; Logs + configs live under per-user %LOCALAPPDATA%\OutWarp and are kept
 ; intentionally so reinstalling preserves the user's profile / clients.
 
