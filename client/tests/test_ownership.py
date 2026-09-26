@@ -279,3 +279,26 @@ class TestApiServiceHandover:
         api.set_settings({"advanced": True})
         after = load_settings()
         assert after["advanced"] is True and after["preferred_ui"] == "tui"
+
+
+def test_show_request_is_a_noop_off_windows(monkeypatch) -> None:
+    monkeypatch.setattr("sys.platform", "linux")
+    from outwarp.ownership import listen_for_show_requests, request_show_existing
+    assert request_show_existing("Local\\unused") is False
+    assert listen_for_show_requests(lambda: None, "Local\\unused") is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows named event")
+def test_second_launch_asks_the_first_to_show_its_window() -> None:
+    # A second launch used to exit silently while the first sat hidden in the
+    # tray; now it signals the owner, which brings its window up.
+    import threading
+
+    from outwarp.ownership import listen_for_show_requests, request_show_existing
+
+    name = f"Local\\OutWarpClientShow-test-{uuid.uuid4().hex[:8]}"
+    assert request_show_existing(name) is False  # nobody listening yet
+    shown = threading.Event()
+    assert listen_for_show_requests(shown.set, name) is True
+    assert request_show_existing(name) is True
+    assert shown.wait(2)

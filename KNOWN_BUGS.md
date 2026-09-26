@@ -157,11 +157,8 @@ Leyenda de estado:
 **Fix:** `window.DSfmt.makeBoundedPeak` (`dash-data.jsx`): en vez de decaer sin límite, recuerda el máximo de las últimas N muestras del máximo de la ventana. El tiempo de recuperación queda acotado (ventana + memoria, ~66 s con los valores por defecto) **independientemente de lo grande que fuera el pico**, y sigue suavizando tráfico realista con ráfagas (vídeo/descargas) sin "respirar" — verificado con simulación numérica de ambos escenarios antes de aplicar el cambio.
 **Prevención:** Cualquier "peak-hold" para escalar un eje debe tener una cota de memoria ligada al tamaño de la ventana que se muestra, nunca un decaimiento puramente exponencial sin límite — si no, el tiempo de recuperación crece con la magnitud del pico, que es exactamente el caso que un pico grande (una prueba de velocidad) hace peor.
 
----
 
-## Abiertos
-
-### 🔴 B-023 — Windows: el servicio del túnel queda en `Automatic` y WireGuard se levanta solo en el siguiente arranque
+### ✅ B-023 — Windows: el servicio del túnel queda en `Automatic` y WireGuard se levanta solo en el siguiente arranque
 **Síntomas:** Tras apagar, suspender o reiniciar Windows con OutWarp conectado, en el arranque siguiente WireGuard aparece activo sin haber abierto OutWarp — incluso con "Iniciar al iniciar sesión" desactivado, y antes de iniciar sesión. `Get-Service *ireguard*` muestra:
 
 
@@ -193,9 +190,24 @@ _run(["sc.exe", "config", f"WireGuardTunnel${name}", "start=", "demand"])
 
 Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructura que los `test_windows_install_autostart_*`: verificar que la secuencia de llamadas incluye el `sc.exe config ... start= demand` después del install.
 
+**Fix (2026-09-26):** `WindowsPlatform.install_wg_tunnel` ejecuta `sc config WireGuardTunnel$<name> start= demand` justo después de `/installtunnelservice` (un fallo solo se registra en el log, no aborta la conexión). Tests: `test_install_wg_tunnel_sets_demand_start_after_install` y `..._survives_demand_start_failure` en `client/tests/test_platforms.py`. Un servicio que ya esté en `Automatic` por una versión anterior se corrige en la siguiente conexión, porque se reinstala.
 **Nota:** el servidor Windows (`server/outwarp_server/platforms/windows.py`) usa la misma llamada, pero allí el arranque automático **sí** es el comportamiento deseado — el fix es sólo para el cliente.
 
 **Prevención:** Al delegar la creación de un servicio en un binario de terceros, no asumir su tipo de arranque por defecto. Si el ciclo de vida lo gestiona la app (instalar al conectar / desinstalar al desconectar), el servicio debe quedar en `demand`, para que un apagado sucio no lo convierta de facto en un servicio de arranque del sistema. Mismo razonamiento que B-016: el estado que deja el SCM sobrevive al proceso que lo creó.
+
+---
+
+## Abiertos
+
+### 🟡 B-024 — Windows: dos iconos en la bandeja tras una cuarentena de `wstunnel.exe` (mitigado, sin reproducir)
+**Síntomas:** Reportado por el autor (2026-09-26): Microsoft Defender / Smart App Control quitó `wstunnel.exe` de repente; al volver a abrir OutWarp aparecieron dos iconos de OutWarp en la bandeja.
+**Hipótesis (sin reproducir, varias causas posibles):**
+1. **Mutex de instancia única poco fiable.** `TunnelOwnerLock._acquire_windows` leía el error con `ctypes.windll.kernel32.GetLastError()` en una llamada aparte; el intérprete puede ejecutar llamadas Win32 propias entre medias y resetearlo, y entonces la segunda instancia cree que ha creado el mutex → dos GUIs, dos trays, dos `TunnelManager` sobre la misma interfaz.
+2. **La segunda instancia salía en silencio.** Con la primera oculta en la bandeja, abrir el acceso directo no mostraba nada, invitando a abrirlo otra vez.
+3. **Icono fantasma.** Si un proceso muere sin quitar su icono, Windows lo deja pintado hasta pasar el ratón por encima; no se puede limpiar desde otro proceso.
+4. **Relacionado:** `TunnelManager(config)` resolvía `wstunnel.exe` al construirse, así que con el binario en cuarentena la GUI moría al arrancar ("Fatal error in client main()") en vez de enseñar el banner de integridad.
+**Fix (2026-09-26):** (1) `ctypes.WinDLL("kernel32", use_last_error=True)` + `ctypes.get_last_error()` y firmas `argtypes`/`restype` (`client/outwarp/ownership.py`). (2) Evento con nombre `Global\OutWarpClientShow`: la segunda instancia lo señala y sale; la primera muestra su ventana (`request_show_existing` / `listen_for_show_requests`). (4) `Tunnel` resuelve `wstunnel` de forma perezosa y lo vuelve a comprobar en cada `connect()`, antes de subir WireGuard; si falta o Windows impide ejecutarlo (`winerror` 2/3/225/1260/4551), lanza `TransportUnavailableError` con un mensaje que apunta a Defender / Smart App Control, y `TunnelManager` pasa a `FAILED` sin recorrer el backoff. (3) no tiene arreglo desde la app.
+**Pendiente:** confirmar en Windows real. Si vuelve a pasar, mirar en `%APPDATA%\OutWarp\outwarp.log` si hay dos líneas `starting` seguidas sin `shut down` entre ellas (dos instancias vivas → causa 1) o una sola (icono fantasma → causa 3). Defender en sí no se puede evitar sin firmar el binario (Authenticode, fuera del criterio de 1.0) — Smart App Control bloquea ejecutables sin firma ni reputación.
 
 ---
 

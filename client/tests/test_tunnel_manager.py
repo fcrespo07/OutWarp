@@ -14,7 +14,7 @@ from outwarp.config import (
     TunnelConfig,
     WireguardConfig,
 )
-from outwarp.tunnel import TunnelManager, TunnelState
+from outwarp.tunnel import TransportUnavailableError, TunnelManager, TunnelState
 
 
 def _make_config(max_attempts: int = 3, delays: list[int] | None = None) -> ClientConfig:
@@ -142,6 +142,19 @@ def test_failed_state_after_max_attempts():
     m.start()
     assert _wait_until(lambda: m.state == TunnelState.FAILED, timeout=3)
     assert fake.connect_calls == 3
+    m.stop(timeout=2)
+
+
+def test_missing_transport_fails_without_retrying():
+    # wstunnel quarantined by an antivirus: walking the backoff (~2 min by
+    # default) cannot bring it back, so the user sees the cause at once.
+    fake = FakeTunnel()
+    fake.connect_errors = [TransportUnavailableError("wstunnel.exe was removed")] * 3
+    m = _make_manager(_make_config(max_attempts=3, delays=[0, 0, 0]), fake)
+    m.start()
+    assert _wait_until(lambda: m.state == TunnelState.FAILED, timeout=3)
+    assert fake.connect_calls == 1
+    assert "was removed" in (m.last_error or "")
     m.stop(timeout=2)
 
 

@@ -85,6 +85,38 @@ class TunnelError(RuntimeError):
     pass
 
 
+class TransportUnavailableError(TunnelError):
+    """wstunnel is missing or may not run here. Retrying cannot fix it, so
+    TunnelManager fails straight away instead of walking its backoff."""
+
+
+# Windows errors meaning "this executable may not run here", not "this rung
+# failed": ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND (quarantined between the
+# existence check and the spawn), ERROR_VIRUS_INFECTED, ERROR_ACCESS_DISABLED_BY_POLICY
+# and Smart App Control / WDAC's "an Application Control policy has blocked this file".
+_BLOCKED_BINARY_WINERRORS = frozenset({2, 3, 225, 1260, 4551})
+
+
+def _is_blocked_binary_error(exc: OSError) -> bool:
+    if isinstance(exc, FileNotFoundError):
+        return True
+    return getattr(exc, "winerror", None) in _BLOCKED_BINARY_WINERRORS
+
+
+def _wstunnel_unavailable_hint() -> str:
+    if sys.platform == "win32":
+        return (
+            "This is usually Microsoft Defender quarantining it or Smart App "
+            "Control blocking it. Restore it from Windows Security → Protection "
+            "history (or reinstall OutWarp), then connect again."
+        )
+    return "Reinstall wstunnel (re-run install.sh) and connect again."
+
+
+def _wstunnel_unavailable(path: Path, what: str) -> str:
+    return f"The tunnel transport ({path}) {what}. {_wstunnel_unavailable_hint()}"
+
+
 def find_wstunnel() -> Path:
     override = os.environ.get(_ENV_OVERRIDE)
     if override:
@@ -247,7 +279,10 @@ class Tunnel:
     ) -> None:
         self._config = config
         self._platform = platform or get_platform()
-        self._wstunnel_bin = wstunnel_bin or find_wstunnel()
+        # Resolved lazily (see _ensure_wstunnel): a quarantined wstunnel.exe
+        # must not stop the GUI from starting and showing why.
+        self._wstunnel_bin: Path | None = wstunnel_bin
+        self._wstunnel_injected = wstunnel_bin is not None
         self._proc: subprocess.Popen[str] | None = None
         self._stdout_thread: Thread | None = None
         self._wg_installed = False
@@ -351,6 +386,8 @@ class Tunnel:
                 "complete. Import the .owcfg again to retry; if its token has "
                 "expired, ask the server admin for a new profile."
             )
+        # Before WireGuard captures all traffic for a transport that cannot start.
+        self._ensure_wstunnel()
         self._active_strategy = None
         self._phase_cb("resolve")
 
@@ -425,6 +462,24 @@ class Tunnel:
             self.disconnect()
             raise
 
+    def _ensure_wstunnel(self) -> Path:
+        """The wstunnel binary, re-checked on every connect: an antivirus can
+        remove it mid-session, and a restored one should work without a restart.
+        A path passed in by the caller is used as given."""
+        if self._wstunnel_bin is not None and (
+            self._wstunnel_injected or self._wstunnel_bin.exists()
+        ):
+            return self._wstunnel_bin
+        try:
+            self._wstunnel_bin = find_wstunnel()
+        except TunnelError as exc:
+            if self._wstunnel_bin is not None:
+                raise TransportUnavailableError(
+                    _wstunnel_unavailable(self._wstunnel_bin, "was removed")
+                ) from exc
+            raise TransportUnavailableError(f"{exc}. {_wstunnel_unavailable_hint()}") from exc
+        return self._wstunnel_bin
+
     def _is_attemptable(self, strat: ConnectionStrategy) -> bool:
         if strat.proxy or strat.scheme != "wss":
             return True
@@ -450,6 +505,13 @@ class Tunnel:
         self._check_cancelled()
         try:
             self._start_wstunnel(strat)
+        except OSError as exc:
+            if _is_blocked_binary_error(exc):
+                # Same failure on every rung: abort the ladder with the cause.
+                raise TransportUnavailableError(
+                    _wstunnel_unavailable(self._ensure_wstunnel(), f"could not be run ({exc})")
+                ) from exc
+            return False, f"wstunnel failed to start: {exc}"
         except Exception as exc:  # noqa: BLE001 — surface as a rung failure, keep laddering
             return False, f"wstunnel failed to start: {exc}"
 
@@ -527,7 +589,7 @@ class Tunnel:
         return False
 
     def _start_wstunnel(self, strat: ConnectionStrategy) -> None:
-        cmd = strategy_to_command(strat, self._wstunnel_bin, _forward_spec(self._config))
+        cmd = strategy_to_command(strat, self._ensure_wstunnel(), _forward_spec(self._config))
         log.info("Starting wstunnel: %s", redact_command(cmd))
         self._proc = subprocess.Popen(
             cmd,
@@ -840,6 +902,11 @@ class TunnelManager:
             )
             try:
                 self._tunnel.connect()
+            except TransportUnavailableError as exc:
+                log.error("Connect failed: %s", exc)
+                self._set_error(str(exc))
+                self._set_state(TunnelState.FAILED)
+                return
             except Exception as exc:
                 if self._stop_event.is_set():
                     return  # cancelled by stop(); connect() already cleaned up

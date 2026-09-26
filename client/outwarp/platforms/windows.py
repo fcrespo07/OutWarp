@@ -110,6 +110,16 @@ class WindowsPlatform(Platform):
             )
         if result.stdout.strip():
             log.info("wireguard /installtunnelservice: %s", result.stdout.strip())
+        # /installtunnelservice registers the service as Automatic, so a tunnel
+        # still installed at an unclean shutdown comes back on its own at the next
+        # boot, with no OutWarp and no wstunnel under it — no network (B-023). We
+        # (re)install and start it on every connect, so demand start is enough.
+        demand = _run(["sc", "config", f"WireGuardTunnel${name}", "start=", "demand"])
+        if demand.returncode != 0:
+            log.warning(
+                "Could not set WireGuard tunnel service '%s' to demand start: %s",
+                name, (demand.stderr or demand.stdout).strip(),
+            )
         # /installtunnelservice returns before the service reaches RUNNING; poll until it does
         # so that is_wg_tunnel_active() returns True by the time wstunnel starts.
         deadline = time.monotonic() + 15.0

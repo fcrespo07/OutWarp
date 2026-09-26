@@ -22,6 +22,7 @@ from outwarp.platforms.base import Platform, PlatformError
 from outwarp.tunnel import (
     _ANSI_ESCAPE_RE,
     _WSTUNNEL_NOISE_RE,
+    TransportUnavailableError,
     Tunnel,
     TunnelError,
     build_wstunnel_command,
@@ -282,6 +283,54 @@ def test_connect_happy_path():
     assert t._proc is fake_proc
     # The first, cleanest rung (plain direct) wins on a friendly network.
     assert t.active_strategy_id == "direct"
+
+
+def test_connect_fails_before_wireguard_when_wstunnel_is_gone(tmp_path, monkeypatch):
+    # Defender quarantined wstunnel.exe after the Tunnel resolved it: fail with
+    # the cause before WireGuard captures all traffic for a dead transport.
+    binary = tmp_path / "wstunnel"
+    binary.write_text("x")
+    monkeypatch.setenv("OUTWARP_WSTUNNEL", str(binary))
+    plat = FakePlatform()
+    t = Tunnel(_make_config(), platform=plat)
+    assert t._ensure_wstunnel() == binary
+    binary.unlink()
+
+    with pytest.raises(TransportUnavailableError, match="was removed"):
+        t.connect()
+    assert plat.installed is False
+
+
+def test_tunnel_builds_without_wstunnel(tmp_path, monkeypatch):
+    # The GUI constructs its TunnelManager at startup; a quarantined binary
+    # must not crash it before the integrity banner can explain.
+    monkeypatch.setenv("OUTWARP_WSTUNNEL", str(tmp_path / "missing"))
+    t = Tunnel(_make_config(), platform=FakePlatform())
+    with pytest.raises(TransportUnavailableError):
+        t.connect()
+
+
+def test_blocked_wstunnel_aborts_the_ladder():
+    # Smart App Control / WDAC: the file is there but may not run. Every rung
+    # would fail the same way, so the ladder stops at the first one.
+    cfg = _make_config()
+    plat = FakePlatform()
+    blocked = OSError("An Application Control policy has blocked this file")
+    blocked.winerror = 4551
+    popen = MagicMock(side_effect=blocked)
+
+    with (
+        patch("outwarp.tunnel.tcp_probe", return_value=True),
+        patch("outwarp.tunnel.verify_tls_fingerprint"),
+        patch("outwarp.tunnel.subprocess.Popen", popen),
+        patch("outwarp.tunnel.get_tunnel_stats", return_value=None),
+        pytest.raises(TransportUnavailableError, match="could not be run"),
+    ):
+        t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"))
+        t.connect()
+
+    assert popen.call_count == 1
+    assert plat.installed is False
 
 
 def test_connect_reports_phases_in_order():

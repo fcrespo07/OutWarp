@@ -16,6 +16,8 @@ from outwarp.ownership import (
     MUTEX_NAME,
     TunnelOwnerLock,
     describe_owner,
+    listen_for_show_requests,
+    request_show_existing,
     service_is_active,
 )
 from outwarp.settings import load_settings
@@ -119,7 +121,10 @@ def main() -> int:
     service_managed = sys.platform == "linux" and service_is_active()
     lock = _SingleInstanceLock()
     if not service_managed and not lock.acquire():
-        log.error("Another instance is already running (%s) — exiting", describe_owner())
+        if request_show_existing():
+            log.info("Another instance is already running — asked it to show its window")
+        else:
+            log.error("Another instance is already running (%s) — exiting", describe_owner())
         return 1
     _stage("service-managed viewer" if service_managed else "single-instance lock acquired")
 
@@ -272,6 +277,7 @@ def main() -> int:
                 manager.start()
                 _stage("tunnel manager started")
 
+        listen_for_show_requests(_show_window)
         tray.run()
         _stage("tray running — about to hand off to webview.start()")
         webview.start(gui="edgechromium" if sys.platform == "win32" else None)

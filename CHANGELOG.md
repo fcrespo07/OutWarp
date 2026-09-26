@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Windows: WireGuard no longer comes back on its own after an unclean
+  shutdown** (B-023). The tunnel service is now set to demand start right
+  after it is installed; before, a machine switched off while connected
+  booted with the tunnel up, no transport under it and no internet until
+  OutWarp was opened.
+- **Windows: a second launch no longer starts a second OutWarp** (B-024).
+  The single-instance check read the Win32 error code unreliably, which could
+  let two copies (and two tray icons) run at once. Opening OutWarp while it
+  already runs now brings the existing window to the front instead of exiting
+  silently.
+- **A quarantined or blocked `wstunnel.exe` is reported, not crashed on.** The
+  GUI used to die at startup when Defender had removed the binary; now it
+  opens and shows the integrity banner. Connecting checks the binary before
+  bringing WireGuard up and fails at once with a message pointing at
+  Defender / Smart App Control, instead of retrying for about two minutes.
+
 ## [0.14.0] — 2026-09-15
 
 ### Changed

@@ -75,6 +75,51 @@ def test_install_wg_tunnel_writes_conf_and_invokes_wireguard(tmp_path, monkeypat
     assert install_call[2] == str(path)
 
 
+def _fake_install_run(calls: list[list[str]], config_rc: int = 0):
+    def fake_run(cmd, *args, **kwargs):
+        calls.append(list(cmd))
+        if cmd[0] == "sc" and cmd[1] == "query":
+            installed = any(len(c) > 1 and c[1] == "/installtunnelservice" for c in calls[:-1])
+            if installed:
+                return _mock_run(0, stdout="STATE : 4 RUNNING")
+            return _mock_run(1060, stderr="service not found")
+        if cmd[0] == "sc" and cmd[1] == "config":
+            return _mock_run(config_rc, stderr="" if config_rc == 0 else "access denied")
+        return _mock_run(0)
+    return fake_run
+
+
+def test_install_wg_tunnel_sets_demand_start_after_install(tmp_path, monkeypatch):
+    # B-023: /installtunnelservice leaves the service Automatic, so a tunnel
+    # left installed by an unclean shutdown came back at boot without wstunnel.
+    p = WindowsPlatform()
+    monkeypatch.setattr(p, "_conf_dir", tmp_path)
+    monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
+    (tmp_path / "wireguard.exe").write_text("fake")
+    calls: list[list[str]] = []
+
+    with patch("subprocess.run", side_effect=_fake_install_run(calls)):
+        p.install_wg_tunnel("MyTunnel", "[Interface]")
+
+    install_idx = next(i for i, c in enumerate(calls)
+                       if len(c) > 1 and c[1] == "/installtunnelservice")
+    config_idx = calls.index(["sc", "config", "WireGuardTunnel$MyTunnel", "start=", "demand"])
+    assert config_idx > install_idx
+
+
+def test_install_wg_tunnel_survives_demand_start_failure(tmp_path, monkeypatch):
+    p = WindowsPlatform()
+    monkeypatch.setattr(p, "_conf_dir", tmp_path)
+    monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
+    (tmp_path / "wireguard.exe").write_text("fake")
+    calls: list[list[str]] = []
+
+    with patch("subprocess.run", side_effect=_fake_install_run(calls, config_rc=5)):
+        path = p.install_wg_tunnel("MyTunnel", "[Interface]")
+
+    assert path == tmp_path / "MyTunnel.conf"
+
+
 def test_install_wg_tunnel_raises_on_failure(tmp_path, monkeypatch):
     p = WindowsPlatform()
     monkeypatch.setattr(p, "_conf_dir", tmp_path)
