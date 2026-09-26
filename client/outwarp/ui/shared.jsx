@@ -394,26 +394,7 @@ const STR = {
   },
 };
 
-// realistic log lines used by both variations
-const SAMPLE_LOGS = [
-  { t: "12:04:02.118", lvl: "info",  msg: "outwarp client v0.4.2 starting" },
-  { t: "12:04:02.221", lvl: "info",  msg: "loading profile 'Universidad' from %APPDATA%\\OutWarp" },
-  { t: "12:04:02.310", lvl: "debug", msg: "wstunnel target = wss://vps.fcrespo.dev:443" },
-  { t: "12:04:02.402", lvl: "info",  msg: "resolving vps.fcrespo.dev → 89.32.144.19" },
-  { t: "12:04:02.566", lvl: "debug", msg: "TLS cert sha256 fingerprint: 4f:9a:1c:7e:b3:d2:8a:55:…" },
-  { t: "12:04:02.567", lvl: "info",  msg: "fingerprint matches pinned value ✓" },
-  { t: "12:04:02.701", lvl: "info",  msg: "WebSocket established (HTTP/1.1 → 101 Switching Protocols)" },
-  { t: "12:04:02.840", lvl: "info",  msg: "wg-quick: bringing up interface outwarp0" },
-  { t: "12:04:03.002", lvl: "info",  msg: "added route 89.32.144.19/32 → 192.168.1.1 (bypass)" },
-  { t: "12:04:03.219", lvl: "debug", msg: "WG: sending initial handshake" },
-  { t: "12:04:03.401", lvl: "info",  msg: "WG handshake OK (rtt=182ms)" },
-  { t: "12:04:03.402", lvl: "info",  msg: "tunnel UP — peer 10.66.0.1, allowed-ips 0.0.0.0/0" },
-  { t: "12:05:18.712", lvl: "debug", msg: "rx 4.2 MB · tx 812 KB · last_hs=00:01:15" },
-  { t: "12:07:44.114", lvl: "debug", msg: "rx 19.7 MB · tx 2.1 MB · last_hs=00:00:42" },
-];
-
 window.STR = STR;
-window.SAMPLE_LOGS = SAMPLE_LOGS;
 
 // hook to read tweaks from a parent
 const useUiState = (initial) => {

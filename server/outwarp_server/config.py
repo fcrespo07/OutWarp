@@ -33,7 +33,7 @@ _WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$")
 
 _EXPIRES_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-# CONCEPTO-C prop.1 (OutWarp-fix-plan.md): server_config.json is semi-trusted
+# CONCEPTO-C prop.1 (docs/history/OutWarp-fix-plan.md): server_config.json is semi-trusted
 # (admin-written, 0o600, not something an attacker typically controls) but
 # still gets the same baseline as the fully hostile .owcfg — cheap defense in
 # depth, and it forces a decision every time a new field is added instead of

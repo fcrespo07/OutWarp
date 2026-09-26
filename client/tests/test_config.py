@@ -56,7 +56,7 @@ def test_load_valid(tmp_path):
 
 
 class TestOwcfgHostileInputValidation:
-    """CONCEPTO-C prop.1 (OutWarp-fix-plan.md): the .owcfg is hostile input —
+    """CONCEPTO-C prop.1 (docs/history/OutWarp-fix-plan.md): the .owcfg is hostile input —
     server.endpoint, server.http_upgrade_path_prefix and tunnel.remote_host
     used to reach a subprocess arg / HTTP path with a bare str(...) and no
     shape check, unlike the WireGuard keys and IPs elsewhere in this parser."""

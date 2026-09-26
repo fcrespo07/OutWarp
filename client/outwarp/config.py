@@ -34,7 +34,7 @@ _WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$")
 # outright above that, so this also doubles as an early, clear error.
 _TUNNEL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,15}$")
 
-# CONCEPTO-C prop.1 (OutWarp-fix-plan.md): the .owcfg is hostile input — it
+# CONCEPTO-C prop.1 (docs/history/OutWarp-fix-plan.md): the .owcfg is hostile input — it
 # travels by email, USB or messaging, and its "signing" block (profile_trust.py)
 # is opt-in TOFU, not a hard gate. Every field that reaches a subprocess
 # argument, an HTTP header, or a line written into a config file needs an

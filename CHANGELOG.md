@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The client UI bundle is about a third smaller: two unused design previews
+  were still being compiled into it. No visible change.
+- Repository cleanup now that it is public: old release notes, design specs
+  and superseded plans removed; the resolved 0.12 audit moved to
+  `docs/history/`.
+
 ### Fixed
 - **Web panel: "Keep this session in this browser" now keeps it.** The
   session cookie had no expiry, so the browser dropped it on close, and

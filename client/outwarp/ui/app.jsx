@@ -1,13 +1,9 @@
 // OutWarp client — runtime app shell.
 //
-// Renders a real, interactive UI on top of the design tokens shipped in
-// var-a.jsx / var-b.jsx. We do NOT use the static VarA/VarB previews
-// directly because their sidebars/buttons are non-interactive design
-// mockups; the chassis here mirrors them visually (same sidebar layout,
-// same hero card, same stat strip) but every control is wired to
-// window.pywebview.api.
-//
-// VarB (developer mode) is selected by settings.advanced = true.
+// Interactive UI built on the design tokens in styles.css; every control is
+// wired to window.pywebview.api. Two looks from the original design: the
+// consumer one by default, the "developer/instrument" one when
+// settings.advanced = true.
 
 const { useState, useEffect, useCallback, useRef } = React;
 
@@ -542,7 +538,7 @@ const ResizeHandles = ({ api }) => (
   </>
 );
 
-// ── Sidebar (clickable, mirrors VarA/VarB design) ──────────────────
+// ── Sidebar ──────────────────
 const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
   const items = [
     ["home",     T.nav_home,     "M3 11 L12 3 L21 11 M5 10 V20 H19 V10"],
@@ -972,7 +968,7 @@ const Stat = ({ label, value, sub, trend }) => (
   </div>
 );
 
-// ── Ported design atoms (mirror var-a.jsx) ─────────────────────────
+// ── Design atoms ─────────────────────────
 const InfoCard = ({ icon, title, body }) => (
   <div className="ow-card ow-card--md ow-card--hover" style={{ padding: 16 }}>
     <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--chip)", display: "grid", placeItems: "center", color: "var(--brand)" }}>{icon}</div>

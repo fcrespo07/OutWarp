@@ -7,7 +7,7 @@ which is the pywebview GUI bridge. Since 0.5.x the TUI (and the systemd/SCM
 and never touches Api at all, so the kill switch was silently inert on the
 primary Linux path: it never engaged on a dropped connection, and a leftover
 rule from a crash was never released either (CONCEPTO-E / FIX-06b in
-OutWarp-fix-plan.md). TunnelManager now calls reconcile() itself from every
+docs/history/OutWarp-fix-plan.md). TunnelManager now calls reconcile() itself from every
 state change when kill_switch_enabled is set, so all three surfaces share the
 same behaviour instead of each having to remember to wire it up.
 """

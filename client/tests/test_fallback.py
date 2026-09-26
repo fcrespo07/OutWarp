@@ -177,7 +177,7 @@ def test_command_ws_scheme_omits_default_80():
 
 # --- reorder_for_sticky ---
 # escape_set() (formerly all_bypass_ips) moved to outwarp.routing / test_routing.py
-# as part of CONCEPTO-B — see OutWarp-fix-plan.md.
+# as part of CONCEPTO-B — see docs/history/OutWarp-fix-plan.md.
 
 def test_reorder_for_sticky_moves_match_to_front():
     ladder = [_strat(id="a"), _strat(id="b"), _strat(id="c")]
@@ -275,7 +275,7 @@ def _raw_with_strategy(**strategy_overrides) -> dict:
 
 
 class TestFallbackStrategyValidation:
-    """CONCEPTO-C prop.1 (OutWarp-fix-plan.md): a fallback strategy's free-text
+    """CONCEPTO-C prop.1 (docs/history/OutWarp-fix-plan.md): a fallback strategy's free-text
     fields end up as wstunnel CLI args / HTTP header values — the .owcfg is
     hostile input, so these need the same explicit validation decision every
     other field in this parser already gets."""

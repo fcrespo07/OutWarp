@@ -266,7 +266,7 @@ def client_ip(headers: Any, direct_ip: str, *, behind_reverse_proxy: bool) -> st
 
     A direct connection is identified by its TCP peer address. Behind a
     reverse proxy (Caddy, in the transport's "acme" branch — see FIX-08 in
-    OutWarp-fix-plan.md) the listener binds loopback and every real client
+    docs/history/OutWarp-fix-plan.md) the listener binds loopback and every real client
     shares that one address, so a naive rate limiter keyed on `direct_ip`
     collapses into a single shared bucket: a handful of failures from ANY
     client locks everyone else out too. Caddy's `reverse_proxy` appends the

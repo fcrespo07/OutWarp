@@ -1,4 +1,4 @@
-"""SQLite-backed client registry — CONCEPTO-A/D in OutWarp-fix-plan.md.
+"""SQLite-backed client registry — CONCEPTO-A/D in docs/history/OutWarp-fix-plan.md.
 
 `ServerConfig.clients` used to be part of the same JSON blob as the server's
 own secrets, rewritten whole on every mutation and guarded only by a

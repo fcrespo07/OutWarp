@@ -429,7 +429,7 @@ class TestWindowsRestartWg:
 class _FakePlatform(ServerPlatform):
     """Minimal concrete ServerPlatform recording call order, for testing
     the base class's reconcile() composition in isolation from any real OS
-    interaction — see CONCEPTO-E in OutWarp-fix-plan.md."""
+    interaction — see CONCEPTO-E in docs/history/OutWarp-fix-plan.md."""
 
     def __init__(self, *, active: bool = False) -> None:
         self.calls: list[tuple] = []

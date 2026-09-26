@@ -1,6 +1,6 @@
 """Trust-on-first-use verification of a server's .owcfg signature.
 
-CONCEPTO-C prop.2 (OutWarp-fix-plan.md): a .owcfg travels to its recipient by
+CONCEPTO-C prop.2 (docs/history/OutWarp-fix-plan.md): a .owcfg travels to its recipient by
 email, USB, or messaging — channels this project has no control over. Every
 self-hosted OutWarp server signs the profiles it issues with its own Ed25519
 keypair (generated server-side in outwarp_server/minisign.py's signing half;

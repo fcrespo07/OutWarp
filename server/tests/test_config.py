@@ -305,7 +305,7 @@ def test_rejects_bad_internal_ws_port(tmp_path: Path, bad: object) -> None:
 
 
 class TestServerConfigHostileInputValidation:
-    """CONCEPTO-C prop.1 (OutWarp-fix-plan.md): server_config.json is
+    """CONCEPTO-C prop.1 (docs/history/OutWarp-fix-plan.md): server_config.json is
     semi-trusted, not hostile, but still gets a baseline check — cheap
     defense in depth, applied consistently rather than left to whichever
     field someone happened to remember."""

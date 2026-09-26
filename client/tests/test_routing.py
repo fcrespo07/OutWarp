@@ -63,7 +63,7 @@ def test_escape_set_empty_ladder_still_excludes_endpoint_and_bypass():
 
 
 def test_kill_switch_allowlist_is_superset_of_wg_conf_exclusions(monkeypatch):
-    """CONCEPTO-B invariant (see OutWarp-fix-plan.md): the kill switch
+    """CONCEPTO-B invariant (see docs/history/OutWarp-fix-plan.md): the kill switch
     allowlist and the WireGuard AllowedIPs exclusions must be computed from
     the same escape_set() call. Before the fix, api.py reconstructed a poorer
     version (just routing.bypass_ips) independently — twice — so an address

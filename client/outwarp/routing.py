@@ -5,7 +5,7 @@ the fallback ladder's own all_bypass_ips, and two separate spots in the kill
 switch — the last two forgot the server endpoint and every alternate front the
 ladder might dial, so the kill switch could engage with an allowlist that
 blocked the client's own path back to the server (see CONCEPTO-B / FIX-03 in
-OutWarp-fix-plan.md). escape_set() is the one function every consumer of this
+docs/history/OutWarp-fix-plan.md). escape_set() is the one function every consumer of this
 set must call.
 """
 

@@ -172,7 +172,7 @@ class ServerPlatform(ABC):
         wrong is exactly how FIX-07 happened (Windows silently dropped its
         NAT rule on every reload). One entry point that always calls
         `prepare_system()` first closes that class of bug generically instead
-        of per call site (CONCEPTO-E in OutWarp-fix-plan.md).
+        of per call site (CONCEPTO-E in docs/history/OutWarp-fix-plan.md).
 
         `force_restart` asks for a full teardown+reinstall even if the
         interface is already active — needed when a change (e.g. the WG

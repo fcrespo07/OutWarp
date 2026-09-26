@@ -30,8 +30,8 @@ CLIENT_UI = ROOT / "client" / "outwarp" / "ui"
 SERVER_UI = ROOT / "server" / "outwarp_server" / "ui"
 
 # Order matters: each file relies on globals defined by previous ones
-# (React hooks, STR, Btn/Pill/StatusDot atoms, design-canvas components).
-CLIENT_ORDER = ["brand.jsx", "shared.jsx", "var-a.jsx", "var-b.jsx", "app.jsx"]
+# (React hooks, STR, Btn/Pill/StatusDot atoms).
+CLIENT_ORDER = ["brand.jsx", "shared.jsx", "app.jsx"]
 SERVER_ORDER = [
     # Unified server dashboard (desktop pywebview + remote web panel). The
     # transport shim must come first (app.jsx reads window.OW); the old
@@ -86,10 +86,10 @@ def build(ui_dir: Path, order: list[str]) -> None:
     for name in order:
         src = (ui_dir / name).read_text(encoding="utf-8")
         # Each .jsx file used to be its own <script>, so top-level const/let
-        # bindings were script-scoped (var-a.jsx and var-b.jsx both declare
+        # bindings were script-scoped (two files may both declare
         # `const Stat = ...` without colliding). Wrapping each file in an
         # IIFE preserves that scoping after concatenation. Anything the file
-        # explicitly exposes (window.VarA = VarA, window.STR = STR, etc.)
+        # explicitly exposes (window.STR = STR, etc.)
         # still becomes global because `window.*` writes go to the host.
         parts.append(
             f"\n// ==== {name} ====\n;(function(){{\n{src}\n}})();\n"
