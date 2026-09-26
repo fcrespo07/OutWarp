@@ -169,4 +169,4 @@ class TestProductionKey:
 
     def test_the_compiled_in_key_is_the_one_that_signed_it(self) -> None:
         from outwarp import updater
-        verify(self.MESSAGE, self.SIGNATURE, updater._MINISIGN_PUBLIC_KEY)
+        verify(self.MESSAGE, self.SIGNATURE, updater._MINISIGN_PUBLIC_KEYS[0])

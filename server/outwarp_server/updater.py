@@ -33,14 +33,21 @@ _SIGNATURE_ASSET = "SHA256SUMS.txt.minisig"
 # public key (key ID 3E1FCD8BF652EC28) is compiled in and its private half lives
 # offline. A release without a signed SHA256SUMS.txt is rejected; the fail-open
 # path for pre-0.11.0 unsigned releases was retired in 0.15.0.
-_MINISIGN_PUBLIC_KEY = (
+#
+# Two keys are trusted: the primary that signs releases, and a backup whose
+# secret half never leaves offline storage. Losing the primary then costs a
+# release signed with the backup instead of every install needing a manual
+# update, which is what losing 3E1FCD8BF652EC28 (0.11–0.14) cost.
+# outwarp-release.pub / outwarp-release-backup.pub at the repo root hold the
+# same keys; a test keeps them in sync.
+_MINISIGN_PUBLIC_KEYS: tuple[str, ...] = (
     "untrusted comment: minisign public key 3E1FCD8BF652EC28\n"
-    "RWQo7FL2i80fPrFtvv7gB5xJCqS/7KTSu+VkoLRdnaQyTnwXXuemHydR\n"
+    "RWQo7FL2i80fPrFtvv7gB5xJCqS/7KTSu+VkoLRdnaQyTnwXXuemHydR\n",
 )
 
 
 def signing_configured() -> bool:
-    return bool(_MINISIGN_PUBLIC_KEY.strip())
+    return any(k.strip() for k in _MINISIGN_PUBLIC_KEYS)
 _SERVER_WHEEL_RE = re.compile(r"^outwarp[_-]server-[0-9].*\.whl$", re.IGNORECASE)
 
 
@@ -192,9 +199,9 @@ def _verify_manifest_signature(manifest: str, signature_url: str) -> None:
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         raise ValueError(f"could not fetch {_SIGNATURE_ASSET}: {exc}") from exc
 
-    from outwarp_server.minisign import MinisignError, verify
+    from outwarp_server.minisign import MinisignError, verify_any
     try:
-        verify(manifest.encode("utf-8"), signature, _MINISIGN_PUBLIC_KEY)
+        verify_any(manifest.encode("utf-8"), signature, _MINISIGN_PUBLIC_KEYS)
     except MinisignError as exc:
         raise ValueError(str(exc)) from exc
 

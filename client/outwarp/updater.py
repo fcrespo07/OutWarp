@@ -46,14 +46,21 @@ _SIGNATURE_ASSET = "SHA256SUMS.txt.minisig"
 # with an unsigned or wrongly-signed one, is rejected. Every release since
 # 0.11.0 is signed; the fail-open path for older, unsigned releases was retired
 # in 0.15.0. See docs/RELEASE_SIGNING.md.
-_MINISIGN_PUBLIC_KEY = (
+#
+# Two keys are trusted: the primary that signs releases, and a backup whose
+# secret half never leaves offline storage. Losing the primary then costs a
+# release signed with the backup instead of every install needing a manual
+# update, which is what losing 3E1FCD8BF652EC28 (0.11–0.14) cost.
+# outwarp-release.pub / outwarp-release-backup.pub at the repo root hold the
+# same keys; a test keeps them in sync.
+_MINISIGN_PUBLIC_KEYS: tuple[str, ...] = (
     "untrusted comment: minisign public key 3E1FCD8BF652EC28\n"
-    "RWQo7FL2i80fPrFtvv7gB5xJCqS/7KTSu+VkoLRdnaQyTnwXXuemHydR\n"
+    "RWQo7FL2i80fPrFtvv7gB5xJCqS/7KTSu+VkoLRdnaQyTnwXXuemHydR\n",
 )
 
 
 def signing_configured() -> bool:
-    return bool(_MINISIGN_PUBLIC_KEY.strip())
+    return any(k.strip() for k in _MINISIGN_PUBLIC_KEYS)
 
 # Windows installer asset names produced by build.py (outwarp.iss
 # OutputBaseFilename per edition). The client prefers the slim "Client" edition
@@ -232,9 +239,9 @@ def verify_manifest_signature(
     except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
         raise SignatureError(f"could not fetch {_SIGNATURE_ASSET}: {exc}") from exc
 
-    from outwarp.minisign import MinisignError, verify
+    from outwarp.minisign import MinisignError, verify_any
     try:
-        verify(manifest.encode("utf-8"), signature, _MINISIGN_PUBLIC_KEY)
+        verify_any(manifest.encode("utf-8"), signature, _MINISIGN_PUBLIC_KEYS)
     except MinisignError as exc:
         raise SignatureError(str(exc)) from exc
 

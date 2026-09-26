@@ -42,7 +42,7 @@ def test_rejects_a_tampered_manifest() -> None:
 
 def test_the_compiled_in_key_is_the_one_that_signed_it() -> None:
     from outwarp_server import updater
-    verify(MESSAGE, SIGNATURE, updater._MINISIGN_PUBLIC_KEY)
+    verify(MESSAGE, SIGNATURE, updater._MINISIGN_PUBLIC_KEYS[0])
 
 
 # --- signing (CONCEPTO-C prop.2): output must interoperate with real minisign,

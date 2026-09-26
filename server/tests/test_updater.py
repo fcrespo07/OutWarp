@@ -179,14 +179,14 @@ class TestManifestSignature:
         assert updater.signing_configured() is True
 
     def test_a_build_without_a_key_refuses_every_manifest(self) -> None:
-        with patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""):
+        with patch.object(updater, "_MINISIGN_PUBLIC_KEYS", ()):
             assert updater.signing_configured() is False
             with pytest.raises(ValueError, match="no release key"):
                 updater._verify_manifest_signature("anything", "https://x/sig")
 
     def test_missing_signature_asset_is_fatal_once_a_key_exists(self) -> None:
         with (
-            patch.object(updater, "_MINISIGN_PUBLIC_KEY", self.PUB_KEY),
+            patch.object(updater, "_MINISIGN_PUBLIC_KEYS", (self.PUB_KEY,)),
             pytest.raises(ValueError, match="does not publish"),
         ):
             updater._verify_manifest_signature(self.MESSAGE.decode(), "")
@@ -206,7 +206,7 @@ class TestManifestSignature:
             return resp
 
         with (
-            patch.object(updater, "_MINISIGN_PUBLIC_KEY", self.PUB_KEY),
+            patch.object(updater, "_MINISIGN_PUBLIC_KEYS", (self.PUB_KEY,)),
             patch("outwarp_server.updater.urllib.request.urlopen", side_effect=_urlopen),
         ):
             ok, detail = updater.verify_wheel(

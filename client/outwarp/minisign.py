@@ -195,6 +195,43 @@ def verify(message: bytes, signature_text: str, public_key_text: str) -> None:
         raise MinisignError("trusted comment does not match its signature")
 
 
+def key_id_hex(key_id: bytes) -> str:
+    """The key ID as minisign prints it (``minisign -V``, the .pub comment)."""
+    return key_id[::-1].hex().upper()
+
+
+def signature_key_id(signature_text: str) -> bytes:
+    """The ID of the key that made ``signature_text``, without verifying it."""
+    lines = [ln.rstrip("\r") for ln in signature_text.splitlines()]
+    body = [ln for ln in lines if ln and not ln.startswith(("untrusted comment:",))]
+    try:
+        sig_blob = base64.b64decode(body[0], validate=True) if body else b""
+    except (ValueError, base64.binascii.Error) as exc:
+        raise MinisignError("signature line is not valid base64") from exc
+    if len(sig_blob) != 74:
+        raise MinisignError("signature has an unexpected length")
+    return sig_blob[2:10]
+
+
+def verify_any(message: bytes, signature_text: str, public_keys: tuple[str, ...]) -> str:
+    """Verify against whichever trusted key made the signature.
+
+    Releases are signed with a primary key; a backup key, whose secret half is
+    kept offline, is trusted too so that losing the primary does not strand
+    every installed copy on its current version (it happened to 3E1FCD8BF652EC28).
+    Returns the ID of the key that verified.
+    """
+    wanted = signature_key_id(signature_text)
+    for key_text in public_keys:
+        key_id, _ = parse_public_key(key_text)
+        if key_id == wanted:
+            verify(message, signature_text, key_text)
+            return key_id_hex(key_id)
+    raise MinisignError(
+        f"signature was made with key {key_id_hex(wanted)}, which this build does not trust"
+    )
+
+
 def _last_base64_line(text: str) -> str | None:
     for raw in reversed(text.splitlines()):
         line = raw.strip()

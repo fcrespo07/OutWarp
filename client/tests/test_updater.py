@@ -290,7 +290,7 @@ def test_verify_download_without_a_manifest_is_rejected_even_without_a_key(tmp_p
     # release since 0.11.0 is signed, so a release without one is not ours.
     p = tmp_path / "OutWarpSetup-0.3.0.exe"
     p.write_bytes(b"whatever")
-    with patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""):
+    with patch.object(updater, "_MINISIGN_PUBLIC_KEYS", ()):
         ok, detail = verify_download(p, "OutWarpSetup-0.3.0.exe", "")
     assert ok is False
     assert "no SHA256SUMS" in detail
@@ -387,14 +387,14 @@ class TestManifestSignature:
 
     def test_a_build_without_a_key_refuses_every_manifest(self) -> None:
         # Retired fail-open path: a keyless build must not trust a manifest.
-        with patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""):
+        with patch.object(updater, "_MINISIGN_PUBLIC_KEYS", ()):
             assert updater.signing_configured() is False
             with pytest.raises(updater.SignatureError, match="no release key"):
                 updater.verify_manifest_signature("anything", "https://x/sig")
 
     def test_valid_signature_is_accepted(self) -> None:
         with (
-            patch.object(updater, "_MINISIGN_PUBLIC_KEY", PUB_KEY),
+            patch.object(updater, "_MINISIGN_PUBLIC_KEYS", (PUB_KEY,)),
             patch.object(updater, "_fetch_text", return_value=SIGNATURE),
         ):
             updater.verify_manifest_signature(
@@ -403,7 +403,7 @@ class TestManifestSignature:
 
     def test_tampered_manifest_is_rejected(self) -> None:
         with (
-            patch.object(updater, "_MINISIGN_PUBLIC_KEY", PUB_KEY),
+            patch.object(updater, "_MINISIGN_PUBLIC_KEYS", (PUB_KEY,)),
             patch.object(updater, "_fetch_text", return_value=SIGNATURE),
             pytest.raises(updater.SignatureError),
         ):
@@ -415,7 +415,7 @@ class TestManifestSignature:
         """Deleting the .minisig from a release must not be a way to skip the
         check — that would make the whole mechanism opt-out for an attacker."""
         with (
-            patch.object(updater, "_MINISIGN_PUBLIC_KEY", PUB_KEY),
+            patch.object(updater, "_MINISIGN_PUBLIC_KEYS", (PUB_KEY,)),
             pytest.raises(updater.SignatureError, match="does not publish"),
         ):
             updater.verify_manifest_signature(SIGNED_MESSAGE.decode(), "")
@@ -424,7 +424,7 @@ class TestManifestSignature:
         import urllib.error
 
         with (
-            patch.object(updater, "_MINISIGN_PUBLIC_KEY", PUB_KEY),
+            patch.object(updater, "_MINISIGN_PUBLIC_KEYS", (PUB_KEY,)),
             patch.object(updater, "_fetch_text",
                          side_effect=urllib.error.URLError("dropped")),
             pytest.raises(updater.SignatureError, match="could not fetch"),
@@ -440,7 +440,7 @@ class TestManifestSignature:
         manifest = f"{digest}  OutWarpSetup.exe\n"
 
         with (
-            patch.object(updater, "_MINISIGN_PUBLIC_KEY", PUB_KEY),
+            patch.object(updater, "_MINISIGN_PUBLIC_KEYS", (PUB_KEY,)),
             patch.object(updater, "_fetch_text", side_effect=[manifest, SIGNATURE]),
         ):
             ok, detail = updater.verify_download(
@@ -457,7 +457,7 @@ class TestManifestSignature:
     ) -> None:
         payload = tmp_path / "OutWarpSetup.exe"
         payload.write_bytes(b"installer")
-        with patch.object(updater, "_MINISIGN_PUBLIC_KEY", PUB_KEY):
+        with patch.object(updater, "_MINISIGN_PUBLIC_KEYS", (PUB_KEY,)):
             ok, detail = updater.verify_download(payload, "OutWarpSetup.exe", "", "")
         assert ok is False
         assert "no SHA256SUMS" in detail
