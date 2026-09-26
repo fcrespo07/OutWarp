@@ -216,6 +216,11 @@ class OutWarpClientTUI(App):
             self._push_unique("dashboard")
         elif state == TunnelState.FAILED:
             self._push_unique("failed")
+        elif state == TunnelState.DISCONNECTED and prev is not None:
+            self._push_unique("dashboard")
+
+    def show_disconnected(self) -> None:
+        self._push_unique("dashboard")
 
     def _notify_state(self, state: TunnelState, prev: TunnelState | None) -> None:
         from outwarp.notify import notify

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
+
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.reactive import reactive
@@ -96,10 +99,17 @@ class ConnectingScreen(Screen):
         )
 
     def action_cancel(self) -> None:
+        asyncio.create_task(self._async_cancel(), name="tui-cancel")
+
+    async def _async_cancel(self) -> None:
+        # Cancelling stops the attempt, it does not quit the TUI (B-032). stop()
+        # joins the watchdog, so keep it off the event loop.
         mgr = getattr(self.app, "manager", None)
         if mgr is not None:
-            mgr.stop()
-        self.app.exit(0)
+            loop = asyncio.get_running_loop()
+            with contextlib.suppress(Exception):
+                await loop.run_in_executor(None, mgr.stop)
+        self.app.show_disconnected()
 
     def action_help(self) -> None:
         from outwarp.tui.modals.help import HelpModal

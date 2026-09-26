@@ -176,7 +176,8 @@ class DashboardScreen(Screen):
             loop = asyncio.get_running_loop()
             with contextlib.suppress(Exception):
                 await loop.run_in_executor(None, mgr.stop)
-        self.app.exit(0)
+        # Stay on the dashboard, disconnected: 'k' disconnects, 'q' quits (B-032).
+        self.notify("Disconnected — press r to connect again.")
 
     def action_reconnect(self) -> None:
         asyncio.create_task(self._async_reconnect(), name="tui-reconnect")

@@ -450,3 +450,51 @@ async def test_profile_screen_reset_restores_original_snapshot(
 
             restored = ClientConfig.load(default_config_path())
             assert restored.wireguard.mtu == 1380
+
+
+@pytest.mark.asyncio
+async def test_k_on_dashboard_disconnects_without_quitting() -> None:
+    """B-032: 'k' used to stop the tunnel and then exit the whole TUI."""
+    from unittest.mock import MagicMock, PropertyMock, patch
+
+    from outwarp.tui.screens.dashboard import DashboardScreen
+
+    app = MagicMock(service_managed=False)
+    screen = DashboardScreen.__new__(DashboardScreen)
+    with patch.object(DashboardScreen, "app", new_callable=PropertyMock, return_value=app), \
+         patch.object(DashboardScreen, "notify") as notify:
+        await screen._async_disconnect()
+
+    app.manager.stop.assert_called_once()
+    app.exit.assert_not_called()
+    notify.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_k_on_connecting_cancels_and_returns_to_dashboard() -> None:
+    from unittest.mock import MagicMock, PropertyMock, patch
+
+    from outwarp.tui.screens.connecting import ConnectingScreen
+
+    app = MagicMock()
+    screen = ConnectingScreen.__new__(ConnectingScreen)
+    with patch.object(ConnectingScreen, "app", new_callable=PropertyMock, return_value=app):
+        await screen._async_cancel()
+
+    app.manager.stop.assert_called_once()
+    app.show_disconnected.assert_called_once()
+    app.exit.assert_not_called()
+
+
+def test_disconnected_state_routes_to_dashboard() -> None:
+    from unittest.mock import patch
+
+    from outwarp.tunnel import TunnelState
+
+    app = OutWarpClientTUI()
+    with patch.object(app, "_push_unique") as push, \
+         patch.object(app, "_notify_state"):
+        app._route_state(TunnelState.CONNECTING)
+        app._route_state(TunnelState.DISCONNECTED)
+
+    assert push.call_args_list[-1].args == ("dashboard",)
