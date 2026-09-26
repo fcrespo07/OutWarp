@@ -26,40 +26,8 @@ function useBridgeEvent(name, handler) {
   }, [handler]);
 }
 
-// ── formatters ─────────────────────────────────────────────────────
-const fmtBps = (n) => {
-  if (!n) return "0 B/s";
-  if (n < 1024) return `${n} B/s`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB/s`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB/s`;
-};
-const fmtBytes = (n) => {
-  if (!n) return "0 B";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
-};
-const fmtAgo = (epoch, lang) => {
-  if (!epoch) return "—";
-  const d = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
-  try {
-    const rtf = new Intl.RelativeTimeFormat(lang || "es", { numeric: "auto" });
-    if (d < 60) return rtf.format(-d, "second");
-    if (d < 3600) return rtf.format(-Math.floor(d / 60), "minute");
-    return rtf.format(-Math.floor(d / 3600), "hour");
-  } catch (_) {
-    if (d < 60) return `${d}s`;
-    if (d < 3600) return `${Math.floor(d / 60)}m`;
-    return `${Math.floor(d / 3600)}h`;
-  }
-};
-
-const fmtDuration = (sec) => {
-  sec = Math.max(0, Math.floor(sec));
-  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-};
+// ── formatters (shared.jsx, so the UI tests can load them) ─────────
+const { fmtBps, fmtBytes, fmtAgo, fmtDuration } = window.OWfmt;
 const fmtClock = (epoch) => {
   const d = new Date(epoch * 1000);  // local time, not UTC
   return [d.getHours(), d.getMinutes(), d.getSeconds()]

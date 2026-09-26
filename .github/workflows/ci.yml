@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main]
 
-# All four jobs only read code and run tests/lint/build locally — none of
+# All jobs only read code and run tests/lint/build locally — none of
 # them push, release, or touch packages — so the default GITHUB_TOKEN (which
 # a PR from a fork also gets) is capped to read-only rather than inheriting
 # whatever broader default the repo/org has configured.
@@ -118,6 +118,33 @@ jobs:
       - name: ruff check (server)
         working-directory: server
         run: ruff check .
+
+  ui-tests:
+    name: UI tests (vitest + bundle guard)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # build_ui.py --check (run by ui-tests/bundle.test.js) needs Python.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the pinned JS toolchain
+        run: npm ci
+
+      # Pure-logic UI tests plus the guard that fails when a committed
+      # bundle.js no longer matches its .jsx sources.
+      - name: vitest
+        run: npx vitest run
 
   build-wheels:
     name: build wheels

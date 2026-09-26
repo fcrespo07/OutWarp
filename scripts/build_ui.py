@@ -14,8 +14,12 @@ Usage:
     python scripts/build_ui.py            # build both bundles
     python scripts/build_ui.py client     # build only client
     python scripts/build_ui.py server     # build only server
+    python scripts/build_ui.py --check    # fail if a committed bundle is stale
 
-Requires Node.js on PATH (uses `npx esbuild`).
+Requires Node.js on PATH. esbuild is pinned (ESBUILD_VERSION, kept equal to
+package.json): the local node_modules copy after `npm ci`, otherwise npx
+fetches that exact version. The bundle is only reproducible — and the
+`--check` guard in CI only meaningful — with one esbuild version.
 """
 
 from __future__ import annotations
@@ -28,6 +32,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CLIENT_UI = ROOT / "client" / "outwarp" / "ui"
 SERVER_UI = ROOT / "server" / "outwarp_server" / "ui"
+
+# Must match devDependencies.esbuild in package.json (ui-tests/ checks it).
+ESBUILD_VERSION = "0.28.2"
+_LOCAL_ESBUILD = ROOT / "node_modules" / ".bin" / (
+    "esbuild.cmd" if sys.platform == "win32" else "esbuild"
+)
 
 # Order matters: each file relies on globals defined by previous ones
 # (React hooks, STR, Btn/Pill/StatusDot atoms).
@@ -57,30 +67,26 @@ PROLOG = (
 
 
 def _esbuild_cmd() -> list[str]:
-    """Pick the right esbuild invocation for this OS.
+    """The pinned esbuild: node_modules' copy if present, else npx.
 
-    npx works on every platform but spawns a Node sub-process per call,
-    which is fine for a one-off build script. On Windows we must let the
-    shell resolve `npx.cmd`, hence shell=True downstream."""
+    On Windows the shell must resolve `npx.cmd` / `esbuild.cmd`, hence
+    shell=True downstream."""
+    flags = ["--loader=jsx", "--minify", "--target=es2020", "--log-level=warning"]
+    if _LOCAL_ESBUILD.exists():
+        return [str(_LOCAL_ESBUILD), *flags]
     if shutil.which("npx") is None:
         raise SystemExit(
-            "error: npx not found on PATH. Install Node.js 18+ "
+            "error: npx not found on PATH. Install Node.js 20+ "
             "(https://nodejs.org/) and re-run this script. Node is only "
             "needed to *build* the UI; end users running the packaged "
             "binary do not need it."
         )
-    return [
-        "npx",
-        "--yes",
-        "esbuild",
-        "--loader=jsx",
-        "--minify",
-        "--target=es2020",
-        "--log-level=warning",
-    ]
+    return ["npx", "--yes", f"esbuild@{ESBUILD_VERSION}", *flags]
 
 
-def build(ui_dir: Path, order: list[str]) -> None:
+def build(ui_dir: Path, order: list[str], *, check: bool = False) -> bool:
+    """Build ui_dir/bundle.js; with ``check``, only compare. Returns whether
+    the committed bundle is (or now is) up to date."""
     print(f"[build_ui] {ui_dir.relative_to(ROOT)}")
     parts = [PROLOG]
     for name in order:
@@ -108,22 +114,33 @@ def build(ui_dir: Path, order: list[str]) -> None:
         raise SystemExit(f"esbuild failed with exit {result.returncode}")
 
     out_path = ui_dir / "bundle.js"
+    if check:
+        current = out_path.read_bytes() if out_path.exists() else b""
+        if current != result.stdout:
+            print(f"  !! {out_path.relative_to(ROOT)} is stale: run python scripts/build_ui.py")
+            return False
+        print("  ok: bundle.js matches its sources")
+        return True
     out_path.write_bytes(result.stdout)
     raw_kb = sum(len(p.encode("utf-8")) for p in parts) // 1024
     out_kb = len(result.stdout) // 1024
     print(f"  -> bundle.js ({out_kb} KB, from {raw_kb} KB of JSX)")
+    return True
 
 
 def main() -> int:
-    targets = sys.argv[1:] or ["client", "server"]
+    args = sys.argv[1:]
+    check = "--check" in args
+    targets = [a for a in args if a != "--check"] or ["client", "server"]
+    ok = True
     for t in targets:
         if t == "client":
-            build(CLIENT_UI, CLIENT_ORDER)
+            ok &= build(CLIENT_UI, CLIENT_ORDER, check=check)
         elif t == "server":
-            build(SERVER_UI, SERVER_ORDER)
+            ok &= build(SERVER_UI, SERVER_ORDER, check=check)
         else:
             raise SystemExit(f"unknown target '{t}' (expected 'client' or 'server')")
-    return 0
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

@@ -87,8 +87,6 @@ wstunnel_*/
 CLAUDE.local.md
 **/CLAUDE.local.md
 
-# stray npm lock (OutWarp is Python-only)
-package-lock.json
 
 # Design handoff (proporcionado por el autor, no forma parte del repo)
 OutWarp.zip
@@ -102,3 +100,6 @@ design_handoff_outwarp/
 
 # Ad-hoc diagnostic dumps (full logs, endpoints, argv with secrets)
 outwarp-diag-*.txt
+
+# Dev-only JS tooling (package.json)
+node_modules/
