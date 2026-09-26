@@ -48,7 +48,7 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       must cover the Python version Arch ships at release time. An AUR
       `PKGBUILD` is the native follow-up (1.x, see "Native Linux packages"),
       not a blocker.
-- [ ] **JS test runner (vitest) + bundle guard.** Pure-logic tests for the
+- [x] **JS test runner (vitest) + bundle guard.** *(Done 2026-09-26.)* Pure-logic tests for the
       dashboard helpers (`makeBoundedPeak`, formatters) and a test that fails
       when `bundle.js` is stale. No ES-module rewrite of the UI.
 - [x] **Retire the unsigned-manifest fallback** *(done in 0.15.0)* in both updaters
@@ -61,7 +61,7 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       ready for production" banner.
 *Added by the author on 2026-09-25:*
 
-- [ ] **No open 🔴 bugs in `KNOWN_BUGS.md`** on release day (today: none; B-023 and B-025 fixed 2026-09-26).
+- [ ] **No open 🔴 bugs in `KNOWN_BUGS.md`** on release day (today: none; the 0.14.0 audit findings are B-025…B-033, all fixed except the minor B-033).
       The 0.14.0 partial-audit findings move into `KNOWN_BUGS.md` so this
       gate covers them.
 - [ ] **Enable/disable clients from the dashboard.** A reversible `disabled`
@@ -108,7 +108,7 @@ Each phase ends in a published 0.x release (draft → sign → publish). Three r
 
 Items marked *(added)* joined the gate with this plan. 👤 marks a task for the maintainer: real hardware, signing or native speakers.
 
-- **Phase 0 — Clean base → 0.15.0.**
+- **Phase 0 — Clean base → 0.15.0.** *(Code done 2026-09-26; publishing 0.15.0 and the repo security settings remain.)*
   - Move the 0.14.0 audit findings into `KNOWN_BUGS.md` and fix the critical and high ones.
   - vitest plus the bundle guard.
   - Retire the unsigned-manifest fallback.

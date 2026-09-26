@@ -294,12 +294,12 @@ Legado (hecho):
   - *Diagnóstico:* `doctor` devuelve todo PASS en Omarchy e incluye un check del tray/backend en Wayland con remedio concreto.
   - **Arch es rolling:** Omarchy lleva la Python más nueva (3.13/3.14) → la matriz de CI debe incluir la versión que Arch tenga en el momento del release, y `requires-python` no puede excluirla.
   - Un `PKGBUILD` para AUR es el camino nativo, pero va como 1.x (ver `ROADMAP.md` "Native Linux packages"), no bloquea.
-- [ ] **Test runner de JS (vitest) + guardia de bundle.** Opción mínima: `package.json` en la raíz solo con devDeps (vitest, jsdom); helper de test que transpila un `.jsx` con esbuild y lo evalúa en un `window` falso; tests de lógica pura (`makeBoundedPeak` fija B-022; `fmtBytes`/`fmtBps`/`fmtAgo` con `now` inyectado). Más un test que reconstruye `bundle.js` con `scripts/build_ui.py` y falla si difiere del commiteado. Job `ui-tests` en CI (Node ya hace falta para `build_ui.py`). NO convertir la UI a módulos ES para esto: solo si algún día hacen falta tests de componentes.
-- [ ] **Retirar el fallback de manifiesto sin firmar.** `verify_download` en ambos updaters pasa a fail-closed: una release sin `SHA256SUMS.txt` + `.minisig` válidos se rechaza siempre.
+- [x] **Test runner de JS (vitest) + guardia de bundle.** *(Hecho 2026-09-26: `package.json` solo dev con esbuild y vitest fijados, `ui-tests/` (loader que evalúa un `.jsx` como lo hace el bundle; tests de `makeBoundedPeak` y formateadores de cliente y servidor), `build_ui.py --check` y job `ui-tests`. Entorno `node`, no jsdom: esbuild no arranca dentro de jsdom.)* Opción mínima: `package.json` en la raíz solo con devDeps (vitest, jsdom); helper de test que transpila un `.jsx` con esbuild y lo evalúa en un `window` falso; tests de lógica pura (`makeBoundedPeak` fija B-022; `fmtBytes`/`fmtBps`/`fmtAgo` con `now` inyectado). Más un test que reconstruye `bundle.js` con `scripts/build_ui.py` y falla si difiere del commiteado. Job `ui-tests` en CI (Node ya hace falta para `build_ui.py`). NO convertir la UI a módulos ES para esto: solo si algún día hacen falta tests de componentes.
+- [x] **Retirar el fallback de manifiesto sin firmar.** *(Hecho 2026-09-26, sale en 0.15.0; todas las releases desde 0.11.0 están firmadas.)* `verify_download` en ambos updaters pasa a fail-closed: una release sin `SHA256SUMS.txt` + `.minisig` válidos se rechaza siempre.
 - [ ] **README y wizard honestos con el anti-DPI.** Sustituir la promesa de `README.md` ("corporate networks, captive Wi-Fi…") por la tabla de adversarios: la rama autofirmada pasa "UDP bloqueado / solo 443"; la rama Caddy+dominio pasa además inspección de certificado; **ninguna** pasa huella TLS (JA3/JA4) ni DPI del Upgrade (caso WIFI_EDU). En `setup`, presentar "tengo un dominio" como camino principal y el autofirmado como "sin dominio, solo contra UDP bloqueado". Añadir "Plataformas soportadas" y "Limitaciones conocidas" (DPI, SmartScreen sin firmar) y **quitar el banner "not yet ready for production"**. Descartado y no reabrir: uTLS/imitación de ClientHello (reescribir el transporte). Como spike futuro, solo con una red DPI real para probarlo: ECH (`--tls-ech-enable` de wstunnel + Caddy ≥ 2.10), que oculta el SNI pero no cambia la huella JA3.
 *Añadidos por el autor el 2026-09-25:*
 
-- [ ] **Sin bugs 🔴 abiertos en `KNOWN_BUGS.md`.** Ningún bug marcado 🔴 en "Abiertos" el día del release (hoy: ninguno; B-023 y B-025 resueltos el 2026-09-26). Los hallazgos de la auditoría parcial de 0.14.0 (ver "Estado actual") se pasan a `KNOWN_BUGS.md` con su severidad, en vez de vivir en una memoria de sesión, para que este criterio los cubra.
+- [ ] **Sin bugs 🔴 abiertos en `KNOWN_BUGS.md`.** Ningún bug marcado 🔴 en "Abiertos" el día del release (hoy: ninguno). Los hallazgos de la auditoría parcial de 0.14.0 ya están en `KNOWN_BUGS.md` (B-025…B-033, 2026-09-26): todos resueltos salvo B-033 🟢 (textos fijos en español), que se resuelve con el i18n de la fase 1.
 - [ ] **Activar/desactivar clientes desde el dashboard.** Estado `disabled` **reversible**, distinto de `revoked` (definitivo, soft delete de CONCEPTO-D): el peer sale de `wg0.conf` (hot-reload) mientras está desactivado, pero conserva nombre, IP, claves, PSK y expiración; reactivarlo lo devuelve sin reenrolar ni redistribuir `.owcfg`. En las cuatro superficies: GUI del servidor, panel web, TUI y CLI (`outwarp-server disable-client` / `enable-client`, nombres a confirmar). Va antes de 1.0 porque añade subcomandos y un valor de `state` que se congelan.
 - [x] **Estudio: handshakes y cortes en escritorio remoto.** *(Cerrado 2026-09-26 sin cambios: el autor probó RDP estable y Sunshine/Moonlight a través de OutWarp con 31 ms de latencia de red media. `bbr`/`fq` quedan como mejora 1.x, ver "Rendimiento".)* Investigar si la frecuencia de handshakes corta sesiones largas tipo RDP y, si procede, bajarla. Contexto para quien lo coja: el rekey de WireGuard cada ~120 s (`REKEY_AFTER_TIME`) es del protocolo, no configurable en `wireguard-tools`, y por sí solo no corta sesiones TCP internas; lo que sí es nuestro es `PersistentKeepalive = 25` (`client/outwarp/wireguard.py`), `--websocket-ping-frequency 25s` (`fallback.py`), el watchdog/reconexión de wstunnel, timeouts de inactividad de proxies intermedios y el head-of-line blocking de TCP. Entregable: reproducir con una sesión RDP real, medir (logs del watchdog, `wg show latest-handshakes`, captura), identificar la causa y decidir el cambio. Si el resultado toca el `.owcfg` o `config.json`, tiene que entrar antes de 1.0.
 - [ ] **Pulido general de UI/UX.** Pasada de coherencia y acabado en GUI cliente, GUI servidor, panel web y TUIs (estados vacíos/error, textos, i18n — hay strings en español fijo en la GUI —, accesibilidad, paridad de funciones entre superficies).
@@ -312,7 +312,7 @@ Legado (hecho):
 
 **Plan de ejecución** *(aprobado por el autor el 2026-09-26)*. Orden en que se ataca lo "Bloqueante". Cada fase cierra con una release 0.x publicada con el flujo borrador → firma → publicar. Hay tres reglas: primero va lo que se congela en 1.0; la infraestructura (tests, i18n) va antes del contenido; las traducciones van después del pulido, con los textos ya congelados. Los puntos *(añadido)* entraron con el plan y también son bloqueantes. 👤 = lo hace el autor (máquina real, firma, nativos).
 
-- **Fase 0 — Base limpia → 0.15.0.**
+- **Fase 0 — Base limpia → 0.15.0.** *(Código hecho 2026-09-26; falta 👤 publicar 0.15.0 y activar los ajustes de seguridad del repo.)*
   - Pasar la auditoría de 0.14.0 a `KNOWN_BUGS.md` y corregir los 🔴 y los altos. DPAPI decidido (2026-09-26): no se implementa; el `.conf` se protege con ACL (B-025, hecho).
   - Vitest más la guardia de `bundle.js`.
   - Retirar el fallback sin firmar, tras comprobar que todas las releases desde 0.11.0 están firmadas.
@@ -359,7 +359,7 @@ Legado (hecho):
 
 ## Estado actual
 
-**Versión actual: `0.14.0`** (en código). El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
+**Versión actual: `0.15.0`** (en código; pendiente de publicar). El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
 
 - **Cliente**: Windows (instalador `.exe`, GUI pywebview + tray) y Linux (`install.sh`, GUI por defecto con escritorio, TUI y `outwarp` headless) completos.
 - **Servidor**: Linux/systemd, Windows (SCM) y Docker/Kubernetes (`platforms/kubernetes.py`, `deploy/`).
@@ -378,6 +378,8 @@ Legado (hecho):
 - **TLS**: `tls.verify` `pin` (fingerprint + SPKI) o `ca` (`--tls-verify-certificate` a wstunnel).
 - **Enrolamiento**: el servidor no genera claves privadas. `add-client` emite un token de un solo uso (15 min); el cliente genera su par y canjea el token por el **mismo puerto del túnel** (forward TCP de wstunnel a `127.0.0.1:<enroll_port>`). Rate limit por token + techo global.
 - En Linux el `.conf` del cliente vive en `/etc/wireguard-outwarp` (otros gestores escanean `/etc/wireguard`).
+- **Windows: dos ejecutables** (desde 0.15.0, B-027): `outwarp-gui.exe` (GUI + tray, `uac_admin`; accesos directos y autoarranque) y `outwarp.exe` (CLI de consola, `asInvoker`). `outwarp.exe` sin argumentos lanza la GUI. `python -m outwarp` es la CLI; `outwarp/gui_main.py` es la entrada de la GUI.
+- El `.conf` del cliente en Windows vive en `C:\ProgramData\WireGuard` con ACL solo SYSTEM + Administradores (B-025); el desinstalador suelta el kill switch si quedó enganchado (B-026).
 - `daemon`/`serve` salen con código 3 en `FAILED`/`ERROR`.
 - Versión de wstunnel **pinneada** en `installer/wstunnel-version.txt`, con guardia anti-drift en `server/tests/test_wstunnel_version_pin.py`.
 - **Releases inmutables** (ajuste del repo): una release publicada no admite cambios de assets ni de tag. `release.yml` / `release.sh` solo crean **borradores** (wheels + instaladores Windows vía `windows-installer.yml` como workflow reutilizable); el autor firma `SHA256SUMS.txt` y publica con `scripts/publish-release.sh`, que verifica assets, hashes y firma antes. Ningún agente publica una release. Detalle en `docs/RELEASE_SIGNING.md`.
@@ -386,13 +388,12 @@ Legado (hecho):
 - `build_wstunnel_command()` es la **única** definición de la invocación de wstunnel (proceso y unit systemd).
 - `tls_mode`: `self-signed` (por defecto, sin dominio) o `acme` (Caddy en el 443 con Let's Encrypt; OutWarp solo escribe `/etc/caddy/conf.d/outwarp.caddyfile`, nunca un Caddyfile ajeno).
 - **Registro de clientes en SQLite** (`client_store.py`, `BEGIN IMMEDIATE`). `ClientEntry.state` `active`/`revoked` (revocar es soft delete); la expiración la aplica el servidor al regenerar `wg0.conf` y al arrancar.
-- `ServerPlatform.reconcile()` prepara NAT/forwarding antes de instalar o reiniciar WG.
+- `ServerPlatform.reconcile()` prepara NAT/forwarding antes de instalar o reiniciar WG, y con `force_restart` escribe la conf nueva antes de reiniciar (B-028).
+- **Un solo builder de la conf WG del SO**: `wireguard.build_platform_wg_conf` (Linux con PostUp/PostDown, Windows sin ellos). Nada escribe `build_server_wg_conf` directamente al SO (B-029).
+- **Instalación de servicios nativa compartida**: `service_install.install_services()` (forwarding, WG, ufw, units de wstunnel y enrolamiento) la usan el wizard CLI y la GUI en Linux (B-031). Caddy solo desde el wizard CLI.
+- `restart` según quién es dueño del transporte: systemd → reescribe y reinicia las units; contenedor → `SIGHUP` al proceso `serve` (B-030); Windows → `transport_owner_note` (la app del servidor lo lleva).
 - `ServerManager.effective_state` reconcilia contra el SO cuando otro proceso lleva el servicio (pod k3s: `shareProcessNamespace: true`); `refresh_config()` recarga si otro proceso cambió la config.
 - **Panel web**: token de admin (hash scrypt) + sesiones persistidas hasheadas en `panel_sessions.json`, atadas al token vigente.
-
-### Pendiente conocido (auditoría parcial de 0.14.0, sin pasar aún a `KNOWN_BUGS.md`)
-
-Cliente Windows: exe solo GUI, el desinstalador no suelta el kill switch. Servidor: `wg_listen_port` desde el panel reinicia wstunnel con el `--restrict-to` viejo, `restart` en Windows, `restart` en Docker no-op, `run_setup` de la GUI incompleto en Linux. TUI: `k` sale en vez de desconectar. GUI: strings en español fijo.
 
 ### Pendiente para la primera versión estable
 
@@ -421,7 +422,7 @@ cliente:  pystray ── "Abrir" ──► pywebview window (file://ui/index.htm
 servidor: idéntico, con outwarp_server.api.Api ──► ServerManager; el mismo UI se sirve también como panel web (web_server.py)
 ```
 
-Los `.jsx` se pre-compilan a `bundle.js` con `python scripts/build_ui.py` (esbuild vía `npx`); **hay que regenerarlo y commitearlo** tras editar cualquier `.jsx`.
+Los `.jsx` se pre-compilan a `bundle.js` con `python scripts/build_ui.py` (esbuild fijado en `ESBUILD_VERSION` = `package.json`; `npm ci` lo instala); **hay que regenerarlo y commitearlo** tras editar cualquier `.jsx` — el job `ui-tests` falla si no (`build_ui.py --check`). Tests de UI: `npm ci && npx vitest run` (`ui-tests/`).
 
 ### Bridge protocol
 

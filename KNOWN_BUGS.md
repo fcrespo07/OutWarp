@@ -6,7 +6,8 @@ Leyenda de estado:
 
 - ✅ Resuelto
 - 🟡 Resuelto parcialmente / pendiente verificar
-- 🔴 Abierto
+- 🔴 Abierto, bloquea 1.0 (crítico o alto)
+- 🟢 Abierto, menor: no bloquea, planificado
 
 ---
 
@@ -201,9 +202,56 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 **Fix (2026-09-26):** `WindowsPlatform._restrict_conf_dir()` (`client/outwarp/platforms/windows.py`) aplica a la carpeta, antes de escribir la clave, un DACL sin herencia con solo SYSTEM (el servicio del túnel) y Administradores (el cliente elevado), heredable por los ficheros (`icacls /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F`, por SID porque los nombres se traducen). El `.conf` se borra y se vuelve a crear para que tome ese ACL aunque viniera de una versión anterior. Si `icacls` falla, no se escribe la clave y la conexión falla con `PlatformError`. DPAPI se descartó (decisión del autor): el servicio corre como SYSTEM, así que un blob cifrado por el usuario no le serviría, y uno con alcance de máquina lo puede descifrar cualquier proceso del equipo.
 **Prevención:** `test_install_wg_tunnel_locks_conf_dir_before_writing_key` y `test_install_wg_tunnel_refuses_to_write_key_when_acl_fails` en `client/tests/test_platforms.py`.
 
+### ✅ B-026 — Windows: desinstalar con el kill switch enganchado dejaba el equipo sin red
+**Síntomas:** Hallazgo de la auditoría de 0.14.0. Si el cliente moría (crash, taskkill, apagón) con el kill switch activo y luego se desinstalaba OutWarp, la política de salida del firewall de Windows seguía en `Block`: el equipo se quedaba sin red y sin ningún OutWarp que lo deshiciera.
+**Causa raíz:** `[UninstallRun]` de `installer/windows/outwarp.iss` solo paraba el servicio WireGuard del servidor. Nada restauraba el firewall ni quitaba las reglas `OutWarp-KillSwitch-*`, y el cliente, a propósito, no suelta un switch al arrancar si el ajuste está activo.
+**Fix (2026-09-26):** el desinstalador ejecuta `Set-NetFirewallProfile -All -DefaultOutboundAction Allow` **solo si** queda alguna regla `OutWarp-KillSwitch-*` (una política puesta por el usuario no se toca), borra las tres reglas, quita el servicio `WireGuardTunnel$OutWarp` del cliente y borra `{commonappdata}\WireGuard\*.conf` (la clave, B-025).
+**Prevención:** `client/tests/test_installer_iss.py` comprueba esas órdenes en el `.iss` y que los nombres de las reglas coinciden con `platforms/windows.py`. Pendiente: probarlo con el instalador real de 0.15.0.
+
+### ✅ B-027 — Windows: `outwarp.exe` ignoraba sus argumentos, no había CLI
+**Síntomas:** Hallazgo de la auditoría de 0.14.0. `outwarp.exe status`, `connect`, etc. abrían la GUI y no imprimían nada: en Windows no existía la CLI que documentan README y `--help`.
+**Causa raíz:** `outwarp-client.spec` construía un único exe de subsistema GUI (`console=False`) cuyo punto de entrada (`__main__.py` → `app.main`) nunca leía `sys.argv`.
+**Fix (2026-09-26):** el mismo esquema que el servidor: `outwarp-gui.exe` (GUI, `uac_admin`, `outwarp/gui_main.py`) y `outwarp.exe` de consola (`asInvoker`, `outwarp.cli:main`) compartiendo `_internal`. Compatibilidad: `outwarp.exe` sin argumentos lanza `outwarp-gui.exe` (accesos directos viejos); la GUI reescribe al arrancar una entrada de autoarranque que aún apunte a `outwarp.exe`; los accesos directos del instalador apuntan a la GUI; `outwarp uninstall` ya no mata con `taskkill` el proceso que lo ejecuta. `python -m outwarp` pasa a ser la CLI. Sin PATH por defecto (como el servidor); la opción de añadirlo desde Ajustes queda para el pulido de UI.
+**Prevención:** tests de dispatch en `client/tests/test_cli.py` y de la migración del autoarranque en `test_app.py`. Pendiente: probarlo con el instalador real de 0.15.0.
+
+### ✅ B-028 — Servidor: cambiar `wg_listen_port` desde el panel cortaba a todos los clientes
+**Síntomas:** Hallazgo de la auditoría de 0.14.0. Tras cambiar el puerto de WireGuard en el panel, ningún cliente volvía a conectar.
+**Causa raíz:** dos fallos. (1) `api.update_server_config` solo reescribía la unit de wstunnel si cambiaba el puerto WSS; con un puerto WG nuevo, systemd reiniciaba wstunnel con el `--restrict-to` viejo. (2) `ServerPlatform.reconcile(force_restart=True)` reiniciaba WireGuard desde el fichero en disco **sin escribir antes el nuevo**, así que seguía con el `ListenPort` viejo (el re-run del wizard pasaba por el mismo sitio). Además, `_save_config_patch` guardaba en la ruta por defecto: un panel con `--config-dir` (el contenedor) perdía el cambio.
+**Fix (2026-09-26):** `reconcile` escribe la conf (`ServerPlatform.write_wg_config`, que el contenedor sobrescribe para quitar el `sysctl`) antes del reinicio forzado; cualquier cambio de puerto reescribe la unit desde la config nueva; se refresca el sello de config del manager; el panel guarda en `manager._config_path`.
+**Prevención:** `test_wg_port_change_rewrites_the_wstunnel_unit`, `test_update_server_config_saves_to_the_managers_config_path` y los tests de `reconcile` en `server/tests/test_platforms.py`.
+
+### ✅ B-029 — Servidor Windows: `add-client`, `revoke-client`, `rotate-client` y `restart` escribían un `wg0.conf` de Linux
+**Síntomas:** Hallazgo de la auditoría de 0.14.0. En un servidor Windows, `restart` fallaba siempre, y las operaciones de clientes (también desde la GUI, que delega en `operations.py`) instalaban una conf que WireGuard for Windows rechaza.
+**Causa raíz:** `operations.py` usaba `build_server_wg_conf` (con `PostUp`/`PostDown` de iptables) en vez del builder de Windows. `restart` además desmontaba el túnel dos veces y el paso de wstunnel lanzaba siempre `PlatformError`, porque en Windows wstunnel vive dentro de la app del servidor.
+**Fix (2026-09-26):** `wireguard.build_platform_wg_conf` es el único builder para la conf del SO y lo usan `operations.py` y `server_manager._get_wg_conf`. `restart_services` hace un solo `reconcile(force_restart=True)`, y cuando otro proceso es dueño del transporte (`ServerPlatform.transport_owner_note`, Windows) lo dice como aviso, no como error.
+**Prevención:** `test_windows_writes_the_windows_wg_conf` y `test_restart_on_windows_points_at_the_app_instead_of_failing`.
+
+### ✅ B-030 — Docker/Kubernetes: `outwarp-server restart` no reiniciaba nada y decía ✓
+**Síntomas:** Hallazgo de la auditoría de 0.14.0. `docker exec … outwarp-server restart` reiniciaba WireGuard pero informaba de wstunnel y del listener de enrolamiento como reiniciados sin tocarlos; un cambio de puerto o de argv nunca llegaba al proceso `serve`.
+**Causa raíz:** `KubernetesServerPlatform.restart_wstunnel_service` y `restart_enroll_service` eran `pass`; `serve` solo atendía `SIGTERM`/`SIGINT`.
+**Fix (2026-09-26):** `serve` atiende `SIGHUP` (bandera; el hilo principal recarga la config y llama a `manager.restart()`); la plataforma del contenedor busca `outwarp-server … serve` con `pgrep` y le manda `SIGHUP`, o falla con un error claro si no hay; el `CMD` del `Dockerfile` hace `exec` para que `serve` sea PID 1.
+**Prevención:** `TestServeReload` y `TestContainerRestart` en `server/tests/test_cli.py`.
+
+### ✅ B-031 — Servidor Linux: el setup desde la GUI no instalaba los servicios
+**Síntomas:** Hallazgo de la auditoría de 0.14.0. Tras configurar el servidor desde `outwarp-server gui` en Linux, el túnel se paraba al cerrar la ventana, no arrancaba con el sistema y el enrolamiento no tenía listener.
+**Causa raíz:** `api.run_setup` solo guardaba la config y dejaba que la GUI ejecutara wstunnel como subproceso; se saltaba todo lo que hace el wizard CLI (forwarding persistente, ufw, units de wstunnel y de enrolamiento).
+**Fix (2026-09-26):** esos pasos pasan a `outwarp_server/service_install.install_services()`, sin `rich`, y los usan el wizard CLI y la GUI (cuando `platform.os_managed_transport`). La GUI exige root en Linux y sigue ofreciendo solo la rama autofirmada; dominio + Caddy es del wizard CLI.
+**Prevención:** `server/tests/test_service_install.py` y `test_run_setup_installs_the_services_on_linux`.
+
+### ✅ B-032 — TUI: `k` salía de la TUI en vez de desconectar
+**Síntomas:** Hallazgo de la auditoría de 0.14.0. En el dashboard, `k` (Disconnect según la ayuda) paraba el túnel y cerraba la TUI; en la pantalla de conexión, `k` (Cancel) también salía, y además bloqueaba el bucle de eventos durante el `stop()`.
+**Causa raíz:** `app.exit(0)` tras `mgr.stop()` en `tui/screens/dashboard.py` y `tui/screens/connecting.py`.
+**Fix (2026-09-26):** ambos se quedan en la TUI, en el dashboard desconectado; el cancel ejecuta `stop()` fuera del bucle; una transición a `DISCONNECTED` lleva al dashboard.
+**Prevención:** tres tests en `client/tests/test_tui_client.py`.
+
 ---
 
 ## Abiertos
+
+### 🟢 B-033 — GUI del cliente: textos fijos en español
+**Síntomas:** Hallazgo de la auditoría de 0.14.0. Parte de la GUI del cliente muestra textos en español aunque el idioma sea inglés.
+**Causa:** strings literales en los `.jsx` fuera de `STR`.
+**Plan:** se resuelve con la infraestructura de i18n (fase 1 del plan de 1.0, criterio "Interfaz en 5 idiomas"). No bloquea por sí solo.
 
 ### 🟡 B-024 — Windows: dos iconos en la bandeja tras una cuarentena de `wstunnel.exe` (mitigado, sin reproducir)
 **Síntomas:** Reportado por el autor (2026-09-26): Microsoft Defender / Smart App Control quitó `wstunnel.exe` de repente; al volver a abrir OutWarp aparecieron dos iconos de OutWarp en la bandeja.

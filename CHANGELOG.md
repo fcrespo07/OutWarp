@@ -8,7 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-09-26
+
 ### Changed
+- **Windows: a real command line.** The client now installs two programs,
+  like the server: `outwarp-gui.exe` (the tray app, what the shortcuts open)
+  and `outwarp.exe`, a console CLI (`outwarp status`, `outwarp connect`, …).
+  Until now `outwarp.exe` was the tray app and silently ignored every
+  argument (B-027). A bare `outwarp.exe` still opens the tray app, so old
+  shortcuts keep working, and a start-at-boot entry from an older version is
+  re-pointed at the GUI the first time it runs. `python -m outwarp` is the CLI.
+- **Updates refuse releases without a signed manifest.** The fallback that
+  accepted a release publishing no `SHA256SUMS.txt` is gone from both
+  updaters; every release since 0.11.0 is signed, so nothing legitimate is
+  affected.
+- `outwarp-server restart` inside a Docker/Kubernetes container now reloads
+  the running server (the `serve` process handles `SIGHUP`); the image runs
+  `serve` as PID 1.
+- The server's desktop GUI setup on Linux now installs the same system
+  services as `sudo outwarp-server setup` and needs root (`sudo
+  outwarp-server gui`). The domain + Caddy branch remains CLI-only.
+- Development: UI tests (vitest) with a guard that fails when a committed
+  `bundle.js` is stale, a pinned esbuild, SHA-pinned GitHub Actions,
+  Dependabot, a `pip-audit` job, and `SECURITY.md` with the private reporting
+  channel.
 - The client UI bundle is about a third smaller: two unused design previews
   were still being compiled into it. No visible change.
 - **Releases are drafted, then published once complete and signed.** GitHub
@@ -22,6 +45,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/history/`.
 
 ### Fixed
+- **Windows: uninstalling no longer strands a machine offline** (B-026). If
+  the client had died with the kill switch engaged, the firewall kept
+  blocking all outbound traffic after uninstall. The uninstaller now restores
+  the policy (only when an OutWarp rule is still present), removes the rules,
+  the client tunnel service and its key file.
+- **Server: changing the WireGuard port from the panel no longer cuts every
+  client off** (B-028). wstunnel kept forwarding to the old port and
+  WireGuard was restarted on the old config file. Changes made from a panel
+  started with `--config-dir` (the container) are also saved to that
+  directory now instead of being lost.
+- **Windows server: adding, revoking or rotating a client and `restart` wrote
+  a Linux WireGuard config** (B-029), which WireGuard for Windows refuses.
+  They now write the Windows one; `restart` no longer tears the tunnel down
+  twice and, since wstunnel runs inside the server app, says to restart it
+  from the tray instead of failing.
+- **Docker/Kubernetes: `outwarp-server restart` really restarts** (B-030) —
+  it used to report wstunnel and the enrolment listener as restarted without
+  touching them.
+- **Linux server GUI setup** (B-031): the tunnel no longer stops when the
+  window closes, comes back at boot, and enrolment works.
+- **TUI: `k` disconnects (or cancels a connection attempt) instead of
+  quitting** (B-032).
 - **Windows: other local users could read the client's WireGuard private
   key** (B-025). The tunnel's `.conf` under `C:\ProgramData\WireGuard`
   inherited read access for every user on the machine; the folder is now
