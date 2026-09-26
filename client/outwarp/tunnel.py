@@ -462,6 +462,10 @@ class Tunnel:
             self.disconnect()
             raise
 
+    def ensure_transport(self) -> None:
+        """Raise TransportUnavailableError now if wstunnel is missing or gone."""
+        self._ensure_wstunnel()
+
     def _ensure_wstunnel(self) -> Path:
         """The wstunnel binary, re-checked on every connect: an antivirus can
         remove it mid-session, and a restored one should work without a restart.
@@ -886,6 +890,17 @@ class TunnelManager:
                    "ask the server admin for a new .owcfg")
             log.error(msg)
             self._set_error(msg)
+            self._set_state(TunnelState.FAILED)
+            return
+
+        # Before anything slow (the gateway lookup below spawns a process on
+        # Windows): a missing transport should reach the UI as the reason,
+        # not after a "connecting" screen.
+        try:
+            self._tunnel.ensure_transport()
+        except TransportUnavailableError as exc:
+            log.error("Connect failed: %s", exc)
+            self._set_error(str(exc))
             self._set_state(TunnelState.FAILED)
             return
 

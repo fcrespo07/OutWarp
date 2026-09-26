@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opens and shows the integrity banner. Connecting checks the binary before
   bringing WireGuard up and fails at once with a message pointing at
   Defender / Smart App Control, instead of retrying for about two minutes.
+  The check runs before any network work, so the error shows straight away
+  rather than after a "connecting" screen.
 
 ## [0.14.0] — 2026-09-15
 

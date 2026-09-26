@@ -49,6 +49,7 @@ class FakeTunnel:
         # When set, connect() blocks until cancel() — models a ladder that
         # outlives stop()'s join budget.
         self.block_until_cancel: Event | None = None
+        self.transport_error: Exception | None = None
 
     def cancel(self) -> None:
         self.cancel_calls += 1
@@ -57,6 +58,10 @@ class FakeTunnel:
 
     def clear_cancel(self) -> None:
         pass
+
+    def ensure_transport(self) -> None:
+        if self.transport_error is not None:
+            raise self.transport_error
 
     def connect(self) -> None:
         self.connect_calls += 1
@@ -158,6 +163,20 @@ def test_missing_transport_fails_without_retrying():
     m.stop(timeout=2)
 
 
+def test_missing_transport_fails_before_any_network_work():
+    # The TUI showed "connecting" before the error: the check ran only after
+    # the (on Windows, process-spawning) gateway lookup.
+    fake = FakeTunnel()
+    fake.transport_error = TransportUnavailableError("wstunnel.exe was removed")
+    m = _make_manager(_make_config(), fake)
+    with patch.object(m, "_network_signature", side_effect=AssertionError("too late")):
+        m.start()
+        assert _wait_until(lambda: m.state == TunnelState.FAILED, timeout=3)
+    assert fake.connect_calls == 0
+    assert "was removed" in (m.last_error or "")
+    m.stop(timeout=2)
+
+
 def test_recovers_after_transient_failure():
     fake = FakeTunnel()
     fake.connect_errors = [RuntimeError("hiccup"), None]  # fails once, then succeeds
@@ -240,6 +259,9 @@ def test_auto_reconnect_setter_is_live():
 class _PhaseCallbackTunnel:
     """Test stub whose connect() drives the phase callback wired by
     TunnelManager. Mirrors how the real Tunnel reports progress mid-connect."""
+    def ensure_transport(self) -> None:
+        pass
+
     def __init__(self):
         self.connect_calls = 0
         self.alive = True
