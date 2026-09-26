@@ -972,9 +972,8 @@ class Api:
 
         # Verify the download against the release's published SHA256SUMS before
         # we run it. A mismatch — or a manifest that couldn't be fetched, or
-        # one that doesn't list this asset — means a corrupted or tampered file
-        # / a downgrade attempt: refuse. Only releases with no manifest at all
-        # (legacy, pre-SHA256SUMS) pass through with ok=True.
+        # one that doesn't list this asset, or no signed manifest at all —
+        # means a corrupted or tampered file / a downgrade attempt: refuse.
         self._emit("update", {"phase": "verifying", "latest": latest})
         try:
             ok, detail = updater.verify_download(

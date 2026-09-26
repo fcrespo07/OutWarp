@@ -16,14 +16,12 @@ def _wheel(tmp_path: Path, content: bytes = b"wheel-bytes") -> Path:
     return p
 
 
-def test_verify_wheel_no_checksums_url_passes(tmp_path: Path) -> None:
-    """Legacy releases without a SHA256SUMS asset: on a build with no release
-    key, an empty URL skips verification rather than refuse to upgrade off them.
-    Once a key is compiled in this becomes fatal — see TestManifestSignature."""
+def test_verify_wheel_without_a_manifest_is_rejected(tmp_path: Path) -> None:
+    """The fail-open path for releases that predate the manifest is retired:
+    every release since 0.11.0 is signed."""
     wheel = _wheel(tmp_path)
-    with patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""):
-        ok, detail = verify_wheel(wheel, wheel.name, "")
-    assert ok is True
+    ok, detail = verify_wheel(wheel, wheel.name, "")
+    assert ok is False
     assert "no SHA256SUMS" in detail
 
 
@@ -55,10 +53,10 @@ def test_verify_wheel_asset_not_listed_is_rejected(tmp_path: Path) -> None:
     resp.__exit__ = lambda *a, **kw: None
     resp.read.return_value = b"0" * 64 + b"  something-else.whl\n"
 
-    # No release key: these cover the hash logic. The signature path has its
-    # own coverage in TestManifestSignature.
+    # Signature check stubbed: these cover the hash logic. The signature path
+    # has its own coverage in TestManifestSignature.
     with (
-        patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""),
+        patch.object(updater, "_verify_manifest_signature"),
         patch("outwarp_server.updater.urllib.request.urlopen", return_value=resp),
     ):
         ok, detail = verify_wheel(wheel, wheel.name, "https://x/SHA256SUMS.txt")
@@ -77,10 +75,10 @@ def test_verify_wheel_hash_match(tmp_path: Path) -> None:
     resp.__exit__ = lambda *a, **kw: None
     resp.read.return_value = f"{expected}  {wheel.name}\n".encode()
 
-    # No release key: these cover the hash logic. The signature path has its
-    # own coverage in TestManifestSignature.
+    # Signature check stubbed: these cover the hash logic. The signature path
+    # has its own coverage in TestManifestSignature.
     with (
-        patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""),
+        patch.object(updater, "_verify_manifest_signature"),
         patch("outwarp_server.updater.urllib.request.urlopen", return_value=resp),
     ):
         ok, detail = verify_wheel(wheel, wheel.name, "https://x/SHA256SUMS.txt")
@@ -98,10 +96,10 @@ def test_verify_wheel_hash_mismatch_is_rejected(tmp_path: Path) -> None:
     resp.__exit__ = lambda *a, **kw: None
     resp.read.return_value = f"{'0' * 64}  {wheel.name}\n".encode()
 
-    # No release key: these cover the hash logic. The signature path has its
-    # own coverage in TestManifestSignature.
+    # Signature check stubbed: these cover the hash logic. The signature path
+    # has its own coverage in TestManifestSignature.
     with (
-        patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""),
+        patch.object(updater, "_verify_manifest_signature"),
         patch("outwarp_server.updater.urllib.request.urlopen", return_value=resp),
     ):
         ok, detail = verify_wheel(wheel, wheel.name, "https://x/SHA256SUMS.txt")
@@ -180,10 +178,11 @@ class TestManifestSignature:
     def test_this_build_requires_signatures(self) -> None:
         assert updater.signing_configured() is True
 
-    def test_a_build_without_a_key_still_accepts_unsigned_manifests(self) -> None:
+    def test_a_build_without_a_key_refuses_every_manifest(self) -> None:
         with patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""):
             assert updater.signing_configured() is False
-            updater._verify_manifest_signature("anything", "")
+            with pytest.raises(ValueError, match="no release key"):
+                updater._verify_manifest_signature("anything", "https://x/sig")
 
     def test_missing_signature_asset_is_fatal_once_a_key_exists(self) -> None:
         with (

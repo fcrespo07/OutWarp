@@ -42,11 +42,10 @@ _SIGNATURE_ASSET = "SHA256SUMS.txt.minisig"
 # from stolen CI credentials would then also be able to sign it, and the
 # signature would prove nothing.
 #
-# Because this is set, signature verification is mandatory: an unsigned or
-# wrongly-signed manifest is rejected outright. Clients built before it was
-# filled in keep accepting unsigned manifests — they have no key to check
-# against — which is why the fail-open branch in verify_download still exists.
-# See docs/RELEASE_SIGNING.md.
+# Signature verification is mandatory: a release without SHA256SUMS.txt, or
+# with an unsigned or wrongly-signed one, is rejected. Every release since
+# 0.11.0 is signed; the fail-open path for older, unsigned releases was retired
+# in 0.15.0. See docs/RELEASE_SIGNING.md.
 _MINISIGN_PUBLIC_KEY = (
     "untrusted comment: minisign public key 3E1FCD8BF652EC28\n"
     "RWQo7FL2i80fPrFtvv7gB5xJCqS/7KTSu+VkoLRdnaQyTnwXXuemHydR\n"
@@ -217,14 +216,12 @@ def verify_manifest_signature(
 ) -> None:
     """Check the manifest against the compiled-in release key.
 
-    No-op while no key is configured — the project's first signed release has to
-    be publishable by a client that predates the key. Once one is compiled in,
-    every failure path here is fatal: a missing signature asset, an unfetchable
+    Every failure path here is fatal: a missing signature asset, an unfetchable
     one and an invalid one are all indistinguishable from an attack, and the
     whole point of this step is that it cannot be skipped by removing a file.
     """
     if not signing_configured():
-        return
+        raise SignatureError("this build has no release key to verify updates with")
     if not signature_url:
         raise SignatureError(
             f"the release does not publish {_SIGNATURE_ASSET}; refusing to trust "
@@ -274,10 +271,8 @@ def verify_download(
 
     Returns ``(ok, detail)``. Decisions:
 
-    - No ``checksums_url`` at all (legacy release, predates the manifest):
-      skip with ``ok=True`` — refusing to update off legacy releases is worse
-      than the lack of a hash for them. This branch is scheduled for removal
-      once no unsigned release is still in circulation; see ROADMAP.md.
+    - No ``checksums_url`` at all: ``ok=False``. Every release since 0.11.0
+      publishes a signed manifest, so a release without one is not ours.
     - Manifest URL present but the fetch fails: ``ok=False``. A network path
       that can selectively drop the manifest must not be able to downgrade
       verification.
@@ -290,9 +285,7 @@ def verify_download(
     - Hash mismatch: ``ok=False``.
     """
     if not checksums_url:
-        if signing_configured():
-            return False, "the release publishes no SHA256SUMS to verify against"
-        return True, "no SHA256SUMS published (skipping verification)"
+        return False, "the release publishes no SHA256SUMS to verify against"
     try:
         sums = fetch_checksums(checksums_url, signature_url=signature_url)
     except _ChecksumsFetchError as exc:

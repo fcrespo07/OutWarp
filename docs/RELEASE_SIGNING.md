@@ -120,21 +120,13 @@ A missing signature is treated exactly like a bad one on purpose. If deleting a
 file from the release were enough to skip the check, the check would be
 opt-out — for the attacker.
 
-## Cut-over
+## Cut-over (done)
 
-Configuring the key makes verification mandatory *for clients that ship with it*.
-Older clients keep accepting unsigned manifests, because they have no key to
-check against; there is no way around that, and it is why the fail-open branch in
-`verify_download` still exists.
-
-The sequence is therefore:
-
-1. Ship one release that contains the public key **and** a valid `.minisig`.
-   Clients from that release onwards verify; older ones ignore the signature.
-2. Keep signing every subsequent release.
-3. Once no meaningfully-used version predates step 1, delete the
-   `"no SHA256SUMS published (skipping verification)"` branch in both updaters
-   and make a missing manifest fatal unconditionally. Tracked in `ROADMAP.md`.
+The key shipped in 0.11.0 and every release since carries a valid `.minisig`.
+In 0.15.0 the fail-open branch was removed from both updaters: a release with no
+`SHA256SUMS.txt`, or with an unsigned or wrongly-signed one, is always rejected,
+and a build without a compiled-in key refuses every manifest. Clients older than
+0.11.0 still ignore signatures; they can only be fixed by updating them.
 
 ## What this does not cover
 

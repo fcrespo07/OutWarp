@@ -51,7 +51,7 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
 - [ ] **JS test runner (vitest) + bundle guard.** Pure-logic tests for the
       dashboard helpers (`makeBoundedPeak`, formatters) and a test that fails
       when `bundle.js` is stale. No ES-module rewrite of the UI.
-- [ ] **Retire the unsigned-manifest fallback** in both updaters
+- [x] **Retire the unsigned-manifest fallback** *(done in 0.15.0)* in both updaters
       (fail-closed; see "Security follow-ups").
 - [ ] **Honest README and wizard about DPI.** Replace the "corporate
       networks / captive Wi-Fi" claim with the adversary table (self-signed:
@@ -219,11 +219,8 @@ carefully (bind address, auth).
 ## Planned — security follow-ups
 
 ### Retire the unsigned-manifest fallback
-`verify_download` still accepts a release that publishes no `SHA256SUMS.txt`, so
-a client can update off releases that predate the manifest. Once the release key
-is configured (see `docs/RELEASE_SIGNING.md`) and no meaningfully-used version
-predates the first signed release, that branch should become fail-closed
-unconditionally in both updaters. **Part of the 1.0 gate** (see "Before 1.0").
+Done in 0.15.0: both updaters are fail-closed. Every release since 0.11.0 is
+signed, so a release without a signed `SHA256SUMS.txt` is always rejected.
 
 ### uTLS / ClientHello mimicry
 The domain branch fixes what the certificate looks like, and the browser

@@ -31,7 +31,8 @@ _SIGNATURE_ASSET = "SHA256SUMS.txt.minisig"
 
 # See the identical constant in client/outwarp/updater.py: the release-signing
 # public key (key ID 3E1FCD8BF652EC28) is compiled in and its private half lives
-# offline. Because it is set, an unsigned or wrongly-signed manifest is rejected.
+# offline. A release without a signed SHA256SUMS.txt is rejected; the fail-open
+# path for pre-0.11.0 unsigned releases was retired in 0.15.0.
 _MINISIGN_PUBLIC_KEY = (
     "untrusted comment: minisign public key 3E1FCD8BF652EC28\n"
     "RWQo7FL2i80fPrFtvv7gB5xJCqS/7KTSu+VkoLRdnaQyTnwXXuemHydR\n"
@@ -174,12 +175,11 @@ def _asset_url(assets: list, name: str) -> str:
 def _verify_manifest_signature(manifest: str, signature_url: str) -> None:
     """Raise ValueError unless the manifest carries a valid release signature.
 
-    No-op while no key is compiled in. Once one is, a missing or unfetchable
-    signature is as fatal as a bad one: the check must not be defeatable by
-    deleting a file from the release.
+    A missing or unfetchable signature is as fatal as a bad one: the check
+    must not be defeatable by deleting a file from the release.
     """
     if not signing_configured():
-        return
+        raise ValueError("this build has no release key to verify updates with")
     if not signature_url:
         raise ValueError(
             f"the release does not publish {_SIGNATURE_ASSET}; refusing to trust "
@@ -206,9 +206,8 @@ def verify_wheel(
 
     Returns ``(ok, detail)``. Decisions:
 
-    - No ``checksums_url`` (the release has no manifest at all): skip with
-      ``ok=True``. Legacy releases predate the manifest and we don't want
-      ``outwarp-server update`` to refuse to upgrade off them.
+    - No ``checksums_url`` (the release has no manifest at all): ``ok=False``.
+      Every release since 0.11.0 publishes a signed manifest.
     - Manifest URL present but fetch fails: ``ok=False``. A MITM that can
       selectively drop the manifest must not be able to downgrade verification.
     - Manifest fetched but this asset isn't listed: ``ok=False``. If the
@@ -218,9 +217,7 @@ def verify_wheel(
     - Manifest fetched, asset listed, hash mismatches: ``ok=False``.
     """
     if not checksums_url:
-        if signing_configured():
-            return False, "the release publishes no SHA256SUMS to verify against"
-        return True, "no SHA256SUMS published (skipping verification)"
+        return False, "the release publishes no SHA256SUMS to verify against"
     try:
         req = urllib.request.Request(checksums_url, headers={"User-Agent": _USER_AGENT})
         with urllib.request.urlopen(req, timeout=10.0) as resp:

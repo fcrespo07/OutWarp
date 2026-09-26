@@ -285,19 +285,15 @@ def test_verify_download_mismatch_is_rejected(tmp_path):
     assert "mismatch" in detail
 
 
-def test_verify_download_no_checksum_passes(tmp_path):
-    # Legacy releases that predate the manifest have an empty checksums_url:
-    # a build with no release key skips verification rather than refuse to
-    # update off them. Once a key is compiled in this becomes fatal — see
-    # TestManifestSignature.test_verify_download_refuses_a_manifestless_release.
+def test_verify_download_without_a_manifest_is_rejected_even_without_a_key(tmp_path):
+    # The fail-open path for releases that predate the manifest is gone: every
+    # release since 0.11.0 is signed, so a release without one is not ours.
     p = tmp_path / "OutWarpSetup-0.3.0.exe"
     p.write_bytes(b"whatever")
-    with (
-        patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""),
-        patch("outwarp.updater.fetch_checksums", return_value={}),
-    ):
-        ok, _ = verify_download(p, "OutWarpSetup-0.3.0.exe", "")
-    assert ok is True
+    with patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""):
+        ok, detail = verify_download(p, "OutWarpSetup-0.3.0.exe", "")
+    assert ok is False
+    assert "no SHA256SUMS" in detail
 
 
 def test_verify_download_manifest_fetch_failure_is_rejected(tmp_path):
@@ -389,12 +385,12 @@ class TestManifestSignature:
         # without it every update silently drops back to hash-only checking.
         assert updater.signing_configured() is True
 
-    def test_a_build_without_a_key_still_accepts_unsigned_manifests(self) -> None:
-        # The fail-open path clients older than the key still take. It has to
-        # keep working until no such client is in circulation (see ROADMAP.md).
+    def test_a_build_without_a_key_refuses_every_manifest(self) -> None:
+        # Retired fail-open path: a keyless build must not trust a manifest.
         with patch.object(updater, "_MINISIGN_PUBLIC_KEY", ""):
             assert updater.signing_configured() is False
-            updater.verify_manifest_signature("anything", "")
+            with pytest.raises(updater.SignatureError, match="no release key"):
+                updater.verify_manifest_signature("anything", "https://x/sig")
 
     def test_valid_signature_is_accepted(self) -> None:
         with (
