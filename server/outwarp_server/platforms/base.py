@@ -125,6 +125,15 @@ class ServerPlatform(ABC):
         """
         ...
 
+    def write_wg_config(self, conf_text: str, interface: str = "wg0") -> None:
+        """Write the interface's config without touching the running interface."""
+        from outwarp_server.config import _atomic_write_secret
+
+        try:
+            _atomic_write_secret(self.wg_config_dir() / f"{interface}.conf", conf_text)
+        except OSError as exc:
+            raise PlatformError(f"Failed to write WG config: {exc}") from exc
+
     @abstractmethod
     def uninstall_wg_config(self, interface: str = "wg0") -> None:
         ...
@@ -181,6 +190,10 @@ class ServerPlatform(ABC):
         iface = interface or self.wg_interface_name()
         self.prepare_system(subnet, wss_port)
         if force_restart and self.is_wg_active(iface):
+            # restart_wg() brings the interface up from the file on disk, so
+            # the new text has to be there first; restarting on the old file
+            # kept the old ListenPort (B-028).
+            self.write_wg_config(conf_text, iface)
             self.restart_wg(iface, subnet=subnet)
         else:
             self.install_wg_config(conf_text, iface)

@@ -37,6 +37,8 @@ def _make_mgr(state=ServerState.STOPPED, clients=(), effective_state=None):
     # pass effective_state explicitly to exercise the OS-reconciliation path.
     m.effective_state = effective_state if effective_state is not None else state
     m.config = _make_config(clients=clients)
+    # None = "the default path", which the save tests patch.
+    m._config_path = None
     return m
 
 
@@ -964,3 +966,57 @@ class TestServiceControl:
         mgr.start.assert_not_called()
         mgr.stop.assert_not_called()
         mgr.restart.assert_not_called()
+
+
+def test_wg_port_change_rewrites_the_wstunnel_unit(tmp_path):
+    # B-028: --restrict-to carries the WG port. A plain `systemctl restart`
+    # kept the old one and every client lost the tunnel.
+    mgr = _make_mgr()
+    mgr._config = mgr.config
+    mgr._wstunnel = None
+    api, _ = _make_api(mgr)
+
+    fake_platform = MagicMock()
+    fake_platform.is_wstunnel_running.return_value = True
+    fake_platform.is_wg_active.return_value = True
+
+    with (
+        patch("outwarp_server.api.default_config_path", return_value=tmp_path / "srv.json"),
+        patch.object(ServerConfig, "save"),
+        patch("outwarp_server.api.get_server_platform", return_value=fake_platform),
+        patch("outwarp_server.api.threading.Thread", _sync_thread()),
+        patch("outwarp_server.api.find_wstunnel", return_value=Path("/usr/bin/wstunnel")),
+    ):
+        r = api.update_server_config({"wg_listen_port": 51999})
+
+    assert r["ok"] is True
+    fake_platform.install_wstunnel_service.assert_called_once()
+    assert "127.0.0.1:51999" in fake_platform.install_wstunnel_service.call_args.args[0]
+    fake_platform.restart_wstunnel_service.assert_called_once()
+
+
+def test_update_server_config_saves_to_the_managers_config_path(tmp_path):
+    # B-028: a panel started with --config-dir saved to the default path, so
+    # the change was lost on the next load.
+    own = tmp_path / "data" / "server_config.json"
+    own.parent.mkdir()
+    mgr = _make_mgr()
+    mgr.config.save(own)
+    mgr._config = mgr.config
+    mgr._config_path = own
+    mgr._wstunnel = None
+    api, _ = _make_api(mgr)
+
+    fake_platform = MagicMock()
+    fake_platform.is_wstunnel_running.return_value = False
+    fake_platform.is_wg_active.return_value = False
+    with (
+        patch("outwarp_server.api.default_config_path", return_value=tmp_path / "default.json"),
+        patch("outwarp_server.api.get_server_platform", return_value=fake_platform),
+        patch("outwarp_server.api.threading.Thread", _sync_thread()),
+    ):
+        r = api.update_server_config({"endpoint": "198.51.100.7"})
+
+    assert r["ok"] is True
+    assert ServerConfig.load(own).endpoint == "198.51.100.7"
+    assert not (tmp_path / "default.json").exists()

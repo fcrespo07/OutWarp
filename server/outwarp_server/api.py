@@ -48,7 +48,9 @@ from outwarp_server.wireguard import get_live_peers
 log = logging.getLogger(__name__)
 
 
-def _save_config_patch(snapshot: ServerConfig, **fields: object) -> ServerConfig:
+def _save_config_patch(
+    snapshot: ServerConfig, path: Path | None = None, **fields: object,
+) -> ServerConfig:
     """Apply `fields` to the freshest on-disk config and save it.
 
     Never save a snapshot taken from memory: another process (e.g. a CLI
@@ -61,7 +63,9 @@ def _save_config_patch(snapshot: ServerConfig, **fields: object) -> ServerConfig
 
     from outwarp_server.config import ConfigError
 
-    path = default_config_path()
+    # The manager's own path, not the default: a panel started with
+    # --config-dir (the container) saved to a file nothing read (B-028).
+    path = path or default_config_path()
     with locked_config(path):
         try:
             base = ServerConfig.load(path)
@@ -1039,7 +1043,9 @@ class Api:
         except Exception as exc:
             self._emit_setup("probe", "warn", str(exc))
 
-    def _bounce_wstunnel(self, port_changed: bool = False) -> None:
+    def _bounce_wstunnel(
+        self, port_changed: bool = False, cfg: ServerConfig | None = None,
+    ) -> None:
         """Restart whichever wstunnel is actually serving traffic.
 
         In headless deployments wstunnel runs under systemd
@@ -1052,7 +1058,8 @@ class Api:
         to the old port).
         """
         platform = get_server_platform()
-        cfg = self._manager.config if self._manager else None
+        if cfg is None and self._manager is not None:
+            cfg = self._manager.config
 
         try:
             if platform.is_wstunnel_running():
@@ -1116,7 +1123,8 @@ class Api:
 
         try:
             new_cfg = _save_config_patch(
-                cfg, port=new_port, wg_listen_port=new_wg_port, endpoint=new_endpoint,
+                cfg, self._manager._config_path,  # noqa: SLF001
+                port=new_port, wg_listen_port=new_wg_port, endpoint=new_endpoint,
             )
         except OSError as exc:
             return {"ok": False, "error": f"could not save config: {exc}"}
@@ -1133,11 +1141,15 @@ class Api:
             )
 
         self._manager._config = new_cfg  # noqa: SLF001 (intentional poke)
+        self._manager._config_stamp = self._manager._current_config_stamp()  # noqa: SLF001
 
         def _bounce() -> None:
-            # 1) Restart wstunnel (systemd unit rewrite if WSS port changed,
-            #    plain restart otherwise; also bounce the GUI subprocess).
-            self._bounce_wstunnel(port_changed=wss_port_changed)
+            # 1) Restart wstunnel. Both ports are baked into its command line:
+            #    the WSS port it listens on and the WG port it forwards to
+            #    (--restrict-to). A plain restart of the systemd unit kept the
+            #    old WG port and cut every client off (B-028), so either change
+            #    rewrites the unit.
+            self._bounce_wstunnel(port_changed=wss_port_changed or wg_port_changed, cfg=new_cfg)
 
             # 2) WG: a hot reload (syncconf) handles peer changes, but cannot
             #    change ListenPort or replay PostUp/PostDown. reconcile()
@@ -1192,6 +1204,7 @@ class Api:
         try:
             new_cfg = _save_config_patch(
                 cfg,
+                self._manager._config_path,  # noqa: SLF001
                 cert_path=str(cert_path),
                 key_path=str(key_path),
                 cert_fingerprint_sha256=fingerprint,

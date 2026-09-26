@@ -451,6 +451,9 @@ class _FakePlatform(ServerPlatform):
     def restart_wg(self, interface: str = "wg0", subnet: str | None = None) -> None:
         self.calls.append(("restart", interface, subnet))
 
+    def write_wg_config(self, conf_text: str, interface: str = "wg0") -> None:
+        self.calls.append(("write", conf_text, interface))
+
     def uninstall_wg_config(self, interface: str = "wg0") -> None: ...
     def wg_config_dir(self) -> Path: return Path("/fake")
 
@@ -475,7 +478,9 @@ class TestReconcile:
             "[Interface]\n", subnet="10.9.0.0/24", wss_port=443, force_restart=True,
         )
         assert p.calls[0] == ("prepare", "10.9.0.0/24", 443)
-        assert p.calls[1] == ("restart", "wg0", "10.9.0.0/24")
+        # B-028: the new text must be on disk before the restart reads it.
+        assert p.calls[1] == ("write", "[Interface]\n", "wg0")
+        assert p.calls[2] == ("restart", "wg0", "10.9.0.0/24")
 
     def test_force_restart_on_inactive_interface_falls_back_to_install(self) -> None:
         # Nothing to tear down on a fresh interface — a full "restart" makes
@@ -489,4 +494,26 @@ class TestReconcile:
     def test_custom_interface_name_is_threaded_through(self) -> None:
         p = _FakePlatform(active=True)
         p.reconcile("conf", interface="OutWarp-Server", subnet="10.0.0.0/24", force_restart=True)
-        assert p.calls[1] == ("restart", "OutWarp-Server", "10.0.0.0/24")
+        assert p.calls[1] == ("write", "conf", "OutWarp-Server")
+        assert p.calls[2] == ("restart", "OutWarp-Server", "10.0.0.0/24")
+
+
+def test_base_write_wg_config_writes_the_file_only(tmp_path: Path) -> None:
+    class _Dir(_FakePlatform):
+        def wg_config_dir(self) -> Path:
+            return tmp_path
+
+    p = _Dir(active=True)
+    ServerPlatform.write_wg_config(p, "[Interface]\nListenPort = 51900\n", "wg0")
+    assert (tmp_path / "wg0.conf").read_text() == "[Interface]\nListenPort = 51900\n"
+    assert p.calls == []
+
+
+def test_kubernetes_write_wg_config_strips_the_sysctl(tmp_path: Path, monkeypatch) -> None:
+    from outwarp_server.platforms.kubernetes import KubernetesServerPlatform
+
+    monkeypatch.setattr(KubernetesServerPlatform, "wg_config_dir", lambda self: tmp_path)
+    KubernetesServerPlatform().write_wg_config(
+        "PostUp = sysctl -w net.ipv4.ip_forward=1; iptables -A x\n", "wg0",
+    )
+    assert (tmp_path / "wg0.conf").read_text() == "PostUp = iptables -A x\n"
