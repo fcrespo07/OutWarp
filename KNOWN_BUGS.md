@@ -195,6 +195,12 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 
 **Prevención:** Al delegar la creación de un servicio en un binario de terceros, no asumir su tipo de arranque por defecto. Si el ciclo de vida lo gestiona la app (instalar al conectar / desinstalar al desconectar), el servicio debe quedar en `demand`, para que un apagado sucio no lo convierta de facto en un servicio de arranque del sistema. Mismo razonamiento que B-016: el estado que deja el SCM sobrevive al proceso que lo creó.
 
+### ✅ B-025 — Windows: cualquier usuario local podía leer la clave privada WireGuard del cliente
+**Síntomas:** Hallazgo de la auditoría parcial de 0.14.0. Mientras el túnel está activo (y tras un cierre sucio, hasta la siguiente conexión) `C:\ProgramData\WireGuard\<túnel>.conf` contiene `PrivateKey` en claro, y la carpeta hereda de `C:\ProgramData` lectura para `Users`: cualquier cuenta del equipo, sin ser administradora, podía copiar la clave y suplantar al cliente. La documentación interna decía además que el `.conf` iba cifrado con DPAPI, y no era así.
+**Causa raíz:** `install_wg_tunnel` creaba la carpeta y el fichero sin tocar su ACL.
+**Fix (2026-09-26):** `WindowsPlatform._restrict_conf_dir()` (`client/outwarp/platforms/windows.py`) aplica a la carpeta, antes de escribir la clave, un DACL sin herencia con solo SYSTEM (el servicio del túnel) y Administradores (el cliente elevado), heredable por los ficheros (`icacls /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F`, por SID porque los nombres se traducen). El `.conf` se borra y se vuelve a crear para que tome ese ACL aunque viniera de una versión anterior. Si `icacls` falla, no se escribe la clave y la conexión falla con `PlatformError`. DPAPI se descartó (decisión del autor): el servicio corre como SYSTEM, así que un blob cifrado por el usuario no le serviría, y uno con alcance de máquina lo puede descifrar cualquier proceso del equipo.
+**Prevención:** `test_install_wg_tunnel_locks_conf_dir_before_writing_key` y `test_install_wg_tunnel_refuses_to_write_key_when_acl_fails` en `client/tests/test_platforms.py`.
+
 ---
 
 ## Abiertos

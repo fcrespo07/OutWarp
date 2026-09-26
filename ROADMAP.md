@@ -61,14 +61,16 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       ready for production" banner.
 *Added by the author on 2026-09-25:*
 
-- [ ] **No open 🔴 bugs in `KNOWN_BUGS.md`** on release day (today: B-023).
+- [ ] **No open 🔴 bugs in `KNOWN_BUGS.md`** on release day (today: none; B-023 and B-025 fixed 2026-09-26).
       The 0.14.0 partial-audit findings move into `KNOWN_BUGS.md` so this
       gate covers them.
 - [ ] **Enable/disable clients from the dashboard.** A reversible `disabled`
       state, distinct from the final `revoked`: the peer leaves `wg0.conf`
       but keeps name, IP, keys, PSK and expiry. GUI, web panel, TUI and CLI
       (`disable-client` / `enable-client`, names TBC).
-- [ ] **Study: handshakes vs. remote-desktop drops.** Find out whether
+- [x] **Study: handshakes vs. remote-desktop drops.** *(Closed 2026-09-26
+      with no change: RDP is stable, and Sunshine/Moonlight through OutWarp
+      measured 31 ms average network latency.)* Find out whether
       handshake frequency drops long RDP sessions and lower it if so. WG's
       ~120 s rekey is protocol-fixed; ours to look at: `PersistentKeepalive`,
       the WebSocket ping, the wstunnel watchdog, proxy idle timeouts, TCP
@@ -112,13 +114,10 @@ Items marked *(added)* joined the gate with this plan. 👤 marks a task for the
   - Retire the unsigned-manifest fallback.
   - *(added)* Public-repo hygiene: `SECURITY.md`, secret scanning and push protection, Dependabot, SHA-pinned actions in the release workflows, `pip-audit` in CI.
   - *(added)* Use 0.15.0 as the rehearsal of the immutable-release flow.
-  - 👤 Confirm B-024 on real Windows.
-  - 👤 Start the RDP measurements.
 - **Phase 1 — What freezes → 0.16.0**, in this order:
   1. Enable/disable clients, with an e2e case.
   2. i18n infrastructure, en/es only.
   3. Multi-profile.
-  4. Act on the RDP study. *(added)* Also evaluate `bbr`, `fq` and `tcp_notsent_lowat` on the Linux server.
 - **Phase 2 — Product → 0.17.0/0.18.0.**
   - UI/UX polish, ending in a string freeze.
   - Windows server via Docker, which can run in parallel with any phase.

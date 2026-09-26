@@ -99,8 +99,11 @@ class WindowsPlatform(Platform):
             )
             self.uninstall_wg_tunnel(name)
 
-        self._conf_dir.mkdir(parents=True, exist_ok=True)
+        self._restrict_conf_dir()
         conf_path = self._conf_dir / f"{name}.conf"
+        # Recreate rather than overwrite, so the file takes the directory's
+        # locked-down ACL instead of keeping whatever an older version left.
+        conf_path.unlink(missing_ok=True)
         conf_path.write_text(config_text, encoding="utf-8")
         result = _run([str(_WIREGUARD_EXE), "/installtunnelservice", str(conf_path)])
         if result.returncode != 0:
@@ -137,6 +140,23 @@ class WindowsPlatform(Platform):
                 "ensure the client runs as Administrator and WireGuard is fully installed."
             )
         return conf_path
+
+    def _restrict_conf_dir(self) -> None:
+        # The .conf holds the client's private key in clear text. Under
+        # C:\ProgramData a new folder inherits read access for every local
+        # user (B-025), so replace its DACL with SYSTEM (the tunnel service)
+        # and Administrators (this client, elevated) only, inherited by the
+        # files written into it. SIDs, not names: names are localised.
+        self._conf_dir.mkdir(parents=True, exist_ok=True)
+        result = _run([
+            "icacls", str(self._conf_dir), "/inheritance:r",
+            "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F",
+        ])
+        if result.returncode != 0:
+            raise PlatformError(
+                f"Could not restrict access to {self._conf_dir}, refusing to write "
+                f"the WireGuard key there: {(result.stderr or result.stdout).strip()}"
+            )
 
     def uninstall_wg_tunnel(self, name: str) -> None:
         if not _WIREGUARD_EXE.exists():

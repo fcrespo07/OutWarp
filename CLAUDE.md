@@ -132,7 +132,7 @@ El patrón: `platforms/base.py` define la interfaz; cada OS tiene su implementac
 |---|---|---|
 | Levantar tunnel WG | `wireguard.exe /installtunnelservice` | `wg-quick up` + systemd |
 | Rutas estáticas | `route add X MASK Y Z` | `ip route add X via Y` |
-| Config WG | `.conf.dpapi` (DPAPI) | `.conf` plano (`/etc/wireguard/`) |
+| Config WG | `.conf` en `C:\ProgramData\WireGuard`, ACL solo SYSTEM + Administradores (sin DPAPI, decisión 2026-09-26) | `.conf` plano (`/etc/wireguard-outwarp/`) |
 | Servicio del servidor | SCM (pywin32) | systemd unit |
 
 ## Distribución e instalación
@@ -299,9 +299,9 @@ Legado (hecho):
 - [ ] **README y wizard honestos con el anti-DPI.** Sustituir la promesa de `README.md` ("corporate networks, captive Wi-Fi…") por la tabla de adversarios: la rama autofirmada pasa "UDP bloqueado / solo 443"; la rama Caddy+dominio pasa además inspección de certificado; **ninguna** pasa huella TLS (JA3/JA4) ni DPI del Upgrade (caso WIFI_EDU). En `setup`, presentar "tengo un dominio" como camino principal y el autofirmado como "sin dominio, solo contra UDP bloqueado". Añadir "Plataformas soportadas" y "Limitaciones conocidas" (DPI, SmartScreen sin firmar) y **quitar el banner "not yet ready for production"**. Descartado y no reabrir: uTLS/imitación de ClientHello (reescribir el transporte). Como spike futuro, solo con una red DPI real para probarlo: ECH (`--tls-ech-enable` de wstunnel + Caddy ≥ 2.10), que oculta el SNI pero no cambia la huella JA3.
 *Añadidos por el autor el 2026-09-25:*
 
-- [ ] **Sin bugs 🔴 abiertos en `KNOWN_BUGS.md`.** Ningún bug marcado 🔴 en "Abiertos" el día del release (hoy: B-023, servicio WG del cliente Windows en `Automatic`). Los hallazgos de la auditoría parcial de 0.14.0 (ver "Estado actual") se pasan a `KNOWN_BUGS.md` con su severidad, en vez de vivir en una memoria de sesión, para que este criterio los cubra.
+- [ ] **Sin bugs 🔴 abiertos en `KNOWN_BUGS.md`.** Ningún bug marcado 🔴 en "Abiertos" el día del release (hoy: ninguno; B-023 y B-025 resueltos el 2026-09-26). Los hallazgos de la auditoría parcial de 0.14.0 (ver "Estado actual") se pasan a `KNOWN_BUGS.md` con su severidad, en vez de vivir en una memoria de sesión, para que este criterio los cubra.
 - [ ] **Activar/desactivar clientes desde el dashboard.** Estado `disabled` **reversible**, distinto de `revoked` (definitivo, soft delete de CONCEPTO-D): el peer sale de `wg0.conf` (hot-reload) mientras está desactivado, pero conserva nombre, IP, claves, PSK y expiración; reactivarlo lo devuelve sin reenrolar ni redistribuir `.owcfg`. En las cuatro superficies: GUI del servidor, panel web, TUI y CLI (`outwarp-server disable-client` / `enable-client`, nombres a confirmar). Va antes de 1.0 porque añade subcomandos y un valor de `state` que se congelan.
-- [ ] **Estudio: handshakes y cortes en escritorio remoto.** Investigar si la frecuencia de handshakes corta sesiones largas tipo RDP y, si procede, bajarla. Contexto para quien lo coja: el rekey de WireGuard cada ~120 s (`REKEY_AFTER_TIME`) es del protocolo, no configurable en `wireguard-tools`, y por sí solo no corta sesiones TCP internas; lo que sí es nuestro es `PersistentKeepalive = 25` (`client/outwarp/wireguard.py`), `--websocket-ping-frequency 25s` (`fallback.py`), el watchdog/reconexión de wstunnel, timeouts de inactividad de proxies intermedios y el head-of-line blocking de TCP. Entregable: reproducir con una sesión RDP real, medir (logs del watchdog, `wg show latest-handshakes`, captura), identificar la causa y decidir el cambio. Si el resultado toca el `.owcfg` o `config.json`, tiene que entrar antes de 1.0.
+- [x] **Estudio: handshakes y cortes en escritorio remoto.** *(Cerrado 2026-09-26 sin cambios: el autor probó RDP estable y Sunshine/Moonlight a través de OutWarp con 31 ms de latencia de red media. `bbr`/`fq` quedan como mejora 1.x, ver "Rendimiento".)* Investigar si la frecuencia de handshakes corta sesiones largas tipo RDP y, si procede, bajarla. Contexto para quien lo coja: el rekey de WireGuard cada ~120 s (`REKEY_AFTER_TIME`) es del protocolo, no configurable en `wireguard-tools`, y por sí solo no corta sesiones TCP internas; lo que sí es nuestro es `PersistentKeepalive = 25` (`client/outwarp/wireguard.py`), `--websocket-ping-frequency 25s` (`fallback.py`), el watchdog/reconexión de wstunnel, timeouts de inactividad de proxies intermedios y el head-of-line blocking de TCP. Entregable: reproducir con una sesión RDP real, medir (logs del watchdog, `wg show latest-handshakes`, captura), identificar la causa y decidir el cambio. Si el resultado toca el `.owcfg` o `config.json`, tiene que entrar antes de 1.0.
 - [ ] **Pulido general de UI/UX.** Pasada de coherencia y acabado en GUI cliente, GUI servidor, panel web y TUIs (estados vacíos/error, textos, i18n — hay strings en español fijo en la GUI —, accesibilidad, paridad de funciones entre superficies).
 - [x] **Login del dashboard más cómodo.** *(Hecho 2026-09-26 — decisión del autor: se queda el token de admin, sin usuario/contraseña, passkeys ni acceso por el túnel.)* Dos arreglos: (A) "Mantener la sesión" funcionaba mal por partida doble — la cookie no llevaba `Max-Age` (el navegador la borraba al cerrarse) y las sesiones vivían solo en memoria (cualquier reinicio del panel echaba al admin). Ahora `SessionStore` persiste en `panel_sessions.json` (0600, solo `sha256(session id)`), cada sesión va atada al token vigente (rotarlo con `admin-token --rotate` las mata todas) y la cookie dura 30 días con la casilla marcada. (B) El formulario de login lleva `username` fijo + `autocomplete="current-password"` para que navegador y gestores de contraseñas guarden y rellenen el token. Opciones evaluadas y descartadas por ahora: acceso sin login para clientes admin dentro del túnel, enlace de un solo uso por CLI, usuario+contraseña+TOTP, passkeys (no funcionan con IP ni cert autofirmado).
 - [ ] **Servidor Windows vía Docker como camino recomendado.** Documentar el despliegue en Windows con Docker Desktop (backend WSL2) usando la imagen de `server/Dockerfile`, con un `compose.yml` listo para arrancar el servicio (volumen de config, `NET_ADMIN`, `/dev/net/tun`, puerto 443) y la guía en `deploy/README.md`. El SCM nativo queda como alternativa. La imagen ya se publica en `ghcr.io` (`docker-publish.yml`): verificar que el paquete es público/descargable sin login cuando el repo lo sea y referenciarla en la guía.
@@ -313,18 +313,15 @@ Legado (hecho):
 **Plan de ejecución** *(aprobado por el autor el 2026-09-26)*. Orden en que se ataca lo "Bloqueante". Cada fase cierra con una release 0.x publicada con el flujo borrador → firma → publicar. Hay tres reglas: primero va lo que se congela en 1.0; la infraestructura (tests, i18n) va antes del contenido; las traducciones van después del pulido, con los textos ya congelados. Los puntos *(añadido)* entraron con el plan y también son bloqueantes. 👤 = lo hace el autor (máquina real, firma, nativos).
 
 - **Fase 0 — Base limpia → 0.15.0.**
-  - Pasar la auditoría de 0.14.0 a `KNOWN_BUGS.md` y corregir los 🔴 y los altos. Hay una decisión del autor pendiente: DPAPI, que se implementa o se quita de la doc.
+  - Pasar la auditoría de 0.14.0 a `KNOWN_BUGS.md` y corregir los 🔴 y los altos. DPAPI decidido (2026-09-26): no se implementa; el `.conf` se protege con ACL (B-025, hecho).
   - Vitest más la guardia de `bundle.js`.
   - Retirar el fallback sin firmar, tras comprobar que todas las releases desde 0.11.0 están firmadas.
   - *(añadido)* Seguridad del repo público: `SECURITY.md`, secret scanning y push protection, Dependabot, actions fijadas por SHA en los workflows de release, `pip-audit` en CI.
   - *(añadido)* 0.15.0 como ensayo del flujo de releases inmutables: el job de Windows adjunta los `.exe` al borrador y `publish-release.sh` funciona de principio a fin.
-  - 👤 Confirmar B-024 en Windows real.
-  - 👤 Empezar a medir el estudio de RDP.
 - **Fase 1 — Lo que se congela → 0.16.0 (quizá también 0.17.0)**, en este orden:
   1. Activar y desactivar clientes, con un caso en el e2e.
   2. Infraestructura de i18n solo en/es: extraer los textos fijos, detección del idioma más selector, fallback a inglés, fuente CJK, anchura doble en las TUIs.
   3. Varios perfiles, con migración idempotente; revisar el kill switch, el sticky store, `dnscache` y `known_servers.json` por perfil.
-  4. Estudio de RDP: decidir y aplicar. Si toca el `.owcfg` o `config.json`, entra aquí. *(añadido)* Evaluar también `bbr`, `fq` y `tcp_notsent_lowat` en el servidor Linux.
 - **Fase 2 — Producto → 0.17.0/0.18.0.**
   - Pulido de UI/UX, que termina con los **textos congelados**.
   - Servidor Windows vía Docker; se puede hacer en paralelo con cualquier fase.
@@ -395,7 +392,7 @@ Legado (hecho):
 
 ### Pendiente conocido (auditoría parcial de 0.14.0, sin pasar aún a `KNOWN_BUGS.md`)
 
-Cliente Windows: exe solo GUI, el desinstalador no suelta el kill switch, clave WG en claro frente al DPAPI prometido. Servidor: `wg_listen_port` desde el panel reinicia wstunnel con el `--restrict-to` viejo, `restart` en Windows, `restart` en Docker no-op, `run_setup` de la GUI incompleto en Linux. TUI: `k` sale en vez de desconectar. GUI: strings en español fijo.
+Cliente Windows: exe solo GUI, el desinstalador no suelta el kill switch. Servidor: `wg_listen_port` desde el panel reinicia wstunnel con el `--restrict-to` viejo, `restart` en Windows, `restart` en Docker no-op, `run_setup` de la GUI incompleto en Linux. TUI: `k` sale en vez de desconectar. GUI: strings en español fijo.
 
 ### Pendiente para la primera versión estable
 

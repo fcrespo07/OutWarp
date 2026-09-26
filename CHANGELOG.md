@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/history/`.
 
 ### Fixed
+- **Windows: other local users could read the client's WireGuard private
+  key** (B-025). The tunnel's `.conf` under `C:\ProgramData\WireGuard`
+  inherited read access for every user on the machine; the folder is now
+  restricted to SYSTEM and Administrators before the key is written, and the
+  client refuses to connect if that fails.
 - **Web panel: "Keep this session in this browser" now keeps it.** The
   session cookie had no expiry, so the browser dropped it on close, and
   sessions only lived in the panel's memory, so any panel restart (an update,

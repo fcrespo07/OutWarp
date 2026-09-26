@@ -120,6 +120,60 @@ def test_install_wg_tunnel_survives_demand_start_failure(tmp_path, monkeypatch):
     assert path == tmp_path / "MyTunnel.conf"
 
 
+def test_install_wg_tunnel_locks_conf_dir_before_writing_key(tmp_path, monkeypatch):
+    # B-025: under C:\ProgramData the .conf inherited read access for every
+    # local user, private key included.
+    p = WindowsPlatform()
+    monkeypatch.setattr(p, "_conf_dir", tmp_path / "WireGuard")
+    monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
+    (tmp_path / "wireguard.exe").write_text("fake")
+    calls: list[list[str]] = []
+    conf_existed_at_icacls: list[bool] = []
+    fake = _fake_install_run(calls)
+
+    def run(cmd, *args, **kwargs):
+        if cmd[0] == "icacls":
+            conf_existed_at_icacls.append((tmp_path / "WireGuard" / "MyTunnel.conf").exists())
+        return fake(cmd, *args, **kwargs)
+
+    (tmp_path / "WireGuard").mkdir()
+    (tmp_path / "WireGuard" / "MyTunnel.conf").write_text("old, world-readable")
+    with patch("subprocess.run", side_effect=run):
+        p.install_wg_tunnel("MyTunnel", "[Interface]")
+
+    icacls = [c for c in calls if c[0] == "icacls"]
+    assert icacls == [[
+        "icacls", str(tmp_path / "WireGuard"), "/inheritance:r",
+        "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F",
+    ]]
+    install_idx = next(i for i, c in enumerate(calls)
+                       if len(c) > 1 and c[1] == "/installtunnelservice")
+    assert calls.index(icacls[0]) < install_idx
+    assert (tmp_path / "WireGuard" / "MyTunnel.conf").read_text() == "[Interface]"
+
+
+def test_install_wg_tunnel_refuses_to_write_key_when_acl_fails(tmp_path, monkeypatch):
+    p = WindowsPlatform()
+    monkeypatch.setattr(p, "_conf_dir", tmp_path)
+    monkeypatch.setattr("outwarp.platforms.windows._WIREGUARD_EXE", tmp_path / "wireguard.exe")
+    (tmp_path / "wireguard.exe").write_text("fake")
+    calls: list[list[str]] = []
+    fake = _fake_install_run(calls)
+
+    def run(cmd, *args, **kwargs):
+        if cmd[0] == "icacls":
+            calls.append(list(cmd))
+            return _mock_run(5, stderr="Access is denied.")
+        return fake(cmd, *args, **kwargs)
+
+    with patch("subprocess.run", side_effect=run), \
+            pytest.raises(PlatformError, match="refusing to write"):
+        p.install_wg_tunnel("MyTunnel", "[Interface]")
+
+    assert not (tmp_path / "MyTunnel.conf").exists()
+    assert not any(len(c) > 1 and c[1] == "/installtunnelservice" for c in calls)
+
+
 def test_install_wg_tunnel_raises_on_failure(tmp_path, monkeypatch):
     p = WindowsPlatform()
     monkeypatch.setattr(p, "_conf_dir", tmp_path)
