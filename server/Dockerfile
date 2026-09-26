@@ -59,7 +59,8 @@ WORKDIR /data
 EXPOSE 443
 
 # init is idempotent — reads env vars and generates keys+cert on first boot,
-# exits in <1 s on subsequent restarts (config already exists).
+# exits in <1 s on subsequent restarts (config already exists). `exec` makes
+# serve PID 1, so `docker stop` / `docker kill -s HUP` reach it directly.
 CMD ["sh", "-c", \
      "outwarp-server --config-dir /data init && \
-      outwarp-server --config-dir /data serve"]
+      exec outwarp-server --config-dir /data serve"]

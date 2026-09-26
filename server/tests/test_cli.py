@@ -854,3 +854,70 @@ class TestServe:
             rc, mgr = self._run(tmp_path, _drive)
         assert rc == 0
         mgr.stop.assert_called_once()
+
+
+class TestServeReload:
+    """B-030: `restart` inside the container used to be a no-op reported as
+    done. It now signals serve, which reloads and restarts the transport."""
+
+    def test_sighup_reloads_and_restarts_the_manager(self, tmp_path: Path) -> None:
+        import signal as _signal
+
+        config_dir = _write_server_config(tmp_path)
+        mgr = MagicMock()
+        handlers: dict = {}
+        waits = iter([False, True])
+
+        def _wait(self, timeout=None):
+            if not handlers.get("fired"):
+                handlers["fired"] = True
+                handlers[_signal.SIGHUP](_signal.SIGHUP, None)
+            return next(waits)
+
+        with (
+            patch("outwarp_server.server_manager.ServerManager", return_value=mgr),
+            patch("signal.signal", side_effect=lambda sig, h: handlers.__setitem__(sig, h)),
+            patch("threading.Event.wait", _wait),
+        ):
+            rc = main(["--config-dir", str(config_dir), "serve"])
+
+        assert rc == 0
+        mgr.refresh_config.assert_called_once()
+        mgr.restart.assert_called_once()
+        mgr.stop.assert_called_once()
+
+
+class TestContainerRestart:
+    def test_restart_signals_the_serve_process(self, monkeypatch) -> None:
+        import signal as _signal
+
+        from outwarp_server.platforms import kubernetes as k8s
+
+        killed = []
+        monkeypatch.setattr(k8s.subprocess, "run", lambda *a, **kw: MagicMock(stdout="41\n42\n"))
+        monkeypatch.setattr(k8s.os, "getpid", lambda: 42)
+        monkeypatch.setattr(k8s.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+
+        k8s.KubernetesServerPlatform().restart_wstunnel_service()
+        assert killed == [(41, _signal.SIGHUP)]
+
+    def test_restart_fails_loudly_without_a_serve_process(self, monkeypatch) -> None:
+        from outwarp_server.platforms import kubernetes as k8s
+        from outwarp_server.platforms.base import PlatformError
+
+        monkeypatch.setattr(k8s.subprocess, "run", lambda *a, **kw: MagicMock(stdout=""))
+        with pytest.raises(PlatformError, match="no `outwarp-server serve` process"):
+            k8s.KubernetesServerPlatform().restart_wstunnel_service()
+
+    def test_serve_pattern_matches_the_container_command_only(self) -> None:
+        import re
+
+        from outwarp_server.platforms.kubernetes import _SERVE_PATTERN
+
+        container_cmd = (
+            "/usr/local/bin/python /usr/local/bin/outwarp-server --config-dir /data serve"
+        )
+        assert re.search(_SERVE_PATTERN, container_cmd)
+        assert re.search(_SERVE_PATTERN, "outwarp-server serve")
+        assert not re.search(_SERVE_PATTERN, "outwarp-server --config-dir /data restart")
+        assert not re.search(_SERVE_PATTERN, "outwarp-server server-status")

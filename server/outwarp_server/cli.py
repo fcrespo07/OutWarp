@@ -137,11 +137,26 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     manager.add_listener(_on_state)
     manager.start()
 
+    # SIGHUP = reload: `outwarp-server restart` run inside the container
+    # (docker exec / kubectl exec) sends it, since this process is the only
+    # one that owns wstunnel and the enrolment listener (B-030). The handler
+    # only flags; the reload runs here, outside signal context.
+    reload_event = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop_event.set())
     signal.signal(signal.SIGINT, lambda *_: stop_event.set())
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, lambda *_: reload_event.set())
 
-    log.info("OutWarp server running. Send SIGTERM or Ctrl+C to stop.")
-    stop_event.wait()
+    log.info("OutWarp server running. Send SIGTERM or Ctrl+C to stop, SIGHUP to reload.")
+    while not stop_event.wait(0.5):
+        if reload_event.is_set():
+            reload_event.clear()
+            log.info("SIGHUP: reloading the configuration and restarting the transport")
+            try:
+                manager.refresh_config()
+                manager.restart()
+            except Exception:
+                log.exception("reload failed")
 
     log.info("Shutting down...")
     manager.stop()

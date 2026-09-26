@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -9,6 +11,10 @@ from outwarp_server.platforms.base import PlatformError
 from outwarp_server.platforms.linux import LinuxServerPlatform, _run
 
 log = logging.getLogger(__name__)
+
+# `outwarp-server [--config-dir DIR] serve` as seen in /proc/*/cmdline, which
+# pgrep -f matches against with the interpreter path in front.
+_SERVE_PATTERN = r"outwarp-server( .*)? serve( |$)"
 
 
 class KubernetesServerPlatform(LinuxServerPlatform):
@@ -32,8 +38,24 @@ class KubernetesServerPlatform(LinuxServerPlatform):
         return result.returncode == 0
 
     def restart_wstunnel_service(self) -> None:
-        # In K8s use: kubectl rollout restart deployment/outwarp-server
-        pass
+        # The `serve` process owns wstunnel and the enrolment listener; ask it
+        # to reload. This used to be a no-op that `restart` reported as done
+        # (B-030). Works under `docker exec` / `kubectl exec` (same PID
+        # namespace) and from a sidecar with shareProcessNamespace.
+        found = subprocess.run(
+            ["pgrep", "-f", _SERVE_PATTERN], capture_output=True, text=True, check=False,
+        )
+        pids = [int(p) for p in found.stdout.split() if p.isdigit() and int(p) != os.getpid()]
+        if not pids:
+            raise PlatformError(
+                "no `outwarp-server serve` process found in this container; "
+                "restart the container (kubectl rollout restart / docker restart)"
+            )
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGHUP)
+            except OSError as exc:
+                raise PlatformError(f"could not signal serve (pid {pid}): {exc}") from exc
 
     # ── enrolment listener: hosted by ServerManager, same as wstunnel ────────
 
@@ -55,6 +77,7 @@ class KubernetesServerPlatform(LinuxServerPlatform):
         return False
 
     def restart_enroll_service(self) -> None:
+        # Hosted by `serve`: the SIGHUP from restart_wstunnel_service restarts it.
         pass
 
     # ── WireGuard: wg-quick directly, no systemd ─────────────────────────────
