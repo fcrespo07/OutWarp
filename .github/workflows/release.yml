@@ -7,7 +7,7 @@ name: Release
 #
 # Releases are immutable once published (repo setting): assets and tag are
 # frozen. So nothing here publishes. The maintainer signs SHA256SUMS.txt
-# offline, uploads the .minisig and publishes with scripts/publish-release.sh,
+# offline, uploads the .minisig and publishes with scripts/publish_release.py,
 # which checks every asset against the signed manifest first.
 # See docs/RELEASE_SIGNING.md.
 #

@@ -242,9 +242,10 @@ GitHub. The in-app updaters, which run unattended, do verify.
 
 ## Distribution — needs external resources
 
-- **Release signing (minisign).** ✅ Done in 0.11.0 — key ID
-  `3E1FCD8BF652EC28`, public half committed as `outwarp-release.pub` and
-  compiled into both updaters. Every release from 0.11.0 on must ship a
+- **Release signing (minisign).** ✅ Done in 0.11.0. The first key
+  (`3E1FCD8BF652EC28`) was lost in 2026-09; since 0.15.0 the updaters trust a
+  primary and an offline backup key (`outwarp-release.pub`,
+  `outwarp-release-backup.pub`). Every release from 0.11.0 on must ship a
   `SHA256SUMS.txt.minisig`; see `docs/RELEASE_SIGNING.md` for the per-release
   step. This is *not* a substitute for the Authenticode certificate below —
   it authenticates the update channel, not the installer SmartScreen sees.

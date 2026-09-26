@@ -137,7 +137,7 @@ jobs:
           # Signing happens on the maintainer's machine, never here: a key CI
           # could reach would be a key an attacker who owns CI could reach, and
           # the signature would prove nothing. See docs/RELEASE_SIGNING.md.
-          Write-Host "::notice::SHA256SUMS.txt is final. Sign it locally, upload SHA256SUMS.txt.minisig and publish with scripts/publish-release.sh — see docs/RELEASE_SIGNING.md"
+          Write-Host "::notice::SHA256SUMS.txt is final. Sign it locally with scripts/sign_release.py and publish with scripts/publish_release.py — see docs/RELEASE_SIGNING.md"
 
       - name: Upload installers as workflow artifacts (debugging)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

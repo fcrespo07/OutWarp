@@ -268,7 +268,7 @@ licencia de OutWarp.
 
 **Decidido por el autor el 2026-09-14. Fuente de verdad: esta sección. `ROADMAP.md` → "Before 1.0" la replica en inglés. 1.0.0 NO sale sin todo lo de "Bloqueante" en verde; ningún agente la publica ni la propone sin comprobarlo.**
 
-Qué significa 1.0 aquí: no "perfecto", sino *"a partir de aquí, romper esto es cambio mayor"*. Queda congelado (cambiarlo = `feat!:` → 2.0, o migración y se queda en 1.x): el formato `.owcfg` v3, el protocolo de enrolamiento (`POST /enroll`, token de un solo uso), los subcomandos y flags documentados de `outwarp` (cliente, ver renombrado más abajo) / `outwarp-server`, el canal de actualización (`SHA256SUMS.txt` + `.minisig`, clave `3E1FCD8BF652EC28`) y la forma de `config.json` / config del servidor. NO queda congelado: UI, TUI, escalera de fallback, mensajes, internos.
+Qué significa 1.0 aquí: no "perfecto", sino *"a partir de aquí, romper esto es cambio mayor"*. Queda congelado (cambiarlo = `feat!:` → 2.0, o migración y se queda en 1.x): el formato `.owcfg` v3, el protocolo de enrolamiento (`POST /enroll`, token de un solo uso), los subcomandos y flags documentados de `outwarp` (cliente, ver renombrado más abajo) / `outwarp-server`, el canal de actualización (`SHA256SUMS.txt` + `.minisig`, claves de `outwarp-release.pub` y `outwarp-release-backup.pub`) y la forma de `config.json` / config del servidor. NO queda congelado: UI, TUI, escalera de fallback, mensajes, internos.
 
 Legado (hecho):
 - [x] Licencia PolyForm Noncommercial 1.0.0 confirmada; `LICENSE` y `THIRD_PARTY_LICENSES` en la raíz.
@@ -342,7 +342,7 @@ Legado (hecho):
 - **Fase 5 — 1.0.0.**
   - 👤 La última RC pasa 2–4 semanas en producción sin hotfix. Si hay hotfix, sale otra rc y el periodo vuelve a empezar.
   - Sin 🔴 abiertos y todas las casillas en verde.
-  - 👤 Firma y publicación con `scripts/publish-release.sh`.
+  - 👤 Firma y publicación con `scripts/publish_release.py`.
 
 **NO bloqueante** (tentación de creer que sí; no reabrir):
 - Certificado Authenticode para el instalador Windows: es dinero, no calidad. El aviso de SmartScreen se documenta en "Limitaciones conocidas".
@@ -382,7 +382,8 @@ Legado (hecho):
 - El `.conf` del cliente en Windows vive en `C:\ProgramData\WireGuard` con ACL solo SYSTEM + Administradores (B-025); el desinstalador suelta el kill switch si quedó enganchado (B-026).
 - `daemon`/`serve` salen con código 3 en `FAILED`/`ERROR`.
 - Versión de wstunnel **pinneada** en `installer/wstunnel-version.txt`, con guardia anti-drift en `server/tests/test_wstunnel_version_pin.py`.
-- **Releases inmutables** (ajuste del repo): una release publicada no admite cambios de assets ni de tag. `release.yml` / `release.sh` solo crean **borradores** (wheels + instaladores Windows vía `windows-installer.yml` como workflow reutilizable); el autor firma `SHA256SUMS.txt` y publica con `scripts/publish-release.sh`, que verifica assets, hashes y firma antes. Ningún agente publica una release. Detalle en `docs/RELEASE_SIGNING.md`.
+- **Releases inmutables** (ajuste del repo): una release publicada no admite cambios de assets ni de tag. `release.yml` / `release.sh` solo crean **borradores** (wheels + instaladores Windows vía `windows-installer.yml` como workflow reutilizable); el autor firma con `scripts/sign_release.py` y publica con `scripts/publish_release.py` (Python, funcionan en Windows), que verifica assets, hashes y firma antes. Ningún agente publica una release. Detalle en `docs/RELEASE_SIGNING.md`.
+- **Dos claves de release de confianza** (desde 0.15.0): principal (`outwarp-release.pub`, firma cada release) y respaldo (`outwarp-release-backup.pub`, secreta solo offline); `minisign.verify_any` elige por key ID. La primera clave, `3E1FCD8BF652EC28`, se perdió el 2026-09-26 sin copia: los 0.11–0.14 tienen que actualizarse a mano una vez. Nunca volver a una sola clave. Las secretas nunca en CI ni en un secreto de GitHub.
 
 **Servidor**
 - `build_wstunnel_command()` es la **única** definición de la invocación de wstunnel (proceso y unit systemd).

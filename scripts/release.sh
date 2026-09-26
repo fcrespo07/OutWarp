@@ -6,7 +6,7 @@
 #
 # Releases are immutable once published, so this never publishes: pushing the
 # tag also runs release.yml, which builds the Windows installers into the same
-# draft. Then sign SHA256SUMS.txt and publish with scripts/publish-release.sh
+# draft. Then sign SHA256SUMS.txt and publish with scripts/publish_release.py
 # (docs/RELEASE_SIGNING.md).
 #
 # Usage:
@@ -225,5 +225,5 @@ printf '%s%s[DONE]%s OutWarp %s drafted (not published yet).\n' "$BOLD" "$GREEN"
 echo "  Next:"
 echo "    1. Wait for the Release workflow to attach the Windows installers:"
 echo "       gh -R $GH_REPO run watch \$(gh -R $GH_REPO run list -w release.yml -L1 --json databaseId -q '.[0].databaseId')"
-echo "    2. Sign SHA256SUMS.txt and upload the .minisig (docs/RELEASE_SIGNING.md)."
-echo "    3. bash scripts/publish-release.sh $TAG"
+echo "    2. python scripts/sign_release.py $TAG"
+echo "    3. python scripts/publish_release.py $TAG"

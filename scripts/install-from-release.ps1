@@ -1,10 +1,10 @@
 # OutWarp - Windows install-from-release helper
 #
 # Convenience script for automated / unattended deployments (Intune,
-# Ansible, kiosk imaging, …). It downloads the latest OutWarpSetup-*.exe
+# Ansible, kiosk imaging, ...). It downloads the latest OutWarpSetup-*.exe
 # from GitHub Releases and runs it with elevation.
 #
-# Regular end users do NOT need this script — they should just download
+# Regular end users do NOT need this script - they should just download
 # OutWarpSetup-x.y.z.exe directly from
 # https://github.com/fcrespo07/OutWarp/releases/latest and double-click it.
 #
@@ -16,7 +16,7 @@
 #   $env:OUTWARP_COMPONENT     = 'server'|'client'|'full'
 #   $env:OUTWARP_SILENT        = '1'             Pass /VERYSILENT to the installer
 #   $env:OUTWARP_SKIP_CHECKSUM = '1'             Skip SHA256SUMS verification (NOT
-#                                                 recommended — see Test-InstallerSha256)
+#                                                 recommended - see Test-InstallerSha256)
 #
 # Requires: Windows 10/11, PowerShell 5.1+, Administrator privileges
 # (the installer itself re-elevates if you start it without admin).
@@ -75,7 +75,7 @@ function Get-ReleaseAsset {
         Write-Fail "No asset matching '$ASSET_PATTERN' in release $($release.tag_name)."
     }
     $sumsAsset = $release.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' } | Select-Object -First 1
-    Write-OK "Release: $($release.tag_name) — asset $($asset.name)"
+    Write-OK "Release: $($release.tag_name) - asset $($asset.name)"
     return [PSCustomObject]@{ Installer = $asset; Sums = $sumsAsset }
 }
 
@@ -90,15 +90,15 @@ function Download-Installer {
 
 # Verify the downloaded installer's SHA256 against the release's SHA256SUMS.txt
 # before it ever runs with elevation. Mirrors installer/linux/install.sh's
-# _verify_wheel_sha256 (FIX-12) — this script was the one place OutWarp shipped
+# _verify_wheel_sha256 (FIX-12) - this script was the one place OutWarp shipped
 # that downloaded and ran an elevated binary with no integrity check at all:
 # a compromised/MITM'd download would run silently, unattended, as SYSTEM-
 # adjacent Administrator, which is exactly the deployment (Intune, Ansible,
 # kiosk imaging) where nobody is watching to notice something's wrong.
-#   - no SHA256SUMS.txt asset → legacy release; skip with a warning
-#   - fetch/parse failure     → refuse (could be a MITM dropping the manifest)
-#   - name not listed         → refuse (wrong release or tampered manifest)
-#   - hash mismatch           → refuse
+#   - no SHA256SUMS.txt asset -> legacy release; skip with a warning
+#   - fetch/parse failure     -> refuse (could be a MITM dropping the manifest)
+#   - name not listed         -> refuse (wrong release or tampered manifest)
+#   - hash mismatch           -> refuse
 function Test-InstallerSha256 {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -156,12 +156,12 @@ function Invoke-Installer {
             'client' { $args += '/TYPE=client';  $args += '/COMPONENTS=client,wstunnel,wireguard' }
             'server' { $args += '/TYPE=server';  $args += '/COMPONENTS=server\gui,server\cli,wstunnel,wireguard' }
             'full'   { $args += '/TYPE=full'; }
-            default  { Write-Host "  [!] Unknown OUTWARP_COMPONENT=$($env:OUTWARP_COMPONENT) — ignoring" -ForegroundColor Yellow }
+            default  { Write-Host "  [!] Unknown OUTWARP_COMPONENT=$($env:OUTWARP_COMPONENT) - ignoring" -ForegroundColor Yellow }
         }
     }
 
     Write-Info "Launching installer: $Path $($args -join ' ')"
-    # Start-Process re-prompts UAC on its own — the user gets the standard
+    # Start-Process re-prompts UAC on its own - the user gets the standard
     # Windows consent dialog, exactly like double-clicking the .exe.
     $proc = Start-Process -FilePath $Path -ArgumentList $args -Verb runAs -Wait -PassThru
     if ($proc.ExitCode -ne 0) {

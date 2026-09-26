@@ -10,7 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.15.0] — 2026-09-26
 
+### ⚠️ Update by hand once from 0.11–0.14
+The release signing key changed: the previous one (`3E1FCD8BF652EC28`) was
+lost. 0.11–0.14 only trust that key, so their built-in updater **refuses**
+0.15.0 ("signature was made with a different key"). Install 0.15.0 by hand
+once — the Windows installer over the existing install, or `install.sh` on
+Linux; containers just pull the new image. From 0.15.0 on, updates verify
+against a primary and an offline backup key, so losing one key no longer
+blocks updates.
+
 ### Changed
+- **Two trusted release keys.** Both updaters accept a signature from the
+  primary key (`outwarp-release.pub`) or the offline backup
+  (`outwarp-release-backup.pub`).
+- **Signing and publishing work on Windows.** `scripts/sign_release.py` and
+  `scripts/publish_release.py` (Python) replace the manual `minisign`/`gh`
+  steps and `publish-release.sh`; `scripts/setup-release-signing.ps1` prepares
+  a Windows machine. `install-from-release.ps1` is now plain ASCII, so Windows
+  PowerShell 5.1 no longer misreads it.
 - **Windows: a real command line.** The client now installs two programs,
   like the server: `outwarp-gui.exe` (the tray app, what the shortcuts open)
   and `outwarp.exe`, a console CLI (`outwarp status`, `outwarp connect`, …).

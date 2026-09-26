@@ -91,7 +91,7 @@ with the wheels and then calls `windows-installer.yml`: a `windows-latest`
 runner executes `installer/windows/build/build.py` against the tag and uploads
 the three `OutWarpSetup-*.exe` editions plus a merged `SHA256SUMS.txt` (wheel +
 installer hashes) to the draft. Then sign the manifest and publish with
-`scripts/publish-release.sh`.
+`scripts/publish_release.py`.
 
 To rebuild the installers into an existing draft (e.g. after a runner hiccup):
 
