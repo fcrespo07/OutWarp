@@ -310,6 +310,43 @@ Legado (hecho):
 - [ ] **Auditoría general justo antes de 1.0.** Cuando todo lo anterior esté en verde y sobre el commit candidato: seguridad, UI/UX, bugs y robustez, en cliente y servidor y en todas las plataformas. Los hallazgos van a `KNOWN_BUGS.md`; los críticos/altos se corrigen antes de publicar (criterio "sin bugs 🔴"), el resto se clasifica explícitamente como 1.x.
 - [ ] **Release firmada y un ciclo sin hotfix.** 1.0.0 sale con `SHA256SUMS.txt.minisig` el mismo día (la clave está offline, en la máquina del autor; ver `docs/RELEASE_SIGNING.md`) y después de que la última 0.x lleve 2–4 semanas en producción (el pod k3s del autor) sin hotfix.
 
+**Plan de ejecución** *(aprobado por el autor el 2026-09-26)*. Orden en que se ataca lo "Bloqueante". Cada fase cierra con una release 0.x publicada con el flujo borrador → firma → publicar. Hay tres reglas: primero va lo que se congela en 1.0; la infraestructura (tests, i18n) va antes del contenido; las traducciones van después del pulido, con los textos ya congelados. Los puntos *(añadido)* entraron con el plan y también son bloqueantes. 👤 = lo hace el autor (máquina real, firma, nativos).
+
+- **Fase 0 — Base limpia → 0.15.0.**
+  - Pasar la auditoría de 0.14.0 a `KNOWN_BUGS.md` y corregir los 🔴 y los altos. Hay una decisión del autor pendiente: DPAPI, que se implementa o se quita de la doc.
+  - Vitest más la guardia de `bundle.js`.
+  - Retirar el fallback sin firmar, tras comprobar que todas las releases desde 0.11.0 están firmadas.
+  - *(añadido)* Seguridad del repo público: `SECURITY.md`, secret scanning y push protection, Dependabot, actions fijadas por SHA en los workflows de release, `pip-audit` en CI.
+  - *(añadido)* 0.15.0 como ensayo del flujo de releases inmutables: el job de Windows adjunta los `.exe` al borrador y `publish-release.sh` funciona de principio a fin.
+  - 👤 Confirmar B-024 en Windows real.
+  - 👤 Empezar a medir el estudio de RDP.
+- **Fase 1 — Lo que se congela → 0.16.0 (quizá también 0.17.0)**, en este orden:
+  1. Activar y desactivar clientes, con un caso en el e2e.
+  2. Infraestructura de i18n solo en/es: extraer los textos fijos, detección del idioma más selector, fallback a inglés, fuente CJK, anchura doble en las TUIs.
+  3. Varios perfiles, con migración idempotente; revisar el kill switch, el sticky store, `dnscache` y `known_servers.json` por perfil.
+  4. Estudio de RDP: decidir y aplicar. Si toca el `.owcfg` o `config.json`, entra aquí. *(añadido)* Evaluar también `bbr`, `fq` y `tcp_notsent_lowat` en el servidor Linux.
+- **Fase 2 — Producto → 0.17.0/0.18.0.**
+  - Pulido de UI/UX, que termina con los **textos congelados**.
+  - Servidor Windows vía Docker; se puede hacer en paralelo con cualquier fase.
+  - README y wizard honestos con el anti-DPI. El banner "not yet ready" se quita en la RC.
+  - 👤 Pruebas reales de la GUI de Linux (X11/Wayland) y de una Omarchy limpia, que cierran los dos `[~]`.
+- **Fase 3 — Idiomas → 0.19.0.**
+  - zh-Hans, fr y pt.
+  - *(añadido)* Test que falla si a un idioma le falta una clave.
+  - *(añadido)* Capturas con Playwright usando los textos más largos.
+  - 👤 Revisión por hablantes nativos.
+- **Fase 4 — Congelación → 1.0.0-rc.1.**
+  - *(añadido)* Referencia de los contratos (`.owcfg` v3, `config.json`, config del servidor, CLI) y **tests de contrato** en CI: snapshot de los subcomandos y flags, y esquemas JSON.
+  - Retirar el alias `outwarp-cli`. *(añadido)* Revisar los shims de migración 0.x que quedan.
+  - *(añadido)* Tests de actualización 0.x → 1.0 en el e2e: perfiles, base de clientes y updater.
+  - *(añadido)* Smoke test del instalador Windows en CI: instalación silenciosa, `--version`, `doctor`, desinstalación.
+  - Auditoría general sobre el commit de la RC; cada corrección crítica o alta saca una rc.N.
+  - *(añadido)* Guía "Actualizar a 1.0" y CHANGELOG consolidado.
+- **Fase 5 — 1.0.0.**
+  - 👤 La última RC pasa 2–4 semanas en producción sin hotfix. Si hay hotfix, sale otra rc y el periodo vuelve a empezar.
+  - Sin 🔴 abiertos y todas las casillas en verde.
+  - 👤 Firma y publicación con `scripts/publish-release.sh`.
+
 **NO bloqueante** (tentación de creer que sí; no reabrir):
 - Certificado Authenticode para el instalador Windows: es dinero, no calidad. El aviso de SmartScreen se documenta en "Limitaciones conocidas".
 - Split tunnelling, DDNS, auto-update del servidor, Prometheus: features; caben en 1.x sin romper nada. (Multi-perfil y "más idiomas" salieron de esta lista el 2026-09-25 por decisión del autor.)

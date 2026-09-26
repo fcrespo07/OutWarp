@@ -97,6 +97,49 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       release day, after the last 0.x has run 2–4 weeks in production without
       a hotfix.
 
+### Execution order (agreed 2026-09-26)
+
+Each phase ends in a published 0.x release (draft → sign → publish). Three rules decide the order:
+- whatever 1.0 freezes lands first;
+- infrastructure (tests, i18n) comes before content;
+- translations come after the polish pass, once the strings are final.
+
+Items marked *(added)* joined the gate with this plan. 👤 marks a task for the maintainer: real hardware, signing or native speakers.
+
+- **Phase 0 — Clean base → 0.15.0.**
+  - Move the 0.14.0 audit findings into `KNOWN_BUGS.md` and fix the critical and high ones.
+  - vitest plus the bundle guard.
+  - Retire the unsigned-manifest fallback.
+  - *(added)* Public-repo hygiene: `SECURITY.md`, secret scanning and push protection, Dependabot, SHA-pinned actions in the release workflows, `pip-audit` in CI.
+  - *(added)* Use 0.15.0 as the rehearsal of the immutable-release flow.
+  - 👤 Confirm B-024 on real Windows.
+  - 👤 Start the RDP measurements.
+- **Phase 1 — What freezes → 0.16.0**, in this order:
+  1. Enable/disable clients, with an e2e case.
+  2. i18n infrastructure, en/es only.
+  3. Multi-profile.
+  4. Act on the RDP study. *(added)* Also evaluate `bbr`, `fq` and `tcp_notsent_lowat` on the Linux server.
+- **Phase 2 — Product → 0.17.0/0.18.0.**
+  - UI/UX polish, ending in a string freeze.
+  - Windows server via Docker, which can run in parallel with any phase.
+  - Honest README and wizard.
+  - 👤 Real-desktop Linux GUI testing and a clean Omarchy install.
+- **Phase 3 — Languages → 0.19.0.**
+  - zh-Hans, fr and pt.
+  - *(added)* A missing-key test and long-string layout screenshots.
+  - 👤 Native review.
+- **Phase 4 — Freeze → 1.0.0-rc.1.**
+  - *(added)* Contract reference docs and **contract tests**: CLI surface snapshot and JSON schemas.
+  - Drop the `outwarp-cli` alias; *(added)* review the remaining 0.x shims.
+  - *(added)* 0.x → 1.0 upgrade tests in e2e.
+  - *(added)* Windows installer smoke test in CI.
+  - General audit on the RC commit, with an rc.N release for each critical fix.
+  - *(added)* Upgrade guide.
+- **Phase 5 — 1.0.0.**
+  - 👤 The last RC runs 2–4 weeks in production without a hotfix.
+  - No open critical bugs.
+  - 👤 The maintainer signs and publishes.
+
 Explicitly **not** blocking 1.0: the Authenticode certificate (money, not
 quality — SmartScreen is documented as a known limitation),
 split tunnelling, DDNS, server auto-update, metrics, mobile.
