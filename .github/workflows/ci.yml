@@ -49,10 +49,9 @@ jobs:
             python-version: "3.14"
 
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -101,10 +100,9 @@ jobs:
     continue-on-error: true
 
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -124,17 +122,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
 
       # build_ui.py --check (run by ui-tests/bundle.test.js) needs Python.
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -146,6 +143,33 @@ jobs:
       - name: vitest
         run: npx vitest run
 
+  pip-audit:
+    name: dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      # Resolve what a user actually installs in a venv of its own, so the
+      # audit sees our dependency tree and not pip-audit's or the runner's.
+      # Our own two packages are not on PyPI and are dropped from the list.
+      - name: Resolve the client and server dependencies
+        run: |
+          python -m venv /tmp/deps
+          /tmp/deps/bin/pip install --quiet ./client'[tui]' ./server'[tui]'
+          /tmp/deps/bin/pip freeze | grep -vi '^outwarp' > /tmp/requirements.txt
+          cat /tmp/requirements.txt
+
+      - name: pip-audit
+        run: |
+          pip install --quiet pip-audit
+          pip-audit --requirement /tmp/requirements.txt --no-deps --disable-pip
+
   build-wheels:
     name: build wheels
     runs-on: ubuntu-latest
@@ -156,10 +180,9 @@ jobs:
     # breaks the installer.
 
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
           cache: pip
@@ -176,7 +199,7 @@ jobs:
         run: python -m build --wheel
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wheels
           path: |
@@ -195,8 +218,7 @@ jobs:
     # would have caught them. Not covered: Windows, systemd, k8s, the GUI.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Kernel WireGuard module available?
         run: |
           sudo modprobe wireguard && lsmod | grep -q wireguard

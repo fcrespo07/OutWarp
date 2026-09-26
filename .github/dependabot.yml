@@ -1,0 +1,37 @@
+# Keeps the SHA-pinned actions and the dependency floors current. Actions are
+# pinned to commit SHAs (with the tag in a comment); Dependabot updates both.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /client
+    schedule:
+      interval: monthly
+    groups:
+      client:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /server
+    schedule:
+      interval: monthly
+    groups:
+      server:
+        patterns: ["*"]
+
+  # Dev-only JS tooling (esbuild, vitest). The esbuild pin must stay equal to
+  # ESBUILD_VERSION in scripts/build_ui.py; ui-tests fails the PR otherwise.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      ui-tooling:
+        patterns: ["*"]
