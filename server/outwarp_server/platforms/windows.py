@@ -61,6 +61,13 @@ class WindowsServerPlatform(ServerPlatform):
             "Use ServerManager.restart() to restart wstunnel on Windows"
         )
 
+    @property
+    def transport_owner_note(self) -> str | None:
+        return (
+            "wstunnel and the enrolment listener run inside the OutWarp Server "
+            "app; restart it from its tray icon to apply the new configuration."
+        )
+
     # ── WireGuard ─────────────────────────────────────────────────────────────
 
     def install_wg_config(self, conf_text: str, interface: str = _WG_INTERFACE) -> None:

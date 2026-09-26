@@ -28,7 +28,7 @@ from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
 from outwarp_server.owcfg import build_owcfg, write_owcfg
 from outwarp_server.wireguard import (
     add_peer_live,
-    build_server_wg_conf,
+    build_platform_wg_conf,
     remove_peer_live,
 )
 
@@ -82,6 +82,9 @@ class RestartResult:
     wstunnel_restarted: bool
     errors: list[str]
     enroll_restarted: bool = False
+    # Set when another process owns wstunnel and the listener (the Windows
+    # server app): nothing here can restart them, and that is not an error.
+    transport_note: str | None = None
 
 
 def _today() -> str:
@@ -329,7 +332,7 @@ def _persist_wg_config(config: ServerConfig) -> str | None:
     # take effect (module-level imports would freeze the reference at import time).
     from outwarp_server.platforms import PlatformError, get_server_platform
     try:
-        get_server_platform().install_wg_config(build_server_wg_conf(config))
+        get_server_platform().install_wg_config(build_platform_wg_conf(config))
     except PlatformError as exc:
         log.warning("Could not persist WG config to OS location: %s", exc)
         return str(exc)
@@ -385,7 +388,7 @@ def revoke_client(
     wg_persist_warning: str | None = None
     from outwarp_server.platforms import PlatformError, get_server_platform
     try:
-        get_server_platform().install_wg_config(build_server_wg_conf(updated))
+        get_server_platform().install_wg_config(build_platform_wg_conf(updated))
     except PlatformError as exc:
         log.warning("Could not persist WG config to OS location: %s", exc)
         wg_persist_warning = str(exc)
@@ -462,7 +465,7 @@ def rotate_client(
     wg_persist_warning: str | None = None
     from outwarp_server.platforms import PlatformError, get_server_platform
     try:
-        get_server_platform().install_wg_config(build_server_wg_conf(updated))
+        get_server_platform().install_wg_config(build_platform_wg_conf(updated))
     except PlatformError as exc:
         log.warning("Could not persist WG config to OS location: %s", exc)
         wg_persist_warning = str(exc)
@@ -522,18 +525,24 @@ def restart_services(config: ServerConfig, *, config_path: Path | None = None) -
     enroll_restarted = False
 
     try:
-        platform.install_wg_config(build_server_wg_conf(config))
-        wg_conf_written = True
+        # One call writes the new conf and brings the interface down and up
+        # on it (or up, if it was down), with NAT/forwarding re-checked first.
+        # Writing with install_wg_config() and then calling restart_wg() tore
+        # the Windows tunnel down twice (B-029).
+        platform.reconcile(
+            build_platform_wg_conf(config),
+            subnet=config.subnet, wss_port=config.port, force_restart=True,
+        )
+        wg_conf_written = wg_restarted = True
     except PlatformError as exc:
         errors.append(f"WireGuard config: {exc}")
         return RestartResult(wg_conf_written, wg_restarted, wstunnel_restarted, errors)
 
-    try:
-        platform.restart_wg(subnet=config.subnet)
-        wg_restarted = True
-    except PlatformError as exc:
-        errors.append(f"WireGuard restart: {exc}")
-        return RestartResult(wg_conf_written, wg_restarted, wstunnel_restarted, errors)
+    note = platform.transport_owner_note
+    if note:
+        return RestartResult(
+            wg_conf_written, wg_restarted, wstunnel_restarted, errors, transport_note=note,
+        )
 
     try:
         if platform.manages_enroll_service:

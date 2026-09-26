@@ -546,6 +546,11 @@ def _cmd_restart(args: argparse.Namespace) -> int:
         console.print(f"  [red]✗[/red] {msg}")
         return 1
 
+    if result.transport_note:
+        console.print(f"  [yellow]![/yellow] {result.transport_note}")
+        console.print("\n[green]WireGuard restarted.[/green]")
+        return 0
+
     console.print("[bold]Restarting wstunnel service...[/bold]")
     if result.wstunnel_restarted:
         console.print("  [green]✓[/green] wstunnel restarted")

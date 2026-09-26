@@ -280,3 +280,14 @@ def remove_peer_live(
         # See add_peer_live's matching comment (FIX-11) — same enroll_lock risk.
         raise WireGuardError(f"Timed out removing peer (wg did not respond): {exc}") from exc
     log.info("Removed peer %s", public_key[:16] + "...")
+
+
+def build_platform_wg_conf(config: ServerConfig) -> str:
+    """The server's wg0.conf in the format this OS's WireGuard accepts.
+
+    WireGuard for Windows refuses the Linux config's PostUp/PostDown hooks, so
+    every writer of the OS-level config must go through here (B-029).
+    """
+    if sys.platform == "win32":
+        return build_server_wg_conf_windows(config)
+    return build_server_wg_conf(config)

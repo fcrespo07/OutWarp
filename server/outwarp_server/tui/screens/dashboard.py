@@ -153,6 +153,8 @@ class DashboardScreen(Screen):
             res = operations.restart_services(self.app.config, config_path=self.app.config_path)
             if res.errors:
                 self.notify("Restart had issues: " + "; ".join(res.errors), severity="error")
+            elif res.transport_note:
+                self.notify(res.transport_note, severity="warning")
             else:
                 self.notify("Server restarted.", severity="information")
 

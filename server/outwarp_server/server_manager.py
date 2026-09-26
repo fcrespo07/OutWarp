@@ -12,7 +12,7 @@ from pathlib import Path
 
 from outwarp_server.config import ServerConfig, default_config_path
 from outwarp_server.platforms import PlatformError, get_server_platform
-from outwarp_server.wireguard import build_server_wg_conf
+from outwarp_server.wireguard import build_platform_wg_conf
 
 log = logging.getLogger(__name__)
 
@@ -104,10 +104,7 @@ def build_enroll_listener_command(config_path: Path) -> list[str]:
 
 
 def _get_wg_conf(config: ServerConfig) -> str:
-    if sys.platform == "win32":
-        from outwarp_server.wireguard import build_server_wg_conf_windows
-        return build_server_wg_conf_windows(config)
-    return build_server_wg_conf(config)
+    return build_platform_wg_conf(config)
 
 
 class ServerManager:

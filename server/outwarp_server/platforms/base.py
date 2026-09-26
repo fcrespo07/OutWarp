@@ -78,6 +78,11 @@ class ServerPlatform(ABC):
         return False
 
     @property
+    def transport_owner_note(self) -> str | None:
+        """Why `restart` cannot reach wstunnel and the listener here, if so."""
+        return None
+
+    @property
     def manages_enroll_service(self) -> bool:
         """True when this platform runs the listener as an OS service of its
         own (so status/doctor have a unit to report on)."""

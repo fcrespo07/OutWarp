@@ -134,13 +134,15 @@ def test_restart_services_returns_all_three_true_on_success(
     config = ServerConfig.load(cfg_path)
     fake = MagicMock()
     fake.manages_enroll_service = False
+    fake.transport_owner_note = None
     mock_platform.return_value = fake
     result = operations.restart_services(config)
     assert result.wg_conf_written and result.wg_restarted and result.wstunnel_restarted
     assert result.enroll_restarted
     assert result.errors == []
-    fake.install_wg_config.assert_called_once()
-    fake.restart_wg.assert_called_once()
+    fake.reconcile.assert_called_once()
+    assert fake.reconcile.call_args.kwargs["force_restart"] is True
+    fake.install_wg_config.assert_not_called()
     fake.restart_wstunnel_service.assert_called_once()
     fake.restart_enroll_service.assert_called_once()
     # No OS-managed units on this platform: nothing to re-render.
@@ -161,6 +163,7 @@ def test_restart_services_rerenders_units_where_the_os_manages_them(
     config = ServerConfig.load(cfg_path)
     fake = MagicMock()
     fake.manages_enroll_service = True
+    fake.transport_owner_note = None
     mock_platform.return_value = fake
 
     result = operations.restart_services(config, config_path=cfg_path)
@@ -246,11 +249,10 @@ def test_restart_services_stops_after_wg_restart_failure(
     cfg_path = _write_server_config(tmp_path)
     config = ServerConfig.load(cfg_path)
     fake = MagicMock()
-    fake.restart_wg.side_effect = PlatformError("boom")
+    fake.reconcile.side_effect = PlatformError("boom")
     mock_platform.return_value = fake
 
     result = operations.restart_services(config)
-    assert result.wg_conf_written is True
     assert result.wg_restarted is False
     assert result.wstunnel_restarted is False
     assert any("boom" in e for e in result.errors)
@@ -393,3 +395,22 @@ def test_add_client_reuses_a_revoked_name(
     config = ServerConfig.load(cfg_path)
     with pytest.raises(ValueError, match="already exists"):
         operations.add_client(config, "laptop", config_path=cfg_path, output_dir=tmp_path)
+
+
+@patch("outwarp_server.platforms.get_server_platform")
+def test_windows_writes_the_windows_wg_conf(mock_platform: MagicMock, tmp_path: Path,
+                                            monkeypatch) -> None:
+    # B-029: add/revoke/rotate/restart wrote the Linux conf (PostUp/PostDown
+    # iptables hooks), which WireGuard for Windows refuses to install.
+    import outwarp_server.wireguard as wg
+
+    cfg_path = _write_server_config(tmp_path)
+    config = ServerConfig.load(cfg_path)
+    fake = MagicMock()
+    mock_platform.return_value = fake
+    monkeypatch.setattr(wg.sys, "platform", "win32")
+
+    assert operations._persist_wg_config(config) is None
+    conf = fake.install_wg_config.call_args.args[0]
+    assert conf == wg.build_server_wg_conf_windows(config)
+    assert "PostUp" not in conf

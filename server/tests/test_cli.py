@@ -425,13 +425,30 @@ class TestRestart:
         config_dir = _write_server_config(tmp_path)
         fake = MagicMock()
         fake.manages_enroll_service = False
+        fake.transport_owner_note = None
         mock_platform.return_value = fake
         ret = main(["--config-dir", str(config_dir), "restart"])
         assert ret == 0
-        fake.install_wg_config.assert_called_once()
-        fake.restart_wg.assert_called_once()
+        fake.reconcile.assert_called_once()
+        assert fake.reconcile.call_args.kwargs["force_restart"] is True
         fake.restart_wstunnel_service.assert_called_once()
         fake.restart_enroll_service.assert_called_once()
+
+    @patch("outwarp_server.platforms.get_server_platform")
+    def test_restart_on_windows_points_at_the_app_instead_of_failing(
+        self, mock_platform: MagicMock, tmp_path: Path, capsys
+    ) -> None:
+        # B-029: the wstunnel step always failed on Windows, where the server
+        # app, not a service, owns wstunnel and the enrolment listener.
+        config_dir = _write_server_config(tmp_path)
+        fake = MagicMock()
+        fake.transport_owner_note = "restart it from its tray icon"
+        mock_platform.return_value = fake
+        ret = main(["--config-dir", str(config_dir), "restart"])
+        assert ret == 0
+        fake.reconcile.assert_called_once()
+        fake.restart_wstunnel_service.assert_not_called()
+        fake.restart_enroll_service.assert_not_called()
 
     @patch("outwarp_server.platforms.get_server_platform")
     def test_restart_returns_1_on_wg_failure(
@@ -441,7 +458,7 @@ class TestRestart:
 
         config_dir = _write_server_config(tmp_path)
         fake = MagicMock()
-        fake.restart_wg.side_effect = PlatformError("boom")
+        fake.reconcile.side_effect = PlatformError("boom")
         mock_platform.return_value = fake
         ret = main(["--config-dir", str(config_dir), "restart"])
         assert ret == 1
