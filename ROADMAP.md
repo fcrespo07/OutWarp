@@ -74,9 +74,10 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       the WebSocket ping, the wstunnel watchdog, proxy idle timeouts, TCP
       head-of-line blocking. Reproduce with a real RDP session first.
 - [ ] **General UI/UX polish** across client/server GUI, web panel and TUIs.
-- [ ] **Better dashboard login than the admin token** (password + optional
-      TOTP, passkeys, or a CLI-issued one-time login link; sessions that
-      survive a panel restart). Changes the server config shape.
+- [x] **Less painful dashboard login.** *(Done 2026-09-26: the admin token
+      stays; "keep this session" now really persists — cookie Max-Age +
+      hashed sessions on disk bound to the current token — and the form works
+      with password managers.)*
 - [ ] **Windows server via Docker as the recommended path.** Docker Desktop
       (WSL2) + the `server/Dockerfile` image, a ready `compose.yml` and a
       guide in `deploy/README.md`; native SCM stays as the alternative. The

@@ -127,6 +127,21 @@ def test_auth_then_api_call(panel):
     assert payload["status"] == "stopped"
 
 
+def test_remember_sets_a_persistent_cookie(panel):
+    # Without Max-Age the browser dropped the cookie on close, so "keep this
+    # session in this browser" kept nothing.
+    httpd, _, token = panel
+    resp, _ = _request(httpd, "POST", "/auth", body={"token": token, "remember": True})
+    assert resp.status == 200
+    assert f"Max-Age={30 * 86400}" in resp.getheader("Set-Cookie")
+
+
+def test_plain_login_sets_a_browser_session_cookie(panel):
+    httpd, _, token = panel
+    resp, _ = _request(httpd, "POST", "/auth", body={"token": token})
+    assert "Max-Age" not in resp.getheader("Set-Cookie")
+
+
 def test_csrf_header_required(panel):
     httpd, _, token = panel
     cookie = _login(httpd, token)

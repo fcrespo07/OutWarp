@@ -1,12 +1,13 @@
 """Authentication primitives for the embedded web admin panel.
 
 The panel runs as root and is reachable over the network, so the front door
-is a single admin token plus an in-memory session. Three pieces:
+is a single admin token plus a session cookie. Three pieces:
 
 * :func:`generate_and_store_token` / :func:`verify_token` — the token is shown
   once on creation; only a salted scrypt hash is persisted (0o600).
 * :class:`SessionStore` — opaque session ids handed out after a successful
-  ``/auth``; validated on every ``/api`` and ``/events`` request.
+  ``/auth``; validated on every ``/api`` and ``/events`` request, persisted
+  hashed so a panel restart doesn't log the admin out.
 * :class:`RateLimiter` — sliding-window lockout on ``/auth`` so the token can't
   be brute-forced over the wire.
 
@@ -131,34 +132,113 @@ def verify_token(config_dir: Path, token: str) -> bool:
 
 
 class SessionStore:
-    """In-memory session table. Sessions die on daemon restart by design —
-    a single admin re-authenticating is cheap, and there is no persisted
-    session secret to leak."""
+    """Panel sessions, persisted so a restart of the panel (an update, a pod
+    reschedule) doesn't log the admin out.
 
-    _DEFAULT_TTL = 12 * 3600
-    _REMEMBER_TTL = 30 * 86400
+    Only ``sha256(session id)`` is written (0o600, next to the admin token),
+    so the file is useless to someone who reads it: the cookie value can't be
+    rebuilt from it. Each session is bound to the admin token it was opened
+    with; rotating the token (``outwarp-server admin-token --rotate``) ends
+    every open session, in this process or any other. Without ``path`` the
+    store stays in memory (tests, callers that don't want persistence).
+    """
 
-    def __init__(self) -> None:
+    DEFAULT_TTL = 12 * 3600
+    REMEMBER_TTL = 30 * 86400
+    _FILE_NAME = "panel_sessions.json"
+
+    def __init__(self, config_dir: Path | None = None) -> None:
         self._lock = threading.Lock()
-        self._sessions: dict[str, float] = {}
+        # sha256(sid) -> {"exp": epoch seconds, "token": token fingerprint}
+        self._sessions: dict[str, dict[str, Any]] = {}
+        self._config_dir = config_dir
+        self._path = config_dir / self._FILE_NAME if config_dir else None
+        self._fp_cache: tuple[tuple[int, int, int], str] | None = None
+        self._load()
+
+    @classmethod
+    def ttl(cls, remember: bool) -> int:
+        return cls.REMEMBER_TTL if remember else cls.DEFAULT_TTL
+
+    @staticmethod
+    def _key(sid: str) -> str:
+        return hashlib.sha256(sid.encode("utf-8")).hexdigest()
+
+    def _token_fingerprint(self) -> str:
+        """Changes whenever the admin token is rotated; "" without a token file."""
+        if self._config_dir is None:
+            return ""
+        path = _token_path(self._config_dir)
+        try:
+            st = path.stat()
+        except OSError:
+            return ""
+        # The token is rewritten atomically (new inode), so a rotation within
+        # the filesystem's mtime granularity is still seen.
+        stamp = (st.st_ino, st.st_mtime_ns, st.st_size)
+        if self._fp_cache and self._fp_cache[0] == stamp:
+            return self._fp_cache[1]
+        try:
+            salt = json.loads(path.read_text(encoding="utf-8"))["salt"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return ""
+        fp = hashlib.sha256(str(salt).encode("utf-8")).hexdigest()[:32]
+        self._fp_cache = (stamp, fp)
+        return fp
+
+    def _load(self) -> None:
+        if self._path is None:
+            return
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            entries = raw.get("sessions", {})
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, AttributeError):
+            # A corrupt file costs a login, nothing more.
+            return
+        now = time.time()
+        for key, entry in entries.items() if isinstance(entries, dict) else ():
+            try:
+                exp = float(entry["exp"])
+                token = str(entry["token"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if exp > now:
+                self._sessions[str(key)] = {"exp": exp, "token": token}
+
+    def _save_locked(self) -> None:
+        if self._path is None:
+            return
+        payload = json.dumps({"version": 1, "sessions": self._sessions}, indent=2)
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write_secret(self._path, payload)
+        except OSError:
+            # Sessions keep working in memory; they just won't survive a restart.
+            pass
 
     def create(self, remember: bool = False) -> str:
         sid = secrets.token_urlsafe(32)
-        ttl = self._REMEMBER_TTL if remember else self._DEFAULT_TTL
+        entry = {"exp": time.time() + self.ttl(remember), "token": self._token_fingerprint()}
         with self._lock:
-            self._sessions[sid] = time.time() + ttl
+            self._sessions[self._key(sid)] = entry
+            self._save_locked()
         return sid
 
     def validate(self, sid: str | None) -> bool:
         if not sid:
             return False
+        key = self._key(sid)
         now = time.time()
+        current = self._token_fingerprint()
         with self._lock:
-            expiry = self._sessions.get(sid)
-            if expiry is None:
+            entry = self._sessions.get(key)
+            if entry is None:
                 return False
-            if expiry < now:
-                del self._sessions[sid]
+            if entry["exp"] < now or entry["token"] != current:
+                del self._sessions[key]
+                self._save_locked()
                 return False
             return True
 
@@ -166,14 +246,19 @@ class SessionStore:
         if not sid:
             return
         with self._lock:
-            self._sessions.pop(sid, None)
+            if self._sessions.pop(self._key(sid), None) is not None:
+                self._save_locked()
 
     def purge_expired(self) -> None:
         now = time.time()
+        current = self._token_fingerprint()
         with self._lock:
-            dead = [s for s, exp in self._sessions.items() if exp < now]
-            for s in dead:
-                del self._sessions[s]
+            dead = [k for k, e in self._sessions.items()
+                    if e["exp"] < now or e["token"] != current]
+            for k in dead:
+                del self._sessions[k]
+            if dead:
+                self._save_locked()
 
 
 def client_ip(headers: Any, direct_ip: str, *, behind_reverse_proxy: bool) -> str:

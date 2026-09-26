@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Web panel: "Keep this session in this browser" now keeps it.** The
+  session cookie had no expiry, so the browser dropped it on close, and
+  sessions only lived in the panel's memory, so any panel restart (an update,
+  a pod reschedule) logged you out. Sessions are now stored on disk (only a
+  hash of each session id, `panel_sessions.json`, 0600) and the cookie lasts
+  30 days when the box is ticked. Rotating the admin token
+  (`outwarp-server admin-token --rotate`) still ends every open session.
+- **Web panel: the login form works with password managers.** Browsers and
+  password managers now offer to save the admin token and fill it in.
 - **Windows: WireGuard no longer comes back on its own after an unclean
   shutdown** (B-023). The tunnel service is now set to demand start right
   after it is installed; before, a machine switched off while connected

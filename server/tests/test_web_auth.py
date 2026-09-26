@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 import sys
 import time
 
@@ -94,5 +96,51 @@ def test_session_expiry():
     store = SessionStore()
     sid = store.create(remember=False)
     # Force the stored expiry into the past.
-    store._sessions[sid] = time.time() - 1
+    store._sessions[SessionStore._key(sid)]["exp"] = time.time() - 1
     assert store.validate(sid) is False
+
+
+def test_sessions_survive_a_panel_restart(tmp_path):
+    # "Keep this session" was useless: sessions lived in memory and every
+    # panel restart (update, pod reschedule) logged the admin out.
+    generate_and_store_token(tmp_path)
+    sid = SessionStore(tmp_path).create(remember=True)
+    assert SessionStore(tmp_path).validate(sid) is True
+
+
+def test_session_file_holds_no_usable_session_id(tmp_path):
+    generate_and_store_token(tmp_path)
+    sid = SessionStore(tmp_path).create(remember=True)
+    path = tmp_path / "panel_sessions.json"
+    assert sid not in path.read_text(encoding="utf-8")
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_rotating_the_admin_token_ends_every_session(tmp_path):
+    generate_and_store_token(tmp_path)
+    store = SessionStore(tmp_path)
+    sid = store.create(remember=True)
+    generate_and_store_token(tmp_path)  # admin-token --rotate, from another process
+    assert store.validate(sid) is False
+    assert SessionStore(tmp_path).validate(sid) is False
+
+
+def test_destroyed_session_stays_gone_after_restart(tmp_path):
+    generate_and_store_token(tmp_path)
+    store = SessionStore(tmp_path)
+    sid = store.create(remember=True)
+    store.destroy(sid)
+    assert SessionStore(tmp_path).validate(sid) is False
+
+
+def test_corrupt_session_file_starts_empty(tmp_path):
+    (tmp_path / "panel_sessions.json").write_text("{not json", encoding="utf-8")
+    store = SessionStore(tmp_path)
+    assert store.validate("anything") is False
+    assert store.validate(store.create()) is True
+
+
+def test_remember_ttl_is_longer():
+    assert SessionStore.ttl(remember=True) == 30 * 86400
+    assert SessionStore.ttl(remember=False) == 12 * 3600

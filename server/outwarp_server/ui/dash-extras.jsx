@@ -55,14 +55,19 @@ function LoginScreen({ T, theme, appInfo, onLogin }) {
       </div>
 
       <div style={{ display: "grid", placeItems: "center", padding: "40px 32px" }}>
-        <form onSubmit={submit} style={{ width: "100%", maxWidth: 380, display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* method/action + a username field are what browsers and password
+            managers key on to offer "save" and autofill; the SPA still submits
+            through onSubmit. The username is fixed: there is one admin. */}
+        <form onSubmit={submit} method="post" action="/auth" autoComplete="on" style={{ width: "100%", maxWidth: 380, display: "flex", flexDirection: "column", gap: 16 }}>
+          <input type="text" name="username" autoComplete="username" value="admin" readOnly tabIndex={-1} aria-hidden="true"
+            style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0 0 0 0)", border: 0 }} />
           <div className="login-brand-mobile" style={{ display: "none", marginBottom: 4 }}>
             <window.WSWordmark size={18} color="var(--text)" accent="var(--brand)" />
           </div>
           <EField label={T.login_token}>
             <div style={{ position: "relative" }}>
               <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-3)", display: "inline-flex" }}>{EIcons.lock(15)}</span>
-              <EInput value={token} onChange={(e) => setToken(e.target.value)} type="password" placeholder={T.login_tokenPh} mono autoFocus style={{ paddingLeft: 34 }} />
+              <EInput id="ow-admin-token" name="password" autoComplete="current-password" value={token} onChange={(e) => setToken(e.target.value)} type="password" placeholder={T.login_tokenPh} mono autoFocus style={{ paddingLeft: 34 }} />
             </div>
           </EField>
           <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 13, color: "var(--text-2)" }}>

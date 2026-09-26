@@ -280,6 +280,10 @@ class _PanelHandler(BaseHTTPRequestHandler):
         cookie = (
             f"{_SESSION_COOKIE}={sid}; HttpOnly; Secure; SameSite=Strict; Path=/"
         )
+        if remember:
+            # Without Max-Age the browser drops the cookie when it closes, and
+            # "keep this session" kept nothing.
+            cookie += f"; Max-Age={SessionStore.ttl(remember=True)}"
         self._send_json({"ok": True}, extra={"Set-Cookie": cookie})
 
     def _handle_logout(self) -> None:
@@ -428,7 +432,7 @@ def serve(
     Returns the server so the caller can ``shutdown()`` it. The admin ``Api``
     must already be constructed; this wires the SSE broker as one of its sinks.
     """
-    sessions = SessionStore()
+    sessions = SessionStore(config_dir)
     rate_limiter = RateLimiter()
     broker = EventBroker()
 
