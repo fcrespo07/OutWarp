@@ -953,3 +953,39 @@ class TestWindowMinimizeOnWayland:
         api.window_minimize()
         api._window.minimize.assert_called_once()
         api._window.hide.assert_not_called()
+
+
+class TestCloseButtonKeepsRunning:
+    def _api(self, **settings):
+        from outwarp.api import Api
+
+        api = Api(MagicMock(), None)
+        api._window = MagicMock()
+        api._settings.update(settings)
+        return api
+
+    def test_hides_to_the_tray_instead_of_quitting(self) -> None:
+        api = self._api()
+        api.tray_available = lambda: True
+        api.window_close()
+        api._window.hide.assert_called_once()
+        api._window.destroy.assert_not_called()
+
+    def test_quits_when_the_user_turned_it_off(self) -> None:
+        api = self._api(close_to_tray=False)
+        api.tray_available = lambda: True
+        api.window_close()
+        api._window.destroy.assert_called_once()
+        api._window.hide.assert_not_called()
+
+    def test_quits_when_there_is_no_tray_to_come_back_from(self) -> None:
+        api = self._api()
+        api.tray_available = lambda: False
+        api.window_close()
+        api._window.destroy.assert_called_once()
+        api._window.hide.assert_not_called()
+
+    def test_on_by_default(self) -> None:
+        from outwarp.settings import default_settings
+
+        assert default_settings()["close_to_tray"] is True

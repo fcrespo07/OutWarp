@@ -279,11 +279,17 @@ class Api:
             self._window.maximize()
 
     def window_close(self) -> None:
-        # Mirror the native close button: tear the window down, which ends
-        # webview.start() and exits the process (the tray "Quit" path does the
-        # same teardown via app.py).
-        if self._window is not None:
-            self._window.destroy()
+        if self._window is None:
+            return
+        # Keep running in the background when there is a tray to come back
+        # from; never hide an app the user could not get back to.
+        if self.get_settings().get("close_to_tray", True) and self.tray_available \
+                and self.tray_available():
+            self._window.hide()
+            return
+        # Otherwise tear the window down, which ends webview.start() and exits
+        # the process (the tray "Quit" path does the same teardown via app.py).
+        self._window.destroy()
 
     def window_start_move(self) -> None:
         """Begin a native window drag (Windows). Gives real Aero Snap and

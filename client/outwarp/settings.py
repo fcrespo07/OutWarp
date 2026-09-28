@@ -49,6 +49,10 @@ def default_settings() -> dict[str, Any]:
         # "Open" entry. A fresh install (no profile yet) ignores this setting
         # - the user needs the import screen visible to do anything at all.
         "minimize_to_tray": True,
+        # The window's own close button hides the app to the tray and leaves it
+        # running (tunnel included) instead of quitting. Ignored when there is
+        # no tray icon to come back from. "Quit" in the tray menu always exits.
+        "close_to_tray": True,
         # Register OutWarp to start on user login. Wired to platform.
         # install_autostart / uninstall_autostart in the GUI's set_settings, so
         # toggling the value writes the registry key (Windows) or .desktop file

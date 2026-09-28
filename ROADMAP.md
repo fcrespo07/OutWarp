@@ -35,19 +35,7 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
 - [~] **Linux client GUI as a first-class option.** *(Code landed 2026-09-15 — installer default, `gui --install`, `ui`, `launch`, doctor check; real-desktop testing on X11/Wayland still pending.)* Installer offers the
       pywebview GUI by default on desktop sessions (TUI stays the headless
       path); tested on X11 and Wayland; `doctor` checks the GUI stack.
-- [~] **Full Omarchy compatibility** *(2026-09-15: window app_id + Hyprland rule, SNI tray with state icon, notification icon, system-site-packages venv, doctor checks, Python 3.14 in CI — all verified on a live Omarchy 4 session; clean-install run still pending.)* (Arch + Hyprland/Wayland + waybar +
-      mako + systemd + pacman). Not just "it installs" — once installed it
-      has to feel native: clean install via the `pacman` path; tray icon in
-      waybar (SNI/appindicator) that **changes with tunnel state** and reads
-      well at bar size in light and dark themes, with a working menu; GTK
-      window under Wayland with a stable `app_id`, own icon, floating by
-      default (documented Hyprland `windowrule`); launcher entry with icon
-      that opens the GUI; mako notifications with icon; session autostart
-      (user unit + linger or Hyprland autostart — pick one); nftables kill
-      switch; `doctor` all green including a Wayland tray check. CI matrix
-      must cover the Python version Arch ships at release time. An AUR
-      `PKGBUILD` is the native follow-up (1.x, see "Native Linux packages"),
-      not a blocker.
+- [x] **Omarchy compatibility: dropped** *(2026-09-28: the author no longer uses it. It is no longer a reference distro and nothing is pending. What was built for it — window app_id + Hyprland rule, SNI tray with state icon, notification icon, doctor checks, Python 3.14 in CI — stays in the code. The Linux client only has to work on Ubuntu/Mint and derivatives with systemd.)*
 - [x] **JS test runner (vitest) + bundle guard.** *(Done 2026-09-26.)* Pure-logic tests for the
       dashboard helpers (`makeBoundedPeak`, formatters) and a test that fails
       when `bundle.js` is stale. No ES-module rewrite of the UI.
@@ -129,7 +117,7 @@ Items marked *(added)* joined the gate with this plan. 👤 marks a task for the
   - **B-034: after shutting down without disconnecting, WireGuard comes back at boot and leaves Windows offline. Required for 0.16.0.** *(Code done 2026-09-28: cleanup when the GUI starts plus SYSTEM scheduled tasks at boot and logon; needs a test on real Windows with Fast Startup.)*
   - **Server dashboard traffic chart** (Home chart + per-client sparkline) with the client GUI's smooth, spike-free look. **Required for 0.16.0.** It may refresh faster than the client's, but must not draw sample-to-sample peaks. Not B-022 (the post-spike scale, fixed in 0.14.0). *(Code done 2026-09-28: `DSfmt.smoothSeries` + `DSfmt.smoothPath`.)*
   - Honest README and wizard.
-  - 👤 Real-desktop Linux GUI testing and a clean Omarchy install.
+  - 👤 Real-desktop Linux GUI testing (X11/Wayland). *(The clean Omarchy install was dropped on 2026-09-28.)*
 - **Phase 3 — Languages → 0.19.0.**
   - zh-Hans, fr and pt.
   - *(added)* A missing-key test and long-string layout screenshots.

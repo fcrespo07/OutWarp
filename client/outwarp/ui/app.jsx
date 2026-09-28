@@ -1622,6 +1622,9 @@ const Settings = ({ T, api, settings, onSetting }) => {
       { title: T.set_minimizeTray, sub: T.set_minimizeTraySub, control: (
         <window.Toggle on={!!settings.minimize_to_tray} onChange={(v) => apply("minimize_to_tray", v)}/>
       )},
+      { title: T.set_closeTray, sub: T.set_closeTraySub, control: (
+        <window.Toggle on={settings.close_to_tray !== false} onChange={(v) => apply("close_to_tray", v)}/>
+      )},
       // Linux only: the .desktop entry runs `outwarp launch`, which honours
       // preferred_ui. On Windows the GUI is the only UI, so the row is noise.
       ...(isLinux ? [{ title: T.set_preferTui, sub: T.set_preferTuiSub, control: (

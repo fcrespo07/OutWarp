@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-09-28
+
+### Added
+- **Closing the client window keeps OutWarp running in the background.** The
+  window's X now hides it to the tray instead of quitting, so the tunnel stays
+  up without keeping a window open; open it again from the tray icon, and
+  choose "Quit" in the tray menu to exit completely. Turn it off in Settings →
+  System → "Keep running when the window is closed". With no tray icon to come
+  back from, the X still quits.
+
 ### Fixed
 - **Server panel: flicker, missing logs and a jerky chart** (B-036). The page
   re-ran its whole start-up about 17 times a second, the live event stream
