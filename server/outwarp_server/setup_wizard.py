@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-import secrets
 import shutil
 import socket
 import sys
@@ -15,7 +14,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 
 from outwarp_server.config import ServerConfig
-from outwarp_server.crypto import generate_tls_cert, generate_wg_keypair
+from outwarp_server.crypto import generate_tls_cert, generate_upgrade_path, generate_wg_keypair
 from outwarp_server.platforms import get_server_platform
 from outwarp_server.platforms.base import PrerequisiteStatus
 from outwarp_server.service_install import install_services
@@ -195,7 +194,7 @@ def run_setup(config_dir: Path) -> int:
 
     # Generate secrets
     console.print("\n[bold]Generating cryptographic material...[/bold]")
-    upgrade_path = secrets.token_urlsafe(32)
+    upgrade_path = generate_upgrade_path()
     console.print("  [green]✓[/green] HTTP upgrade path prefix")
 
     # Generated in both branches: the web admin panel serves HTTPS from this

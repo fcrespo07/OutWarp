@@ -67,6 +67,10 @@ def redact_command(cmd: list[str]) -> str:
             out.append(arg)
             mask_next = True
             continue
+        flag, eq, _ = arg.partition("=")
+        if eq and flag in _SECRET_FLAGS:
+            out.append(f"{flag}=<redacted>")
+            continue
         out.append(_URL_USERINFO_RE.sub(r"\1<redacted>@", arg))
     return " ".join(out)
 
@@ -166,8 +170,9 @@ def strategy_to_command(
         "25s",
         "-L",
         forward,
-        "--http-upgrade-path-prefix",
-        strategy.path_prefix,
+        # One element with "=": a prefix may start with "-" and wstunnel
+        # would read a separate "-v…" argument as an option.
+        f"--http-upgrade-path-prefix={strategy.path_prefix}",
     ]
     # wstunnel connects to any certificate at all unless told otherwise, so the
     # out-of-band pin check in tunnel.py is the only gate on a "pin" rung. On a

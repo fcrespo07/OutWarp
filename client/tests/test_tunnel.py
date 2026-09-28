@@ -155,8 +155,7 @@ def test_build_wstunnel_command_has_expected_structure():
     assert "-L" in cmd
     forward = cmd[cmd.index("-L") + 1]
     assert forward == "udp://127.0.0.1:51820:10.0.0.1:51820?timeout_sec=0"
-    assert "--http-upgrade-path-prefix" in cmd
-    assert cmd[cmd.index("--http-upgrade-path-prefix") + 1] == "s3cret"
+    assert "--http-upgrade-path-prefix=s3cret" in cmd
     # Default port 443 is omitted from the URL so the wstunnel-generated
     # Host header matches what a real browser sends — see build_wstunnel_command.
     assert cmd[-1] == "wss://203.0.113.42"

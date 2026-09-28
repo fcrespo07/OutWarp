@@ -39,7 +39,12 @@ from outwarp_server.config import (
     default_config_path,
     locked_config,
 )
-from outwarp_server.crypto import generate_tls_cert, generate_wg_keypair, renew_tls_cert
+from outwarp_server.crypto import (
+    generate_tls_cert,
+    generate_upgrade_path,
+    generate_wg_keypair,
+    renew_tls_cert,
+)
 from outwarp_server.logs import MemoryLogHandler
 from outwarp_server.platforms import get_server_platform
 from outwarp_server.server_manager import ServerManager, ServerState
@@ -999,8 +1004,7 @@ class Api:
         self._emit_setup("cert", "running")
         cfg_dir = default_config_dir()
         try:
-            import secrets
-            upgrade_path = secrets.token_urlsafe(32)
+            upgrade_path = generate_upgrade_path()
             cert_path, key_path, fingerprint, spki = generate_tls_cert(
                 endpoint, cfg_dir / "tls"
             )

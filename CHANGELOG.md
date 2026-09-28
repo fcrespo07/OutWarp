@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The server could fail to start** when its random upgrade-path secret
+  began with `-`: wstunnel read it as an option (`unexpected argument '-v'`).
+  The secret now goes to wstunnel as `--option=value` on both the server and
+  the client, which also fixes installs that already have such a secret, and
+  new secrets never start with `-` (B-035).
+
 ## [0.16.0] — 2026-09-28
 
 ### Added

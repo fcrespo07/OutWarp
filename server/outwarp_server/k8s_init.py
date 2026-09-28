@@ -3,12 +3,11 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
-import secrets
 import shutil
 from pathlib import Path
 
 from outwarp_server.config import ServerConfig
-from outwarp_server.crypto import generate_tls_cert, generate_wg_keypair
+from outwarp_server.crypto import generate_tls_cert, generate_upgrade_path, generate_wg_keypair
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +63,7 @@ def run_init(config_dir: Path) -> int:
         log.error("OUTWARP_SUBNET is not a valid network: %s", exc)
         return 1
     server_address = os.environ.get("OUTWARP_SERVER_ADDRESS", default_server_addr)
-    upgrade_path = os.environ.get("OUTWARP_UPGRADE_PATH") or secrets.token_urlsafe(32)
+    upgrade_path = os.environ.get("OUTWARP_UPGRADE_PATH") or generate_upgrade_path()
 
     log.info("Generating TLS certificate for %s...", endpoint)
     cert_dir = config_dir / "tls"

@@ -143,7 +143,17 @@ def test_command_default_omits_443_and_dns_flags():
     cmd = strategy_to_command(_strat(), Path("/bin/wstunnel"), "udp://x")
     assert cmd[-1] == "wss://h.example"
     assert "--dns-resolver" not in cmd
-    assert cmd[cmd.index("--http-upgrade-path-prefix") + 1] == "pfx"
+    assert "--http-upgrade-path-prefix=pfx" in cmd
+
+
+def test_a_prefix_starting_with_a_dash_stays_one_argument():
+    from outwarp.fallback import redact_command
+
+    # wstunnel (clap) would read a separate "-v…" argument as an option.
+    cmd = strategy_to_command(_strat(path_prefix="-vQf6"), Path("/bin/wstunnel"), "udp://x")
+    assert "--http-upgrade-path-prefix=-vQf6" in cmd
+    assert "-vQf6" not in cmd
+    assert "-vQf6" not in redact_command(cmd)
 
 
 def test_command_hostile_adds_dns_flags():

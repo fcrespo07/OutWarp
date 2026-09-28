@@ -225,3 +225,13 @@ class TestSpkiPinAndRenewal:
         )
         with pytest.raises(CryptoError, match="not an EC key"):
             renew_tls_cert(tmp_path / "c.pem", key_path, "example.com")
+
+
+def test_generated_upgrade_paths_never_start_with_a_dash(monkeypatch) -> None:
+    import secrets
+
+    from outwarp_server.crypto import generate_upgrade_path
+
+    draws = iter(["-vQf6dLk", "-x", "okPath_1"])
+    monkeypatch.setattr(secrets, "token_urlsafe", lambda n: next(draws))
+    assert generate_upgrade_path() == "okPath_1"

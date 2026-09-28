@@ -293,9 +293,17 @@ class TestWstunnelCommandBranches:
 
     def test_both_branches_keep_the_path_gate_and_the_wg_restriction(self) -> None:
         for cmd in (self._cmd(), self._cmd(tls_mode="acme")):
-            assert "--restrict-http-upgrade-path-prefix" in cmd
+            prefix = _config([]).http_upgrade_path_prefix
+            assert f"--restrict-http-upgrade-path-prefix={prefix}" in cmd
             assert "--restrict-to" in cmd
             assert cmd[cmd.index("--restrict-to") + 1] == "127.0.0.1:51820"
+
+    def test_a_prefix_starting_with_a_dash_stays_one_argument(self) -> None:
+        # wstunnel (clap) read a separate "-v…" argument as an option and the
+        # server never started (seen in the e2e with a random prefix).
+        cmd = self._cmd(http_upgrade_path_prefix="-vQf6")
+        assert "--restrict-http-upgrade-path-prefix=-vQf6" in cmd
+        assert "-vQf6" not in cmd
 
     def test_both_branches_allow_a_forward_to_the_enrolment_listener_only(self) -> None:
         """B-018: enrolment rides the transport as a TCP forward to the

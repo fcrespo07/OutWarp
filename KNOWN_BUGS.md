@@ -246,6 +246,12 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 
 ---
 
+### ✅ B-035 — El servidor no arranca si el secreto de la ruta de upgrade empieza por `-`
+**Síntomas:** Visto en el e2e de CI (2026-09-28): el servidor sale en `ERROR` nada más arrancar con `[wstunnel] error: unexpected argument '-v' found`, y ningún cliente puede enrolarse ni conectar. Afecta a cualquier instalación (wizard, GUI, contenedor) cuyo secreto aleatorio salga empezando por `-`, alrededor de 1 de cada 64.
+**Causa raíz:** `secrets.token_urlsafe` puede devolver un `-` al principio, y el secreto se pasaba a wstunnel como un argumento aparte (`--restrict-http-upgrade-path-prefix -vQf6…`). clap lo lee como una opción. En el cliente pasaba lo mismo con `--http-upgrade-path-prefix`.
+**Fix (2026-09-28):** servidor y cliente pasan el secreto en un solo argumento con `=` (`--restrict-http-upgrade-path-prefix=<secreto>`, `--http-upgrade-path-prefix=<secreto>`), comprobado con wstunnel 10.5.2; así también arrancan las instalaciones que ya tienen un secreto así, sin regenerar ningún `.owcfg`. Además `crypto.generate_upgrade_path()` ya no genera secretos que empiecen por `-`. `redact_command` oculta también la forma con `=`. Tests en `test_server_manager.py`, `test_fallback.py` y `test_crypto.py`.
+**Prevención:** un valor aleatorio o del usuario que va a un argv siempre como `--opción=valor`, nunca como argumento suelto.
+
 ### ✅ B-034 — Windows: tras apagar con OutWarp conectado, WireGuard vuelve al arrancar y el equipo se queda sin red
 **Síntomas:** Reportado por el autor (2026-09-28). Si se apaga el equipo sin desconectar ni cerrar OutWarp, en el siguiente arranque el túnel de WireGuard está levantado, sin OutWarp y sin wstunnel debajo: no hay conexión hasta finalizar WireGuard en el Administrador de tareas. Pasa aunque OutWarp no arranque con Windows.
 **Causa raíz:** B-023 dejó el servicio del túnel en arranque manual, pero eso no basta. (1) Con el **inicio rápido** de Windows, "Apagar" hiberna la sesión 0 y el servicio vuelve *corriendo*, sea cual sea su tipo de arranque. (2) Las instalaciones de 0.14 o anteriores tienen el servicio en `Automatic` hasta la siguiente conexión. (3) Nadie quitaba un servicio huérfano salvo `install_wg_tunnel`, es decir, al conectar: abrir OutWarp sin conectar, o no abrirlo, dejaba el túnel colgado.

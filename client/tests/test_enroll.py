@@ -523,7 +523,7 @@ class TestEnrolViaTransport:
         assert cmd[:2] == [str(wstunnel), "client"]
         assert "tcp://127.0.0.1:40001:127.0.0.1:8444" in cmd
         assert "--tls-verify-certificate" in cmd
-        assert cmd[cmd.index("--http-upgrade-path-prefix") + 1] == "s3cret"
+        assert "--http-upgrade-path-prefix=s3cret" in cmd
         assert cmd[-1] == "wss://vpn.example.com"
 
     def test_forward_gives_up_when_wstunnel_dies(self) -> None:

@@ -70,17 +70,23 @@ def build_wstunnel_command(config: ServerConfig, wstunnel_bin: Path) -> list[str
     ]
     if config.behind_reverse_proxy:
         cmd += [
-            "--restrict-http-upgrade-path-prefix", config.http_upgrade_path_prefix,
+            _upgrade_path_arg(config),
             f"ws://127.0.0.1:{config.internal_ws_port}",
         ]
     else:
         cmd += [
             "--tls-certificate", config.cert_path,
             "--tls-private-key", config.key_path,
-            "--restrict-http-upgrade-path-prefix", config.http_upgrade_path_prefix,
+            _upgrade_path_arg(config),
             f"wss://0.0.0.0:{config.port}",
         ]
     return cmd
+
+
+def _upgrade_path_arg(config: ServerConfig) -> str:
+    # One argv element with "=": a random prefix may start with "-", and
+    # wstunnel (clap) reads a separate "-v…" argument as an option.
+    return f"--restrict-http-upgrade-path-prefix={config.http_upgrade_path_prefix}"
 
 
 # Kept so existing internal callers and tests that reach for the private name

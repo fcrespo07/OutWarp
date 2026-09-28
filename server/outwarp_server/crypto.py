@@ -274,3 +274,17 @@ def _atomic_write_secret_bytes(path: Path, payload: bytes) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
         raise
+
+
+def generate_upgrade_path() -> str:
+    """A random HTTP upgrade path prefix (the tunnel's shared secret).
+
+    Never starts with "-": wstunnel gets it on the command line, and a leading
+    dash was once read as an option and kept the server from starting.
+    """
+    import secrets
+
+    while True:
+        path = secrets.token_urlsafe(32)
+        if not path.startswith("-"):
+            return path
