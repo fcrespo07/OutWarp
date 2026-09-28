@@ -210,6 +210,18 @@ Filename: "{app}\server\{#ServerGuiExe}"; \
 #endif
 
 #if HasClient
+; B-034: a tunnel left installed by a session that never disconnected (power
+; cut, shutdown with OutWarp connected; Fast Startup even brings it back
+; running) takes every packet with no wstunnel under it. Clean it up at boot
+; and at every logon, as SYSTEM, whether or not the tray app starts with
+; Windows. `recover-tunnel` does nothing while an OutWarp tunnel owner runs.
+Filename: "schtasks.exe"; \
+    Parameters: "/Create /F /TN ""OutWarp\RecoverTunnelBoot"" /SC ONSTART /RU SYSTEM /RL HIGHEST /TR ""\""{app}\client\outwarp.exe\"" recover-tunnel"""; \
+    Flags: runhidden; Components: client
+Filename: "schtasks.exe"; \
+    Parameters: "/Create /F /TN ""OutWarp\RecoverTunnelLogon"" /SC ONLOGON /RU SYSTEM /RL HIGHEST /TR ""\""{app}\client\outwarp.exe\"" recover-tunnel"""; \
+    Flags: runhidden; Components: client
+
 ; Launch the client at the end of setup if only the client was selected.
 Filename: "{app}\client\{#ClientExeName}"; \
     Description: "Lanzar OutWarp Client"; \
@@ -249,6 +261,10 @@ Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=OutWar
     Flags: runhidden; RunOnceId: "KillSwitchBlock"
 Filename: "{commonpf}\WireGuard\wireguard.exe"; Parameters: "/uninstalltunnelservice OutWarp"; \
     Flags: runhidden skipifdoesntexist; RunOnceId: "RemoveWGClient"
+Filename: "schtasks.exe"; Parameters: "/Delete /F /TN ""OutWarp\RecoverTunnelBoot"""; \
+    Flags: runhidden; RunOnceId: "RecoverTaskBoot"
+Filename: "schtasks.exe"; Parameters: "/Delete /F /TN ""OutWarp\RecoverTunnelLogon"""; \
+    Flags: runhidden; RunOnceId: "RecoverTaskLogon"
 #endif
 
 [UninstallDelete]
@@ -256,6 +272,7 @@ Type: filesandordirs; Name: "{app}\bundle"
 #if HasClient
 ; The client's tunnel .conf holds its private key (B-025).
 Type: files; Name: "{commonappdata}\WireGuard\*.conf"
+Type: files; Name: "{commonappdata}\WireGuard\*.outwarp-client"
 #endif
 ; Logs + configs live under per-user %LOCALAPPDATA%\OutWarp and are kept
 ; intentionally so reinstalling preserves the user's profile / clients.

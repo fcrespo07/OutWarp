@@ -246,6 +246,12 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 
 ---
 
+### ✅ B-034 — Windows: tras apagar con OutWarp conectado, WireGuard vuelve al arrancar y el equipo se queda sin red
+**Síntomas:** Reportado por el autor (2026-09-28). Si se apaga el equipo sin desconectar ni cerrar OutWarp, en el siguiente arranque el túnel de WireGuard está levantado, sin OutWarp y sin wstunnel debajo: no hay conexión hasta finalizar WireGuard en el Administrador de tareas. Pasa aunque OutWarp no arranque con Windows.
+**Causa raíz:** B-023 dejó el servicio del túnel en arranque manual, pero eso no basta. (1) Con el **inicio rápido** de Windows, "Apagar" hiberna la sesión 0 y el servicio vuelve *corriendo*, sea cual sea su tipo de arranque. (2) Las instalaciones de 0.14 o anteriores tienen el servicio en `Automatic` hasta la siguiente conexión. (3) Nadie quitaba un servicio huérfano salvo `install_wg_tunnel`, es decir, al conectar: abrir OutWarp sin conectar, o no abrirlo, dejaba el túnel colgado.
+**Fix (2026-09-28):** `WindowsPlatform.remove_stale_tunnels()` desinstala los túneles del cliente que siguen instalados (el `OutWarp` por defecto más los marcados con `<túnel>.outwarp-client`, que se escribe al instalar y se borra al desinstalar; el túnel del servidor y los del usuario no se tocan). Lo llaman: (a) la GUI al arrancar, justo tras quedarse el candado de dueño del túnel y antes de conectar; (b) el subcomando interno `outwarp recover-tunnel`, que el instalador registra como dos tareas programadas de SYSTEM (`OutWarp\RecoverTunnelBoot` al arrancar y `OutWarp\RecoverTunnelLogon` al iniciar sesión) y que no hace nada si corre `outwarp-gui.exe` o `wstunnel.exe`. El desinstalador borra las tareas y los marcadores. Tests: `client/tests/test_stale_tunnel.py` y `test_installer_iss.py`.
+**Prevención:** Un estado que el SO conserva entre arranques (servicio, regla de firewall) necesita un limpiador que corra al arrancar sin depender de que el usuario abra la app, y no puede fiarse del tipo de arranque del servicio: el inicio rápido restaura lo que estaba corriendo.
+
 ## Abiertos
 
 ### 🟢 B-033 — GUI del cliente: textos fijos en español

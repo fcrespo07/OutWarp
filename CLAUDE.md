@@ -326,6 +326,7 @@ Legado (hecho):
 - **Fase 2 — Producto → 0.17.0/0.18.0.**
   - Pulido de UI/UX, que termina con los **textos congelados**.
   - Servidor Windows vía Docker; se puede hacer en paralelo con cualquier fase.
+  - **B-034: tras apagar sin desconectar, WireGuard vuelve al arrancar y deja el equipo sin red. Requisito indispensable de 0.16.0** (decisión del autor, 2026-09-28). *(Código hecho 2026-09-28: limpieza al arrancar la GUI y tareas programadas de SYSTEM al arrancar e iniciar sesión (`outwarp recover-tunnel`); falta 👤 probarlo en Windows real con inicio rápido.)*
   - **Gráfica de tráfico de la dashboard del servidor** (Home + sparkline por cliente) con el estilo fluido y sin puntas de la GUI del cliente. **Requisito indispensable de 0.16.0** (decisión del autor, 2026-09-28): puede refrescar más rápido que la del cliente, pero no dibujar picos de muestra a muestra. No es B-022 (la escala tras un pico, 0.14.0). *(Código hecho 2026-09-28: `DSfmt.smoothSeries` + `DSfmt.smoothPath`; falta 👤 verlo en el panel real.)*
   - README y wizard honestos con el anti-DPI. El banner "not yet ready" se quita en la RC.
   - 👤 Pruebas reales de la GUI de Linux (X11/Wayland) y de una Omarchy limpia, que cierran los dos `[~]`.
@@ -382,6 +383,7 @@ Legado (hecho):
 - En Linux el `.conf` del cliente vive en `/etc/wireguard-outwarp` (otros gestores escanean `/etc/wireguard`).
 - **Windows: dos ejecutables** (desde 0.15.0, B-027): `outwarp-gui.exe` (GUI + tray, `uac_admin`; accesos directos y autoarranque) y `outwarp.exe` (CLI de consola, `asInvoker`). `outwarp.exe` sin argumentos lanza la GUI. `python -m outwarp` es la CLI; `outwarp/gui_main.py` es la entrada de la GUI.
 - El `.conf` del cliente en Windows vive en `C:\ProgramData\WireGuard` con ACL solo SYSTEM + Administradores (B-025); el desinstalador suelta el kill switch si quedó enganchado (B-026).
+- **Túnel huérfano en Windows (B-034)**: el servicio del túnel va en arranque manual (B-023), pero el inicio rápido lo restaura corriendo; `remove_stale_tunnels()` lo quita al arrancar la GUI y desde las tareas programadas de SYSTEM `OutWarp\RecoverTunnel{Boot,Logon}` (`outwarp recover-tunnel`, subcomando interno fuera de `--help`). Solo toca túneles del cliente (`OutWarp` o con marcador `.outwarp-client`), nunca el del servidor ni los del usuario.
 - `daemon`/`serve` salen con código 3 en `FAILED`/`ERROR`.
 - Versión de wstunnel **pinneada** en `installer/wstunnel-version.txt`, con guardia anti-drift en `server/tests/test_wstunnel_version_pin.py`.
 - **Releases inmutables** (ajuste del repo): una release publicada no admite cambios de assets ni de tag. `release.yml` / `release.sh` solo crean **borradores** (wheels + instaladores Windows vía `windows-installer.yml` como workflow reutilizable); el autor firma con `scripts/sign_release.py` y publica con `scripts/publish_release.py` (Python, funcionan en Windows), que verifica assets, hashes y firma antes. Ningún agente publica una release. Detalle en `docs/RELEASE_SIGNING.md`.

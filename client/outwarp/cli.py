@@ -355,7 +355,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
     p_import = sub.add_parser("import", help="Import a .owcfg profile")
     p_import.add_argument("path", help="Path to the .owcfg file")
@@ -419,6 +419,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_un.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
 
     sub.add_parser("doctor", help="Run client health checks and show remediation hints")
+
+    # Internal: run by the installer's boot/logon scheduled task (Windows), not
+    # part of the documented CLI: no help= keeps it out of the listing.
+    sub.add_parser("recover-tunnel")
 
     sub.add_parser(
         "tui",
@@ -697,6 +701,27 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     return run_daemon(allow_tls_intercept=args.allow_tls_intercept)
 
 
+def _cmd_recover_tunnel(args: argparse.Namespace) -> int:
+    """Remove a tunnel an unclean shutdown left behind (B-034).
+
+    Runs as SYSTEM at boot and at every logon, before or alongside the tray
+    app: a tunnel service still installed while no OutWarp process could own
+    it routes everything into an adapter with no wstunnel under it.
+    """
+    setup_logging()
+    from outwarp.platforms import get_platform
+
+    platform = get_platform()
+    if platform.tunnel_owner_running():
+        log.info("recover-tunnel: an OutWarp tunnel owner is running; nothing to do")
+        return 0
+    removed = platform.remove_stale_tunnels()
+    if removed:
+        log.warning("recover-tunnel: removed stale tunnel(s): %s", ", ".join(removed))
+        _print("Removed stale tunnel(s): " + ", ".join(removed))
+    return 0
+
+
 def _cmd_service(args: argparse.Namespace) -> int:
     from outwarp.service import install_service, service_status, uninstall_service
     if args.action == "install":
@@ -717,6 +742,7 @@ _COMMANDS = {
     "forget-profile": _cmd_forget_profile,
     "uninstall":      _cmd_uninstall,
     "doctor":         _cmd_doctor,
+    "recover-tunnel": _cmd_recover_tunnel,
     "tui":            _cmd_tui,
     "gui":            _cmd_gui,
     "ui":             _cmd_ui,

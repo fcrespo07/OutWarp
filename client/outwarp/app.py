@@ -148,6 +148,17 @@ def main() -> int:
             log.error("Another instance is already running (%s) — exiting", describe_owner())
         return 1
     _stage("service-managed viewer" if service_managed else "single-instance lock acquired")
+    if not service_managed:
+        # We own the tunnel and have not brought one up: any tunnel service
+        # still installed is left over from a session that never disconnected
+        # and is holding the network hostage (B-034).
+        try:
+            from outwarp.platforms import get_platform
+
+            if get_platform().remove_stale_tunnels():
+                _stage("removed a stale WireGuard tunnel")
+        except Exception:
+            log.exception("stale tunnel cleanup failed (continuing)")
 
     try:
         if sys.platform == "linux":

@@ -14,6 +14,15 @@ _WIREGUARD_EXE = Path(r"C:\Program Files\WireGuard\wireguard.exe")
 # C:\ProgramData\WireGuard is where wireguard.exe /installtunnelservice expects
 # to find conf files — the service runs as LocalSystem and cannot access %LOCALAPPDATA%.
 _WG_CONF_DIR = Path(r"C:\ProgramData\WireGuard")
+# Next to each client tunnel's .conf: marks the tunnel as the client's, so the
+# boot-time cleanup never touches the server's tunnel (same directory) or one
+# the user runs with WireGuard for Windows. "OutWarp" is what every server
+# names the client tunnel, and covers installs from before the marker.
+_CLIENT_MARKER_SUFFIX = ".outwarp-client"
+_DEFAULT_CLIENT_TUNNEL = "OutWarp"
+# Running while OutWarp owns a tunnel; if neither is, a tunnel service still up
+# has nothing behind it.
+_TUNNEL_OWNER_IMAGES = ("outwarp-gui.exe", "wstunnel.exe")
 _IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -105,6 +114,7 @@ class WindowsPlatform(Platform):
         # locked-down ACL instead of keeping whatever an older version left.
         conf_path.unlink(missing_ok=True)
         conf_path.write_text(config_text, encoding="utf-8")
+        (self._conf_dir / f"{name}{_CLIENT_MARKER_SUFFIX}").touch()
         result = _run([str(_WIREGUARD_EXE), "/installtunnelservice", str(conf_path)])
         if result.returncode != 0:
             raise PlatformError(
@@ -179,6 +189,44 @@ class WindowsPlatform(Platform):
             log.warning("WireGuard tunnel '%s' did not stop within timeout; routes may flap", name)
         conf_path = self._conf_dir / f"{name}.conf"
         conf_path.unlink(missing_ok=True)
+        (self._conf_dir / f"{name}{_CLIENT_MARKER_SUFFIX}").unlink(missing_ok=True)
+
+    def remove_stale_tunnels(self) -> list[str]:
+        """Uninstall client tunnel services left behind by a session that never
+        disconnected (B-034).
+
+        After an unclean shutdown the tunnel service survives, and with Fast
+        Startup ("shut down" hibernates the services) it even comes back
+        running, whatever its start type: the adapter takes all traffic with
+        no wstunnel under it and the machine has no network. Only the caller
+        knows no OutWarp owns the tunnel right now; see `tunnel_owner_running`.
+        """
+        if not _WIREGUARD_EXE.exists():
+            return []
+        names = {_DEFAULT_CLIENT_TUNNEL}
+        if self._conf_dir.is_dir():
+            names.update(
+                p.name[: -len(_CLIENT_MARKER_SUFFIX)]
+                for p in self._conf_dir.glob(f"*{_CLIENT_MARKER_SUFFIX}")
+            )
+        removed = []
+        for name in sorted(names):
+            if _sc_service_state(f"WireGuardTunnel${name}") is None:
+                (self._conf_dir / f"{name}{_CLIENT_MARKER_SUFFIX}").unlink(missing_ok=True)
+                continue
+            log.warning("Removing stale WireGuard tunnel service '%s'", name)
+            self.uninstall_wg_tunnel(name)
+            removed.append(name)
+        return removed
+
+    def tunnel_owner_running(self) -> bool:
+        """Whether an OutWarp process that could own a tunnel is running, in any
+        session. `outwarp connect` / `daemon` always run a wstunnel."""
+        for image in _TUNNEL_OWNER_IMAGES:
+            result = _run(["tasklist", "/FI", f"IMAGENAME eq {image}", "/NH", "/FO", "CSV"])
+            if image.lower() in result.stdout.lower():
+                return True
+        return False
 
     def is_wg_tunnel_active(self, name: str) -> bool:
         return _sc_service_state(f"WireGuardTunnel${name}") == _SC_STATE_RUNNING

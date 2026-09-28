@@ -124,6 +124,7 @@ Items marked *(added)* joined the gate with this plan. 👤 marks a task for the
 - **Phase 2 — Product → 0.17.0/0.18.0.**
   - UI/UX polish, ending in a string freeze.
   - Windows server via Docker, which can run in parallel with any phase.
+  - **B-034: after shutting down without disconnecting, WireGuard comes back at boot and leaves Windows offline. Required for 0.16.0.** *(Code done 2026-09-28: cleanup when the GUI starts plus SYSTEM scheduled tasks at boot and logon; needs a test on real Windows with Fast Startup.)*
   - **Server dashboard traffic chart** (Home chart + per-client sparkline) with the client GUI's smooth, spike-free look. **Required for 0.16.0.** It may refresh faster than the client's, but must not draw sample-to-sample peaks. Not B-022 (the post-spike scale, fixed in 0.14.0). *(Code done 2026-09-28: `DSfmt.smoothSeries` + `DSfmt.smoothPath`.)*
   - Honest README and wizard.
   - 👤 Real-desktop Linux GUI testing and a clean Omarchy install.

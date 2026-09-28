@@ -65,6 +65,14 @@ class Platform(ABC):
     # the switch must let the tunnel's own inner traffic through: on Linux
     # that is matched by output interface, on Windows by the tunnel's local
     # address (netsh cannot scope a rule to an adapter by name).
+    def remove_stale_tunnels(self) -> list[str]:
+        """Remove tunnels a previous session left installed; returns their
+        names. Only Windows keeps a tunnel across a reboot."""
+        return []
+
+    def tunnel_owner_running(self) -> bool:
+        return False
+
     @abstractmethod
     def engage_kill_switch(
         self, allowlist_ips: list[str], *, tunnel_iface: str, tunnel_address: str,

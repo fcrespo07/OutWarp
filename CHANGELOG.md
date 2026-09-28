@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Windows: after shutting down with OutWarp connected, WireGuard came back
+  at boot with nothing behind it and the machine had no network** until
+  WireGuard was killed by hand (B-034). Demand start (0.15.0) was not
+  enough: Fast Startup restores running services, and nothing removed a
+  leftover tunnel except the next connect. Now a leftover client tunnel is
+  removed at boot and at every logon (two SYSTEM scheduled tasks the
+  installer registers, running the internal `outwarp recover-tunnel`) and
+  when the app starts. The server's tunnel and tunnels of your own
+  WireGuard setup are never touched.
+
 ### Added
 - **Disable a client without revoking it.** `outwarp-server disable-client
   <name>` takes the peer off the tunnel at once (hot-removed and dropped from
