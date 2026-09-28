@@ -27,6 +27,7 @@ import json
 import logging
 import queue
 import ssl
+import sys
 import threading
 import time
 from http import HTTPStatus
@@ -142,6 +143,14 @@ class _PanelServer(ThreadingHTTPServer):
         self.sessions = sessions
         self.rate_limiter = rate_limiter
         self.broker = broker
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        # A browser closing a tab or a proxy dropping an idle connection is
+        # routine; socketserver printed a full traceback to stderr for each.
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError, ssl.SSLError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
 
 
 class _PanelHandler(BaseHTTPRequestHandler):

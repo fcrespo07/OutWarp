@@ -193,61 +193,63 @@ const Sparkline = ({ data, w = 72, h = 22, color = "var(--brand-2)", fill = true
 };
 
 // ── Area throughput chart (dual: rx up, tx down-mirrored) ─────────────────
-const AreaChart = ({ rx: rawRx, tx: rawTx, h = 150, intervalMs = 2000 }) => {
+//
+// Points sit at their own time (the server's sampled_at), not at their index,
+// and the view scrolls with the clock: one requestAnimationFrame per frame
+// moves a single transform, the path is rebuilt only when a sample arrives.
+// The right edge trails real time by `delaySec`, so the newest sample is
+// normally already there when its moment scrolls into view; samples that
+// arrive late or in a bunch (a proxy buffering the event stream) land where
+// they belong instead of shoving the line sideways.
+const AreaChart = ({ samples, h = 150, windowSec = 120, delaySec = 4 }) => {
   const W = 1000, P = 4;
-  const rx = window.DSfmt.smoothSeries(rawRx);
-  const tx = window.DSfmt.smoothSeries(rawTx);
-  const dataMax = Math.max(...rx, ...tx, 0.0001);
-  // Bounded peak-hold, not a decaying one: see window.DSfmt.makeBoundedPeak's
-  // comment (dash-data.jsx). A raw per-tick max made a steady trickle of
-  // traffic look like it was constantly surging and settling; an unboundedly
-  // decaying one (tried in 0.12.1) went too far the other way — a one-off
-  // spike (a speed test) could keep the axis pinned high for minutes after,
-  // long enough to draw real but smaller ongoing traffic as a flat line.
+  const mid = h / 2;
+  const pxPerSec = (W - P * 2) / windowSec;
   const holdRef = React.useRef(null);
   if (holdRef.current === null) holdRef.current = window.DSfmt.makeBoundedPeak(10);
-  const max = holdRef.current(dataMax);
-  const n = rx.length;
-  const mid = h / 2;
-  // Smoothed like the client GUI's chart: the 2 s samples are noisy, and a
-  // polyline through them read as a row of spikes.
-  const step = (W - P * 2) / (n - 1);
-  // Continuous scroll. Samples arrive every `intervalMs`; redrawing the line
-  // when one lands makes it jump a whole step. Instead each new sample is
-  // drawn one step off the right edge and the group glides left over the
-  // interval (a CSS transition: no per-frame JS), so the line moves steadily
-  // and the newest point slides in. The extra leading point is the sample
-  // that just scrolled off the left, so no gap opens on that side. The chart
-  // therefore lags the data by one interval.
-  const prevFirst = React.useRef(null);
   const groupRef = React.useRef(null);
-  const first = prevFirst.current || { rx: rx[0], tx: tx[0] };
-  const line = (arr, mirror, lead) => {
-    const all = [lead, ...arr];
-    const pts = all.map((v, i) => [
-      P + i * step,
-      mirror ? mid + (v / max) * (mid - P) : mid - (v / max) * (mid - P),
-    ]);
-    return mirror
-      ? window.DSfmt.smoothPath(pts, mid, h - P)
-      : window.DSfmt.smoothPath(pts, P, mid);
-  };
-  const rxD = line(rx, false, first.rx);
-  const txD = line(tx, true, first.tx);
-  React.useLayoutEffect(() => {
-    prevFirst.current = { rx: rx[0], tx: tx[0] };
+  // Server clock → browser clock: the smallest arrival delay seen so far.
+  const offsetRef = React.useRef(null);
+
+  const pts = samples || [];
+  const last = pts[pts.length - 1];
+  for (const p of pts) {
+    if (p.at == null) continue;
+    const off = p.at - p.t;
+    if (offsetRef.current === null || off < offsetRef.current) offsetRef.current = off;
+  }
+  const t0 = pts.length ? pts[0].t : 0;
+
+  const geom = React.useMemo(() => {
+    if (pts.length < 2) return null;
+    const rx = window.DSfmt.smoothSeries(pts.map((p) => p.rx));
+    const tx = window.DSfmt.smoothSeries(pts.map((p) => p.tx));
+    const max = holdRef.current(Math.max(...rx, ...tx, 0.0001));
+    const xs = pts.map((p) => P + (p.t - t0) * pxPerSec);
+    const up = window.DSfmt.smoothPath(xs.map((x, i) => [x, mid - (rx[i] / max) * (mid - P)]), P, mid);
+    const down = window.DSfmt.smoothPath(xs.map((x, i) => [x, mid + (tx[i] / max) * (mid - P)]), mid, h - P);
+    return { up, down, x0: xs[0], x1: xs[xs.length - 1] };
+  }, [pts.length, last && last.t, t0, h]);
+
+  React.useEffect(() => {
     const g = groupRef.current;
-    if (!g) return;
+    if (!g) return undefined;
     const still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    g.style.transition = "none";
-    g.style.transform = "translateX(0px)";
-    if (still) { g.style.transform = `translateX(${-step}px)`; return; }
-    void g.getBoundingClientRect();   // commit the start position
-    g.style.transition = `transform ${intervalMs}ms linear`;
-    g.style.transform = `translateX(${-step}px)`;
-  }, [rawRx]);
+    let raf = 0;
+    const place = () => {
+      const serverNow = Date.now() / 1000 - (offsetRef.current || 0);
+      // Time at the left edge of the view.
+      const left = serverNow - delaySec - windowSec;
+      g.setAttribute("transform", `translate(${(-(left - t0) * pxPerSec).toFixed(2)} 0)`);
+    };
+    const frame = () => { place(); raf = requestAnimationFrame(frame); };
+    if (still || typeof requestAnimationFrame !== "function") place();
+    else raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [t0, pxPerSec, windowSec, delaySec]);
+
   return (
-    <svg viewBox={`0 0 ${W} ${h}`} width="100%" height={h} preserveAspectRatio="none" style={{ display: "block" }}>
+    <svg viewBox={`0 0 ${W} ${h}`} width="100%" height={h} preserveAspectRatio="none" style={{ display: "block", overflow: "hidden" }}>
       <defs>
         {/* fade toward the centre axis → transparent, like the Windows GUI */}
         <linearGradient id="owGradRx" gradientUnits="userSpaceOnUse" x1="0" y1={P} x2="0" y2={mid}>
@@ -263,10 +265,12 @@ const AreaChart = ({ rx: rawRx, tx: rawTx, h = 150, intervalMs = 2000 }) => {
       </defs>
       <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--line)" strokeDasharray="2 5"/>
       <g ref={groupRef}>
-        <path d={`${rxD} L${P + n * step} ${mid} L${P} ${mid} Z`} fill="url(#owGradRx)"/>
-        <path d={rxD} fill="none" stroke="var(--brand)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
-        <path d={`${txD} L${P + n * step} ${mid} L${P} ${mid} Z`} fill="url(#owGradTx)"/>
-        <path d={txD} fill="none" stroke="var(--brand-2)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
+        {geom && <>
+          <path d={`${geom.up} L${geom.x1} ${mid} L${geom.x0} ${mid} Z`} fill="url(#owGradRx)"/>
+          <path d={geom.up} fill="none" stroke="var(--brand)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+          <path d={`${geom.down} L${geom.x1} ${mid} L${geom.x0} ${mid} Z`} fill="url(#owGradTx)"/>
+          <path d={geom.down} fill="none" stroke="var(--brand-2)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+        </>}
       </g>
     </svg>
   );

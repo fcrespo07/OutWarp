@@ -246,6 +246,23 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 
 ---
 
+### ✅ B-037 — Panel del servidor en Docker/Kubernetes: parpadeo, registro vacío y gráfica a tirones (0.16.1 no lo arregló)
+**Síntomas:** Reportado por el autor (2026-09-28) tras 0.16.1, en su pod: la información del dashboard parpadea cada poco, el Registro sale vacío y la gráfica va a tirones. B-036 se había verificado contra un panel de prueba local, que no reproduce el despliegue real.
+**Reproducción:** réplica del pod con Docker: `serve` y `web` en contenedores separados que comparten `/data`, red y PID, Caddy delante como proxy y un cliente real moviendo tráfico, observada con Chromium durante minutos (campos del dashboard cada 100 ms, posición de la gráfica, líneas del registro).
+**Causa raíz (cuatro):**
+1. **Parpadeo:** cada 2 s el panel emitía `outwarp:status` con solo `status` y `config_present`, y la página *sustituía* con eso todo su estado: endpoint, subred, huella y días de TLS pasaban a "—" hasta que otra petición completa los devolvía.
+2. **Registro vacío:** en el pod el panel es otro proceso; el `serve` solo escribía en su stdout, así que el panel no tenía ninguna línea suya que mostrar.
+3. **Gráfica:** los puntos iban por índice y el trazo saltaba una posición por muestra; con el flujo de eventos atravesando proxies las muestras llegan a destiempo o agrupadas, y dos lecturas casi simultáneas de los contadores daban tasas de 0 o picos.
+4. Al arreglar el registro apareció un problema de seguridad: la línea "Starting wstunnel" incluía el secreto de la ruta de upgrade (la credencial del túnel); se habría visto en el panel y en disco.
+**Fix (2026-09-28):** los eventos de estado llevan el `get_status()` completo y la página fusiona en vez de sustituir; `serve` escribe también `<config>/logs/serve.log` y el panel lo sigue (`logs.FileTail`, con rotación), mostrando cada línea con su hora y su nivel (también los de wstunnel) y sin códigos de color; el secreto se oculta en el comando registrado y en cualquier línea que llegue al panel; la gráfica coloca cada punto por su `sampled_at` y se desplaza con el reloj (un `transform` por fotograma, el trazo solo se recalcula al llegar una muestra), va 4 s por detrás y descarta lecturas a menos de 1 s de la anterior; si no llegan eventos en 5 s la página consulta cada 2 s (un proxy que corta el flujo ya no congela nada). Verificado en la réplica: 0 parpadeos en 1400 capturas, desplazamiento constante sin saltos atrás, registro con las líneas del `serve`, también con un proxy que rompe `/events`.
+**Prevención:** un arreglo de UI del panel se verifica contra el despliegue real (dos procesos + proxy), no contra un panel local con datos simulados. Un evento parcial nunca reemplaza estado.
+
+### ✅ B-038 — Cliente: cerrar la ventana seguía saliendo de OutWarp (0.16.1)
+**Síntomas:** Reportado por el autor (2026-09-28): la opción "seguir en segundo plano al cerrar" de 0.16.1 no funcionaba.
+**Causa raíz:** solo se trataba la X de nuestra barra de título; cerrar con Alt+F4 o "Cerrar ventana" en la barra de tareas seguía saliendo. Y cuando sí se ocultaba, en Windows 11 el icono nuevo queda escondido en la flecha de la bandeja: la ventana desaparecía sin rastro y parecía que la app se había cerrado.
+**Fix (2026-09-28):** el evento `closing` de la ventana se cancela y la oculta en la bandeja para cualquier cierre cuando la opción está activa y hay icono; solo "Parar y salir" y las actualizaciones terminan el proceso, y un apagado o cierre de sesión de Windows nunca se bloquea (`SM_SHUTTINGDOWN`, que además deja a `_on_quit` bajar el túnel, B-034). La primera vez que se oculta, una notificación dice que OutWarp sigue en la bandeja. Tests en `test_app.py`. De paso, el visor de logs de la GUI del cliente tenía el mismo fallo de B-036 (se paraba al llenarse el buffer) y se corrige igual.
+**Prevención:** un comportamiento de ventana se engancha al evento de la ventana, no a un botón concreto.
+
 ### ✅ B-036 — Panel del servidor: parpadeo, logs que no aparecen y gráfica a tirones
 **Síntomas:** Reportado por el autor (2026-09-28, sobre 0.16.0): la gráfica ya no tiene picos pero va a tirones, el registro no se ve en el dashboard y a veces toda la información parpadea.
 **Causa raíz (tres, medidas en un Chromium real contra el panel de verdad):**

@@ -15,6 +15,8 @@ STRINGS: dict[str, str] = {
     "tray.state.reconnecting": "OutWarp — reconnecting...",
     "tray.state.failed": "OutWarp — connection failed",
     "tray.no_config": "OutWarp — no configuration",
+    "tray.hidden_title": "OutWarp is still running",
+    "tray.hidden_body": "It stays connected in the tray. Click the icon to open it; “Stop and quit” in its menu closes it.",
     "notify.connected": "Connected",
     "notify.failed": "Connection failed: {error}",
     "notify.reconnecting": "Connection dropped — reconnecting...",

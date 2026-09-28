@@ -56,6 +56,14 @@ function adaptClient(row, derived) {
   };
 }
 
+// Samples closer together than this are dropped: the same counters read
+// twice a few ms apart (an SSE event and a fetch, or a burst a proxy held back)
+// give a rate of 0 or a huge spike, which the chart drew as a dip or a peak.
+const MIN_SAMPLE_GAP_S = 1.0;
+// Seconds of history the live chart keeps.
+const LIVE_WINDOW_S = 120;
+const MAX_LOGS = 400;
+
 function useLiveData() {
   const [, force] = useState(0);
   const ref = useRef(null);
@@ -64,15 +72,18 @@ function useLiveData() {
       status: null,
       clients: [],
       totals: { online: 0, idle: 0, offline: 0, pending: 0, disabled: 0, rxBps: 0, txBps: 0 },
-      rxSeries: new Array(60).fill(0),
-      txSeries: new Array(60).fill(0),
+      // Total throughput as {t (server seconds), rx, tx}; the chart places
+      // points by their own time, so late or bunched delivery cannot bend it.
+      samples: [],
       logs: [],
+      lastSeq: 0,
+      lastEventAt: 0,
       uptimeSec: null,
     };
   }
   // Keyed by client name: pending clients all share an empty public_key and
   // used to collapse into one row of rate/sparkline state.
-  const prevRef = useRef({});       // name -> {rx, tx, t}
+  const prevRef = useRef({});       // name -> {rx, tx, t, rxBps, txBps}
   const sparkRef = useRef({});      // name -> number[]
   const peakRef = useRef({});       // name -> boundedPeak() instance (sparkline scale)
 
@@ -80,25 +91,21 @@ function useLiveData() {
     const s = ref.current;
     const browserNow = Date.now() / 1000;
     let totRx = 0, totTx = 0, online = 0, idle = 0, offline = 0, pending = 0, disabled = 0;
+    let newest = 0;
     const adapted = (rows || []).map((row) => {
       // The server stamps each sample with the time it actually took it
-      // (sampled_at). Using that instead of the browser's clock keeps the
-      // rate correct even when a backgrounded tab throttles delivery and a
-      // batch of SSE events all land in the same JS tick — dividing by the
-      // real dt instead of a near-zero (or huge) one avoids a bogus
-      // instantaneous spike or trough.
-      const sampledAt = row.sampled_at != null ? row.sampled_at : browserNow;
-      const prev = prevRef.current[row.name];
-      let rxBps = 0, txBps = 0;
-      if (prev && sampledAt > prev.t) {
-        const dt = sampledAt - prev.t;
-        rxBps = Math.max(0, (row.rx_bytes - prev.rx) / dt);
-        txBps = Math.max(0, (row.tx_bytes - prev.tx) / dt);
+      // (sampled_at): rates divide by the real gap between two readings.
+      const { state: rate, advanced } = window.DSfmt.nextRate(
+        prevRef.current[row.name], row, browserNow, MIN_SAMPLE_GAP_S);
+      prevRef.current[row.name] = rate;
+      const { rxBps, txBps } = rate;
+      if (advanced) {
+        newest = Math.max(newest, rate.t);
+        const ring = (sparkRef.current[row.name] || new Array(SPARK_RING_LEN).fill(0)).slice(1);
+        ring.push(rxBps);
+        sparkRef.current[row.name] = ring;
       }
-      prevRef.current[row.name] = { rx: row.rx_bytes || 0, tx: row.tx_bytes || 0, t: sampledAt };
-      const ring = (sparkRef.current[row.name] || new Array(SPARK_RING_LEN).fill(0)).slice(1);
-      ring.push(rxBps);
-      sparkRef.current[row.name] = ring;
+      const ring = sparkRef.current[row.name] || new Array(SPARK_RING_LEN).fill(0);
       const state = row.status === "unknown" ? "offline" : row.status;
       if (state === "online") { online++; totRx += rxBps; totTx += txBps; }
       else if (state === "idle") idle++;
@@ -109,52 +116,59 @@ function useLiveData() {
       // (dash-data.jsx) for why a bounded peak-hold, not a raw or decaying one.
       const boundedPeak = peakRef.current[row.name] || window.DSfmt.makeBoundedPeak(SPARK_PEAK_MEMORY);
       peakRef.current[row.name] = boundedPeak;
-      const peak = boundedPeak(Math.max(...ring, 1));
-      const normSpark = ring.map((v) => v / peak);
+      const peak = advanced ? boundedPeak(Math.max(...ring, 1)) : Math.max(...ring, 1);
+      const normSpark = ring.map((v) => Math.min(1, v / peak));
       return adaptClient(row, { rxBps, txBps, spark: normSpark });
     });
     s.clients = adapted;
     s.totals = { online, idle, offline, pending, disabled, rxBps: totRx, txBps: totTx };
-    s.rxSeries = s.rxSeries.slice(1).concat(totRx);
-    s.txSeries = s.txSeries.slice(1).concat(totTx);
+    if (newest) {
+      s.samples = s.samples
+        .filter((p) => p.t > newest - LIVE_WINDOW_S - 30)
+        .concat({ t: newest, rx: totRx, tx: totTx, at: browserNow });
+    }
     force((x) => x + 1);
   }, []);
 
+  // Merge, never replace: an event may carry fewer fields than get_status().
   const onStatus = useCallback((st) => {
-    ref.current.status = st;
+    ref.current.status = { ...(ref.current.status || {}), ...(st || {}) };
     force((x) => x + 1);
   }, []);
 
-  const onLog = useCallback((entry) => {
+  // Entries arrive from events and from fetches (start-up, resync, fallback
+  // polling); each carries the server's sequence number, so none shows twice.
+  const addLogs = useCallback((entries) => {
     const s = ref.current;
-    const t = window.DSfmt.nowClock(entry.ts);
-    s.logs = s.logs.concat({
-      seq: entry.seq, t,
-      svc: "", lvl: entry.level || "info", msg: entry.msg,
-    });
-    if (s.logs.length > 400) s.logs = s.logs.slice(-400);
+    const next = window.DSfmt.mergeLogs(s.logs, s.lastSeq, entries, MAX_LOGS);
+    if (next.logs === s.logs) return;
+    s.logs = next.logs;
+    s.lastSeq = next.lastSeq;
     force((x) => x + 1);
   }, []);
+  const onLog = useCallback((entry) => addLogs([entry]), [addLogs]);
 
   useEffect(() => {
-    const offC = OW.on("clients", onClients);
-    const offS = OW.on("status", onStatus);
+    const seen = (fn) => (d) => { ref.current.lastEventAt = Date.now(); fn(d); };
+    const offC = OW.on("clients", seen(onClients));
+    const offS = OW.on("status", seen(onStatus));
     const offL = OW.on("log", onLog);
     return () => { offC(); offS(); offL(); };
   }, [onClients, onStatus, onLog]);
 
-  // Stable identity: bootstrap() depends on this, and a new function per
-  // render made it re-run on every render, which re-rendered, which ran it
-  // again: ~17 rounds of five API calls a second, the whole page repainting
-  // each time and the log list reset to "now" (B-036).
-  const seedLogs = useCallback((entries) => {
-    ref.current.logs = (entries || []).map((e) => ({
-      seq: e.seq, t: window.DSfmt.nowClock(e.ts), svc: "", lvl: e.level || "info", msg: e.msg,
-    }));
-    force((x) => x + 1);
-  }, []);
+  // What the live events would have delivered, fetched instead: after a
+  // reconnect, and while events are not arriving (a proxy that buffers or
+  // drops the event stream must not freeze the page).
+  const poll = useCallback(async () => {
+    const [stt, cls, lgs] = await Promise.all([
+      OW.call("get_status"), OW.call("list_clients"), OW.call("get_logs", ref.current.lastSeq),
+    ]);
+    if (stt) onStatus(stt);
+    if (cls) onClients(cls);
+    addLogs(lgs);
+  }, [onStatus, onClients, addLogs]);
 
-  return { live: ref.current, seedLogs, seedClients: onClients };
+  return { live: ref.current, onStatus, onClients, addLogs, poll };
 }
 
 function resolveTheme(theme) {
@@ -216,6 +230,7 @@ function App() {
   const [selected, setSelected] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [, setViewTick] = useState(0);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia("(max-width: 860px)").matches);
 
   const lang = window.OWi18n.resolveLang(settings.language, window.OWi18n.systemLangs());
@@ -228,7 +243,7 @@ function App() {
   }, [lang]);
   const ui = window.styleTokens("pulida");
 
-  const { live, seedLogs, seedClients } = useLiveData();
+  const { live, onStatus, onClients, addLogs, poll } = useLiveData();
   const [confirm, confirmNode] = useConfirm(T);
 
   const server = (() => {
@@ -257,20 +272,33 @@ function App() {
       ]);
       if (set) setSettings((s) => ({ ...s, ...set }));
       if (info) setAppInfo(info);
-      live.status = stt;
-      seedClients(cls);
-      seedLogs(lgs);
+      onStatus(stt);
+      onClients(cls);
+      addLogs(lgs);
+      live.lastEventAt = Date.now();
       setBooted(true);
       OW.call("notify_ready");
     } catch (e) {
       // In web mode a 401 means we need to log in first; the gate handles it.
       setBooted(true);
     }
-  }, [live, seedClients, seedLogs]);
+  }, [onStatus, onClients, addLogs]);
 
   useEffect(() => { if (authed) bootstrap(); }, [authed, bootstrap]);
-  // The live stream dropped and came back (transport.js): refetch what it missed.
-  useEffect(() => OW.on("resync", () => { if (authed) bootstrap(); }), [authed, bootstrap]);
+  // The live stream dropped and came back (transport.js): fetch what it missed.
+  useEffect(() => OW.on("resync", () => { if (authed) poll().catch(() => {}); }), [authed, poll]);
+  // Fallback: no live event for a while (a proxy buffering the stream, a
+  // renderer that stopped taking them) → fetch every 2 s until they resume.
+  useEffect(() => {
+    if (!authed || !booted) return undefined;
+    let busy = false;
+    const id = setInterval(async () => {
+      if (busy || document.hidden || Date.now() - live.lastEventAt < 5000) return;
+      busy = true;
+      try { await poll(); } catch (_e) { /* next tick */ } finally { busy = false; }
+    }, 2000);
+    return () => clearInterval(id);
+  }, [authed, booted, poll, live]);
 
   useEffect(() => {
     const off = OW.on("settings", (s) => setSettings((cur) => ({ ...cur, ...s })));
@@ -298,13 +326,14 @@ function App() {
   const C = {
     T, lang, langPref: settings.language || "auto", live, server, go, appInfo,
     call: (m, ...a) => OW.call(m, ...a),
+    refreshView: () => setViewTick((x) => x + 1),
     openClient: (name) => setSelected(name),
     openAdd: () => setAddOpen(true),
     confirm, signOut, setLang, theme, toggleTheme,
     isWeb: OW.isWeb,
     refresh: async () => {
       const [stt, cls] = await Promise.all([OW.call("get_status"), OW.call("list_clients")]);
-      live.status = stt; seedClients(cls);
+      onStatus(stt); onClients(cls);
     },
   };
 

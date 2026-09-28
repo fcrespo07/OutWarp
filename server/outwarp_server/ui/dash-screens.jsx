@@ -3,8 +3,8 @@ const { Card, SLabel, PageHead, Btn, Pill, Dot, Toggle, Segmented, Stat, Field, 
         Sparkline, AreaChart, BarSeries, Donut, KV, Icons, useUI } = window;
 const { fmtBytes, fmtBps, fmtDuration, fmtAgo, tr } = window.DSfmt;
 
-// Seconds between live throughput samples (the server's clients poll, api.py).
-const LIVE_SAMPLE_S = 2;
+// Seconds of history the live chart shows (matches app.jsx's LIVE_WINDOW_S).
+const LIVE_WINDOW_S = 120;
 
 const stateTone = (s) => s === "online" ? "good" : s === "idle" || s === "pending" ? "warn" : "neutral";
 
@@ -111,9 +111,9 @@ function ScreenDashboard({ C }) {
             <span style={{ color: "var(--brand-2)" }}>↑ {fmtBps(live.totals.txBps)}</span>
           </div>
         </div>
-        <AreaChart rx={live.rxSeries} tx={live.txSeries} h={150} intervalMs={LIVE_SAMPLE_S * 1000} />
+        <AreaChart samples={live.samples} h={150} windowSec={LIVE_WINDOW_S} />
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--text-3)" }}>
-          <span>-{live.rxSeries.length * LIVE_SAMPLE_S}s</span><span>{T.dash_now}</span>
+          <span>-{LIVE_WINDOW_S}s</span><span>{T.dash_now}</span>
         </div>
       </Card>
 
@@ -409,7 +409,7 @@ function ScreenLogs({ C }) {
   });
   React.useEffect(() => {
     if (follow && scrollerRef.current) scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
-  }, [live.logs.length, follow]);
+  }, [live.lastSeq, follow]);
   const lvlColor = (l) => l === "info" ? "var(--brand-2)" : l === "warn" ? "var(--brand-warn)" : l === "error" ? "var(--brand-bad)" : "var(--text-3)";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%", minHeight: 0 }}>
@@ -417,7 +417,7 @@ function ScreenLogs({ C }) {
         right={<>
           <Segmented options={levels} value={level} onChange={setLevel} />
           <Btn size="sm" icon={Icons.download(14)} onClick={() => C.call("export_logs")}>{T.logs_export}</Btn>
-          <Btn size="sm" kind="ghost" icon={Icons.trash(14)} onClick={async () => { await C.call("clear_logs"); }}>{T.logs_clear}</Btn>
+          <Btn size="sm" kind="ghost" icon={Icons.trash(14)} onClick={async () => { await C.call("clear_logs"); live.logs = []; C.refreshView(); }}>{T.logs_clear}</Btn>
         </>} />
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: "1 1 220px", maxWidth: 340 }}>
@@ -434,8 +434,8 @@ function ScreenLogs({ C }) {
           const el = e.target; const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 28;
           if (!bottom && follow) setFollow(false);
         }} style={{ flex: 1, overflow: "auto", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.7, padding: 14 }}>
-          {rows.map((l, i) => (
-            <div key={i} className="log-line" style={{ display: "grid", gridTemplateColumns: "92px 52px 1fr", gap: 10 }}>
+          {rows.map((l) => (
+            <div key={l.seq} className="log-line" style={{ display: "grid", gridTemplateColumns: "92px 52px 1fr", gap: 10 }}>
               <span style={{ color: "var(--text-3)" }}>{l.t}</span>
               <span style={{ color: lvlColor(l.lvl), textTransform: "uppercase" }}>{l.lvl}</span>
               <span style={{ color: "var(--text)", wordBreak: "break-word" }}>{l.msg}</span>

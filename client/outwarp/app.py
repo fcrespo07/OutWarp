@@ -87,6 +87,18 @@ def _ensure_elevated() -> None:
     sys.exit(0 if ret > 32 else 1)
 
 
+def _session_ending() -> bool:
+    """Windows is shutting down or signing out (SM_SHUTTINGDOWN)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.user32.GetSystemMetrics(0x2000))  # type: ignore[attr-defined]
+    except Exception:
+        return False
+
+
 def _resolve_ui_path() -> str:
     """Absolute path to ui/index.html (works in dev and PyInstaller bundles)."""
     base = Path(sys._MEIPASS) / "ui" if hasattr(sys, "_MEIPASS") else Path(__file__).parent / "ui"
@@ -277,6 +289,20 @@ def main() -> int:
             with contextlib.suppress(Exception):
                 window.destroy()
 
+        # Every way of closing the window — the title bar's X, Alt+F4, "Close
+        # window" on the taskbar — leaves OutWarp in the tray when that is on.
+        # Only Quit (tray menu, an update) ends the process. Returning False
+        # from `closing` cancels the close.
+        def _on_closing() -> bool:
+            # Shutdown or sign-out closes every window: never block it, and
+            # let _on_quit take the tunnel down (see B-034).
+            if quit_done.is_set() or _session_ending() or not api.hide_on_close():
+                return True
+            threading.Thread(target=api.hide_to_tray, daemon=True).start()
+            return False
+
+        window.events.closing += _on_closing
+
         # Let apply_update() quit the app after launching the installer so it
         # can replace our files and relaunch us.
         api.set_quit_handler(_on_quit)
@@ -291,6 +317,7 @@ def main() -> int:
             api=api,
             lang_getter=lambda: api.get_settings().get("language", "auto"),
         )
+        api.on_hidden_to_tray = getattr(tray, "notify_hidden", None)
         _stage("tray constructed")
 
         # Auto-connect at launch unless the user opted out, or the profile has

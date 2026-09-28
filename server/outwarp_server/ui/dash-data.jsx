@@ -530,5 +530,39 @@ function smoothSeries(values, kernel = [1, 2, 3, 2, 1]) {
   });
 }
 
+// One client's throughput from two readings of its byte counters. A reading
+// less than `minGap` seconds after the previous one is ignored (the previous
+// rate stands): the same counters read twice a few ms apart — an event and a
+// fetch, or a burst a proxy held back — gave a rate of 0 or a spike, drawn as
+// a dip or a peak. Returns the new state and whether it moved on.
+function nextRate(prev, row, now, minGap = 1.0) {
+  const t = row.sampled_at != null ? row.sampled_at : now;
+  const rx = row.rx_bytes || 0, tx = row.tx_bytes || 0;
+  if (!prev) return { state: { rx, tx, t, rxBps: 0, txBps: 0 }, advanced: false };
+  if (t - prev.t < minGap) return { state: prev, advanced: false };
+  const dt = t - prev.t;
+  return {
+    state: { rx, tx, t, rxBps: Math.max(0, (rx - prev.rx) / dt), txBps: Math.max(0, (tx - prev.tx) / dt) },
+    advanced: true,
+  };
+}
+
+// Log entries arrive from live events and from fetches; the server's
+// sequence number keeps each one once. A restarted server counts from 1
+// again, so a batch starting at 1 below what we have starts over.
+function mergeLogs(logs, lastSeq, entries, max = 400) {
+  const list = entries || [];
+  if (!list.length) return { logs, lastSeq };
+  if (list[0].seq <= 1 && lastSeq > list[list.length - 1].seq) { logs = []; lastSeq = 0; }
+  const fresh = list.filter((e) => e.seq > lastSeq);
+  if (!fresh.length) return { logs, lastSeq };
+  return {
+    logs: logs.concat(fresh.map((e) => ({
+      seq: e.seq, t: nowClock(e.ts), svc: "", lvl: e.level || "info", msg: e.msg,
+    }))).slice(-max),
+    lastSeq: fresh[fresh.length - 1].seq,
+  };
+}
+
 window.DS_STR = DS_STR;
-window.DSfmt = { fmtBytes, fmtBps, fmtDuration, fmtAgo, tr, nowClock, makeBoundedPeak, smoothPath, smoothSeries };
+window.DSfmt = { fmtBytes, fmtBps, fmtDuration, fmtAgo, tr, nowClock, makeBoundedPeak, smoothPath, smoothSeries, nextRate, mergeLogs };

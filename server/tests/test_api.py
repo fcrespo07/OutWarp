@@ -1129,3 +1129,60 @@ def test_run_setup_on_linux_requires_root(tmp_path, monkeypatch):
         r = api.run_setup(dict(_SETUP))
     assert r["ok"] is False
     assert "sudo outwarp-server gui" in r["error"]
+
+
+def test_status_events_carry_the_whole_status():
+    """A two-key event replaced the dashboard's status every 2 s and blanked
+    endpoint, subnet and TLS until the next full fetch (B-037)."""
+    mgr = _make_mgr(state=ServerState.RUNNING)
+    api, _ = _make_api(mgr)
+    seen = []
+    api.register_sink(lambda name, payload: seen.append((name, payload)))
+    api._on_state_change(ServerState.STOPPED)
+    name, payload = seen[-1]
+    assert name == "status" and payload["status"] == "stopped"
+    for key in ("endpoint", "subnet", "cert_fingerprint_sha256", "wg_listen_port"):
+        assert key in payload
+
+
+def test_web_panel_shows_the_serve_process_log(tmp_path):
+    """In a container the panel is a separate process from `serve`; it reads
+    serve's log file from the shared config dir, colour codes stripped."""
+    import time as _time
+
+    log_file = tmp_path / "serve.log"
+    log_file.write_text("2026-01-01 00:00:00,000 [INFO] outwarp: started\n")
+    api = Api(MemoryLogHandler(), _make_mgr(), extra_log_files=[log_file])
+    api.start_background()
+    with log_file.open("a") as fh:
+        fh.write("2026-01-01 00:00:01,000 [WARNING] x: \x1b[32m INFO\x1b[0m wstunnel said hi\n")
+    for _ in range(40):
+        msgs = [e["msg"] for e in api.get_logs(0)]
+        if any("wstunnel said hi" in m for m in msgs):
+            break
+        _time.sleep(0.05)
+    assert any("started" in m for m in msgs)
+    last = api.get_logs(0)[-1]
+    assert last["msg"].endswith(" INFO wstunnel said hi") and "\x1b" not in last["msg"]
+    assert last["level"] == "warn"
+
+
+def test_log_lines_show_their_own_time_level_and_no_secret():
+    from outwarp_server.api import _parse_log_line
+
+    ts, level, msg = _parse_log_line(
+        "2026-09-28 20:01:35,935 [INFO] outwarp_server.server_manager: [wstunnel] "
+        "2026-09-28T20:01:35.935505Z \x1b[31mERROR\x1b[0m cnx: Error while upgrading cnx"
+    )
+    assert level == "error" and msg == "wstunnel: cnx: Error while upgrading cnx"
+    assert ts is not None and ts % 1 > 0.9  # ,935 ms kept
+    ts, level, msg = _parse_log_line("2026-09-28 20:01:05,630 [WARNING] outwarp_server.cli: hi")
+    assert (level, msg) == ("warn", "cli: hi")
+    assert _parse_log_line("free text [ERROR] x")[1:] == ("error", "free text [ERROR] x")
+
+    api, _ = _make_api(_make_mgr())
+    api._record_line(
+        "2026-09-28 20:01:05,682 [INFO] outwarp_server.server_manager: Starting wstunnel: "
+        "/usr/local/bin/wstunnel server --restrict-http-upgrade-path-prefix=XhlBBN-s3cret wss://0.0.0.0:443"
+    )
+    assert "s3cret" not in api.get_logs(0)[-1]["msg"]

@@ -119,9 +119,14 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     import signal
     import threading
 
+    from outwarp_server.logs import add_file_log, serve_log_path
     from outwarp_server.server_manager import ServerManager, ServerState
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    try:
+        add_file_log(serve_log_path(_config_dir_from_args(args)))
+    except OSError as exc:
+        log.warning("serve: cannot write the log file for the web panel: %s", exc)
 
     config = _load_config(args)
     manager = ServerManager(config, config_path=_resolve_config_path(args))
@@ -1164,9 +1169,12 @@ def _cmd_web(args: argparse.Namespace) -> int:
     manager = ServerManager(config, config_path=_resolve_config_path(args))
 
     from outwarp_server.api import Api
+    from outwarp_server.logs import serve_log_path
     from outwarp_server.web_server import serve
 
-    api = Api(memory_handler, manager)
+    # In a container the tunnel runs in a separate `serve` process; its log
+    # file on the shared config dir is what the Logs screen can show.
+    api = Api(memory_handler, manager, extra_log_files=[serve_log_path(config_dir)])
     httpd = serve(
         api,
         ui_dir=Path(__file__).parent / "ui",

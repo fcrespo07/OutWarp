@@ -282,3 +282,81 @@ class TestRefreshWindowsAutostart:
     def test_only_touches_frozen_windows_builds(self, monkeypatch) -> None:
         plat = self._run(monkeypatch, platform="win32", frozen=False, start_at_boot=True)
         plat.install_autostart.assert_not_called()
+
+
+class TestClosingTheWindowKeepsOutWarpRunning:
+    """Every close of the window (title bar X, Alt+F4, taskbar "Close
+    window") hides OutWarp to the tray when close_to_tray is on; only Quit
+    ends it. 0.16.1 handled the X alone, so the other ways still quit."""
+
+    def _run(self, tmp_path, settings, *, tray_icon=True, shutting_down=False):
+        from outwarp import app as app_mod
+
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(_VALID_OWCFG))
+        (tmp_path / "settings.json").write_text(json.dumps(settings))
+        handlers = []
+
+        class _Event:
+            def __iadd__(self, fn):
+                handlers.append(fn)
+                return self
+
+        fake_window = MagicMock()
+        fake_window.events.closing = _Event()
+        fake_webview = MagicMock()
+        fake_webview.create_window.return_value = fake_window
+        seen = {}
+
+        def _start(**_kw):
+            seen["cancelled"] = handlers[0]() is False
+
+        fake_webview.start.side_effect = _start
+        notified = []
+
+        class _FakeTrayApp:
+            def __init__(self, manager, on_show, on_quit, api=None, lang_getter=None):
+                self._icon = object() if tray_icon else None
+            def run(self): pass
+            def stop(self): pass
+            def update_manager(self, m): pass
+            def notify_hidden(self): notified.append(True)
+
+        with (
+            patch("outwarp.app.default_config_path", return_value=config_path),
+            patch("outwarp.api.default_config_path", return_value=config_path),
+            patch("outwarp.api._settings_path", return_value=tmp_path / "settings.json"),
+            patch("outwarp.tunnel.TunnelManager", return_value=MagicMock()),
+            patch.dict(sys.modules, {"webview": fake_webview}),
+            patch("outwarp.tray.TrayApp", _FakeTrayApp),
+            patch("outwarp.app._session_ending", return_value=shutting_down),
+            patch.object(app_mod._SingleInstanceLock, "acquire", return_value=True),
+            patch.object(app_mod._SingleInstanceLock, "release"),
+        ):
+            app_mod.main()
+        # The hide runs on a thread (closing is handled on the UI thread).
+        import time as _time
+        for _ in range(50):
+            if fake_window.hide.called or not seen["cancelled"]:
+                break
+            _time.sleep(0.02)
+        return seen["cancelled"], fake_window, notified
+
+    def test_any_close_hides_to_the_tray(self, tmp_path) -> None:
+        cancelled, window, notified = self._run(tmp_path, {"close_to_tray": True})
+        assert cancelled
+        window.hide.assert_called_once()
+        assert notified == [True]  # says where it went, once
+
+    def test_closes_when_turned_off(self, tmp_path) -> None:
+        cancelled, window, _ = self._run(tmp_path, {"close_to_tray": False})
+        assert not cancelled
+        window.hide.assert_not_called()
+
+    def test_closes_without_a_tray_icon(self, tmp_path) -> None:
+        cancelled, _, _ = self._run(tmp_path, {"close_to_tray": True}, tray_icon=False)
+        assert not cancelled
+
+    def test_never_blocks_a_windows_shutdown(self, tmp_path) -> None:
+        cancelled, _, _ = self._run(tmp_path, {"close_to_tray": True}, shutting_down=True)
+        assert not cancelled

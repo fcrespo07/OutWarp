@@ -537,3 +537,12 @@ def test_owns_transport_only_with_a_live_subprocess(tmp_path: Path) -> None:
     assert mgr.owns_transport is False
     mgr._wstunnel = object()  # noqa: SLF001 — what _do_start sets
     assert mgr.owns_transport is True
+
+
+def test_the_logged_wstunnel_command_hides_the_upgrade_path() -> None:
+    from outwarp_server.server_manager import redact_command
+
+    flag = "--restrict-http-upgrade-path-prefix"
+    line = redact_command(["wstunnel", "server", f"{flag}=-s3cret", "wss://0.0.0.0:443"])
+    assert "s3cret" not in line and f"{flag}=<redacted>" in line
+    assert "s3cret" not in redact_command(["wstunnel", flag, "s3cret"])

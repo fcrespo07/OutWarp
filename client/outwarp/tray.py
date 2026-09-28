@@ -236,6 +236,21 @@ class TrayApp:
             with contextlib.suppress(Exception):
                 self._icon.stop()
 
+    def notify_hidden(self) -> None:
+        """Tell the user the app went to the tray, not away: on Windows 11 a
+        new tray icon sits in the hidden-icons flyout, and a window that just
+        vanished looked like OutWarp had quit."""
+        title, body = self._t("hidden_title"), self._t("hidden_body")
+        if sys.platform == "win32" and self._icon is not None:
+            try:
+                self._icon.notify(body, title)
+                return
+            except Exception:
+                log.debug("tray notification failed", exc_info=True)
+        from outwarp.notify import notify
+
+        notify(title, body)
+
     def run(self) -> None:
         """Start pystray in a background thread (non-blocking)."""
         import pystray

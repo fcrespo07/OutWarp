@@ -278,14 +278,36 @@ class Api:
         else:
             self._window.maximize()
 
+    # Set by app.py: tells the user, once, that the app went to the tray.
+    on_hidden_to_tray: Callable[[], None] | None = None
+    _told_hidden = False
+
+    def hide_on_close(self) -> bool:
+        """Whether closing the window should leave OutWarp running in the
+        tray: the setting is on and there is a tray icon to come back from
+        (never hide an app the user could not get back to)."""
+        return bool(
+            self.get_settings().get("close_to_tray", True)
+            and self.tray_available and self.tray_available()
+        )
+
+    def hide_to_tray(self) -> None:
+        if self._window is None:
+            return
+        self._window.hide()
+        log.info("window closed: OutWarp keeps running in the tray")
+        if not self._told_hidden and self.on_hidden_to_tray is not None:
+            self._told_hidden = True
+            try:
+                self.on_hidden_to_tray()
+            except Exception:
+                log.debug("could not say the app went to the tray", exc_info=True)
+
     def window_close(self) -> None:
         if self._window is None:
             return
-        # Keep running in the background when there is a tray to come back
-        # from; never hide an app the user could not get back to.
-        if self.get_settings().get("close_to_tray", True) and self.tray_available \
-                and self.tray_available():
-            self._window.hide()
+        if self.hide_on_close():
+            self.hide_to_tray()
             return
         # Otherwise tear the window down, which ends webview.start() and exits
         # the process (the tray "Quit" path does the same teardown via app.py).
@@ -844,25 +866,23 @@ class Api:
 
     def _start_log_watcher(self) -> None:
         """Poll the MemoryLogHandler 4×/s and emit each new line as an event."""
-        last_count = len(self._memory_handler.snapshot())
+        seen = self._memory_handler.total
 
         def _loop() -> None:
-            nonlocal last_count
+            nonlocal seen
             while True:
-                snapshot = self._memory_handler.snapshot()
-                if len(snapshot) < last_count:
-                    last_count = 0  # buffer rotated
-                if len(snapshot) > last_count:
-                    for line in snapshot[last_count:]:
-                        # rough level inference: lines from MemoryLogHandler are
-                        # already formatted "ts [LEVEL] name: msg"
-                        level = "info"
-                        for token in ("ERROR", "WARNING", "DEBUG"):
-                            if f"[{token}]" in line:
-                                level = token.lower().replace("warning", "warn")
-                                break
-                        self._record_log(level, line)
-                    last_count = len(snapshot)
+                # Counted by lines ever emitted: once the buffer is full its
+                # length stops changing, and the Logs screen stopped showing
+                # new lines on a client that had been up for a while.
+                lines, seen = self._memory_handler.since(seen)
+                for line in lines:
+                    # lines from MemoryLogHandler are "ts [LEVEL] name: msg"
+                    level = "info"
+                    for token in ("ERROR", "WARNING", "DEBUG"):
+                        if f"[{token}]" in line:
+                            level = token.lower().replace("warning", "warn")
+                            break
+                    self._record_log(level, line)
                 time.sleep(0.25)
 
         threading.Thread(target=_loop, daemon=True, name="outwarp-log-watcher").start()

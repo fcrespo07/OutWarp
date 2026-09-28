@@ -135,3 +135,24 @@ def test_install_crash_logging_passes_keyboardinterrupt_without_logging(tmp_path
     snap = h.snapshot()
     assert not any("Uncaught exception" in line for line in snap)
     assert chained, "KeyboardInterrupt must still chain to the previous hook"
+
+
+def test_since_keeps_counting_once_the_buffer_is_full() -> None:
+    import logging as _logging
+
+    from outwarp.logs import MemoryLogHandler
+
+    h = MemoryLogHandler(capacity=3)
+    h.setFormatter(_logging.Formatter("%(message)s"))
+    lg = _logging.getLogger("client-since-test")
+    lg.propagate = False
+    lg.addHandler(h)
+    lg.setLevel(_logging.INFO)
+    seen = h.total
+    for i in range(5):
+        lg.info("line %d", i)
+    lines, seen = h.since(seen)
+    assert lines == ["line 2", "line 3", "line 4"]
+    h.clear()
+    lg.info("after clear")
+    assert h.since(seen) == (["after clear"], 6)

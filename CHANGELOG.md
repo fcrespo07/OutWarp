@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2] — 2026-09-28
+
+### Fixed
+- **Server panel in Docker/Kubernetes: flicker, empty Logs and a jerky chart**
+  (B-037; 0.16.1 did not fix them). Every 2 s a partial status event blanked
+  the endpoint, subnet and TLS cards until the next full fetch; the panel now
+  merges status and the events carry all of it. In a container the panel is a
+  separate process from `serve`, which only logged to stdout: `serve` now also
+  writes `<config dir>/logs/serve.log` and the panel's Logs screen follows it,
+  each line with its own time and level (wstunnel's too), colours stripped.
+  The live chart places each sample at its own time and scrolls with the
+  clock, so late or bunched samples (a proxy in front of the panel) no longer
+  make it jump; readings a few ms apart no longer draw dips or spikes. When no
+  live event arrives for 5 s (a proxy buffering or blocking the event stream)
+  the page fetches the same data every 2 s instead of freezing.
+- **The tunnel's upgrade-path secret was written to the log** in the
+  "Starting wstunnel" line; it is now redacted there and in anything the panel
+  shows.
+- **Closing the client window still quit OutWarp** (B-038). 0.16.1 only
+  handled the title bar's X: now Alt+F4 and the taskbar's "Close window" also
+  leave it in the tray, and the first time it says so with a notification
+  (on Windows 11 a new tray icon is hidden behind the ^ arrow). A Windows
+  shutdown or sign-out still closes it. The client's Logs screen also stopped
+  showing new lines after 2000; fixed.
+
 ## [0.16.1] — 2026-09-28
 
 ### Added

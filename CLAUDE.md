@@ -353,7 +353,7 @@ Legado (hecho):
 
 ## Estado actual
 
-**Versión actual: `0.16.1`** (en código; borrador pendiente de firmar y publicar; 0.16.0 publicada). El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
+**Versión actual: `0.16.2`** (en código; borrador pendiente de firmar y publicar; 0.16.1 publicada). El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
 
 - **Cliente**: Windows (instalador `.exe`, GUI pywebview + tray) y Linux (`install.sh`, GUI por defecto con escritorio, TUI y `outwarp` headless) completos.
 - **Servidor**: Linux/systemd, Windows (SCM) y Docker/Kubernetes (`platforms/kubernetes.py`, `deploy/`).
@@ -374,7 +374,7 @@ Legado (hecho):
 - En Linux el `.conf` del cliente vive en `/etc/wireguard-outwarp` (otros gestores escanean `/etc/wireguard`).
 - **Windows: dos ejecutables** (desde 0.15.0, B-027): `outwarp-gui.exe` (GUI + tray, `uac_admin`; accesos directos y autoarranque) y `outwarp.exe` (CLI de consola, `asInvoker`). `outwarp.exe` sin argumentos lanza la GUI. `python -m outwarp` es la CLI; `outwarp/gui_main.py` es la entrada de la GUI.
 - El `.conf` del cliente en Windows vive en `C:\ProgramData\WireGuard` con ACL solo SYSTEM + Administradores (B-025); el desinstalador suelta el kill switch si quedó enganchado (B-026).
-- **La X de la ventana del cliente oculta la app en la bandeja** (`close_to_tray`, por defecto activo; `Api.window_close`): el túnel sigue y se sale con «Salir» de la bandeja. Sin icono de bandeja, la X sale de verdad. El cierre nativo (Alt+F4, el instalador con `CloseApplications`) sigue saliendo, para no bloquear las actualizaciones.
+- **Cerrar la ventana del cliente la oculta en la bandeja** (`close_to_tray`, por defecto activo): cualquier cierre (la X, Alt+F4, la barra de tareas) pasa por `window.events.closing` y se cancela; solo «Parar y salir» y las actualizaciones terminan el proceso. Sin icono de bandeja cierra de verdad, y un apagado o cierre de sesión de Windows nunca se bloquea (`SM_SHUTTINGDOWN`). La primera vez avisa con una notificación (B-038).
 - **Túnel huérfano en Windows (B-034)**: el servicio del túnel va en arranque manual (B-023), pero el inicio rápido lo restaura corriendo; `remove_stale_tunnels()` lo quita al arrancar la GUI y desde las tareas programadas de SYSTEM `OutWarp\RecoverTunnel{Boot,Logon}` (`outwarp recover-tunnel`, subcomando interno fuera de `--help`). Solo toca túneles del cliente (`OutWarp` o con marcador `.outwarp-client`), nunca el del servidor ni los del usuario.
 - `daemon`/`serve` salen con código 3 en `FAILED`/`ERROR`.
 - Versión de wstunnel **pinneada** en `installer/wstunnel-version.txt`, con guardia anti-drift en `server/tests/test_wstunnel_version_pin.py`.
@@ -401,6 +401,7 @@ Legado (hecho):
 - `restart` según quién es dueño del transporte: systemd → reescribe y reinicia las units; contenedor → `SIGHUP` al proceso `serve` (B-030); Windows → `transport_owner_note` (la app del servidor lo lleva).
 - `ServerManager.effective_state` reconcilia contra el SO cuando otro proceso lleva el servicio (pod k3s: `shareProcessNamespace: true`); `refresh_config()` recarga si otro proceso cambió la config.
 - **Panel web**: token de admin (hash scrypt) + sesiones persistidas hasheadas en `panel_sessions.json`, atadas al token vigente.
+- **Panel en contenedor** (`web` como proceso aparte del `serve`): el registro sale de `<config>/logs/serve.log`, que escribe `serve` y sigue `logs.FileTail`. Los eventos `outwarp:status` llevan el `get_status()` completo y la UI **fusiona** (nunca sustituye) el estado. Si no llegan eventos en 5 s la página consulta cada 2 s (proxies que cortan o almacenan SSE). La gráfica en vivo coloca los puntos por `sampled_at` y se desplaza con el reloj. El secreto de la ruta de upgrade nunca va a un log (`server_manager.redact_command` / `redact_secrets`). Un cambio de UI del panel se verifica contra dos procesos + proxy, no contra un panel local (B-037).
 
 ### Pendiente para la primera versión estable
 

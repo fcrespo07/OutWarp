@@ -8,6 +8,8 @@ STRINGS: dict[str, str] = {
     "tray.profiles": "Perfiles",
     "tray.viewlogs": "Ver registro",
     "tray.quit": "Parar y salir",
+    "tray.hidden_title": "OutWarp sigue funcionando",
+    "tray.hidden_body": "Sigue conectado en la bandeja. Haz clic en el icono para abrirlo; «Parar y salir» en su menú lo cierra.",
     "tray.state.disconnected": "OutWarp — desconectado",
     "tray.state.connecting": "OutWarp — conectando...",
     "tray.state.connected": "OutWarp — conectado",

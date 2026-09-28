@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import subprocess
 import sys
@@ -81,6 +82,20 @@ def build_wstunnel_command(config: ServerConfig, wstunnel_bin: Path) -> list[str
             f"wss://0.0.0.0:{config.port}",
         ]
     return cmd
+
+
+def redact_command(cmd: list[str]) -> str:
+    """A wstunnel argv for a log line, without the upgrade path prefix: that
+    prefix is the credential that gates the tunnel, and the log is shown in
+    the web panel and written to disk."""
+    return redact_secrets(" ".join(cmd))
+
+
+_SECRET_ARG_RE = re.compile(r"(upgrade-path-prefix[= ])\S+")
+
+
+def redact_secrets(text: str) -> str:
+    return _SECRET_ARG_RE.sub(r"\1<redacted>", text)
 
 
 def _upgrade_path_arg(config: ServerConfig) -> str:
@@ -493,7 +508,7 @@ class ServerManager:
                 return
 
             cmd = _build_wstunnel_command(self._config, Path(wstunnel_bin))
-            log.info("Starting wstunnel: %s", " ".join(cmd))
+            log.info("Starting wstunnel: %s", redact_command(cmd))
             self._wstunnel = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,

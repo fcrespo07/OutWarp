@@ -22,13 +22,14 @@ import contextlib
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -45,9 +46,9 @@ from outwarp_server.crypto import (
     generate_wg_keypair,
     renew_tls_cert,
 )
-from outwarp_server.logs import MemoryLogHandler
+from outwarp_server.logs import FileTail, MemoryLogHandler
 from outwarp_server.platforms import get_server_platform
-from outwarp_server.server_manager import ServerManager, ServerState
+from outwarp_server.server_manager import ServerManager, ServerState, redact_secrets
 from outwarp_server.wireguard import get_live_peers
 
 log = logging.getLogger(__name__)
@@ -192,14 +193,53 @@ def _save_settings(settings: dict[str, Any]) -> None:
         log.warning("could not persist GUI settings: %s", exc)
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+# "2026-09-28 20:01:05,630 [INFO] outwarp_server.cli: message" (logs.py format)
+_LOG_LINE_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),(\d{3}) \[(\w+)\] ([\w.]+): (.*)$", re.S,
+)
+# wstunnel's own lines, relayed by server_manager: "[wstunnel] <iso time> LEVEL rest"
+_WSTUNNEL_RE = re.compile(r"^\[wstunnel\] \S+Z\s+(TRACE|DEBUG|INFO|WARN|ERROR)\s+(.*)$", re.S)
+_LEVELS = {"ERROR": "error", "CRITICAL": "error", "WARNING": "warn", "WARN": "warn",
+           "DEBUG": "debug", "TRACE": "debug"}
+
+
+def _parse_log_line(line: str) -> tuple[float | None, str, str]:
+    """(time, level, message) of a formatted log line, so the Logs screen
+    shows each line once with its own time and level instead of the time it
+    was read plus the raw line (which repeated the time and hid wstunnel's
+    ERRORs under INFO)."""
+    line = _ANSI_RE.sub("", line)
+    m = _LOG_LINE_RE.match(line)
+    if not m:
+        level = "info"
+        for token in ("ERROR", "WARNING", "DEBUG"):
+            if f"[{token}]" in line or line.startswith(token + " "):
+                level = _LEVELS[token]
+                break
+        return None, level, line
+    stamp, millis, level, name, msg = m.groups()
+    try:
+        ts = time.mktime(time.strptime(stamp, "%Y-%m-%d %H:%M:%S")) + int(millis) / 1000
+    except (ValueError, OverflowError):
+        ts = None
+    level = _LEVELS.get(level, "info")
+    w = _WSTUNNEL_RE.match(msg)
+    if w:
+        return ts, _LEVELS.get(w.group(1), "info"), f"wstunnel: {w.group(2)}"
+    return ts, level, f"{name.rsplit('.', 1)[-1]}: {msg}"
+
+
 class Api:
     def __init__(
         self,
         memory_handler: MemoryLogHandler,
         manager: ServerManager | None,
         on_manager_replaced: Callable[[ServerManager], None] | None = None,
+        extra_log_files: Iterable[Path] = (),
     ) -> None:
         self._window: Any = None
+        self._extra_log_files = [Path(p) for p in extra_log_files]
         # Sticky kill-switch for the Python→JS bridge. Kept separate from
         # ``_window`` so window chrome methods (minimize/close,
         # pick_owcfg_file's create_file_dialog) keep working even when the
@@ -243,7 +283,7 @@ class Api:
         # UI picks the backfill up on first paint via api.get_logs(0); the
         # watcher below covers everything after.
         for line in self._memory_handler.snapshot():
-            self._record_log("info", line)
+            self._record_line(line)
         self._window = window
         # Keep the custom title bar's maximize/restore glyph in sync when the
         # window state changes outside our buttons (Aero Snap, Win+Up, the
@@ -284,7 +324,7 @@ class Api:
             return
         self._bg_started = True
         for line in self._memory_handler.snapshot():
-            self._record_log("info", line)
+            self._record_line(line)
         self._start_log_watcher()
 
     # ── window chrome (custom frameless title bar) ─────────────────────────────
@@ -399,12 +439,7 @@ class Api:
             while not self._poll_stop.is_set():
                 try:
                     if self._manager is not None:
-                        self._emit("status", {
-                            "status": _STATE_TO_JS.get(
-                                self._manager.effective_state, "stopped"
-                            ),
-                            "config_present": True,
-                        })
+                        self._emit("status", self._status_event())
                         self._emit("clients", self.list_clients())
                 except Exception:
                     log.exception("live poll iteration failed")
@@ -659,10 +694,21 @@ class Api:
         }
 
     def _on_state_change(self, state: ServerState) -> None:
-        self._emit("status", {
-            "status": _STATE_TO_JS.get(state, "stopped"),
-            "config_present": self._manager is not None,
-        })
+        self._emit("status", self._status_event(state))
+
+    def _status_event(self, state: ServerState | None = None) -> dict[str, Any]:
+        """The payload of every `outwarp:status` event: the whole get_status(),
+        not just the state. The UI used to replace its status with a two-key
+        event every 2 s, which blanked endpoint, subnet and TLS on the
+        dashboard until the next full fetch put them back (B-037)."""
+        try:
+            payload = self.get_status()
+        except Exception:
+            log.debug("get_status failed while building a status event", exc_info=True)
+            payload = {"config_present": self._manager is not None}
+        if state is not None:
+            payload["status"] = _STATE_TO_JS.get(state, "stopped")
+        return payload
 
     # ── service control ──────────────────────────────────────────────────────
 
@@ -1220,10 +1266,7 @@ class Api:
                 log.exception("update_server_config: wg bounce failed")
 
         threading.Thread(target=_bounce, daemon=True, name="api-cfg-update").start()
-        self._emit("status", {
-            "status": _STATE_TO_JS.get(self._manager.effective_state, "stopped"),
-            "config_present": True,
-        })
+        self._emit("status", self._status_event())
         return {"ok": True}
 
     def rotate_tls_cert(self, keep_key: bool = False) -> dict[str, Any]:
@@ -1273,11 +1316,7 @@ class Api:
             self._bounce_wstunnel(port_changed=False)
 
         threading.Thread(target=_bounce, daemon=True, name="api-cert-rotate").start()
-        self._emit("status", {
-            "status": _STATE_TO_JS.get(self._manager.effective_state, "stopped"),
-            "config_present": True,
-            "cert_fingerprint_sha256": fingerprint,
-        })
+        self._emit("status", self._status_event())
         return {"ok": True, "fingerprint": fingerprint, "spki": spki, "keep_key": keep_key}
 
     def probe_external_port(self) -> dict[str, Any]:
@@ -1365,10 +1404,18 @@ class Api:
             return {"ok": False, "error": f"could not write: {exc}"}
         return {"ok": True, "path": path}
 
-    def _record_log(self, level: str, msg: str) -> None:
+    def _record_line(self, line: str) -> None:
+        ts, level, msg = _parse_log_line(line)
+        self._record_log(level, msg, ts)
+
+    def _record_log(self, level: str, msg: str, ts: float | None = None) -> None:
+        # wstunnel colours its output; the escape codes showed up as garbage.
+        # The upgrade path prefix is the tunnel's credential: never on screen,
+        # whatever wrote the line (serve.log of an older version included).
+        msg = redact_secrets(_ANSI_RE.sub("", msg))
         with self._lock:
             self._log_seq += 1
-            entry = {"seq": self._log_seq, "ts": time.time(), "level": level, "msg": msg}
+            entry = {"seq": self._log_seq, "ts": ts or time.time(), "level": level, "msg": msg}
             self._logs.append(entry)
         self._emit("log", entry)
 
@@ -1377,6 +1424,10 @@ class Api:
             return
         self._watcher_started = True
         seen = self._memory_handler.total
+        tails = [FileTail(p) for p in self._extra_log_files]
+        for tail in tails:
+            for line in tail.backfill():
+                self._record_line(line)
 
         def _loop() -> None:
             nonlocal seen
@@ -1385,13 +1436,12 @@ class Api:
                 # number, so its length stops changing once it is full and a
                 # long-running server stopped showing new lines.
                 lines, seen = self._memory_handler.since(seen)
+                # Plus the files of processes this one only watches (the
+                # `serve` next to a container's web panel).
+                for tail in tails:
+                    lines += tail.poll()
                 for line in lines:
-                    level = "info"
-                    for token in ("ERROR", "WARNING", "DEBUG"):
-                        if f"[{token}]" in line:
-                            level = token.lower().replace("warning", "warn")
-                            break
-                    self._record_log(level, line)
+                    self._record_line(line)
                 time.sleep(0.25)
 
         threading.Thread(target=_loop, daemon=True, name="outwarp-log-watcher").start()

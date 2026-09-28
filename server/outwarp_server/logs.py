@@ -54,6 +54,70 @@ class MemoryLogHandler(logging.Handler):
             return list(self._buf)
 
 
+def serve_log_path(config_dir: Path) -> Path:
+    """Where `outwarp-server serve` also writes its log, inside the config
+    directory. In Docker/Kubernetes the web panel runs as a separate process
+    (a sidecar sharing /data) and cannot see serve's stdout; this file is how
+    its Logs screen shows what the tunnel is doing."""
+    return config_dir / "logs" / "serve.log"
+
+
+def add_file_log(path: Path) -> None:
+    """Also write the root logger to `path` (rotated like the main log)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(
+        path, maxBytes=_MAX_BYTES, backupCount=_BACKUP_COUNT, encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter(_DEFAULT_FORMAT))
+    logging.getLogger().addHandler(handler)
+
+
+class FileTail:
+    """Follows a log file another process writes, across rotation.
+
+    `backfill()` returns its last lines; `poll()` the complete lines written
+    since the previous call. A rotated or truncated file (new inode, or
+    shorter than what was read) is read again from the start.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._pos = 0
+        self._ino: int | None = None
+        self._partial = ""
+
+    def backfill(self, limit: int = 400) -> list[str]:
+        try:
+            st = self.path.stat()
+            with self.path.open("r", encoding="utf-8", errors="replace") as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            return []
+        self._ino, self._pos, self._partial = st.st_ino, st.st_size, ""
+        return lines[-limit:]
+
+    def poll(self) -> list[str]:
+        try:
+            st = self.path.stat()
+        except OSError:
+            return []
+        if st.st_ino != self._ino or st.st_size < self._pos:
+            self._ino, self._pos, self._partial = st.st_ino, 0, ""
+        if st.st_size == self._pos:
+            return []
+        try:
+            with self.path.open("r", encoding="utf-8", errors="replace") as fh:
+                fh.seek(self._pos)
+                chunk = fh.read()
+                self._pos = fh.tell()
+        except OSError:
+            return []
+        text = self._partial + chunk
+        lines = text.split("\n")
+        self._partial = lines.pop()
+        return [ln for ln in lines if ln]
+
+
 def setup_logging(
     level: int = logging.INFO,
     log_path: Path | None = None,
