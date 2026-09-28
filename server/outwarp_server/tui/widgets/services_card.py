@@ -3,6 +3,7 @@ from __future__ import annotations
 from textual.containers import Container
 from textual.widgets import Static
 
+from outwarp_server.i18n import t as tr
 from outwarp_server.tui.tokens import BAD, DIM, OK
 
 
@@ -10,7 +11,7 @@ class ServicesCard(Container):
     DEFAULT_CSS = "ServicesCard { layout: vertical; height: auto; }"
 
     def compose(self):
-        yield Static("SERVICES", classes="card-title")
+        yield Static(tr("tui.card.services"), classes="card-title")
         yield Static("wstunnel  —", id="svc-wstunnel", classes="value")
         yield Static("wireguard —", id="svc-wg", classes="value")
 

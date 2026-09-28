@@ -9,6 +9,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
 from outwarp_server.config import ConfigError, ServerConfig
+from outwarp_server.i18n import t as tr
 from outwarp_server.traffic_history import TrafficHistory
 from outwarp_server.tui.screens.clients import ClientsScreen
 from outwarp_server.tui.screens.dashboard import DashboardScreen
@@ -21,7 +22,7 @@ log = logging.getLogger(__name__)
 class _NoConfigScreen(Screen):
     """Shown when server_config.json is missing — admin must run setup first."""
 
-    BINDINGS = [("q", "quit", "Quit")]
+    BINDINGS = [("q", "quit", tr("tui.key.quit"))]
 
     def __init__(self, message: str) -> None:
         super().__init__()
@@ -34,9 +35,9 @@ class _NoConfigScreen(Screen):
         with Vertical(id="root"):
             yield Static("[bold]OutWarp server[/bold]")
             yield Static(self._message, classes="fail")
-            yield Static("No configuration found. Run the setup wizard, then re-launch the TUI:")
+            yield Static(tr("tui.app.no_config"))
             yield Static(f"  [{BRAND}]$[/] sudo outwarp-server setup")
-            yield Static(f"[{DIM}]Press q to quit.[/]")
+            yield Static(f"[{DIM}]{tr('tui.app.press_q')}[/]")
         yield Footer()
 
 
@@ -50,8 +51,8 @@ class OutWarpServerTUI(App):
         "logs": LogsScreen,
     }
     BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("question_mark", "help", "Help"),
+        ("q", "quit", tr("tui.key.quit")),
+        ("question_mark", "help", tr("tui.key.help")),
     ]
 
     def __init__(self, config_dir: Path) -> None:
@@ -65,7 +66,7 @@ class OutWarpServerTUI(App):
         try:
             self.config = ServerConfig.load(self.config_path)
         except ConfigError as exc:
-            self.push_screen(_NoConfigScreen(f"Cannot load config: {exc}"))
+            self.push_screen(_NoConfigScreen(tr("tui.app.load_failed", error=exc)))
             return
         try:
             self.history = TrafficHistory(config=self.config)

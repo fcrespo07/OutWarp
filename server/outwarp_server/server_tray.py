@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from outwarp_server.i18n import t
 from outwarp_server.server_manager import ServerManager, ServerState
 
 log = logging.getLogger(__name__)
@@ -28,14 +29,18 @@ _STATE_COLORS: dict[ServerState, tuple[int, int, int]] = {
     ServerState.ERROR:    (220,   0,   0),
 }
 
-_STATE_TOOLTIPS: dict[ServerState, str] = {
-    ServerState.STOPPED:  "OutWarp Server — detenido",
-    ServerState.STARTING: "OutWarp Server — iniciando…",
-    ServerState.RUNNING:  "OutWarp Server — activo",
-    ServerState.ERROR:    "OutWarp Server — error",
+# i18n keys (outwarp_server/i18n.py), resolved when shown.
+_STATE_TOOLTIP_KEYS: dict[ServerState, str] = {
+    ServerState.STOPPED:  "tray.state.stopped",
+    ServerState.STARTING: "tray.state.starting",
+    ServerState.RUNNING:  "tray.state.running",
+    ServerState.ERROR:    "tray.state.error",
 }
 
-_NO_CONFIG_TOOLTIP = "OutWarp Server — sin configurar"
+
+def _tooltip(state: ServerState | None) -> str:
+    return t(_STATE_TOOLTIP_KEYS.get(state, "tray.no_config") if state else "tray.no_config")
+
 _NO_CONFIG_DOT = (100, 100, 100)
 
 
@@ -95,7 +100,7 @@ class ServerTrayApp:
             return
         try:
             self._icon.icon = _icon_for_state(state, self._base)
-            self._icon.title = _STATE_TOOLTIPS.get(state, "OutWarp Server")
+            self._icon.title = _tooltip(state)
         except Exception:
             log.exception("Failed to update tray icon for state %s", state)
 
@@ -128,16 +133,16 @@ class ServerTrayApp:
         import pystray
 
         state = self._manager.state if self._manager else None
-        tooltip = _STATE_TOOLTIPS.get(state, _NO_CONFIG_TOOLTIP) if state else _NO_CONFIG_TOOLTIP
+        tooltip = _tooltip(state)
 
         menu = pystray.Menu(
             pystray.MenuItem(
-                "Abrir OutWarp Server",
+                lambda item: t("tray.open"),
                 self._open_window,
                 default=True,
             ),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Parar y salir", self._quit),
+            pystray.MenuItem(lambda item: t("tray.quit"), self._quit),
         )
 
         self._icon = pystray.Icon(

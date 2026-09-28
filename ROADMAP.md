@@ -119,7 +119,7 @@ Items marked *(added)* joined the gate with this plan. 👤 marks a task for the
   - *(added)* Use 0.15.0 as the rehearsal of the immutable-release flow.
 - **Phase 1 — What freezes → 0.16.0**, in this order:
   1. Enable/disable clients, with an e2e case.
-  2. i18n infrastructure, en/es only.
+  2. i18n infrastructure, en/es only. *(Done 2026-09-28: shared JS resolver, Python catalogs for tray, notifications, API messages and both TUIs; CLI messages and the `setup` wizard stay English until phase 3.)*
   3. Multi-profile.
 - **Phase 2 — Product → 0.17.0/0.18.0.**
   - UI/UX polish, ending in a string freeze.

@@ -8,7 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Language follows the system, and everything is translatable.** The
+  `language` setting is now `auto` by default (the system's language, or the
+  browser's in the web panel) or an explicit language; any text a language
+  lacks falls back to English. Beyond the two web UIs, the tray, desktop
+  notifications, the messages the app shows in its window and both TUIs
+  (client and server) are translated, English and Spanish for now. Set
+  `OUTWARP_LANG=en|es` to force one. The UIs name CJK fallback fonts and the
+  TUIs pad columns by terminal cells, ready for Chinese.
+
 ### Fixed
+- **Client GUI showed Spanish text with English selected** (B-033): some
+  messages from the app and the tray menu were not translated.
 - **Windows: after shutting down with OutWarp connected, WireGuard came back
   at boot with nothing behind it and the machine had no network** until
   WireGuard was killed by hand (B-034). Demand start (0.15.0) was not

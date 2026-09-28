@@ -1,16 +1,14 @@
-"""User-facing strings outside the web UI: tray, notifications, messages the
-API hands the GUI, and the TUI.
+"""User-facing strings outside the web UI: tray and TUI.
 
-The web UI has its own tables (ui/shared.jsx) and resolver
-(ui-shared/i18n.jsx); both follow the same rule: the `language` setting is
-"auto" or a code from LANGS, and a key a language lacks falls back to English.
-With "auto", the GUI tells us what it resolved (`set_ui_language`) so tray,
-notifications and error messages match the window exactly; without a GUI the
-system locale decides.
+Same rules as the client's outwarp/i18n.py (a separate copy: the server is
+its own distribution): the `language` setting in gui_settings.json is "auto"
+or a code from LANGS, a key a language lacks falls back to English, "auto"
+follows the system locale, and OUTWARP_LANG overrides.
 """
 
 from __future__ import annotations
 
+import json
 import locale
 import os
 import sys
@@ -22,7 +20,7 @@ FALLBACK_LANG = "en"
 _ui_lang: str | None = None
 
 def _catalog() -> dict[str, dict[str, str]]:
-    from outwarp.locales import en, es
+    from outwarp_server.locales import en, es
 
     return {"en": en.STRINGS, "es": es.STRINGS}
 
@@ -79,10 +77,11 @@ def current_lang() -> str:
     if (forced := os.environ.get("OUTWARP_LANG")) in LANGS:
         return forced  # type: ignore[return-value]
     try:
-        from outwarp.settings import load_settings
+        from outwarp_server.config import default_config_dir
 
-        pref = load_settings().get("language", "auto")
-    except Exception:  # noqa: BLE001 — unreadable settings still get text
+        raw = json.loads((default_config_dir() / "gui_settings.json").read_text(encoding="utf-8"))
+        pref = raw.get("language", "auto") if isinstance(raw, dict) else "auto"
+    except Exception:  # noqa: BLE001 — missing or unreadable settings still get text
         pref = "auto"
     return resolve_lang(pref)
 

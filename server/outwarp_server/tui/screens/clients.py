@@ -10,6 +10,7 @@ from textual.containers import Container
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input
 
+from outwarp_server.i18n import t as tr
 from outwarp_server.tui.tokens import OK, WARN
 
 log = logging.getLogger(__name__)
@@ -19,15 +20,15 @@ _ONLINE_WINDOW_SECONDS = 180
 
 class ClientsScreen(Screen):
     BINDINGS = [
-        Binding("a", "add", "Add"),
-        Binding("r", "revoke", "Revoke"),
-        Binding("t", "rotate", "Rotate"),
-        Binding("d", "toggle_enabled", "Disable/Enable"),
-        Binding("P", "prune", "Prune expired"),
-        Binding("slash", "focus_search", "Search"),
-        Binding("escape", "back", "Back", priority=True),
-        Binding("q", "quit", "Quit", priority=True),
-        Binding("question_mark", "help", "Help"),
+        Binding("a", "add", tr("tui.key.add")),
+        Binding("r", "revoke", tr("tui.clients.key_revoke")),
+        Binding("t", "rotate", tr("tui.clients.key_rotate")),
+        Binding("d", "toggle_enabled", tr("tui.clients.key_toggle")),
+        Binding("P", "prune", tr("tui.clients.key_prune")),
+        Binding("slash", "focus_search", tr("tui.key.search")),
+        Binding("escape", "back", tr("tui.key.back"), priority=True),
+        Binding("q", "quit", tr("tui.key.quit"), priority=True),
+        Binding("question_mark", "help", tr("tui.key.help")),
     ]
 
     def action_back(self) -> None:
@@ -61,7 +62,9 @@ class ClientsScreen(Screen):
     def on_mount(self) -> None:
         t = self.query_one(DataTable)
         t.add_columns(
-            "●", "name", "address", "status", "last hs", "rx", "tx", "endpoint", "expires",
+            "●", tr("tui.clients.col_name"), tr("tui.clients.col_address"),
+            tr("tui.clients.col_status"), tr("tui.clients.col_hs"), "rx", "tx",
+            tr("tui.clients.col_endpoint"), tr("tui.clients.col_expires"),
         )
         # Default focus on the table so single-key verbs (a, r, q, ?) work
         # without a leading Tab. Pressing `/` jumps focus into search.
@@ -90,17 +93,19 @@ class ClientsScreen(Screen):
                 continue
             peer = peers.get(c.public_key)
             if c.state == "disabled":
-                dot, status, hs, rx, tx, endpoint = "⊘", "disabled", "—", "—", "—", "—"
+                dot, status, hs, rx, tx, endpoint = "⊘", tr("tui.st.disabled"), "—", "—", "—", "—"
             elif peer is None:
-                dot, status, hs, rx, tx, endpoint = "○", "unknown", "—", "—", "—", "—"
+                dot, status, hs, rx, tx, endpoint = "○", tr("tui.st.unknown"), "—", "—", "—", "—"
             elif peer.latest_handshake is None:
-                dot, status, hs, rx, tx, endpoint = "○", "idle", "never", "0 B", "0 B", "—"
+                dot, status, hs, rx, tx, endpoint = (
+                    "○", tr("tui.st.idle"), tr("tui.st.never"), "0 B", "0 B", "—",
+                )
             else:
                 age = now - peer.latest_handshake
                 if age < _ONLINE_WINDOW_SECONDS:
-                    dot, status = "●", f"[{OK}]online[/]"
+                    dot, status = "●", f"[{OK}]{tr('tui.st.online')}[/]"
                 else:
-                    dot, status = "◐", f"[{WARN}]offline[/]"
+                    dot, status = "◐", f"[{WARN}]{tr('tui.st.offline')}[/]"
                 hs = _fmt_age(age)
                 rx = _fmt_bytes(peer.transfer_rx)
                 tx = _fmt_bytes(peer.transfer_tx)
@@ -136,7 +141,7 @@ class ClientsScreen(Screen):
     def action_revoke(self) -> None:
         name = self._selected_name()
         if not name:
-            self.notify("Select a client first.", severity="warning")
+            self.notify(tr("tui.clients.select_first"), severity="warning")
             return
 
         from outwarp_server.tui.modals.confirm import ConfirmModal
@@ -150,7 +155,7 @@ class ClientsScreen(Screen):
                     self.app.config, name, config_path=self.app.config_path,
                 )
             except KeyError:
-                self.notify(f"Client '{name}' not found.", severity="error")
+                self.notify(tr("tui.clients.not_found", name=name), severity="error")
                 return
             # Refresh in-memory config from disk so subsequent refreshes are correct.
             self.app.reload_config()
@@ -158,9 +163,9 @@ class ClientsScreen(Screen):
 
         self.app.push_screen(
             ConfirmModal(
-                title=f"Revoke '{name}'?",
-                body="The client will lose access immediately.",
-                ok_label="Revoke",
+                title=tr("tui.clients.revoke_title", name=name),
+                body=tr("tui.clients.revoke_body"),
+                ok_label=tr("tui.clients.key_revoke"),
             ),
             _go,
         )
@@ -168,11 +173,11 @@ class ClientsScreen(Screen):
     def action_toggle_enabled(self) -> None:
         name = self._selected_name()
         if not name:
-            self.notify("Select a client first.", severity="warning")
+            self.notify(tr("tui.clients.select_first"), severity="warning")
             return
         entry = next((c for c in self.app.config.clients if c.name == name), None)
         if entry is None:
-            self.notify(f"Client '{name}' not found.", severity="error")
+            self.notify(tr("tui.clients.not_found", name=name), severity="error")
             return
         enable = entry.state == "disabled"
         from outwarp_server import operations
@@ -181,20 +186,20 @@ class ClientsScreen(Screen):
                 self.app.config, name, enable, config_path=self.app.config_path,
             )
         except KeyError:
-            self.notify(f"Client '{name}' not found.", severity="error")
+            self.notify(tr("tui.clients.not_found", name=name), severity="error")
             return
         self.app.reload_config()
         self.refresh_table()
         self.notify(
-            f"'{name}' enabled." if enable
-            else f"'{name}' disabled — press d again to enable it.",
+            tr("tui.clients.enabled", name=name) if enable
+            else tr("tui.clients.disabled", name=name),
             severity="information",
         )
 
     def action_rotate(self) -> None:
         name = self._selected_name()
         if not name:
-            self.notify("Select a client first.", severity="warning")
+            self.notify(tr("tui.clients.select_first"), severity="warning")
             return
 
         from outwarp_server.tui.modals.confirm import ConfirmModal
@@ -215,7 +220,7 @@ class ClientsScreen(Screen):
             self.app.reload_config()
             self.refresh_table()
             self.notify(
-                f"Rotated '{name}' → {res.owcfg_path.name}. Distribute the new .owcfg.",
+                tr("tui.clients.rotated", name=name, file=res.owcfg_path.name),
                 severity="information",
             )
             from outwarp_server.tui.modals.qr import QrModal
@@ -223,12 +228,9 @@ class ClientsScreen(Screen):
 
         self.app.push_screen(
             ConfirmModal(
-                title=f"Rotate '{name}'?",
-                body=(
-                    "Generates a new WireGuard keypair + PSK. "
-                    "The client must reimport the new .owcfg."
-                ),
-                ok_label="Rotate",
+                title=tr("tui.clients.rotate_title", name=name),
+                body=tr("tui.clients.rotate_body"),
+                ok_label=tr("tui.clients.key_rotate"),
             ),
             _go,
         )
@@ -244,7 +246,7 @@ class ClientsScreen(Screen):
             if c.expires_at and c.expires_at < now
         ]
         if not expired:
-            self.notify("No expired clients found.", severity="information")
+            self.notify(tr("tui.clients.none_expired"), severity="information")
             return
 
         def _go(result: bool | None) -> None:
@@ -258,15 +260,17 @@ class ClientsScreen(Screen):
                     )
                     self.app.reload_config()
                 except (KeyError, Exception) as exc:
-                    self.notify(f"Error revoking {name}: {exc}", severity="error")
+                    self.notify(
+                        tr("tui.clients.revoke_error", name=name, error=exc), severity="error",
+                    )
             self.refresh_table()
-            self.notify(f"Pruned {len(expired)} expired client(s).", severity="information")
+            self.notify(tr("tui.clients.pruned", n=len(expired)), severity="information")
 
         self.app.push_screen(
             ConfirmModal(
-                title=f"Prune {len(expired)} expired client(s)?",
+                title=tr("tui.clients.prune_title", n=len(expired)),
                 body=", ".join(expired),
-                ok_label="Prune",
+                ok_label=tr("tui.clients.prune_ok"),
             ),
             _go,
         )
@@ -288,9 +292,9 @@ def _fmt_bytes(n: int) -> str:
 
 def _fmt_age(seconds: int) -> str:
     if seconds < 60:
-        return f"{seconds}s ago"
+        return tr("tui.ago_s", n=seconds)
     if seconds < 3600:
-        return f"{seconds // 60}m ago"
+        return tr("tui.ago_m", n=seconds // 60)
     if seconds < 86400:
-        return f"{seconds // 3600}h ago"
-    return f"{seconds // 86400}d ago"
+        return tr("tui.ago_h", n=seconds // 3600)
+    return tr("tui.ago_d", n=seconds // 86400)

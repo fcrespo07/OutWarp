@@ -91,3 +91,10 @@ def test_the_gui_can_tell_python_its_language() -> None:
         assert Api.set_ui_language(object(), "es") == {"ok": True, "lang": "es"}
     finally:
         i18n.set_ui_language(None)
+
+
+def test_padding_counts_terminal_cells_not_characters() -> None:
+    assert i18n.cell_width("total") == 5
+    assert i18n.cell_width("客户端") == 6
+    assert i18n.pad("客户端", 8) == "客户端  "
+    assert i18n.pad("longer than width", 4) == "longer than width"

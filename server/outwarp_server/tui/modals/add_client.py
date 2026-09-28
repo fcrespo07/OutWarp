@@ -7,14 +7,15 @@ from textual.widgets import Input, Static
 
 from outwarp_server import operations
 from outwarp_server.config import validate_client_name
+from outwarp_server.i18n import t as tr
 from outwarp_server.ip_pool import PoolExhaustedError, next_available_ip
 from outwarp_server.tui.tokens import BAD, DIM, OK, WARN
 
 
 class AddClientModal(ModalScreen[operations.AddClientResult | None]):
     BINDINGS = [
-        ("enter", "submit", "Create"),
-        ("escape", "cancel", "Cancel"),
+        ("enter", "submit", tr("tui.add.key_create")),
+        ("escape", "cancel", tr("tui.key.cancel")),
         ("Q", "show_qr", "QR"),
     ]
 
@@ -24,16 +25,15 @@ class AddClientModal(ModalScreen[operations.AddClientResult | None]):
 
     def compose(self) -> ComposeResult:
         with Container(id="add-modal"):
-            yield Static("[bold]Add client[/bold]")
-            yield Input(placeholder="client name (e.g. felix-laptop)", id="name")
+            yield Static(f"[bold]{tr('tui.help.add_client')}[/bold]")
+            yield Input(placeholder=tr("tui.add.name_ph"), id="name")
             yield Static("", id="preview", classes="info")
             yield Static("", id="result")
             yield Static(
-                f"[{WARN}]⚠  Send the .owcfg over a secure channel — "
-                "it contains the client's private key.[/]"
+                f"[{WARN}]⚠  {tr('tui.add.secure')}[/]"
             )
             yield Static(
-                f"[{DIM}]Enter to create, Esc to cancel, Q to show QR after success.[/]"
+                f"[{DIM}]{tr('tui.add.keys')}[/]"
             )
 
     def on_mount(self) -> None:
@@ -51,7 +51,7 @@ class AddClientModal(ModalScreen[operations.AddClientResult | None]):
         except PoolExhaustedError as exc:
             self.query_one("#preview", Static).update(f"[{BAD}]{exc}[/]")
             return
-        msg = f"next address  {ip}  auto-assigned"
+        msg = tr("tui.add.next_ip", ip=ip)
         if name.strip():
             try:
                 validate_client_name(name)
@@ -74,7 +74,7 @@ class AddClientModal(ModalScreen[operations.AddClientResult | None]):
             self.query_one("#result", Static).update(f"[{BAD}]{exc}[/]")
             return
         except Exception as exc:
-            self.query_one("#result", Static).update(f"[{BAD}]Error: {exc}[/]")
+            self.query_one("#result", Static).update(f"[{BAD}]{tr('tui.error', error=exc)}[/]")
             return
 
         self.app.reload_config()
@@ -86,19 +86,19 @@ class AddClientModal(ModalScreen[operations.AddClientResult | None]):
                 result.enrollment_expires_at, _dt.UTC
             ).strftime("%H:%M UTC")
             status = (
-                f"  one-time enrolment token, valid until [{WARN}]{deadline}[/]\n"
-                f"  no private key in this file — the client makes its own"
+                f"  {tr('tui.add.token', deadline=f'[{WARN}]{deadline}[/]')}\n"
+                f"  {tr('tui.add.no_key')}"
             )
         else:
             status = (
-                f"  hot-added to wireguard: "
-                f"{f'[{OK}]yes[/]' if result.hot_added else f'[{WARN}]no[/]'}"
+                f"  {tr('tui.add.hot_added')}: "
+                f"{f'[{OK}]' + tr('tui.yes') + '[/]' if result.hot_added else f'[{WARN}]no[/]'}"
             )
         msg = (
             f"[{OK}]✓[/]  {result.owcfg_path.name}  sha256 {short_fp}…\n"
-            f"  written to {result.owcfg_path}\n"
+            f"  {tr('tui.add.written', path=result.owcfg_path)}\n"
             f"{status}\n"
-            f"[{DIM}]Press Q to view as QR, or Esc to close.[/]"
+            f"[{DIM}]{tr('tui.add.after')}[/]"
         )
         self.query_one("#result", Static).update(msg)
 

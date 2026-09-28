@@ -9,6 +9,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
+from outwarp_server.i18n import t as tr
 from outwarp_server.tui.tokens import OK
 from outwarp_server.tui.widgets.clients_summary import ClientsSummary
 from outwarp_server.tui.widgets.network_card import NetworkCard
@@ -34,13 +35,13 @@ class DashboardScreen(Screen):
     """3-up cards on the left, traffic chart + top talkers on the right."""
 
     BINDINGS = [
-        ("c", "open_clients", "Clients"),
-        ("a", "add", "Add"),
-        ("d", "open_doctor", "Doctor"),
-        ("l", "open_logs", "Logs"),
-        ("r", "restart", "Restart"),
-        ("q", "quit", "Quit"),
-        ("question_mark", "help", "Help"),
+        ("c", "open_clients", tr("tui.help.clients")),
+        ("a", "add", tr("tui.key.add")),
+        ("d", "open_doctor", tr("tui.key.doctor")),
+        ("l", "open_logs", tr("tui.key.logs")),
+        ("r", "restart", tr("tui.dash.key_restart")),
+        ("q", "quit", tr("tui.key.quit")),
+        ("question_mark", "help", tr("tui.key.help")),
     ]
 
     def action_open_clients(self) -> None:
@@ -63,7 +64,7 @@ class DashboardScreen(Screen):
             with Vertical(classes="col"):
                 yield Container(ClientsSummary())
                 yield Container(TrafficChart())
-                yield Container(Static("[bold]TOP TALKERS (1h)[/bold]\n[dim]—[/]",
+                yield Container(Static(f"[bold]{tr('tui.dash.top')}[/bold]\n[dim]—[/]",
                                        id="top"))
         yield Footer()
 
@@ -124,7 +125,7 @@ class DashboardScreen(Screen):
         except Exception:
             talkers = []
         if talkers:
-            lines = ["[bold]TOP TALKERS (1h)[/bold]"]
+            lines = [f"[bold]{tr('tui.dash.top')}[/bold]"]
             for t in talkers:
                 lines.append(
                     f"  {t['name']:<24} rx [{OK}]{_fmt_bytes(t['rx_delta'])}[/]"
@@ -133,7 +134,7 @@ class DashboardScreen(Screen):
             self.query_one("#top", Static).update("\n".join(lines))
         else:
             self.query_one("#top", Static).update(
-                "[bold]TOP TALKERS (1h)[/bold]\n[dim]no data yet[/]",
+                f"[bold]{tr('tui.dash.top')}[/bold]\n[dim]{tr('tui.no_data')}[/]",
             )
 
     def action_add(self) -> None:
@@ -152,20 +153,18 @@ class DashboardScreen(Screen):
             from outwarp_server import operations
             res = operations.restart_services(self.app.config, config_path=self.app.config_path)
             if res.errors:
-                self.notify("Restart had issues: " + "; ".join(res.errors), severity="error")
+                self.notify(tr("tui.dash.restart_issues", errors="; ".join(res.errors)),
+                            severity="error")
             elif res.transport_note:
                 self.notify(res.transport_note, severity="warning")
             else:
-                self.notify("Server restarted.", severity="information")
+                self.notify(tr("tui.dash.restarted"), severity="information")
 
         self.app.push_screen(
             ConfirmModal(
-                title="Restart services?",
-                body=(
-                    "Regenerate wg0.conf and bounce wg-quick, wstunnel and the "
-                    "enrolment listener."
-                ),
-                ok_label="Restart",
+                title=tr("tui.dash.restart_title"),
+                body=tr("tui.dash.restart_body"),
+                ok_label=tr("tui.dash.key_restart"),
             ),
             _go,
         )

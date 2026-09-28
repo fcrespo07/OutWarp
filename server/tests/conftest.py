@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
+
+# The suite asserts English text. Set before any test module imports the TUI,
+# whose key bindings are translated at class definition time.
+os.environ["OUTWARP_LANG"] = "en"
 
 
 @pytest.fixture(autouse=True)

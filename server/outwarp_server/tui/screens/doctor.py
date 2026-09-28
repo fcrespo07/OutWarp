@@ -9,6 +9,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from outwarp_server.diagnostics import CheckResult, Status, run_all
+from outwarp_server.i18n import t as tr
 from outwarp_server.tui.tokens import BAD, BRAND, DIM, OK, WARN
 
 log = logging.getLogger(__name__)
@@ -23,11 +24,11 @@ _ICON = {
 
 class DoctorScreen(Screen):
     BINDINGS = [
-        Binding("r", "rerun", "Re-run"),
-        Binding("f", "apply_fix", "Apply fix"),
-        Binding("escape", "app.pop_screen", "Back", priority=True),
-        Binding("q", "app.quit", "Quit", priority=True),
-        Binding("question_mark", "help", "Help"),
+        Binding("r", "rerun", tr("tui.doctor.key_rerun")),
+        Binding("f", "apply_fix", tr("tui.doctor.key_fix")),
+        Binding("escape", "app.pop_screen", tr("tui.key.back"), priority=True),
+        Binding("q", "app.quit", tr("tui.key.quit"), priority=True),
+        Binding("question_mark", "help", tr("tui.key.help")),
     ]
 
     def __init__(self) -> None:
@@ -42,7 +43,7 @@ class DoctorScreen(Screen):
 
     def on_mount(self) -> None:
         t = self.query_one(DataTable)
-        t.add_columns(" ", "Check", "Detail")
+        t.add_columns(" ", tr("tui.doctor.col_check"), tr("tui.doctor.col_detail"))
         t.focus()
         self.query_one("#detail", Static).update(f"[{DIM}]Running checks...[/]")
         asyncio.create_task(self._run_async(), name="doctor-run")
@@ -96,7 +97,7 @@ class DoctorScreen(Screen):
         r = self._results[idx]
         if r.fix_kind != "auto" or r.fix_callable is None:
             self.notify(
-                f"Fix is {r.fix_kind or 'unavailable'} — copy the command and run it manually.",
+                tr("tui.doctor.manual_fix", kind=r.fix_kind or "unavailable"),
                 severity="warning",
             )
             return
@@ -116,9 +117,9 @@ class DoctorScreen(Screen):
 
         self.app.push_screen(
             ConfirmModal(
-                title=f"Apply fix for '{r.name}'?",
-                body=r.remediation or "Run the recommended action.",
-                ok_label="Apply",
+                title=tr("tui.doctor.confirm_title", name=r.name),
+                body=r.remediation or tr("tui.doctor.confirm_body"),
+                ok_label=tr("tui.doctor.confirm_ok"),
             ),
             _go,
         )

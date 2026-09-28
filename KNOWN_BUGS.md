@@ -252,12 +252,13 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 **Fix (2026-09-28):** `WindowsPlatform.remove_stale_tunnels()` desinstala los túneles del cliente que siguen instalados (el `OutWarp` por defecto más los marcados con `<túnel>.outwarp-client`, que se escribe al instalar y se borra al desinstalar; el túnel del servidor y los del usuario no se tocan). Lo llaman: (a) la GUI al arrancar, justo tras quedarse el candado de dueño del túnel y antes de conectar; (b) el subcomando interno `outwarp recover-tunnel`, que el instalador registra como dos tareas programadas de SYSTEM (`OutWarp\RecoverTunnelBoot` al arrancar y `OutWarp\RecoverTunnelLogon` al iniciar sesión) y que no hace nada si corre `outwarp-gui.exe` o `wstunnel.exe`. El desinstalador borra las tareas y los marcadores. Tests: `client/tests/test_stale_tunnel.py` y `test_installer_iss.py`.
 **Prevención:** Un estado que el SO conserva entre arranques (servicio, regla de firewall) necesita un limpiador que corra al arrancar sin depender de que el usuario abra la app, y no puede fiarse del tipo de arranque del servicio: el inicio rápido restaura lo que estaba corriendo.
 
-## Abiertos
-
-### 🟢 B-033 — GUI del cliente: textos fijos en español
+### ✅ B-033 — GUI del cliente: textos fijos en español
 **Síntomas:** Hallazgo de la auditoría de 0.14.0. Parte de la GUI del cliente muestra textos en español aunque el idioma sea inglés.
-**Causa:** strings literales en los `.jsx` fuera de `STR`.
-**Plan:** se resuelve con la infraestructura de i18n (fase 1 del plan de 1.0, criterio "Interfaz en 5 idiomas"). No bloquea por sí solo.
+**Causa:** los mensajes que la API de Python manda a la ventana (perfil caducado, no se pudo guardar, verificación de la actualización) y el tooltip/menú de la bandeja estaban en español fijo; el selector de idioma solo cambiaba las tablas de la web UI.
+**Fix (2026-09-28):** infraestructura de i18n (fase 1 del plan de 1.0): `outwarp/i18n.py` + `outwarp/locales/{en,es}.py` para bandeja, notificaciones, mensajes de la API y TUI; la ventana le dice a Python el idioma que resolvió (`Api.set_ui_language`). Tests de paridad de claves en `client/tests/test_i18n.py` y `ui-tests/i18n.test.js`.
+**Prevención:** ningún texto visible fuera de una tabla de idioma; el test "every key the code uses exists" y la paridad de claves lo vigilan.
+
+## Abiertos
 
 ### 🟡 B-024 — Windows: dos iconos en la bandeja tras una cuarentena de `wstunnel.exe` (mitigado, sin reproducir)
 **Síntomas:** Reportado por el autor (2026-09-26): Microsoft Defender / Smart App Control quitó `wstunnel.exe` de repente; al volver a abrir OutWarp aparecieron dos iconos de OutWarp en la bandeja.

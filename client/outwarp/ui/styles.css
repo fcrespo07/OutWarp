@@ -20,8 +20,9 @@
 
 :root {
   /* Type */
-  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+  /* Geist has no CJK glyphs: the system CJK fonts carry zh-Hans text. */
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", "WenQuanYi Micro Hei", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "JetBrains Mono", "SF Mono", Menlo, "Noto Sans Mono CJK SC", "Microsoft YaHei UI", "Noto Sans CJK SC", "WenQuanYi Micro Hei Mono", monospace;
   --font-display: "Geist", ui-sans-serif, system-ui, sans-serif;
 
   /* Brand */

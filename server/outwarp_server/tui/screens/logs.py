@@ -11,6 +11,8 @@ from textual.containers import Container
 from textual.screen import Screen
 from textual.widgets import Footer, Header, RichLog
 
+from outwarp_server.i18n import t as tr
+
 log = logging.getLogger(__name__)
 
 
@@ -24,8 +26,8 @@ class LogsScreen(Screen):
     """
 
     BINDINGS = [
-        Binding("escape", "app.pop_screen", "Back", priority=True),
-        Binding("q", "app.quit", "Quit", priority=True),
+        Binding("escape", "app.pop_screen", tr("tui.key.back"), priority=True),
+        Binding("q", "app.quit", tr("tui.key.quit"), priority=True),
     ]
 
     def compose(self) -> ComposeResult:

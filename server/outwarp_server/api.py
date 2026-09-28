@@ -1395,6 +1395,15 @@ class Api:
 
     # ── settings ─────────────────────────────────────────────────────────────
 
+    def set_ui_language(self, lang: str) -> dict[str, Any]:
+        """What the desktop window resolved "auto" to, so the tray matches it.
+        Not exposed to the web panel: a remote viewer's browser language is
+        not the server's."""
+        from outwarp_server import i18n
+
+        i18n.set_ui_language(lang)
+        return {"ok": True}
+
     def get_settings(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._settings)

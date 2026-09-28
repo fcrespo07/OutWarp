@@ -215,6 +215,11 @@ function App() {
   const lang = window.OWi18n.resolveLang(settings.language, window.OWi18n.systemLangs());
   const theme = resolveTheme(settings.theme);
   const T = window.OWi18n.stringsFor(window.DS_STR, lang);
+  useEffect(() => {
+    // Lets the browser pick the right CJK glyph variants for the language.
+    document.documentElement.lang = lang;
+    if (!OW.isWeb) OW.call("set_ui_language", lang).catch(() => {});
+  }, [lang]);
   const ui = window.styleTokens("pulida");
 
   const { live, seedLogs, seedClients } = useLiveData();
