@@ -121,6 +121,7 @@ Items marked *(added)* joined the gate with this plan. 👤 marks a task for the
 - **Phase 2 — Product → 0.17.0/0.18.0.**
   - UI/UX polish, ending in a string freeze.
   - Windows server via Docker, which can run in parallel with any phase.
+  - **Server dashboard traffic chart** (Home chart + per-client sparkline): redo how it looks. Touches nothing that freezes, so it is pulled forward into 0.16.0. Not B-022 (the post-spike scale, fixed in 0.14.0).
   - Honest README and wizard.
   - 👤 Real-desktop Linux GUI testing and a clean Omarchy install.
 - **Phase 3 — Languages → 0.19.0.**
