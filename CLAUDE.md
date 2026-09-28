@@ -313,13 +313,13 @@ Legado (hecho):
 
 **Plan de ejecución** *(aprobado por el autor el 2026-09-26)*. Orden en que se ataca lo "Bloqueante". Cada fase cierra con una release 0.x publicada con el flujo borrador → firma → publicar. Hay tres reglas: primero va lo que se congela en 1.0; la infraestructura (tests, i18n) va antes del contenido; las traducciones van después del pulido, con los textos ya congelados. Los puntos *(añadido)* entraron con el plan y también son bloqueantes. 👤 = lo hace el autor (máquina real, firma, nativos).
 
-- **Fase 0 — Base limpia → 0.15.0.** *(Código hecho 2026-09-26; falta 👤 publicar 0.15.0 y activar los ajustes de seguridad del repo.)*
+- **Fase 0 — Base limpia → 0.15.0.** *(Hecha; 0.15.0 publicada el 2026-09-28. Falta 👤 activar los ajustes de seguridad del repo.)*
   - Pasar la auditoría de 0.14.0 a `KNOWN_BUGS.md` y corregir los 🔴 y los altos. DPAPI decidido (2026-09-26): no se implementa; el `.conf` se protege con ACL (B-025, hecho).
   - Vitest más la guardia de `bundle.js`.
   - Retirar el fallback sin firmar, tras comprobar que todas las releases desde 0.11.0 están firmadas.
   - *(añadido)* Seguridad del repo público: `SECURITY.md`, secret scanning y push protection, Dependabot, actions fijadas por SHA en los workflows de release, `pip-audit` en CI.
   - *(añadido)* 0.15.0 como ensayo del flujo de releases inmutables: el job de Windows adjunta los `.exe` al borrador y `publish-release.sh` funciona de principio a fin.
-- **Fase 1 — Lo que se congela → 0.16.0 (quizá también 0.17.0)**, en este orden:
+- **Fase 1 — Lo que se congela → 0.16.0 (quizá también 0.17.0)**, en este orden: *(Código hecho 2026-09-28; falta 👤 probar B-034 y la gráfica y publicar 0.16.0.)*
   1. Activar y desactivar clientes, con un caso en el e2e.
   2. Infraestructura de i18n solo en/es: extraer los textos fijos, detección del idioma más selector, fallback a inglés, fuente CJK, anchura doble en las TUIs. *(Hecho 2026-09-28: `ui-shared/i18n.jsx` en las dos web UIs; `outwarp/i18n.py` y `outwarp_server/i18n.py` con `locales/{en,es}.py` para bandeja, notificaciones, mensajes de la API y las TUIs; tests de paridad. Pendiente para la fase 3: los mensajes de la CLI y los textos del wizard `setup`, que siguen en inglés.)*
   3. Varios perfiles, con migración idempotente; revisar el kill switch, el sticky store, `dnscache` y `known_servers.json` por perfil. *(Hecho 2026-09-28: kill switch y `dnscache`/`known_servers.json` siguen globales (van por servidor); el sticky store pasa a ir por servidor + red.)*
@@ -362,7 +362,7 @@ Legado (hecho):
 
 ## Estado actual
 
-**Versión actual: `0.15.0`** (en código; pendiente de publicar). El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
+**Versión actual: `0.16.0`** (en código; borrador creado, pendiente de firmar y publicar; 0.15.0 publicada). El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
 
 - **Cliente**: Windows (instalador `.exe`, GUI pywebview + tray) y Linux (`install.sh`, GUI por defecto con escritorio, TUI y `outwarp` headless) completos.
 - **Servidor**: Linux/systemd, Windows (SCM) y Docker/Kubernetes (`platforms/kubernetes.py`, `deploy/`).

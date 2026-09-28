@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-09-28
+
 ### Added
 - **Several connection profiles in one client**, one active at a time.
   Importing an .owcfg adds a profile and makes it active (re-importing the
