@@ -383,7 +383,7 @@ Legado (hecho):
 - `daemon`/`serve` salen con código 3 en `FAILED`/`ERROR`.
 - Versión de wstunnel **pinneada** en `installer/wstunnel-version.txt`, con guardia anti-drift en `server/tests/test_wstunnel_version_pin.py`.
 - **Releases inmutables** (ajuste del repo): una release publicada no admite cambios de assets ni de tag. `release.yml` / `release.sh` solo crean **borradores** (wheels + instaladores Windows vía `windows-installer.yml` como workflow reutilizable); el autor firma con `scripts/sign_release.py` y publica con `scripts/publish_release.py` (Python, funcionan en Windows), que verifica assets, hashes y firma antes. Ningún agente publica una release. Detalle en `docs/RELEASE_SIGNING.md`.
-- **Dos claves de release de confianza** (desde 0.15.0): principal (`outwarp-release.pub`, firma cada release) y respaldo (`outwarp-release-backup.pub`, secreta solo offline); `minisign.verify_any` elige por key ID. La primera clave, `3E1FCD8BF652EC28`, se perdió el 2026-09-26 sin copia: los 0.11–0.14 tienen que actualizarse a mano una vez. Nunca volver a una sola clave. Las secretas nunca en CI ni en un secreto de GitHub.
+- **Dos claves de release de confianza** (desde 0.15.0): principal `A2E04F7F69ABA94F` (`outwarp-release.pub`, firma cada release) y respaldo `C864B6A98619FAC9` (`outwarp-release-backup.pub`, secreta solo offline), generadas el 2026-09-28; `minisign.verify_any` elige por key ID. La primera clave, `3E1FCD8BF652EC28`, se perdió el 2026-09-26 sin copia: los 0.11–0.14 tienen que actualizarse a mano una vez. Nunca volver a una sola clave. Las secretas nunca en CI ni en un secreto de GitHub.
 
 **Servidor**
 - `build_wstunnel_command()` es la **única** definición de la invocación de wstunnel (proceso y unit systemd).

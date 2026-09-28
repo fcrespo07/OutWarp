@@ -32,6 +32,13 @@ def test_key_ids_are_distinct() -> None:
     assert len(set(ids)) == len(ids)
 
 
+def test_builds_trust_the_primary_and_the_backup() -> None:
+    # Guards against a careless edit dropping the backup: with a single key,
+    # losing it strands every install again (what happened to 3E1FCD8BF652EC28).
+    ids = [key_id_hex(parse_public_key(k)[0]) for k in updater._MINISIGN_PUBLIC_KEYS]
+    assert ids == ["A2E04F7F69ABA94F", "C864B6A98619FAC9"]
+
+
 def test_key_id_hex_matches_what_minisign_prints() -> None:
     key_id, _ = parse_public_key(
         "untrusted comment: minisign public key 3E1FCD8BF652EC28\n"

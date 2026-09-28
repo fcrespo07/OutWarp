@@ -26,10 +26,12 @@ asset, and keep the secret keys offline and backed up.
 Both updaters trust **two** keys and accept a signature from either (chosen by
 the key ID in the signature):
 
+Both were generated on 2026-09-28 and ship from 0.15.0.
+
 | Key | Public half | Secret half | Used for |
 |---|---|---|---|
-| **Primary** | `outwarp-release.pub` | `%USERPROFILE%\.minisign\outwarp-release.key` (Windows) or `~/.minisign/outwarp-release.key`, plus an encrypted copy in the maintainer's password manager | every release |
-| **Backup** | `outwarp-release-backup.pub` | offline USB drive(s) only, never left on a disk | only if the primary is lost |
+| **Primary** `A2E04F7F69ABA94F` | `outwarp-release.pub` | `%USERPROFILE%\.minisign\outwarp-release.key` (Windows) or `~/.minisign/outwarp-release.key`, plus an encrypted copy in the maintainer's password manager | every release |
+| **Backup** `C864B6A98619FAC9` | `outwarp-release-backup.pub` | offline USB drive(s) only, never left on a disk | only if the primary is lost |
 
 Each secret key is encrypted with its own password (minisign's scrypt box); both
 passwords live in the password manager. The backup exists because a single key
@@ -129,6 +131,9 @@ opt-out — for the attacker. Since 0.15.0 there is no fail-open path at all.
   be updated by hand once. Its public half stays at
   `keys/retired/outwarp-release-3E1FCD8BF652EC28.pub` so signatures on 0.11–0.14
   can still be checked.
+- `A2E04F7F69ABA94F` (primary) and `C864B6A98619FAC9` (backup) — generated
+  2026-09-28 on the maintainer's Windows machine with
+  `scripts\setup-release-signing.ps1 -NewKeys`; trusted from 0.15.0.
 
 ## What this does not cover
 

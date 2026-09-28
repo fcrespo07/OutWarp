@@ -12,22 +12,32 @@ import subprocess
 
 import pytest
 
-from outwarp_server.minisign import MinisignError, verify
+from outwarp_server.minisign import MinisignError, verify, verify_any
 
 _HAS_MINISIGN = shutil.which("minisign") is not None
 
+# Same material as client/tests/test_minisign.py::TestProductionKey: made by
+# minisign 0.12 with the real primary and backup release keys.
 RELEASE_KEY = (
-    "untrusted comment: minisign public key 3E1FCD8BF652EC28\n"
-    "RWQo7FL2i80fPrFtvv7gB5xJCqS/7KTSu+VkoLRdnaQyTnwXXuemHydR\n"
+    "untrusted comment: minisign public key A2E04F7F69ABA94F\n"
+    "RWRPqatpf0/goqisSdUajHgymIamOGelwrG4pPrTGBrNbG2RIz74vBZ/\n"
 )
 MESSAGE = b"deadbeef  fake-asset.whl\ncafebabe  other-asset.exe\n"
 SIGNATURE = (
     "untrusted comment: signature from minisign secret key\n"
-    "RUQo7FL2i80fPkuGPo6f4hcp41eVLbxnoNpbqsW2+SBumD5JMdvjByKWpW8s6xLw7do9dSVbXp5o"
-    "/CPIrqJSHbye/1YOfTNFLwk=\n"
+    "RURPqatpf0/gor/VxOLDQbMfs5G/e5cXwtJtxeUvllCmbEqmHMJjApJLf6Jzx2FNp2CFPwXsj3w963sc"
+    "inJMRoaHC+sE0wzblgU=\n"
     "trusted comment: OutWarp signature round-trip test\n"
-    "55pk/kESbaENvkSQZuJnBO7DYg0g/SYM2vjP5EfWYUPIYpeR2BOPz9sIkhJOFvqmSrXqyDfFVtWj"
-    "28LR0aibCQ==\n"
+    "S07c/M+sMS4UKbNqCv2v/GfGiTIg4zNFjKO0VdWsmjjXcwlL27T9IK4o1K5FPs0mWsgQew2hNTiSDVk4"
+    "8SXqBw==\n"
+)
+BACKUP_SIGNATURE = (
+    "untrusted comment: signature from minisign secret key\n"
+    "RUTJ+hmGqbZkyF9CkJW3Af33HkENZUArlIkibfvMtwFW8RA3VoAN5ixYpt1ZohvLjtf3hLpYGeDLJIPj"
+    "AIQt/E/2XBph+kGxIQQ=\n"
+    "trusted comment: OutWarp signature round-trip test\n"
+    "8K8AdqUmffbnPQFCwQPHqxwkMw9v12VVYKHXsL7JNSmgAdhCVzVlA1BfFG2d5v2CBod9knpkmUx+GzMj"
+    "D13CCA==\n"
 )
 
 
@@ -40,9 +50,12 @@ def test_rejects_a_tampered_manifest() -> None:
         verify(MESSAGE + b"0000  smuggled.exe\n", SIGNATURE, RELEASE_KEY)
 
 
-def test_the_compiled_in_key_is_the_one_that_signed_it() -> None:
+def test_the_compiled_in_keys_are_the_ones_that_signed_them() -> None:
     from outwarp_server import updater
-    verify(MESSAGE, SIGNATURE, updater._MINISIGN_PUBLIC_KEYS[0])
+
+    keys = updater._MINISIGN_PUBLIC_KEYS
+    assert verify_any(MESSAGE, SIGNATURE, keys) == "A2E04F7F69ABA94F"
+    assert verify_any(MESSAGE, BACKUP_SIGNATURE, keys) == "C864B6A98619FAC9"
 
 
 # --- signing (CONCEPTO-C prop.2): output must interoperate with real minisign,

@@ -33,8 +33,9 @@ _USER_AGENT = "OutWarp-Updater"
 _CHECKSUMS_ASSET = "SHA256SUMS.txt"
 _SIGNATURE_ASSET = "SHA256SUMS.txt.minisig"
 
-# minisign public key for OutWarp releases (key ID 3E1FCD8BF652EC28), also
-# committed as outwarp-release.pub so downloads can be checked by hand.
+# minisign public keys for OutWarp releases, also committed as
+# outwarp-release.pub (primary, A2E04F7F69ABA94F) and outwarp-release-backup.pub
+# (backup, C864B6A98619FAC9) so downloads can be checked by hand.
 #
 # Compiled in on purpose: fetching it would move the trust problem one level up
 # instead of solving it. Its private half lives offline on the maintainer's
@@ -54,8 +55,10 @@ _SIGNATURE_ASSET = "SHA256SUMS.txt.minisig"
 # outwarp-release.pub / outwarp-release-backup.pub at the repo root hold the
 # same keys; a test keeps them in sync.
 _MINISIGN_PUBLIC_KEYS: tuple[str, ...] = (
-    "untrusted comment: minisign public key 3E1FCD8BF652EC28\n"
-    "RWQo7FL2i80fPrFtvv7gB5xJCqS/7KTSu+VkoLRdnaQyTnwXXuemHydR\n",
+    "untrusted comment: minisign public key A2E04F7F69ABA94F\n"
+    "RWRPqatpf0/goqisSdUajHgymIamOGelwrG4pPrTGBrNbG2RIz74vBZ/\n",
+    "untrusted comment: minisign public key C864B6A98619FAC9\n"
+    "RWTJ+hmGqbZkyEcxhLvXbpVKfMVddphrOZ2RLVEkjlmj56TF9RbFv6Go\n",
 )
 
 

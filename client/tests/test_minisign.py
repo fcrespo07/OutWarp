@@ -139,34 +139,52 @@ class TestVerify:
 class TestProductionKey:
     """Regression guard against the container parser drifting away from the real
     tool. The material below was produced by `minisign 0.12` itself against the
-    project's actual release key — a synthetic fixture cannot prove we stayed
-    compatible with the thing that will sign every release."""
+    project's actual release keys (Windows, 2026-09-28) — a synthetic fixture
+    cannot prove we stayed compatible with the thing that will sign every
+    release."""
 
-    # Same key that is compiled into outwarp/updater.py and committed as
-    # outwarp-release.pub.
+    # The keys compiled into outwarp/updater.py and committed as
+    # outwarp-release.pub / outwarp-release-backup.pub.
     RELEASE_KEY = (
-        "untrusted comment: minisign public key 3E1FCD8BF652EC28\n"
-        "RWQo7FL2i80fPrFtvv7gB5xJCqS/7KTSu+VkoLRdnaQyTnwXXuemHydR\n"
+        "untrusted comment: minisign public key A2E04F7F69ABA94F\n"
+        "RWRPqatpf0/goqisSdUajHgymIamOGelwrG4pPrTGBrNbG2RIz74vBZ/\n"
+    )
+    BACKUP_KEY = (
+        "untrusted comment: minisign public key C864B6A98619FAC9\n"
+        "RWTJ+hmGqbZkyEcxhLvXbpVKfMVddphrOZ2RLVEkjlmj56TF9RbFv6Go\n"
     )
     MESSAGE = b"deadbeef  fake-asset.whl\ncafebabe  other-asset.exe\n"
     # Note the "ED" prefix: minisign >= 0.11 prehashes with BLAKE2b by default,
     # so this also pins that we handle the prehashed variant and not just legacy.
     SIGNATURE = (
         "untrusted comment: signature from minisign secret key\n"
-        "RUQo7FL2i80fPkuGPo6f4hcp41eVLbxnoNpbqsW2+SBumD5JMdvjByKWpW8s6xLw7do9dSVbXp5o"
-        "/CPIrqJSHbye/1YOfTNFLwk=\n"
+        "RURPqatpf0/gor/VxOLDQbMfs5G/e5cXwtJtxeUvllCmbEqmHMJjApJLf6Jzx2FNp2CFPwXsj3w963sc"
+        "inJMRoaHC+sE0wzblgU=\n"
         "trusted comment: OutWarp signature round-trip test\n"
-        "55pk/kESbaENvkSQZuJnBO7DYg0g/SYM2vjP5EfWYUPIYpeR2BOPz9sIkhJOFvqmSrXqyDfFVtWj"
-        "28LR0aibCQ==\n"
+        "S07c/M+sMS4UKbNqCv2v/GfGiTIg4zNFjKO0VdWsmjjXcwlL27T9IK4o1K5FPs0mWsgQew2hNTiSDVk4"
+        "8SXqBw==\n"
+    )
+    BACKUP_SIGNATURE = (
+        "untrusted comment: signature from minisign secret key\n"
+        "RUTJ+hmGqbZkyF9CkJW3Af33HkENZUArlIkibfvMtwFW8RA3VoAN5ixYpt1ZohvLjtf3hLpYGeDLJIPj"
+        "AIQt/E/2XBph+kGxIQQ=\n"
+        "trusted comment: OutWarp signature round-trip test\n"
+        "8K8AdqUmffbnPQFCwQPHqxwkMw9v12VVYKHXsL7JNSmgAdhCVzVlA1BfFG2d5v2CBod9knpkmUx+GzMj"
+        "D13CCA==\n"
     )
 
     def test_accepts_a_signature_made_by_minisign_itself(self) -> None:
         verify(self.MESSAGE, self.SIGNATURE, self.RELEASE_KEY)
+        verify(self.MESSAGE, self.BACKUP_SIGNATURE, self.BACKUP_KEY)
 
     def test_rejects_a_tampered_manifest(self) -> None:
         with pytest.raises(MinisignError):
             verify(self.MESSAGE + b"0000  smuggled.exe\n", self.SIGNATURE, self.RELEASE_KEY)
 
-    def test_the_compiled_in_key_is_the_one_that_signed_it(self) -> None:
+    def test_the_compiled_in_keys_are_the_ones_that_signed_them(self) -> None:
         from outwarp import updater
-        verify(self.MESSAGE, self.SIGNATURE, updater._MINISIGN_PUBLIC_KEYS[0])
+        from outwarp.minisign import verify_any
+
+        keys = updater._MINISIGN_PUBLIC_KEYS
+        assert verify_any(self.MESSAGE, self.SIGNATURE, keys) == "A2E04F7F69ABA94F"
+        assert verify_any(self.MESSAGE, self.BACKUP_SIGNATURE, keys) == "C864B6A98619FAC9"

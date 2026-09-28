@@ -30,8 +30,9 @@ _CHECKSUMS_ASSET = "SHA256SUMS.txt"
 _SIGNATURE_ASSET = "SHA256SUMS.txt.minisig"
 
 # See the identical constant in client/outwarp/updater.py: the release-signing
-# public key (key ID 3E1FCD8BF652EC28) is compiled in and its private half lives
-# offline. A release without a signed SHA256SUMS.txt is rejected; the fail-open
+# public keys (primary A2E04F7F69ABA94F, backup C864B6A98619FAC9) are compiled
+# in and their private halves live offline. A release without a signed
+# SHA256SUMS.txt is rejected; the fail-open
 # path for pre-0.11.0 unsigned releases was retired in 0.15.0.
 #
 # Two keys are trusted: the primary that signs releases, and a backup whose
@@ -41,8 +42,10 @@ _SIGNATURE_ASSET = "SHA256SUMS.txt.minisig"
 # outwarp-release.pub / outwarp-release-backup.pub at the repo root hold the
 # same keys; a test keeps them in sync.
 _MINISIGN_PUBLIC_KEYS: tuple[str, ...] = (
-    "untrusted comment: minisign public key 3E1FCD8BF652EC28\n"
-    "RWQo7FL2i80fPrFtvv7gB5xJCqS/7KTSu+VkoLRdnaQyTnwXXuemHydR\n",
+    "untrusted comment: minisign public key A2E04F7F69ABA94F\n"
+    "RWRPqatpf0/goqisSdUajHgymIamOGelwrG4pPrTGBrNbG2RIz74vBZ/\n",
+    "untrusted comment: minisign public key C864B6A98619FAC9\n"
+    "RWTJ+hmGqbZkyEcxhLvXbpVKfMVddphrOZ2RLVEkjlmj56TF9RbFv6Go\n",
 )
 
 
