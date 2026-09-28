@@ -88,3 +88,24 @@ def test_install_crash_logging_passes_keyboardinterrupt_without_logging(tmp_path
     snap = h.snapshot()
     assert not any("Uncaught exception" in line for line in snap)
     assert chained, "KeyboardInterrupt must still chain to the previous hook"
+
+
+def test_since_keeps_counting_once_the_buffer_is_full() -> None:
+    # The GUI/panel log watcher used len(snapshot()), which stops changing at
+    # capacity, so a long-running server stopped showing new lines.
+    h = MemoryLogHandler(capacity=3)
+    h.setFormatter(logging.Formatter("%(message)s"))
+    log = logging.getLogger("since-test")
+    log.propagate = False
+    log.addHandler(h)
+    log.setLevel(logging.INFO)
+    seen = h.total
+    for i in range(5):
+        log.info("line %d", i)
+    lines, seen = h.since(seen)
+    assert lines == ["line 2", "line 3", "line 4"]  # 0 and 1 already dropped
+    assert seen == 5
+    log.info("line 5")
+    lines, seen = h.since(seen)
+    assert lines == ["line 5"] and seen == 6
+    assert h.since(seen) == ([], 6)

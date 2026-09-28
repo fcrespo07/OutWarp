@@ -246,6 +246,15 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 
 ---
 
+### ✅ B-036 — Panel del servidor: parpadeo, logs que no aparecen y gráfica a tirones
+**Síntomas:** Reportado por el autor (2026-09-28, sobre 0.16.0): la gráfica ya no tiene picos pero va a tirones, el registro no se ve en el dashboard y a veces toda la información parpadea.
+**Causa raíz (tres, medidas en un Chromium real contra el panel de verdad):**
+1. **Bucle de peticiones.** `bootstrap()` dependía de `seedLogs`, una función nueva en cada render, así que cada render lo relanzaba y él volvía a renderizar: unas 17 rondas por segundo de cinco llamadas a la API (206 en 12 s), con todo el panel repintándose, la lista de logs reiniciada con la hora de "ahora" y muestras falsas en la gráfica.
+2. **El flujo en directo (SSE) moría al iniciar sesión.** El panel abre `/events` al cargar, antes de autenticarse; el 401 hace que el navegador cierre el `EventSource` para siempre (`readyState 2`), y no se reabría tras el login. Sin eventos no llegaban estado, clientes ni logs hasta recargar la página; el bucle del punto 1 lo tapaba a base de consultar todo sin parar.
+3. **El vigilante de logs se paraba a las 2000 líneas.** Comparaba `len(snapshot())`, que no crece cuando el buffer está lleno: un servidor con tiempo encendido dejaba de mostrar líneas nuevas.
+**Fix (2026-09-28):** `seedLogs` estable; `transport.js` reabre el flujo tras el login y con retroceso exponencial cuando el navegador se rinde, y avisa (`outwarp:resync`) para que la página vuelva a pedir lo que se perdió; `MemoryLogHandler` cuenta las líneas emitidas (`total`/`since`) y el vigilante las usa. La gráfica se desplaza de forma continua (cada muestra entra por la derecha y todo el trazo se desliza con una transición CSS durante el intervalo de muestreo) en vez de saltar un paso cada 2 s; va un intervalo por detrás de los datos y respeta `prefers-reduced-motion`. Los logs llevan su hora real. Tests: `ui-tests/server-transport.test.js` y `test_logs.py`.
+**Prevención:** un efecto que llama a algo con estado no puede depender de una función que cambia en cada render (`useCallback`); y una conexión que el navegador no reintenta (SSE con error HTTP) la reabre nuestro código.
+
 ### ✅ B-035 — El servidor no arranca si el secreto de la ruta de upgrade empieza por `-`
 **Síntomas:** Visto en el e2e de CI (2026-09-28): el servidor sale en `ERROR` nada más arrancar con `[wstunnel] error: unexpected argument '-v' found`, y ningún cliente puede enrolarse ni conectar. Afecta a cualquier instalación (wizard, GUI, contenedor) cuyo secreto aleatorio salga empezando por `-`, alrededor de 1 de cada 64.
 **Causa raíz:** `secrets.token_urlsafe` puede devolver un `-` al principio, y el secreto se pasaba a wstunnel como un argumento aparte (`--restrict-http-upgrade-path-prefix -vQf6…`). clap lo lee como una opción. En el cliente pasaba lo mismo con `--http-upgrade-path-prefix`.

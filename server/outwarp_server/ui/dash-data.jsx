@@ -452,8 +452,9 @@ function tr(str, vars) {
   if (!vars) return str;
   return str.replace(/\{(\w+)\}/g, (_, k) => (vars[k] != null ? vars[k] : `{${k}}`));
 }
-function nowClock() {
-  const d = new Date();
+function nowClock(ts) {
+  // ts = seconds since the epoch (a log entry's own time); default: now.
+  const d = ts ? new Date(ts * 1000) : new Date();
   const p = (n) => String(n).padStart(2, "0");
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
 }

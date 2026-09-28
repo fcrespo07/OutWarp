@@ -86,21 +86,49 @@
     }
   }
 
-  function startEventStream() {
-    // EventSource auto-reconnects; we re-dispatch every named SSE event as the
-    // window CustomEvent the dashboard already listens for.
-    const NAMES = [
-      "status", "clients", "log", "settings", "setup_progress", "setup_done",
-    ];
+  // Re-dispatch every named SSE event as the window CustomEvent the dashboard
+  // already listens for.
+  //
+  // EventSource retries a dropped connection by itself, but NOT one refused
+  // with an HTTP error: a 401 (the page opens the stream before the admin has
+  // logged in) or a proxy 5xx closes it for good (readyState 2). So the stream
+  // is (re)opened here: on load, right after login, and by a backoff timer
+  // whenever the browser has given up. After any reconnect the page gets an
+  // `outwarp:resync` so it refetches what it missed meanwhile.
+  const STREAM_EVENTS = [
+    "status", "clients", "log", "settings", "setup_progress", "setup_done",
+  ];
+  let stream = null;
+  let retryTimer = null;
+  let retryMs = 1000;
+  let dropped = false;
+
+  function connectStream() {
+    if (stream && stream.readyState !== 2) return stream;
+    clearTimeout(retryTimer);
     const es = new EventSource("/events");
-    NAMES.forEach((name) => {
+    stream = es;
+    STREAM_EVENTS.forEach((name) => {
       es.addEventListener("outwarp:" + name, (ev) => {
         let detail = {};
         try { detail = JSON.parse(ev.data); } catch (_e) { detail = {}; }
         window.dispatchEvent(new CustomEvent("outwarp:" + name, { detail }));
       });
     });
-    es.onerror = () => { /* EventSource retries on its own */ };
+    es.onopen = () => {
+      retryMs = 1000;
+      if (dropped) {
+        dropped = false;
+        window.dispatchEvent(new CustomEvent("outwarp:resync", { detail: {} }));
+      }
+    };
+    es.onerror = () => {
+      dropped = true;
+      if (es.readyState === 2) {
+        retryTimer = setTimeout(connectStream, retryMs);
+        retryMs = Math.min(retryMs * 2, 15000);
+      }
+    };
     return es;
   }
 
@@ -134,7 +162,9 @@
       });
       let body = {};
       try { body = await res.json(); } catch (_e) { body = {}; }
-      return { ok: res.ok && body.ok !== false, status: res.status, ...body };
+      const ok = res.ok && body.ok !== false;
+      if (ok) connectStream();  // the stream opened before login was refused
+      return { ok, status: res.status, ...body };
     },
 
     async logout() {
@@ -154,7 +184,8 @@
     // Kick the SSE stream once the page is interactive. If the user isn't
     // authenticated yet /events 401s and EventSource keeps retrying — it
     // connects for real right after login.
-    OW._es = startEventStream();
+    OW._connectStream = connectStream;
+    connectStream();
   }
 
   window.OW = OW;

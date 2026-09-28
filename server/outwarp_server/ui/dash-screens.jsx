@@ -111,7 +111,7 @@ function ScreenDashboard({ C }) {
             <span style={{ color: "var(--brand-2)" }}>↑ {fmtBps(live.totals.txBps)}</span>
           </div>
         </div>
-        <AreaChart rx={live.rxSeries} tx={live.txSeries} h={150} />
+        <AreaChart rx={live.rxSeries} tx={live.txSeries} h={150} intervalMs={LIVE_SAMPLE_S * 1000} />
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--text-3)" }}>
           <span>-{live.rxSeries.length * LIVE_SAMPLE_S}s</span><span>{T.dash_now}</span>
         </div>

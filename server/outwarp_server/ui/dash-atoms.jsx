@@ -193,7 +193,7 @@ const Sparkline = ({ data, w = 72, h = 22, color = "var(--brand-2)", fill = true
 };
 
 // ── Area throughput chart (dual: rx up, tx down-mirrored) ─────────────────
-const AreaChart = ({ rx: rawRx, tx: rawTx, h = 150 }) => {
+const AreaChart = ({ rx: rawRx, tx: rawTx, h = 150, intervalMs = 2000 }) => {
   const W = 1000, P = 4;
   const rx = window.DSfmt.smoothSeries(rawRx);
   const tx = window.DSfmt.smoothSeries(rawTx);
@@ -211,9 +211,20 @@ const AreaChart = ({ rx: rawRx, tx: rawTx, h = 150 }) => {
   const mid = h / 2;
   // Smoothed like the client GUI's chart: the 2 s samples are noisy, and a
   // polyline through them read as a row of spikes.
-  const line = (arr, mirror) => {
-    const step = (W - P * 2) / (n - 1);
-    const pts = arr.map((v, i) => [
+  const step = (W - P * 2) / (n - 1);
+  // Continuous scroll. Samples arrive every `intervalMs`; redrawing the line
+  // when one lands makes it jump a whole step. Instead each new sample is
+  // drawn one step off the right edge and the group glides left over the
+  // interval (a CSS transition: no per-frame JS), so the line moves steadily
+  // and the newest point slides in. The extra leading point is the sample
+  // that just scrolled off the left, so no gap opens on that side. The chart
+  // therefore lags the data by one interval.
+  const prevFirst = React.useRef(null);
+  const groupRef = React.useRef(null);
+  const first = prevFirst.current || { rx: rx[0], tx: tx[0] };
+  const line = (arr, mirror, lead) => {
+    const all = [lead, ...arr];
+    const pts = all.map((v, i) => [
       P + i * step,
       mirror ? mid + (v / max) * (mid - P) : mid - (v / max) * (mid - P),
     ]);
@@ -221,6 +232,20 @@ const AreaChart = ({ rx: rawRx, tx: rawTx, h = 150 }) => {
       ? window.DSfmt.smoothPath(pts, mid, h - P)
       : window.DSfmt.smoothPath(pts, P, mid);
   };
+  const rxD = line(rx, false, first.rx);
+  const txD = line(tx, true, first.tx);
+  React.useLayoutEffect(() => {
+    prevFirst.current = { rx: rx[0], tx: tx[0] };
+    const g = groupRef.current;
+    if (!g) return;
+    const still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    g.style.transition = "none";
+    g.style.transform = "translateX(0px)";
+    if (still) { g.style.transform = `translateX(${-step}px)`; return; }
+    void g.getBoundingClientRect();   // commit the start position
+    g.style.transition = `transform ${intervalMs}ms linear`;
+    g.style.transform = `translateX(${-step}px)`;
+  }, [rawRx]);
   return (
     <svg viewBox={`0 0 ${W} ${h}`} width="100%" height={h} preserveAspectRatio="none" style={{ display: "block" }}>
       <defs>
@@ -237,10 +262,12 @@ const AreaChart = ({ rx: rawRx, tx: rawTx, h = 150 }) => {
         </linearGradient>
       </defs>
       <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--line)" strokeDasharray="2 5"/>
-      <path d={`${line(rx)} L${W - P} ${mid} L${P} ${mid} Z`} fill="url(#owGradRx)"/>
-      <path d={line(rx)} fill="none" stroke="var(--brand)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
-      <path d={`${line(tx, true)} L${W - P} ${mid} L${P} ${mid} Z`} fill="url(#owGradTx)"/>
-      <path d={line(tx, true)} fill="none" stroke="var(--brand-2)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
+      <g ref={groupRef}>
+        <path d={`${rxD} L${P + n * step} ${mid} L${P} ${mid} Z`} fill="url(#owGradRx)"/>
+        <path d={rxD} fill="none" stroke="var(--brand)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
+        <path d={`${txD} L${P + n * step} ${mid} L${P} ${mid} Z`} fill="url(#owGradTx)"/>
+        <path d={txD} fill="none" stroke="var(--brand-2)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
+      </g>
     </svg>
   );
 };

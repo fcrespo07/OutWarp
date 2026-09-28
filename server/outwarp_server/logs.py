@@ -26,11 +26,28 @@ class MemoryLogHandler(logging.Handler):
         super().__init__()
         self._buf: deque[str] = deque(maxlen=capacity)
         self._lock = Lock()
+        self._total = 0
 
     def emit(self, record: logging.LogRecord) -> None:
         msg = self.format(record)
         with self._lock:
             self._buf.append(msg)
+            self._total += 1
+
+    @property
+    def total(self) -> int:
+        """Lines ever emitted. len(snapshot()) stops growing once the buffer
+        is full, so it cannot tell a watcher that something new arrived."""
+        with self._lock:
+            return self._total
+
+    def since(self, seen: int) -> tuple[list[str], int]:
+        """Lines emitted after the first `seen`, and the new running total.
+        Lines that already fell off the end of the buffer are gone."""
+        with self._lock:
+            new = self._total - seen
+            lines = list(self._buf)[-new:] if new > 0 else []
+            return lines, self._total
 
     def snapshot(self) -> list[str]:
         with self._lock:

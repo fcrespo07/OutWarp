@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Server panel: flicker, missing logs and a jerky chart** (B-036). The page
+  re-ran its whole start-up about 17 times a second, the live event stream
+  stayed closed after logging in (so no logs, clients or status arrived), and
+  the log watcher stopped after 2000 lines. The throughput chart now scrolls
+  continuously instead of stepping every sample.
 - **The server could fail to start** when its random upgrade-path secret
   began with `-`: wstunnel read it as an option (`unexpected argument '-v'`).
   The secret now goes to wstunnel as `--option=value` on both the server and

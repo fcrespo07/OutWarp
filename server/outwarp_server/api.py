@@ -1376,23 +1376,22 @@ class Api:
         if self._watcher_started:
             return
         self._watcher_started = True
-        last_count = len(self._memory_handler.snapshot())
+        seen = self._memory_handler.total
 
         def _loop() -> None:
-            nonlocal last_count
+            nonlocal seen
             while True:
-                snap = self._memory_handler.snapshot()
-                if len(snap) < last_count:
-                    last_count = 0
-                if len(snap) > last_count:
-                    for line in snap[last_count:]:
-                        level = "info"
-                        for token in ("ERROR", "WARNING", "DEBUG"):
-                            if f"[{token}]" in line:
-                                level = token.lower().replace("warning", "warn")
-                                break
-                        self._record_log(level, line)
-                    last_count = len(snap)
+                # Counted by lines ever emitted: the buffer holds a fixed
+                # number, so its length stops changing once it is full and a
+                # long-running server stopped showing new lines.
+                lines, seen = self._memory_handler.since(seen)
+                for line in lines:
+                    level = "info"
+                    for token in ("ERROR", "WARNING", "DEBUG"):
+                        if f"[{token}]" in line:
+                            level = token.lower().replace("warning", "warn")
+                            break
+                    self._record_log(level, line)
                 time.sleep(0.25)
 
         threading.Thread(target=_loop, daemon=True, name="outwarp-log-watcher").start()

@@ -127,7 +127,7 @@ function useLiveData() {
 
   const onLog = useCallback((entry) => {
     const s = ref.current;
-    const t = window.DSfmt.nowClock();
+    const t = window.DSfmt.nowClock(entry.ts);
     s.logs = s.logs.concat({
       seq: entry.seq, t,
       svc: "", lvl: entry.level || "info", msg: entry.msg,
@@ -143,12 +143,18 @@ function useLiveData() {
     return () => { offC(); offS(); offL(); };
   }, [onClients, onStatus, onLog]);
 
-  return { live: ref.current, seedLogs: (entries) => {
+  // Stable identity: bootstrap() depends on this, and a new function per
+  // render made it re-run on every render, which re-rendered, which ran it
+  // again: ~17 rounds of five API calls a second, the whole page repainting
+  // each time and the log list reset to "now" (B-036).
+  const seedLogs = useCallback((entries) => {
     ref.current.logs = (entries || []).map((e) => ({
-      seq: e.seq, t: window.DSfmt.nowClock(), svc: "", lvl: e.level || "info", msg: e.msg,
+      seq: e.seq, t: window.DSfmt.nowClock(e.ts), svc: "", lvl: e.level || "info", msg: e.msg,
     }));
     force((x) => x + 1);
-  }, seedClients: onClients };
+  }, []);
+
+  return { live: ref.current, seedLogs, seedClients: onClients };
 }
 
 function resolveTheme(theme) {
@@ -263,6 +269,8 @@ function App() {
   }, [live, seedClients, seedLogs]);
 
   useEffect(() => { if (authed) bootstrap(); }, [authed, bootstrap]);
+  // The live stream dropped and came back (transport.js): refetch what it missed.
+  useEffect(() => OW.on("resync", () => { if (authed) bootstrap(); }), [authed, bootstrap]);
 
   useEffect(() => {
     const off = OW.on("settings", (s) => setSettings((cur) => ({ ...cur, ...s })));
