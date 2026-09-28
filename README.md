@@ -79,6 +79,7 @@ After `outwarp import path/to/profile.owcfg`:
 | Action | How |
 |---|---|
 | Foreground connect (Ctrl+C to stop) | `outwarp connect` |
+| List profiles / switch / remove one (one active at a time) | `outwarp profile list` / `outwarp profile use <id>` / `outwarp profile remove <id>` |
 | Headless status probe | `outwarp status` |
 | Tail the log file (`tail -f` style) | `outwarp logs --follow` |
 | Interactive TUI (recommended) | `outwarp tui` |

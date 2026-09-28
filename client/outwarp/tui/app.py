@@ -49,6 +49,7 @@ class OutWarpClientTUI(App):
         ("question_mark", "help", tr("tui.key.help")),
         ("s", "settings", tr("tui.key.settings")),
         ("d", "doctor", tr("tui.key.doctor")),
+        ("P", "profiles", tr("tui.profiles.key")),
     ]
 
     def __init__(self) -> None:
@@ -138,7 +139,7 @@ class OutWarpClientTUI(App):
         self.service_managed = False
         self.reload_config()
 
-    def start_manager(self, *, auto: bool = False) -> None:
+    def start_manager(self, *, auto: bool = False, connect: bool = True) -> None:
         """Construct (or rebuild) the TunnelManager and, by default, start it.
 
         ``auto=True`` marks the call as an "initial load" — triggered by
@@ -179,6 +180,9 @@ class OutWarpClientTUI(App):
         self._startup_error = None
         self.manager.add_listener(self._on_state)
         self._last_state = None
+        if not connect:
+            self._push_unique("dashboard")
+            return
         if auto and not bool(self._settings.get("auto_connect", True)):
             log.info("auto_connect disabled — staying disconnected; press 'r' to connect")
             self._push_unique("dashboard")
@@ -243,6 +247,41 @@ class OutWarpClientTUI(App):
     def action_settings(self) -> None:
         from outwarp.tui.modals.settings import SettingsModal
         self.push_screen(SettingsModal())
+
+    def action_profiles(self) -> None:
+        from outwarp.tui.modals.profiles import ProfilesModal
+        self.push_screen(ProfilesModal())
+
+    def switch_profile(self, profile_id: str) -> None:
+        """Make another profile active: the current tunnel goes down and the
+        new profile waits, disconnected, on the dashboard."""
+        from outwarp import profiles
+
+        if self.manager is not None:
+            with contextlib.suppress(Exception):
+                self.manager.stop()
+            self.manager = None
+        profiles.set_active(profile_id)
+        try:
+            self.config = ClientConfig.load(default_config_path())
+        except ConfigError as exc:
+            self.config = None
+            self._startup_error = tr("tui.app.profile_unloadable", error=exc)
+            self._push_unique("failed")
+            return
+        self.start_manager(connect=False)
+        self.notify(tr("tui.profiles.switched", name=self.config.name or profile_id))
+
+    def remove_profile(self, profile_id: str) -> None:
+        from outwarp import profiles
+
+        if profile_id == profiles.active_id() and self.manager is not None:
+            with contextlib.suppress(Exception):
+                self.manager.stop()
+            self.manager = None
+        profiles.remove(profile_id)
+        if self.manager is None:
+            self.reload_config()
 
     def action_doctor(self) -> None:
         self.push_screen("doctor")

@@ -190,11 +190,13 @@ def main() -> int:
         # tray is filled in below before the closures fire
         tray: TrayApp
 
-        def on_manager_replaced(new_mgr: TunnelManager) -> None:
+        def on_manager_replaced(new_mgr: TunnelManager | None) -> None:
+            # The Api starts the new manager itself when it should run (after
+            # an import, or an edit while connected); switching profiles
+            # leaves it disconnected.
             nonlocal manager
             manager = new_mgr
             tray.update_manager(new_mgr)
-            new_mgr.start()
 
         api = Api(
             memory_handler,

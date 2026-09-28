@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -165,9 +166,46 @@ class TrayApp:
         except Exception:
             log.exception("tray view logs failed")
 
-    def update_manager(self, manager: TunnelManager) -> None:
+    def _profiles(self) -> list[dict]:
+        if self._api is None:
+            return []
+        try:
+            return list(self._api.list_profiles())
+        except Exception:
+            log.exception("tray: could not list profiles")
+            return []
+
+    def _profile_items(self):
+        """Radio list of profiles, rebuilt each time the submenu opens."""
+        import pystray
+
+        for profile in self._profiles():
+            yield pystray.MenuItem(
+                profile["name"],
+                self._make_switch(profile["id"]),
+                checked=lambda item, active=profile["active"]: active,
+                radio=True,
+            )
+
+    def _make_switch(self, profile_id: str):
+        def _switch(icon: object, item: object) -> None:
+            # Stopping the current tunnel can take seconds; keep the tray's
+            # event loop free.
+            def _run() -> None:
+                try:
+                    self._api.set_active_profile(profile_id)
+                except Exception:
+                    log.exception("tray profile switch failed")
+            threading.Thread(target=_run, daemon=True, name="tray-profile-switch").start()
+        return _switch
+
+    def update_manager(self, manager: TunnelManager | None) -> None:
+        """Follow a new manager (another profile, a re-import) or none (the
+        last profile removed)."""
         self._manager = manager
-        manager.add_listener(self._on_state_change)
+        if manager is not None:
+            manager.add_listener(self._on_state_change)
+        self._on_state_change(manager.state if manager is not None else None)
 
     def _on_state_change(self, state: TunnelState) -> None:
         if self._icon is None:
@@ -218,6 +256,10 @@ class TrayApp:
             ),
             pystray.MenuItem(
                 lambda item: self._t("reconnect"), self._reconnect, enabled=self._has_profile,
+            ),
+            pystray.MenuItem(
+                lambda item: self._t("profiles"), pystray.Menu(self._profile_items),
+                visible=lambda item: len(self._profiles()) > 1,
             ),
             pystray.MenuItem(lambda item: self._t("viewlogs"), self._view_logs),
             pystray.Menu.SEPARATOR,

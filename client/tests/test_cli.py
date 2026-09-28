@@ -125,7 +125,8 @@ def test_import_success(tmp_path, isolated_config, capsys):
 
     rc = cli.main(["import", str(owcfg)])
     assert rc == 0
-    assert isolated_config.exists()
+    from outwarp import profiles
+    assert profiles.config_path(profiles.active_id()).exists()
     out = capsys.readouterr().out
     assert "Imported profile" in out
     assert "203.0.113.42:443" in out

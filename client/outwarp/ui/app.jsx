@@ -220,7 +220,8 @@ function App() {
     if (api && api.set_ui_language) api.set_ui_language(lang);
   }, [api, lang]);
 
-  const active = profiles[0] || null;
+  const active = profiles.find((p) => p.active) || profiles.find((p) => p.id === activeId)
+    || profiles[0] || null;
 
   const onConnect = async () => {
     if (!api) return;
@@ -235,25 +236,46 @@ function App() {
     if (!api) return { ok: false };
     return api.import_profile(text);
   };
-  const onRemoveProfile = async () => {
-    if (!api || !activeId) return;
-    const ok = await confirm({
-      title: T.profiles_removeTitle,
-      message: T.profiles_removeConfirm,
-      confirmLabel: T.profiles_remove,
-      cancelLabel: T.cancel,
-      danger: true,
-    });
-    if (!ok) return;
-    await api.remove_profile(activeId);
-    const ps = await api.list_profiles();
-    setProfiles(ps);
-    setActiveId(null);
-  };
   const refreshProfiles = async () => {
     if (!api) return;
     const ps = await api.list_profiles();
     setProfiles(ps);
+  };
+  // The tray, the TUI or `outwarp profile use` can switch profiles too; the
+  // status event carries the new id, so follow it.
+  useEffect(() => { refreshProfiles(); }, [api, activeId]);
+  const onRemoveProfile = async (profile) => {
+    if (!api || !profile) return;
+    const ok = await confirm({
+      title: T.profiles_removeTitle,
+      message: T.profiles_removeConfirm.replace("{name}", profile.name),
+      confirmLabel: T.profiles_remove,
+      cancelLabel: T.cancel,
+      danger: true,
+    });
+    if (!ok) return { ok: false };
+    const r = await api.remove_profile(profile.id);
+    if (r && r.ok) setActiveId(r.active_profile_id);
+    await refreshProfiles();
+    return r;
+  };
+  // One tunnel at a time: switching disconnects the current one (confirmed
+  // when it is up) and leaves the new profile disconnected.
+  const onSwitchProfile = async (profile) => {
+    if (!api || !profile) return { ok: false };
+    if (status === "connected" || status === "connecting" || status === "reconnecting") {
+      const ok = await confirm({
+        title: T.profiles_switchTitle,
+        message: T.profiles_switchConfirm.replace("{name}", profile.name),
+        confirmLabel: T.profiles_use,
+        cancelLabel: T.cancel,
+      });
+      if (!ok) return { ok: false };
+    }
+    const r = await api.set_active_profile(profile.id);
+    if (r && r.ok) setActiveId(profile.id);
+    await refreshProfiles();
+    return r;
   };
 
   // onSetting returns the bridge result so children can show an inline error
@@ -328,7 +350,7 @@ function App() {
               onLogs={() => setScreen("logs")}
             />
           )}
-          {screen === "import"  && <Import T={T} api={api} active={active} confirm={confirm} onImported={(p) => { setActiveId(p.id); setProfiles([p]); setScreen("home"); }} onRemove={onRemoveProfile} onProfilesChanged={refreshProfiles}/>}
+          {screen === "import"  && <Import T={T} api={api} active={active} profiles={profiles} confirm={confirm} onImported={async (p) => { setActiveId(p.id); await refreshProfiles(); setScreen("home"); }} onRemove={onRemoveProfile} onSwitch={onSwitchProfile} onProfilesChanged={refreshProfiles}/>}
           {screen === "logs"     && <Logs T={T} logs={logs} api={api} onClear={() => setLogs([])}/>}
           {screen === "settings" && <Settings T={T} api={api} settings={settings} onSetting={onSetting}/>}
           {screen === "about"    && <About T={T} api={api} settings={settings}/>}
@@ -1056,7 +1078,7 @@ const Dial = ({ status = "disconnected", onClick, label }) => {
 };
 
 // ── Import / Profiles ──────────────────────────────────────────────
-const Import = ({ T, api, active, confirm, onImported, onRemove, onProfilesChanged }) => {
+const Import = ({ T, api, active, profiles, confirm, onImported, onRemove, onSwitch, onProfilesChanged }) => {
   const fileRef = useRef(null);
   const [mode, setMode] = useState("file");      // "file" | "paste"
   const [paste, setPaste] = useState("");
@@ -1071,16 +1093,6 @@ const Import = ({ T, api, active, confirm, onImported, onRemove, onProfilesChang
     if (!text || !text.trim()) {
       setError(T.errorUnknown);
       return;
-    }
-    // Replacing an existing profile: confirm first regardless of source.
-    if (active) {
-      const ok = await confirm({
-        title: T.profiles_replaceTitle,
-        message: T.profiles_replaceWarn,
-        confirmLabel: T.confirm_continue,
-        cancelLabel: T.cancel,
-      });
-      if (!ok) return;
     }
     setMsg(T.importReading);
     try {
@@ -1124,8 +1136,28 @@ const Import = ({ T, api, active, confirm, onImported, onRemove, onProfilesChang
          style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 720 }}>
       <Header
         title={active ? T.profiles_title : T.welcomeTitle}
-        sub={T.welcomeSub}
+        sub={active ? T.profiles_importHint : T.welcomeSub}
       />
+
+      {profiles.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {profiles.map((p) => (
+            <ProfileRow key={p.id} T={T} profile={p}
+              onEdit={p.active ? () => setShowEditor((v) => !v) : null}
+              onUse={p.active ? null : () => onSwitch(p)}
+              onRemove={() => onRemove(p)}/>
+          ))}
+        </div>
+      )}
+      {showEditor && active && (
+        <ProfileEditor
+          T={T} api={api} active={active} confirm={confirm}
+          onUpdated={onProfilesChanged}
+          onClose={() => setShowEditor(false)}/>
+      )}
+      {active && (
+        <div style={{ fontSize: 13, fontWeight: 600, marginTop: 6 }}>{T.profiles_add}</div>
+      )}
 
       <input ref={fileRef} type="file"
              accept=".owcfg,.warpcfg,.json,.txt" hidden
@@ -1163,21 +1195,6 @@ const Import = ({ T, api, active, confirm, onImported, onRemove, onProfilesChang
         </div>
       )}
 
-      {active && (
-        <ProfileCard active={active}
-          editLabel={T.edit_open}
-          removeLabel={T.profiles_remove}
-          onEdit={() => setShowEditor((v) => !v)}
-          onRemove={onRemove}/>
-      )}
-      {showEditor && active && (
-        <div>
-          <ProfileEditor
-            T={T} api={api} active={active} confirm={confirm}
-            onUpdated={onProfilesChanged}
-            onClose={() => setShowEditor(false)}/>
-        </div>
-      )}
     </div>
   );
 };
@@ -1255,23 +1272,30 @@ const PasteArea = ({ T, value, onChange, onSubmit, disabled }) => (
   </div>
 );
 
-const ProfileCard = ({ active, onEdit, onRemove, editLabel, removeLabel }) => (
+const ProfileRow = ({ T, profile, onEdit, onUse, onRemove }) => (
   <div className="ow-card" style={{
-    padding: 16,
-    display: "flex", justifyContent: "space-between", alignItems: "center",
-    gap: 12,
+    padding: 14,
+    display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
+    borderColor: profile.active ? "var(--brand)" : undefined,
   }}>
-    <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 13, fontWeight: 600 }}>{active.name}</div>
-      <div style={{
-        fontSize: 12, color: "var(--text-3)", marginTop: 2,
-        fontFamily: "var(--font-mono)",
-        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-      }}>{active.endpoint}</div>
+    <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 10 }}>
+      <window.StatusDot tone={profile.active ? "good" : "idle"} pulse={false}/>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, display: "flex", gap: 8, alignItems: "center" }}>
+          {profile.name}
+          {profile.active && <window.Pill tone="good">{T.profiles_active}</window.Pill>}
+          {profile.expired && <window.Pill tone="bad">{T.profiles_expired}</window.Pill>}
+        </div>
+        <div style={{
+          fontSize: 12, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>{profile.endpoint}</div>
+      </div>
     </div>
     <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-      <window.Btn kind="ghost"  size="sm" onClick={onEdit}>{editLabel}</window.Btn>
-      <window.Btn kind="danger" size="sm" onClick={onRemove}>{removeLabel}</window.Btn>
+      {onUse && <window.Btn kind="primary" size="sm" onClick={onUse}>{T.profiles_use}</window.Btn>}
+      {onEdit && <window.Btn kind="ghost" size="sm" onClick={onEdit}>{T.edit_open}</window.Btn>}
+      <window.Btn kind="danger" size="sm" onClick={onRemove}>{T.profiles_remove}</window.Btn>
     </div>
   </div>
 );

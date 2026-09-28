@@ -85,7 +85,7 @@ grep -qiE "used|redeemed|expired|enrol" /tmp/e2e-reimport.log \
 
 log "client: connect (background) and wait for the handshake"
 "${COMPOSE[@]}" exec -T -d client sh -c 'outwarp connect > /tmp/connect.out 2>&1'
-IFACE=$(cli python3 -c "import json;print(json.load(open('/root/.config/OutWarp/config.json'))['wireguard']['tunnel_name'])")
+IFACE=$(cli python3 -c "from outwarp.config import ClientConfig, default_config_path; print(ClientConfig.load(default_config_path()).wireguard.tunnel_name)")
 for i in $(seq 1 60); do
     hs=$(cli sh -c "wg show ${IFACE} latest-handshakes 2>/dev/null | awk '{print \$2}'" || echo 0)
     if [[ -n "${hs:-}" && "${hs}" != "0" ]]; then break; fi
@@ -106,6 +106,9 @@ grep -q "dev ${IFACE}" <<<"$route" || fail "1.1.1.1 is not routed via ${IFACE}"
 log "client: counters move"
 rx=$(cli sh -c "wg show ${IFACE} transfer | awk '{print \$2}'")
 [[ "${rx:-0}" -gt 0 ]] || fail "rx counter is 0"
+
+log "client: the import became the active profile"
+cli outwarp profile list | grep -q '^\* ' || fail "no active profile after import"
 
 log "server: disable-client takes the peer off, enable-client brings it back"
 peers() { srv sh -c "wg show wg0 peers | wc -l"; }

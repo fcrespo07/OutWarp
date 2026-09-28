@@ -87,9 +87,11 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       (WSL2) + the `server/Dockerfile` image, a ready `compose.yml` and a
       guide in `deploy/README.md`; native SCM stays as the alternative. The
       image is already published to ghcr.io — make sure it is pullable.
-- [ ] **Multiple (non-simultaneous) profiles in one client.** Moved out of
-      "not blocking": it changes the `config.json` shape that 1.0 freezes.
-      See "Multi-profile support" below.
+- [x] **Multiple (non-simultaneous) profiles in one client.** *(Done
+      2026-09-28: `profiles/<id>/config.json` + `active_profile`, automatic
+      migration, `outwarp profile list|use|remove`, GUI list, tray submenu,
+      `P` in the TUI.)* Moved out of "not blocking": it changes the
+      `config.json` shape that 1.0 freezes.
 - [ ] **UI in 5 languages**, not just Spanish and English: English,
       Mandarin Chinese (Simplified), Spanish, French and Portuguese. All
       surfaces (GUIs, web panel, TUIs, CLI, notifications), system-language
@@ -120,7 +122,7 @@ Items marked *(added)* joined the gate with this plan. 👤 marks a task for the
 - **Phase 1 — What freezes → 0.16.0**, in this order:
   1. Enable/disable clients, with an e2e case.
   2. i18n infrastructure, en/es only. *(Done 2026-09-28: shared JS resolver, Python catalogs for tray, notifications, API messages and both TUIs; CLI messages and the `setup` wizard stay English until phase 3.)*
-  3. Multi-profile.
+  3. Multi-profile. *(Done 2026-09-28.)*
 - **Phase 2 — Product → 0.17.0/0.18.0.**
   - UI/UX polish, ending in a string freeze.
   - Windows server via Docker, which can run in parallel with any phase.
@@ -183,14 +185,9 @@ These landed as code with tests:
 ## Planned — larger reworks
 
 ### Multi-profile support
-**Part of the 1.0 gate since 2026-09-25** (non-simultaneous: one active
-tunnel at a time).
-Today the client holds a single active `config.json`. The API methods
-(`list_profiles`, `set_active_profile`, `remove_profile`) exist as single-profile
-stubs so the UI renders uniformly; the real work is a profile store on disk
-(a `profiles/` subdirectory with one `config_<id>.json` per entry), a
-per-profile `TunnelManager`, a switcher in the UI and tray, and a migration for
-the current single-profile layout.
+Done in 0.16 (see "Before 1.0"): one active tunnel at a time, a profile per
+directory under `profiles/`, switched from the GUI, the tray, the TUI (`P`)
+or `outwarp profile use <id>`.
 
 ### Split tunnelling (per-app / per-domain)
 Bypass IPs already carve routes out of the tunnel. True per-application routing

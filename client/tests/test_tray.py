@@ -118,3 +118,40 @@ def test_x11_safe_title_strips_emdash() -> None:
 
     # ASCII passes through unchanged (avoids unnecessary work in the hot path).
     assert _x11_safe_title("OutWarp connected") == "OutWarp connected"
+
+
+def test_tray_profile_submenu_lists_profiles_and_switches(monkeypatch) -> None:
+    import sys
+    import threading
+    import types
+
+    class _Item:
+        def __init__(self, text, action, checked=None, radio=False):
+            self.text, self.action, self.radio = text, action, radio
+            self.checked = checked(self) if checked else None
+
+    monkeypatch.setitem(sys.modules, "pystray", types.SimpleNamespace(MenuItem=_Item))
+    api = MagicMock()
+    api.list_profiles.return_value = [
+        {"id": "casa", "name": "Casa", "active": True},
+        {"id": "trabajo", "name": "Trabajo", "active": False},
+    ]
+    tray = TrayApp(manager=None, on_show=lambda: None, on_quit=lambda: None, api=api)
+    items = list(tray._profile_items())
+    assert [i.text for i in items] == ["Casa", "Trabajo"]
+    assert [i.checked for i in items] == [True, False]
+    assert all(i.radio for i in items)
+
+    ran = threading.Event()
+    api.set_active_profile.side_effect = lambda pid: ran.set()
+    items[1].action(None, None)
+    assert ran.wait(2)
+    api.set_active_profile.assert_called_once_with("trabajo")
+
+
+def test_tray_follows_the_last_profile_being_removed() -> None:
+    tray = TrayApp(manager=MagicMock(), on_show=lambda: None, on_quit=lambda: None)
+    tray._icon = MagicMock()
+    tray.update_manager(None)
+    assert tray._manager is None
+    assert "OutWarp" in tray._icon.title

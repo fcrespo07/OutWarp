@@ -874,7 +874,11 @@ class TunnelManager:
             gateway = self._tunnel.platform.get_default_gateway()
         except Exception:
             gateway = ""
-        return network_signature(gateway)
+        net = network_signature(gateway)
+        # The winning rung depends on the server as much as on the network:
+        # with several profiles, each server remembers its own.
+        server = self._config.server
+        return f"{server.endpoint}:{server.port}@{net}" if net else ""
 
     def _run(self) -> None:
         attempt = 0

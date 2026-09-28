@@ -32,7 +32,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from outwarp import killswitch, updater
+from outwarp import killswitch, profiles, updater
 from outwarp.config import (
     ClientConfig,
     ConfigError,
@@ -70,12 +70,6 @@ _RESIZE_HT = {
 }
 
 
-# Path resolver kept local so test patches on `outwarp.api.default_config_path`
-# continue to redirect settings I/O. The shared `outwarp.settings` module
-# accepts an explicit `path` argument that we forward here. KEEP THIS LINE
-# in sync with `outwarp.settings.settings_path` — both must derive the file
-# from `default_config_path().parent / "settings.json"`; diverging silently
-# would let one UI write to a file the other UI never reads.
 _SERVICE_MANAGED_MSG = (
     "The tunnel is run by the background service (outwarp-client.service). "
     "Turn it off in Settings → System to control the tunnel from here."
@@ -94,7 +88,10 @@ def _last_line(lines: list[str]) -> str:
 
 
 def _settings_path() -> Path:
-    return default_config_path().parent / "settings.json"
+    # One settings.json for every profile, the same file the TUI reads.
+    from outwarp.settings import settings_path
+
+    return settings_path()
 
 
 def _load_settings() -> dict[str, Any]:
@@ -124,7 +121,7 @@ def _autostart_command() -> list[str]:
     return [sys.executable, "-m", "outwarp"]
 
 
-def _profile_from_config(cfg: ClientConfig) -> dict[str, Any]:
+def _profile_from_config(cfg: ClientConfig, profile_id: str | None = None) -> dict[str, Any]:
     """Public-facing projection of a ClientConfig — no private keys.
 
     Includes the user-editable fields so the profile editor in the UI can be
@@ -132,9 +129,9 @@ def _profile_from_config(cfg: ClientConfig) -> dict[str, Any]:
     """
     wg = cfg.wireguard
     return {
-        # id stays tied to the OS interface name (stable); name is the
-        # server-assigned, user-editable display label.
-        "id": wg.tunnel_name or cfg.server.endpoint,
+        # id is the profile's directory (outwarp/profiles.py), stable across
+        # renames; name is the server-assigned, user-editable display label.
+        "id": profile_id or wg.tunnel_name,
         "name": cfg.name or wg.tunnel_name or cfg.server.endpoint,
         "endpoint": f"{cfg.server.endpoint}:{cfg.server.port}",
         # For a CA-mode profile there is no pin to show; the UI renders the
@@ -414,7 +411,9 @@ class Api:
     def _active_profile_id(self) -> str | None:
         if self._manager is None:
             return None
-        return _profile_from_config(self._manager.config)["id"]
+        # No profiles/ entry means the pre-0.16 config.json is still in use
+        # (its migration failed); fall back to the id it always had.
+        return profiles.active_id() or self._manager.config.wireguard.tunnel_name
 
     def _error_str(self) -> str | None:
         """Last failure reason for the active tunnel, or None. Coerced to str so
@@ -536,12 +535,25 @@ class Api:
     # ── profiles ──────────────────────────────────────────────────────────────
 
     def list_profiles(self) -> list[dict[str, Any]]:
-        # Single-profile model: returns either 0 entries (no profile imported)
-        # or 1 (the active one). The list shape is kept so the UI can render
-        # uniformly and so a future multi-profile rework doesn't break callers.
-        if self._manager is None:
-            return []
-        return [_profile_from_config(self._manager.config)]
+        """Every imported profile, the active one flagged. The active one is
+        read from the running manager, so unsaved-to-disk state never lags."""
+        active = profiles.active_id()
+        out: list[dict[str, Any]] = []
+        for ref in profiles.list_profiles():
+            if ref.id == active and self._manager is not None:
+                cfg = self._manager.config
+            else:
+                try:
+                    cfg = ClientConfig.load(ref.path)
+                except ConfigError as exc:
+                    log.warning("profile %s is unreadable: %s", ref.id, exc)
+                    continue
+            out.append({**_profile_from_config(cfg, ref.id), "active": ref.id == active})
+        if not out and self._manager is not None:
+            # Pre-0.16 config.json still in use (see _active_profile_id).
+            cfg = self._manager.config
+            out.append({**_profile_from_config(cfg, self._active_profile_id()), "active": True})
+        return out
 
     # An .owcfg is a small JSON document (~1–2 KB). Anything past this is either
     # a wrong file the user dropped or a malformed paste — reject before parsing.
@@ -571,34 +583,20 @@ class Api:
             # — import_owcfg_text would otherwise resolve its own
             # ``outwarp.config.default_config_path`` and clobber the real
             # user config (we hit that during local validation).
-            cfg, trust_verdict = import_owcfg_text_with_verdict(
-                file_content, dest=default_config_path()
-            )
+            # No dest: a new profile, or the same one re-issued, becomes the
+            # active one (outwarp/profiles.py).
+            cfg, trust_verdict = import_owcfg_text_with_verdict(file_content)
         except ConfigError as exc:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:
             log.exception("import_profile failed")
             return {"ok": False, "error": str(exc)}
 
-        # Swap manager: stop old, create new, notify the orchestrator.
-        old = self._manager
-        if old is not None:
-            old.stop()
-        new_manager = TunnelManager(
-            cfg,
-            allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False)),
-            auto_reconnect=bool(self._settings.get("auto_reconnect", True)),
-            kill_switch_enabled=bool(self._settings.get("kill_switch", False)),
-        )
-        new_manager.add_listener(self._on_state_change)
-        self._manager = new_manager
-        if self._on_manager_replaced is not None:
-            try:
-                self._on_manager_replaced(new_manager)
-            except Exception:
-                log.exception("on_manager_replaced raised")
+        # Swap manager: stop old, create new, notify the orchestrator, connect.
+        self._stop_manager()
+        self._install_manager(cfg).start()
 
-        prof = _profile_from_config(cfg)
+        prof = _profile_from_config(cfg, profiles.active_id())
         self._record_log("info", f"profile imported: {prof['name']}")
         log_level = "warning" if trust_verdict.status != "verified" else "info"
         self._record_log(log_level, f"profile signature: {trust_verdict.message}")
@@ -610,23 +608,79 @@ class Api:
         }
 
     def remove_profile(self, profile_id: str) -> dict[str, Any]:
-        # Single-profile model: `profile_id` is ignored. There is at most one
-        # active config, so "remove" means stop the tunnel and forget it.
-        if self._manager is None:
-            return {"ok": True}
-        self._manager.stop()
-        self._manager = None
+        """Delete a profile. Removing the active one disconnects it and makes
+        the next profile active (disconnected), or leaves none."""
+        if self._service_managed:
+            return {"ok": False, "error": _SERVICE_MANAGED_MSG}
+        if profile_id not in {p.id for p in profiles.list_profiles()}:
+            return {"ok": False, "error": f"no profile '{profile_id}'"}
+        was_active = profile_id == profiles.active_id()
+        if was_active:
+            self._stop_manager()
         try:
-            default_config_path().unlink(missing_ok=True)
+            new_active = profiles.remove(profile_id)
         except OSError as exc:
-            log.warning("could not delete config: %s", exc)
+            return {"ok": False, "error": str(exc)}
+        if was_active:
+            self._load_active_manager(new_active)
+        self._record_log("info", f"profile removed: {profile_id}")
         self._emit("status", self._status_payload())
-        return {"ok": True}
+        return {"ok": True, "active_profile_id": new_active}
 
     def set_active_profile(self, profile_id: str) -> dict[str, Any]:
-        # Single-profile model: there is nothing to switch between. Accept and
-        # ignore so the UI can call this without special-casing.
-        return {"ok": True}
+        """Switch profiles. Only one tunnel at a time: the current one is
+        disconnected and the new profile is left disconnected."""
+        if self._service_managed:
+            return {"ok": False, "error": _SERVICE_MANAGED_MSG}
+        if profile_id == profiles.active_id() and self._manager is not None:
+            return {"ok": True}
+        try:
+            cfg = ClientConfig.load(profiles.config_path(profile_id))
+            self._stop_manager()
+            profiles.set_active(profile_id)
+        except (ConfigError, profiles.ProfileError, OSError) as exc:
+            return {"ok": False, "error": str(exc)}
+        self._install_manager(cfg)
+        self._record_log("info", f"active profile: {profile_id}")
+        self._emit("status", self._status_payload())
+        return {"ok": True, "profile": {**_profile_from_config(cfg, profile_id), "active": True}}
+
+    def _stop_manager(self) -> None:
+        old, self._manager = self._manager, None
+        if old is not None:
+            try:
+                old.stop()
+            except Exception:
+                log.exception("error stopping the previous manager")
+
+    def _load_active_manager(self, profile_id: str | None) -> None:
+        if profile_id is None:
+            self._notify_manager_replaced(None)
+            return
+        try:
+            self._install_manager(ClientConfig.load(profiles.config_path(profile_id)))
+        except ConfigError as exc:
+            log.warning("could not load profile %s: %s", profile_id, exc)
+            self._notify_manager_replaced(None)
+
+    def _install_manager(self, cfg: ClientConfig) -> TunnelManager:
+        manager = TunnelManager(
+            cfg,
+            allow_tls_intercept=bool(self._settings.get("allow_tls_intercept", False)),
+            auto_reconnect=bool(self._settings.get("auto_reconnect", True)),
+            kill_switch_enabled=bool(self._settings.get("kill_switch", False)),
+        )
+        manager.add_listener(self._on_state_change)
+        self._manager = manager
+        self._notify_manager_replaced(manager)
+        return manager
+
+    def _notify_manager_replaced(self, manager: TunnelManager | None) -> None:
+        if self._on_manager_replaced is not None:
+            try:
+                self._on_manager_replaced(manager)
+            except Exception:
+                log.exception("on_manager_replaced raised")
 
     def update_profile(self, profile_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         """Apply user edits (name, MTU, DNS, IP, routing, reconnect) to the
@@ -663,7 +717,7 @@ class Api:
             log.exception("update_profile: manager swap failed")
             return {"ok": False, "error": str(exc)}
 
-        prof = _profile_from_config(new_cfg)
+        prof = _profile_from_config(new_cfg, profiles.active_id())
         self._record_log("info", f"profile settings updated: {prof['name']}")
         return {"ok": True, "profile": prof}
 
@@ -690,7 +744,7 @@ class Api:
             log.exception("reset_profile: manager swap failed")
             return {"ok": False, "error": str(exc)}
 
-        prof = _profile_from_config(new_cfg)
+        prof = _profile_from_config(new_cfg, profiles.active_id())
         self._record_log("info", f"profile settings reset to defaults: {prof['name']}")
         return {"ok": True, "profile": prof}
 

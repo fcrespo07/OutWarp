@@ -84,9 +84,12 @@ def _cmd_import(args: argparse.Namespace) -> int:
         _err(f"Error: invalid .owcfg — {exc}")
         return 1
 
-    dest = default_config_path()
+    from outwarp import profiles
+
+    profile_id = profiles.active_id() or ""
     _print(f"Imported profile from {src}")
-    _print(f"  Saved to:  {dest}")
+    _print(f"  Profile:   {profile_id} (active)")
+    _print(f"  Saved to:  {profiles.config_path(profile_id)}")
     _print(f"  Server:    {config.server.endpoint}:{config.server.port}")
     if config.name:
         _print(f"  Name:      {config.name}")
@@ -209,6 +212,95 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 
 def _cmd_profile(args: argparse.Namespace) -> int:
+    action = getattr(args, "profile_action", None)
+    if action == "list":
+        return _profile_list()
+    if action == "use":
+        return _profile_use(args.id)
+    if action == "remove":
+        return _profile_remove(args.id, assume_yes=args.yes)
+    return _profile_show()
+
+
+def _profile_list() -> int:
+    from outwarp import profiles
+
+    refs = profiles.list_profiles()
+    if not refs:
+        _print("No profiles imported. Import one with: outwarp import <file.owcfg>")
+        return 0
+    active = profiles.active_id()
+    for ref in refs:
+        try:
+            cfg = ClientConfig.load(ref.path)
+            detail = f"{cfg.name or '(unnamed)'}  {cfg.server.endpoint}:{cfg.server.port}"
+            if cfg.is_expired():
+                detail += f"  (expired {cfg.expires_at})"
+        except ConfigError as exc:
+            detail = f"(unreadable: {exc})"
+        _print(f"{'*' if ref.id == active else ' '} {ref.id:<24} {detail}")
+    return 0
+
+
+def _tunnel_in_use() -> str | None:
+    """Who runs the tunnel right now, if anyone; switching profiles under it
+    would leave it running on the profile the user just left."""
+    from outwarp.ownership import TunnelOwnerLock, describe_owner
+
+    if sys.platform == "linux":
+        from outwarp.service import service_is_active
+
+        if service_is_active():
+            return "the background service (outwarp-client.service)"
+    lock = TunnelOwnerLock()
+    if lock.acquire():
+        lock.release()
+        return None
+    return describe_owner()
+
+
+def _profile_use(profile_id: str) -> int:
+    from outwarp import profiles
+
+    if profile_id not in {p.id for p in profiles.list_profiles()}:
+        _err(f"No profile '{profile_id}'. See: outwarp profile list")
+        return 1
+    if profile_id == profiles.active_id():
+        _print(f"'{profile_id}' is already the active profile.")
+        return 0
+    owner = _tunnel_in_use()
+    if owner:
+        _err(f"The tunnel is in use by {owner}. Disconnect it first, then switch profiles.")
+        return 1
+    profiles.set_active(profile_id)
+    _print(f"Active profile: {profile_id}. Connect with: outwarp connect")
+    return 0
+
+
+def _profile_remove(profile_id: str, *, assume_yes: bool) -> int:
+    from outwarp import profiles
+
+    if profile_id not in {p.id for p in profiles.list_profiles()}:
+        _err(f"No profile '{profile_id}'. See: outwarp profile list")
+        return 1
+    if profile_id == profiles.active_id():
+        owner = _tunnel_in_use()
+        if owner:
+            _err(f"'{profile_id}' is active and the tunnel is in use by {owner}. "
+                 "Disconnect it first.")
+            return 1
+    if not assume_yes:
+        answer = input(f"Delete profile '{profile_id}' and its keys? Type 'yes': ")
+        if answer.strip().lower() != "yes":
+            _print("Aborted.")
+            return 1
+    now_active = profiles.remove(profile_id)
+    _print(f"Removed '{profile_id}'."
+           + (f" Active profile: {now_active}." if now_active else " No profiles left."))
+    return 0
+
+
+def _profile_show() -> int:
     config = _load_config()
     if config is None:
         return 1
@@ -284,7 +376,8 @@ def _cmd_logs(args: argparse.Namespace) -> int:
 
 
 def _cmd_forget_profile(args: argparse.Namespace) -> int:
-    """Remove the imported profile and its baseline snapshot.
+    """Remove the active profile and its baseline snapshot (`outwarp profile
+    remove <id>` removes any profile).
 
     Does NOT touch the helper script, sudoers rule, autostart entry, or the
     pipx venv — for a full purge use ``outwarp uninstall`` instead.
@@ -323,6 +416,18 @@ def _cmd_forget_profile(args: argparse.Namespace) -> int:
             # Couldn't check — log and continue. Better to let the user delete
             # a corrupt profile than to wedge them out of cleanup.
             log.warning("Could not verify tunnel state before uninstall: %s", exc)
+
+    from outwarp import profiles
+
+    if cfg.parent.parent == profiles.profiles_dir():
+        # The active profile of several: drop it and activate the next one.
+        try:
+            now_active = profiles.remove(cfg.parent.name)
+        except (OSError, profiles.ProfileError) as exc:
+            _err(f"Could not remove {cfg.parent}: {exc}")
+            return 1
+        _print("Profile removed." + (f" Active profile: {now_active}." if now_active else ""))
+        return 0
 
     for path in (cfg, baseline):
         try:
@@ -398,7 +503,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser("status", help="Show profile summary and WireGuard state")
-    sub.add_parser("profile", help="Print full profile details")
+    p_profile = sub.add_parser(
+        "profile", help="Show the active profile, or list / switch / remove profiles",
+    )
+    p_profile_sub = p_profile.add_subparsers(dest="profile_action", metavar="<action>")
+    p_profile_sub.add_parser("show", help="Print the active profile's details (the default)")
+    p_profile_sub.add_parser("list", help="List imported profiles; * marks the active one")
+    p_use = p_profile_sub.add_parser(
+        "use", help="Make a profile the active one (disconnects the current tunnel)",
+    )
+    p_use.add_argument("id", help="Profile id, as `outwarp profile list` shows it")
+    p_rm = p_profile_sub.add_parser("remove", help="Delete a profile")
+    p_rm.add_argument("id", help="Profile id, as `outwarp profile list` shows it")
+    p_rm.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
 
     p_logs = sub.add_parser("logs", help="Show the OutWarp log file")
     p_logs.add_argument(
@@ -408,7 +525,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_forget = sub.add_parser(
         "forget-profile",
-        help="Remove the imported profile (was 'uninstall' in 0.4.x)",
+        help="Remove the active profile (see also `outwarp profile remove`)",
     )
     p_forget.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
 

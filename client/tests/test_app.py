@@ -9,6 +9,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _settings_beside_tmp_config(tmp_path, monkeypatch):
+    # settings.json is shared by every profile (outwarp/profiles.py); these
+    # tests read and seed it in tmp_path.
+    monkeypatch.setattr("outwarp.settings.settings_path", lambda: tmp_path / "settings.json")
+
+
 def _unique_lock_args() -> dict[str, str]:
     """Per-test mutex / lock-file names so the suite doesn't collide with a
     real OutWarp client running on the developer's machine."""

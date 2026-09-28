@@ -17,16 +17,13 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from outwarp.config import default_config_path
+from outwarp.profiles import app_config_dir
 
 
 def settings_path() -> Path:
-    """Return the on-disk location of ``settings.json``.
-
-    Resolved at call time from :func:`outwarp.config.default_config_path` so a
-    monkeypatch on that symbol takes effect.
-    """
-    return default_config_path().parent / "settings.json"
+    """Return the on-disk location of ``settings.json``: the app config
+    directory, shared by every profile (outwarp/profiles.py)."""
+    return app_config_dir() / "settings.json"
 
 
 def default_settings() -> dict[str, Any]:

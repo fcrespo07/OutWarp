@@ -289,6 +289,14 @@ class ClientConfig:
 
 
 def default_config_path() -> Path:
+    """The active profile's config.json (outwarp/profiles.py), or the pre-0.16
+    single-profile location when no profile exists (it does not exist either,
+    which is how callers learn nothing is imported)."""
+    from outwarp import profiles
+
+    profile_id = profiles.active_id()
+    if profile_id is not None:
+        return profiles.config_path(profile_id)
     return Path(user_config_dir(_APP_NAME)) / "config.json"
 
 
@@ -365,7 +373,6 @@ def _finish_import(config: ClientConfig, dest: Path | None, enroll: bool) -> Cli
     The import is a network call in this case, which is why the module-level
     imports stay clean: outwarp.enroll depends on this module.
     """
-    target = dest or default_config_path()
     if config.is_expired():
         raise ConfigError(
             f"this profile expired on {config.expires_at}; ask the server admin for a new one"
@@ -388,9 +395,24 @@ def _finish_import(config: ClientConfig, dest: Path | None, enroll: bool) -> Cli
                     "its enrolment listener is running (`outwarp-server doctor`), "
                     "or issue the profile with `outwarp-server add-client --embed-key`."
                 ) from exc
-    config.save(target)
+    from outwarp import profiles
+
+    profile_id = None
+    if dest is None:
+        # A new profile, or the same one re-issued: it becomes the active one.
+        profile_id = profiles.target_for_import(
+            config.name, config.server.endpoint, config.wireguard.client_address,
+        )
+        dest = profiles.config_path(profile_id)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.suppress(OSError):
+            os.chmod(dest.parent.parent, 0o700)
+            os.chmod(dest.parent, 0o700)
+    config.save(dest)
     # Snapshot the untouched import so profile editing can always be undone.
-    config.save(original_config_path(target))
+    config.save(original_config_path(dest))
+    if profile_id is not None:
+        profiles.set_active(profile_id)
     return config
 
 

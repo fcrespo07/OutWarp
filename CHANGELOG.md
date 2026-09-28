@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Several connection profiles in one client**, one active at a time.
+  Importing an .owcfg adds a profile and makes it active (re-importing the
+  same one, for the same server and tunnel address, replaces it). Switch from
+  the Profiles screen of the window, the tray's Profiles submenu, `P` in the
+  TUI or `outwarp profile use <id>`; `outwarp profile list` and `outwarp
+  profile remove <id>` complete the set. Switching disconnects the current
+  tunnel and leaves the new profile disconnected. Existing installs are
+  migrated automatically: the single `config.json` becomes the first
+  profile under `profiles/`. Settings stay shared by every profile.
 - **Language follows the system, and everything is translatable.** The
   `language` setting is now `auto` by default (the system's language, or the
   browser's in the web panel) or an explicit language; any text a language

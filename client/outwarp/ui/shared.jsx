@@ -45,7 +45,7 @@ const STR = {
 
     // Nav / sections
     nav_home: "Conexión",
-    nav_profiles: "Perfil",
+    nav_profiles: "Perfiles",
     nav_logs: "Registro",
     nav_settings: "Ajustes",
     nav_about: "Acerca de",
@@ -110,10 +110,14 @@ const STR = {
     logs_filter: "Filtrar…",
 
     // Profiles
-    profiles_title: "Perfil",
-    profiles_add: "Reemplazar perfil",
+    profiles_title: "Perfiles",
+    profiles_add: "Añadir perfil",
     profiles_active: "Activo",
-    profiles_replaceWarn: "Ya tienes una conexión configurada. Importar otra reemplazará la actual. ¿Continuar?",
+    profiles_use: "Usar",
+    profiles_switchTitle: "Cambiar de perfil",
+    profiles_switchConfirm: "Cambiar a «{name}» desconecta el túnel actual.",
+    profiles_importHint: "Importar un .owcfg añade un perfil y lo activa. Si es del mismo servidor y dispositivo que uno que ya tienes, lo sustituye.",
+    profiles_expired: "Caducado",
 
     // Profile editor
     edit_title: "Ajustes del perfil",
@@ -148,8 +152,7 @@ const STR = {
     confirm_reset: "Reiniciar",
     profiles_remove: "Eliminar",
     profiles_removeTitle: "Eliminar perfil",
-    profiles_removeConfirm: "¿Eliminar el perfil activo? Tendrás que importar de nuevo el .owcfg.",
-    profiles_replaceTitle: "Reemplazar conexión",
+    profiles_removeConfirm: "¿Eliminar el perfil «{name}»? Tendrás que importar de nuevo su .owcfg.",
 
     // Errors / status
     error_title: "No se pudo conectar",
@@ -244,7 +247,7 @@ const STR = {
     fingerprint: "TLS fingerprint",
 
     nav_home: "Connection",
-    nav_profiles: "Profile",
+    nav_profiles: "Profiles",
     nav_logs: "Logs",
     nav_settings: "Settings",
     nav_about: "About",
@@ -306,10 +309,14 @@ const STR = {
     logs_export: "Export",
     logs_filter: "Filter…",
 
-    profiles_title: "Profile",
-    profiles_add: "Replace profile",
+    profiles_title: "Profiles",
+    profiles_add: "Add profile",
     profiles_active: "Active",
-    profiles_replaceWarn: "You already have a connection configured. Importing another will replace the current one. Continue?",
+    profiles_use: "Use",
+    profiles_switchTitle: "Switch profile",
+    profiles_switchConfirm: "Switching to “{name}” disconnects the current tunnel.",
+    profiles_importHint: "Importing an .owcfg adds a profile and makes it active. If it is for the same server and device as one you have, it replaces that one.",
+    profiles_expired: "Expired",
 
     edit_title: "Profile settings",
     edit_sub: "Connection values assigned by your server.",
@@ -342,8 +349,7 @@ const STR = {
     confirm_reset: "Reset",
     profiles_remove: "Remove",
     profiles_removeTitle: "Remove profile",
-    profiles_removeConfirm: "Remove the active profile? You'll need to import the .owcfg again.",
-    profiles_replaceTitle: "Replace connection",
+    profiles_removeConfirm: "Remove the profile “{name}”? You'll need to import its .owcfg again.",
 
     error_title: "Couldn't connect",
     error_genericBody: "It may be a TLS fingerprint mismatch, an unreachable endpoint or a WireGuard failure.",

@@ -33,6 +33,13 @@ _VALID_OWCFG = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _settings_beside_tmp_config(tmp_path, monkeypatch):
+    # settings.json is shared by every profile (outwarp/profiles.py); these
+    # tests read and seed it in tmp_path.
+    monkeypatch.setattr("outwarp.settings.settings_path", lambda: tmp_path / "settings.json")
+
+
 def _make_api(manager=None):
     handler = MemoryLogHandler()
     return Api(handler, manager), handler

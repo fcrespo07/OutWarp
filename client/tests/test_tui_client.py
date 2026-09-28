@@ -509,3 +509,68 @@ def test_disconnect_during_shutdown_does_not_push_a_screen() -> None:
     # Quitting stops the manager; the DISCONNECTED it reports arrives after the
     # screens are gone.
     assert _route(running=False).call_args_list[-1].args == ("connecting",)
+
+
+def test_switch_profile_leaves_the_new_one_disconnected(tmp_path: Path, monkeypatch) -> None:
+    """P → Enter on another profile: the current tunnel stops and the new
+    profile waits on the dashboard; nothing auto-connects."""
+    import copy
+    from unittest.mock import MagicMock, patch
+
+    from outwarp import profiles
+    from outwarp.config import import_owcfg_text
+
+    raw = json.loads(_write_owcfg(tmp_path).read_text())
+    import_owcfg_text(json.dumps(raw), enroll=False)
+    other = copy.deepcopy(raw)
+    other["name"] = "work"
+    other["server"]["endpoint"] = "198.51.100.7"
+    import_owcfg_text(json.dumps(other), enroll=False)
+    first = [p.id for p in profiles.list_profiles() if p.id != profiles.active_id()][0]
+
+    app = OutWarpClientTUI()
+    old_manager = MagicMock()
+    app.manager = old_manager
+    new_manager = MagicMock()
+    with patch("outwarp.tui.app.TunnelManager", return_value=new_manager), \
+         patch.object(app, "_push_unique") as push, patch.object(app, "notify"):
+        app.switch_profile(first)
+
+    old_manager.stop.assert_called_once()
+    new_manager.start.assert_not_called()
+    push.assert_called_with("dashboard")
+    assert profiles.active_id() == first
+    assert app.config.server.endpoint != "198.51.100.7"
+
+
+def test_removing_the_last_profile_goes_back_to_the_empty_screen(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock, patch
+
+    from outwarp import profiles
+    from outwarp.config import import_owcfg
+
+    import_owcfg(_write_owcfg(tmp_path), enroll=False)
+    app = OutWarpClientTUI()
+    app.manager = MagicMock()
+    with patch.object(app, "_push_unique") as push:
+        app.remove_profile(profiles.active_id())
+    assert profiles.list_profiles() == []
+    push.assert_called_with("empty")
+
+
+@pytest.mark.asyncio
+async def test_profiles_modal_opens_and_lists(tmp_path: Path, monkeypatch) -> None:
+    from outwarp.config import import_owcfg
+    from outwarp.tui.modals.profiles import ProfilesModal
+
+    import_owcfg(_write_owcfg(tmp_path), enroll=False)
+    app = OutWarpClientTUI()
+    monkeypatch.setattr(app, "reload_config", lambda: None)
+    async with app.run_test() as pilot:
+        app.push_screen(ProfilesModal())
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, ProfilesModal)
+        assert len(app.screen._refs) == 1
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, ProfilesModal)

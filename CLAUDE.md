@@ -211,7 +211,7 @@ El servidor genera **un fichero `.owcfg` por cliente** (formato JSON). Cada `.ow
 
 **El `.owcfg` es sensible**: contiene la clave privada WireGuard del cliente. Quien tenga el fichero ES ese cliente. Tratarlo como una credencial.
 
-El cliente, al importar el `.owcfg`, lo guarda como `config.json` en la ruta de configuración del usuario (`%APPDATA%\OutWarp\` en Windows, `~/.config/outwarp/` en Linux).
+El cliente, al importar el `.owcfg`, lo guarda como un **perfil**: `profiles/<id>/config.json` (más `config.original.json`, la copia tal cual se importó) en la ruta de configuración del usuario (`%APPDATA%\OutWarp\` en Windows, `~/.config/OutWarp/` en Linux), y lo marca activo en `active_profile`. Puede haber varios; solo uno activo a la vez. Reimportar el mismo perfil (mismo servidor y misma IP de túnel) lo sustituye.
 
 ### Comandos del servidor
 
@@ -306,7 +306,7 @@ Legado (hecho):
 - [ ] **Pulido general de UI/UX.** Pasada de coherencia y acabado en GUI cliente, GUI servidor, panel web y TUIs (estados vacíos/error, textos, i18n — hay strings en español fijo en la GUI —, accesibilidad, paridad de funciones entre superficies).
 - [x] **Login del dashboard más cómodo.** *(Hecho 2026-09-26 — decisión del autor: se queda el token de admin, sin usuario/contraseña, passkeys ni acceso por el túnel.)* Dos arreglos: (A) "Mantener la sesión" funcionaba mal por partida doble — la cookie no llevaba `Max-Age` (el navegador la borraba al cerrarse) y las sesiones vivían solo en memoria (cualquier reinicio del panel echaba al admin). Ahora `SessionStore` persiste en `panel_sessions.json` (0600, solo `sha256(session id)`), cada sesión va atada al token vigente (rotarlo con `admin-token --rotate` las mata todas) y la cookie dura 30 días con la casilla marcada. (B) El formulario de login lleva `username` fijo + `autocomplete="current-password"` para que navegador y gestores de contraseñas guarden y rellenen el token. Opciones evaluadas y descartadas por ahora: acceso sin login para clientes admin dentro del túnel, enlace de un solo uso por CLI, usuario+contraseña+TOTP, passkeys (no funcionan con IP ni cert autofirmado).
 - [ ] **Servidor Windows vía Docker como camino recomendado.** Documentar el despliegue en Windows con Docker Desktop (backend WSL2) usando la imagen de `server/Dockerfile`, con un `compose.yml` listo para arrancar el servicio (volumen de config, `NET_ADMIN`, `/dev/net/tun`, puerto 443) y la guía en `deploy/README.md`. El SCM nativo queda como alternativa. La imagen ya se publica en `ghcr.io` (`docker-publish.yml`): verificar que el paquete es público/descargable sin login cuando el repo lo sea y referenciarla en la guía.
-- [ ] **Varios perfiles en un mismo cliente (no simultáneos).** Sale de "NO bloqueante": cambia la forma de `config.json` (store `profiles/` con un fichero por perfil + perfil activo), que se congela en 1.0. Selector en GUI, tray, TUI y CLI (`outwarp profile list|use|remove`, a confirmar), migración idempotente del layout de un solo perfil, un solo túnel activo a la vez (cambiar de perfil desconecta el actual). Los stubs `list_profiles`/`set_active_profile`/`remove_profile` de `api.py` ya existen. Ver `ROADMAP.md` → "Multi-profile support".
+- [x] **Varios perfiles en un mismo cliente (no simultáneos).** *(Hecho 2026-09-28: `outwarp/profiles.py`, `profiles/<id>/config.json` + `active_profile`, migración automática del `config.json` único, `outwarp profile list|use|remove`, lista en la pantalla Perfiles de la GUI, submenú en la bandeja, `P` en la TUI. Cambiar de perfil desconecta y deja el nuevo desconectado; con el servicio de Linux activo se rechaza.)* Sale de "NO bloqueante": cambia la forma de `config.json` (store `profiles/` con un fichero por perfil + perfil activo), que se congela en 1.0. Selector en GUI, tray, TUI y CLI (`outwarp profile list|use|remove`, a confirmar), migración idempotente del layout de un solo perfil, un solo túnel activo a la vez (cambiar de perfil desconecta el actual). Los stubs `list_profiles`/`set_active_profile`/`remove_profile` de `api.py` ya existen. Ver `ROADMAP.md` → "Multi-profile support".
 - [ ] **Interfaz en 5 idiomas: inglés, chino mandarín (simplificado), español, francés y portugués.** Decisión del autor (2026-09-25), no solo español e inglés. Cubre GUI cliente/servidor (`STR`/`SRV_STR` en `shared.jsx`/`srv-data.jsx`), panel web, TUIs, mensajes de CLI y notificaciones, con selección automática por idioma del sistema y selector manual. Implica: sacar a i18n los strings hoy fijos; fuentes de respaldo para chino, porque Geist no tiene glifos CJK; en las TUIs, anchura doble de CJK; textos más largos en francés/portugués que no rompan layouts. Traducciones revisadas por un hablante nativo, no solo automáticas. Sale de "NO bloqueante" ("más idiomas").
 - [ ] **Auditoría general justo antes de 1.0.** Cuando todo lo anterior esté en verde y sobre el commit candidato: seguridad, UI/UX, bugs y robustez, en cliente y servidor y en todas las plataformas. Los hallazgos van a `KNOWN_BUGS.md`; los críticos/altos se corrigen antes de publicar (criterio "sin bugs 🔴"), el resto se clasifica explícitamente como 1.x.
 - [ ] **Release firmada y un ciclo sin hotfix.** 1.0.0 sale con `SHA256SUMS.txt.minisig` el mismo día (la clave está offline, en la máquina del autor; ver `docs/RELEASE_SIGNING.md`) y después de que la última 0.x lleve 2–4 semanas en producción (el pod k3s del autor) sin hotfix.
@@ -322,7 +322,7 @@ Legado (hecho):
 - **Fase 1 — Lo que se congela → 0.16.0 (quizá también 0.17.0)**, en este orden:
   1. Activar y desactivar clientes, con un caso en el e2e.
   2. Infraestructura de i18n solo en/es: extraer los textos fijos, detección del idioma más selector, fallback a inglés, fuente CJK, anchura doble en las TUIs. *(Hecho 2026-09-28: `ui-shared/i18n.jsx` en las dos web UIs; `outwarp/i18n.py` y `outwarp_server/i18n.py` con `locales/{en,es}.py` para bandeja, notificaciones, mensajes de la API y las TUIs; tests de paridad. Pendiente para la fase 3: los mensajes de la CLI y los textos del wizard `setup`, que siguen en inglés.)*
-  3. Varios perfiles, con migración idempotente; revisar el kill switch, el sticky store, `dnscache` y `known_servers.json` por perfil.
+  3. Varios perfiles, con migración idempotente; revisar el kill switch, el sticky store, `dnscache` y `known_servers.json` por perfil. *(Hecho 2026-09-28: kill switch y `dnscache`/`known_servers.json` siguen globales (van por servidor); el sticky store pasa a ir por servidor + red.)*
 - **Fase 2 — Producto → 0.17.0/0.18.0.**
   - Pulido de UI/UX, que termina con los **textos congelados**.
   - Servidor Windows vía Docker; se puede hacer en paralelo con cualquier fase.
@@ -389,6 +389,11 @@ Legado (hecho):
 - **Releases inmutables** (ajuste del repo): una release publicada no admite cambios de assets ni de tag. `release.yml` / `release.sh` solo crean **borradores** (wheels + instaladores Windows vía `windows-installer.yml` como workflow reutilizable); el autor firma con `scripts/sign_release.py` y publica con `scripts/publish_release.py` (Python, funcionan en Windows), que verifica assets, hashes y firma antes. Ningún agente publica una release. Detalle en `docs/RELEASE_SIGNING.md`.
 - **Dos claves de release de confianza** (desde 0.15.0): principal `A2E04F7F69ABA94F` (`outwarp-release.pub`, firma cada release) y respaldo `C864B6A98619FAC9` (`outwarp-release-backup.pub`, secreta solo offline), generadas el 2026-09-28; `minisign.verify_any` elige por key ID. La primera clave, `3E1FCD8BF652EC28`, se perdió el 2026-09-26 sin copia: los 0.11–0.14 tienen que actualizarse a mano una vez. Nunca volver a una sola clave. Las secretas nunca en CI ni en un secreto de GitHub.
 
+**Perfiles (cliente)**
+- `outwarp/profiles.py`: `profiles/<id>/config.json` + `active_profile`. `config.default_config_path()` devuelve el del perfil activo, así que todo lo que carga "la config" carga el activo sin saber de perfiles. La migración del `config.json` único es perezosa e idempotente (la dispara cualquier proceso al preguntar por el perfil activo).
+- Globales, no por perfil: `settings.json`, `known_servers.json` y `resolved_hosts.json` (van por servidor). El sticky store de la escalera va por servidor + red.
+- Un solo túnel: cambiar o borrar el perfil activo para el manager y deja el nuevo desconectado (la API, la TUI y la CLI igual). Con el servicio de Linux llevando el túnel, cambiar de perfil se rechaza con un mensaje.
+
 **Idiomas (i18n)**
 - Web UIs: tablas `STR` (`shared.jsx`) y `DS_STR` (`dash-data.jsx`) resueltas con `ui-shared/i18n.jsx` (`OWi18n`, incluido en los dos bundles). Python: `outwarp/i18n.py` / `outwarp_server/i18n.py` + `locales/<lang>.py` (una tabla plana por idioma; añadir un idioma = un fichero más y su código en `LANGS`, en JS y en Python).
 - Ajuste `language`: `auto` (por defecto) o un código. Orden en Python: `OUTWARP_LANG` > ajuste explícito > lo que resolvió la ventana (`set_ui_language`) > locale del sistema > inglés. Clave que falte → inglés.
@@ -449,7 +454,7 @@ Eventos:
 
 ### Persistencia de settings
 
-`outwarp.api` guarda `settings.json` junto al `config.json` del usuario (`%APPDATA%\OutWarp\` o `~/.config/OutWarp/`). `outwarp_server.api` usa `gui_settings.json` dentro de `default_config_dir()`.
+`outwarp.api` guarda `settings.json` en la raíz de la configuración del usuario (`%APPDATA%\OutWarp\` o `~/.config/OutWarp/`), común a todos los perfiles. `outwarp_server.api` usa `gui_settings.json` dentro de `default_config_dir()`.
 
 ### Modo avanzado
 

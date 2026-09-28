@@ -212,3 +212,17 @@ ModalScreen {
     border: tall $brand;
     height: auto;
 }
+
+#profiles-modal {
+    width: 80;
+    height: auto;
+    background: $bg2;
+    border: thick $brand;
+    padding: 1 2;
+}
+
+#profiles-modal ListView {
+    height: auto;
+    max-height: 12;
+    margin: 1 0;
+}
