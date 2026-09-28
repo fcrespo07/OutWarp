@@ -12,7 +12,8 @@ name: Release
 # See docs/RELEASE_SIGNING.md.
 #
 # Triggers:
-#   - push of a v* tag      → drafts that tag.
+#   - push of a v* tag      → drafts that tag (skipped if that release is
+#                             already published: publishing creates the tag).
 #   - workflow_dispatch     → (re)draft any tag that is not published yet.
 #
 # Release notes come from the matching `## [x.y.z]` section in CHANGELOG.md,
@@ -31,7 +32,35 @@ permissions:
   contents: write
 
 jobs:
+  # Publishing a draft that was created with --target makes GitHub create the
+  # tag at that moment, and that tag push fires this workflow again. The
+  # release is then already published (and immutable), so there is nothing
+  # to draft: skip instead of failing. A dispatch still fails loudly below.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.published.outputs.skip }}
+    steps:
+      - name: Skip a tag push for an already-published release
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          skip=false
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            if draft=$(gh release view "$tag" --json isDraft -q .isDraft 2>/dev/null) \
+                && [ "$draft" = "false" ]; then
+              echo "::notice::$tag is already published (its tag was created by publishing); nothing to draft."
+              skip=true
+            fi
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: check
+    if: needs.check.outputs.skip != 'true'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
