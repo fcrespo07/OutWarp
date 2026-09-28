@@ -82,7 +82,7 @@ def validate_client_name(name: str) -> str:
     return cleaned
 
 
-_CLIENT_STATES = ("active", "revoked")
+_CLIENT_STATES = ("active", "disabled", "revoked")
 
 
 @dataclass(frozen=True)
@@ -99,11 +99,13 @@ class ClientEntry:
     # the `prune-expired` command and the client's own refusal to import an
     # expired .owcfg.
     expires_at: str = ""
-    # 'active' | 'revoked'. Revoking sets this rather than deleting the row
-    # (client_store.py) — so "never enrolled" and "enrolled, then revoked"
-    # stay distinguishable (CONCEPTO-D). Default 'active' so every existing
-    # keyword-constructed ClientEntry(...) in the codebase and tests keeps
-    # meaning what it always has.
+    # 'active' | 'disabled' | 'revoked'. Revoking sets this rather than
+    # deleting the row (client_store.py) — so "never enrolled" and "enrolled,
+    # then revoked" stay distinguishable (CONCEPTO-D). 'disabled' is the
+    # reversible off switch: the peer leaves the interface but keeps its name,
+    # IP, keys, PSK and expiry, so enabling it again needs no new .owcfg.
+    # Default 'active' so every existing keyword-constructed ClientEntry(...)
+    # in the codebase and tests keeps meaning what it always has.
     state: str = "active"
     # ISO-8601 date the public_key first became non-empty. Empty for a
     # reservation still awaiting enrolment, and for clients migrated from a

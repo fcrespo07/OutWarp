@@ -43,6 +43,7 @@ const DS_STR = {
     idle: "Inactivo",
     offline: "Desconectado",
     pending: "Pendiente",
+    disabled: "Desactivado",
     uptime: "Uptime",
 
     // dashboard
@@ -101,6 +102,9 @@ const DS_STR = {
     detail_regen: "Regenerar .owcfg",
     detail_rotate: "Rotar claves",
     detail_revoke: "Revocar",
+    detail_disable: "Desactivar",
+    detail_enable: "Activar",
+    detail_disabled: "Desactivado — fuera del túnel hasta que lo actives; conserva IP, claves y .owcfg",
     detail_qr: "Ver QR",
     detail_download: "Descargar",
     rotateTitle: "Rotar las claves del cliente",
@@ -244,6 +248,7 @@ const DS_STR = {
     idle: "Idle",
     offline: "Offline",
     pending: "Pending",
+    disabled: "Disabled",
     uptime: "Uptime",
 
     dash_title: "Overview",
@@ -299,6 +304,9 @@ const DS_STR = {
     detail_regen: "Regenerate .owcfg",
     detail_rotate: "Rotate keys",
     detail_revoke: "Revoke",
+    detail_disable: "Disable",
+    detail_enable: "Enable",
+    detail_disabled: "Disabled — off the tunnel until you enable it; keeps its IP, keys and .owcfg",
     detail_qr: "Show QR",
     detail_download: "Download",
     rotateTitle: "Rotate client keys",

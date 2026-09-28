@@ -18,6 +18,12 @@ def _is_expired(client: ClientEntry, today: str) -> bool:
     return bool(client.expires_at) and client.expires_at < today
 
 
+def is_live_peer(client: ClientEntry, today: str) -> bool:
+    """Whether `client` belongs on the interface: enrolled, not disabled or
+    revoked, not expired. The one rule every wg-conf builder applies."""
+    return bool(client.public_key) and client.state == "active" and not _is_expired(client, today)
+
+
 class WireGuardError(RuntimeError):
     pass
 
@@ -142,14 +148,11 @@ def build_server_wg_conf_windows(config: ServerConfig) -> str:
     today = datetime.datetime.now(datetime.UTC).date().isoformat()
     for client in config.clients:
         # A client awaiting enrolment holds a reserved name, IP and PSK but no
-        # public key yet. Emitting a [Peer] without one produces a config
-        # wg-quick refuses outright, taking the whole interface down with it.
-        if not client.public_key:
-            continue
-        # Expiry is enforced here, not just by `prune-expired` or the client's
-        # own refusal to import an expired .owcfg — an edited local clock or a
-        # never-run cron job must not keep a peer live forever (CONCEPTO-D).
-        if _is_expired(client, today):
+        # public key yet: a [Peer] without one makes wg-quick refuse the whole
+        # config. Expiry is enforced here too, not just by `prune-expired` —
+        # an edited clock or a never-run cron job must not keep a peer live
+        # forever (CONCEPTO-D). A disabled client keeps its row but no peer.
+        if not is_live_peer(client, today):
             continue
         lines.append("")
         lines.append("[Peer]")
@@ -192,13 +195,9 @@ def build_server_wg_conf(config: ServerConfig) -> str:
 
     today = datetime.datetime.now(datetime.UTC).date().isoformat()
     for client in config.clients:
-        # A client awaiting enrolment holds a reserved name, IP and PSK but no
-        # public key yet. Emitting a [Peer] without one produces a config
-        # wg-quick refuses outright, taking the whole interface down with it.
-        if not client.public_key:
-            continue
-        # See build_server_wg_conf_windows: same server-enforced expiry check.
-        if _is_expired(client, today):
+        # See build_server_wg_conf_windows: pending, disabled and expired
+        # clients get no [Peer].
+        if not is_live_peer(client, today):
             continue
         lines.append("")
         lines.append("[Peer]")

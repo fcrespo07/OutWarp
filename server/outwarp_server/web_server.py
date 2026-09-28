@@ -50,7 +50,7 @@ ALLOWED_METHODS = frozenset({
     "run_diagnostics", "apply_remediation",
     "start_service", "stop_service", "restart_service",
     "list_clients", "add_client", "get_client",
-    "regenerate_owcfg", "rotate_client_keys", "revoke_client",
+    "regenerate_owcfg", "rotate_client_keys", "revoke_client", "set_client_enabled",
     "prune_expired_clients",
     "run_setup", "update_server_config", "rotate_tls_cert", "probe_external_port",
     "get_logs", "clear_logs", "get_settings", "set_settings",

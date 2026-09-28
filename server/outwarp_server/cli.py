@@ -29,6 +29,7 @@ console = Console()
 # Anything not in this set runs without a root check (--version, --help).
 _PRIVILEGED_COMMANDS = frozenset({
     "setup", "add-client", "list-clients", "revoke-client", "rotate-client",
+    "disable-client", "enable-client",
     "renew-cert", "prune-expired", "status", "restart", "uninstall", "doctor",
     "init", "serve", "tui",
     "web", "admin-token", "enroll-listener",
@@ -370,6 +371,12 @@ def _cmd_list_clients(args: argparse.Namespace) -> int:
     }
 
     for c in config.clients:
+        if c.state == "disabled":
+            table.add_row(
+                c.name, c.address, "[magenta]disabled[/magenta]", "[dim]—[/dim]",
+                "[dim]—[/dim]", "[dim]—[/dim]", c.expires_at or "[dim]never[/dim]",
+            )
+            continue
         if not c.public_key:
             # Slot reserved by add-client, not yet claimed by the client. Showing
             # it as "unknown" would read as a broken peer rather than a normal
@@ -434,6 +441,43 @@ def _cmd_revoke_client(args: argparse.Namespace) -> int:
 
     console.print(f"[green]Client '{name}' revoked.[/green]")
     return 0
+
+
+def _set_client_enabled(args: argparse.Namespace, enabled: bool) -> int:
+    from outwarp_server import operations
+
+    config = _load_config(args)
+    try:
+        result = operations.set_client_enabled(
+            config, args.name, enabled, config_path=_resolve_config_path(args)
+        )
+    except KeyError as exc:
+        console.print(f"[red]Error:[/red] {exc.args[0] if exc.args else exc}")
+        return 1
+
+    if enabled:
+        console.print(f"[green]Client '{args.name}' enabled.[/green]")
+    else:
+        console.print(
+            f"[green]Client '{args.name}' disabled.[/green] It keeps its IP and keys; "
+            f"[bold]outwarp-server enable-client {args.name}[/bold] brings it back."
+        )
+    if not result.hot_applied:
+        console.print(
+            "[yellow]WireGuard is not running; the change applies when it starts.[/yellow]"
+        )
+    if result.wg_persist_warning:
+        console.print(f"[yellow]Could not write the WireGuard config:[/yellow] "
+                      f"{result.wg_persist_warning}")
+    return 0
+
+
+def _cmd_disable_client(args: argparse.Namespace) -> int:
+    return _set_client_enabled(args, False)
+
+
+def _cmd_enable_client(args: argparse.Namespace) -> int:
+    return _set_client_enabled(args, True)
 
 
 def _cmd_rotate_client(args: argparse.Namespace) -> int:
@@ -924,6 +968,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_revoke = sub.add_parser("revoke-client", help="Revoke a client")
     p_revoke.add_argument("name", help="Client name to revoke")
 
+    p_disable = sub.add_parser(
+        "disable-client",
+        help="Take a client off the tunnel, reversibly (keeps its IP, keys and .owcfg)",
+    )
+    p_disable.add_argument("name", help="Client name to disable")
+
+    p_enable = sub.add_parser("enable-client", help="Put a disabled client back on the tunnel")
+    p_enable.add_argument("name", help="Client name to enable")
+
     p_rotate = sub.add_parser(
         "rotate-client",
         help="Generate a new WireGuard keypair + PSK for an existing client",
@@ -1267,6 +1320,8 @@ _COMMANDS: dict[str, callable] = {
     "list-clients": _cmd_list_clients,
     "revoke-client": _cmd_revoke_client,
     "rotate-client": _cmd_rotate_client,
+    "disable-client": _cmd_disable_client,
+    "enable-client": _cmd_enable_client,
     "renew-cert": _cmd_renew_cert,
     "prune-expired": _cmd_prune_expired,
     "status": _cmd_status,

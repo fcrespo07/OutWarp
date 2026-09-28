@@ -735,7 +735,13 @@ class Api:
         out = []
         for c in self._manager.config.clients:
             peer = live.get(c.public_key) if c.public_key else None
-            if not c.public_key:
+            if c.state == "disabled":
+                # Off the interface on purpose; any counters wg still holds
+                # are stale.
+                status_, age = "disabled", None
+                endpoint = None
+                rx = tx = 0
+            elif not c.public_key:
                 # Slot reserved, token not redeemed yet: there is no peer to
                 # be online or offline. Shown as its own state so an admin can
                 # tell "never enrolled" from "enrolled, not connected".
@@ -765,6 +771,7 @@ class Api:
                 "rx_bytes": rx,
                 "tx_bytes": tx,
                 "expires_at": c.expires_at,
+                "enrolled": bool(c.public_key),
                 "sampled_at": sampled_at,
             })
         return out
@@ -891,6 +898,19 @@ class Api:
         try:
             self._manager.revoke_client(name)
         except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        self._emit("clients", self.list_clients())
+        return {"ok": True}
+
+    def set_client_enabled(self, name: str, enabled: bool) -> dict[str, Any]:
+        if self._manager is None:
+            return {"ok": False, "error": "server not configured"}
+        try:
+            self._manager.set_client_enabled(name, bool(enabled))
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            log.exception("set_client_enabled failed")
             return {"ok": False, "error": str(exc)}
         self._emit("clients", self.list_clients())
         return {"ok": True}

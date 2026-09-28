@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Disable a client without revoking it.** `outwarp-server disable-client
+  <name>` takes the peer off the tunnel at once (hot-removed and dropped from
+  `wg0.conf`) but keeps its name, IP, keys, PSK and expiry;
+  `enable-client <name>` puts it back, with no re-enrolment and no new
+  `.owcfg`. Also in the server GUI and web panel (a Disable/Enable button in
+  the client detail and a "Disabled" filter), in the TUI (`d`) and in
+  `list-clients`. A disabled client that redeems its enrolment token or has
+  its keys rotated stays off until enabled. The config's client `state` gains
+  the value `disabled`.
+
 ### Changed
 - **Server dashboard: the live throughput chart and the per-client sparklines
   draw smooth curves**, like the client GUI's traffic chart, instead of a

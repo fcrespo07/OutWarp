@@ -5,7 +5,8 @@
 #   add-client → import (enrols over :443 through wstunnel's forward)
 #   → connect → WireGuard handshake → HTTP fetched over the tunnel
 #   → default route inside the tunnel → counters moving
-#   → reused token rejected → clean disconnect (no interface, no routes).
+#   → reused token rejected → disable-client cuts it off, enable-client
+#   restores it without re-enrolling → clean disconnect (no interface, no routes).
 #
 # Covers what green unit tests let through before: B-017 (self-signed cert
 # handling), B-018 (unreachable enrolment listener), B-019 (verification
@@ -105,6 +106,26 @@ grep -q "dev ${IFACE}" <<<"$route" || fail "1.1.1.1 is not routed via ${IFACE}"
 log "client: counters move"
 rx=$(cli sh -c "wg show ${IFACE} transfer | awk '{print \$2}'")
 [[ "${rx:-0}" -gt 0 ]] || fail "rx counter is 0"
+
+log "server: disable-client takes the peer off, enable-client brings it back"
+peers() { srv sh -c "wg show wg0 peers | wc -l"; }
+[[ "$(peers)" -eq 1 ]] || fail "expected 1 peer before disabling"
+srv outwarp-server --config-dir /data disable-client "${CLIENT_NAME}" >/dev/null \
+    || fail "disable-client failed"
+[[ "$(peers)" -eq 0 ]] || fail "disabled client still on wg0"
+if cli curl -fsS --max-time 5 "http://${SERVER_TUNNEL_IP}:${HTTP_PORT}/" >/dev/null 2>&1; then
+    fail "HTTP over the tunnel still works for a disabled client"
+fi
+srv outwarp-server --config-dir /data enable-client "${CLIENT_NAME}" >/dev/null \
+    || fail "enable-client failed"
+[[ "$(peers)" -eq 1 ]] || fail "enabled client not back on wg0"
+# Same keys, same .owcfg: the running client just handshakes again.
+body=""
+for i in $(seq 1 30); do
+    body=$(cli curl -fsS --max-time 3 "http://${SERVER_TUNNEL_IP}:${HTTP_PORT}/" 2>/dev/null) && break
+    sleep 1
+done
+[[ "$body" == "outwarp-e2e-ok" ]] || fail "no traffic after enable-client without re-enrolling"
 
 log "client: disconnect (SIGTERM) and verify cleanup"
 cli sh -c 'pkill -TERM -f "[o]utwarp connect" || true'

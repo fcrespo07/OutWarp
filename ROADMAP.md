@@ -64,7 +64,10 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
 - [ ] **No open 🔴 bugs in `KNOWN_BUGS.md`** on release day (today: none; the 0.14.0 audit findings are B-025…B-033, all fixed except the minor B-033).
       The 0.14.0 partial-audit findings move into `KNOWN_BUGS.md` so this
       gate covers them.
-- [ ] **Enable/disable clients from the dashboard.** A reversible `disabled`
+- [x] **Enable/disable clients from the dashboard.** *(Done 2026-09-28:
+      `outwarp-server disable-client` / `enable-client`, a toggle in the
+      client detail (GUI and web panel), a "Disabled" filter, `d` in the
+      TUI, and an e2e case.)* A reversible `disabled`
       state, distinct from the final `revoked`: the peer leaves `wg0.conf`
       but keeps name, IP, keys, PSK and expiry. GUI, web panel, TUI and CLI
       (`disable-client` / `enable-client`, names TBC).

@@ -22,6 +22,7 @@ class ClientsScreen(Screen):
         Binding("a", "add", "Add"),
         Binding("r", "revoke", "Revoke"),
         Binding("t", "rotate", "Rotate"),
+        Binding("d", "toggle_enabled", "Disable/Enable"),
         Binding("P", "prune", "Prune expired"),
         Binding("slash", "focus_search", "Search"),
         Binding("escape", "back", "Back", priority=True),
@@ -88,7 +89,9 @@ class ClientsScreen(Screen):
             if search and search not in c.name.lower():
                 continue
             peer = peers.get(c.public_key)
-            if peer is None:
+            if c.state == "disabled":
+                dot, status, hs, rx, tx, endpoint = "⊘", "disabled", "—", "—", "—", "—"
+            elif peer is None:
                 dot, status, hs, rx, tx, endpoint = "○", "unknown", "—", "—", "—", "—"
             elif peer.latest_handshake is None:
                 dot, status, hs, rx, tx, endpoint = "○", "idle", "never", "0 B", "0 B", "—"
@@ -160,6 +163,32 @@ class ClientsScreen(Screen):
                 ok_label="Revoke",
             ),
             _go,
+        )
+
+    def action_toggle_enabled(self) -> None:
+        name = self._selected_name()
+        if not name:
+            self.notify("Select a client first.", severity="warning")
+            return
+        entry = next((c for c in self.app.config.clients if c.name == name), None)
+        if entry is None:
+            self.notify(f"Client '{name}' not found.", severity="error")
+            return
+        enable = entry.state == "disabled"
+        from outwarp_server import operations
+        try:
+            operations.set_client_enabled(
+                self.app.config, name, enable, config_path=self.app.config_path,
+            )
+        except KeyError:
+            self.notify(f"Client '{name}' not found.", severity="error")
+            return
+        self.app.reload_config()
+        self.refresh_table()
+        self.notify(
+            f"'{name}' enabled." if enable
+            else f"'{name}' disabled — press d again to enable it.",
+            severity="information",
         )
 
     def action_rotate(self) -> None:

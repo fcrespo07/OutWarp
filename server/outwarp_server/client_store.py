@@ -174,6 +174,9 @@ class ClientStore:
             (public_key, psk, name),
         )
 
+    def set_state(self, name: str, state: str, *, conn: sqlite3.Connection) -> None:
+        conn.execute("UPDATE clients SET state = ? WHERE name = ?", (state, name))
+
     def soft_delete(self, name: str, *, conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE clients SET state = 'revoked' WHERE name = ?", (name,))
 

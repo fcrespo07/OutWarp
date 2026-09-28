@@ -198,6 +198,10 @@ function ClientDrawer({ T, client, lang, C, onClose, confirm }) {
       await C.refresh();
     } finally { setBusy(""); }
   };
+  const setEnabled = async (enabled) => {
+    setBusy("enable");
+    try { await C.call("set_client_enabled", client.name, enabled); await C.refresh(); } finally { setBusy(""); }
+  };
   const revoke = async () => {
     const ok = await confirm({ title: EF.tr(T.revokeTitle, { name: client.name }), body: EF.tr(T.revokeBody, { name: client.name }), danger: true, confirmLabel: T.detail_revoke });
     if (!ok) return;
@@ -228,6 +232,7 @@ function ClientDrawer({ T, client, lang, C, onClose, confirm }) {
               <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)", letterSpacing: ".08em", textTransform: "uppercase", fontFamily: "var(--font-mono)" }}>{T.detail_session}</span>
               {(client.state === "online" || client.state === "idle") && <EPill tone="good">{EIcons.bolt(11)} {T.detail_live}</EPill>}
               {client.state === "pending" && <EPill tone="warn">{T.detail_pending}</EPill>}
+              {client.state === "disabled" && <EPill tone="neutral">{T.detail_disabled}</EPill>}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>
@@ -255,6 +260,13 @@ function ClientDrawer({ T, client, lang, C, onClose, confirm }) {
               onClick={() => rotateAndDownload("regenerate_owcfg", true)}>{T.detail_regen}</EBtn>
             <EBtn kind="ghost" icon={EIcons.rotate(15)} disabled={!!busy} style={{ justifyContent: "flex-start" }}
               onClick={() => rotateAndDownload("rotate_client_keys", true)}>{T.detail_rotate}</EBtn>
+            {client.state === "disabled" ? (
+              <EBtn kind="ghost" icon={EIcons.play(15)} disabled={!!busy} style={{ justifyContent: "flex-start" }}
+                onClick={() => setEnabled(true)}>{T.detail_enable}</EBtn>
+            ) : (
+              <EBtn kind="ghost" icon={EIcons.pause(15)} disabled={!!busy} style={{ justifyContent: "flex-start" }}
+                onClick={() => setEnabled(false)}>{T.detail_disable}</EBtn>
+            )}
             <EBtn kind="danger" icon={EIcons.trash(15)} disabled={!!busy} style={{ justifyContent: "flex-start" }}
               onClick={revoke}>{T.detail_revoke}</EBtn>
           </div>

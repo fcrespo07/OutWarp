@@ -124,6 +124,8 @@ After running the server installer, the following commands are available:
 | `outwarp-server add-client <name>` | Issue a `.owcfg` for a new client (one-time enrolment token; add `--embed-key` for the legacy format) |
 | `outwarp-server list-clients` | List registered clients with their live status (online/offline, last handshake, transfer) |
 | `outwarp-server revoke-client <name>` | Remove a client and kill any outstanding enrolment token |
+| `outwarp-server disable-client <name>` | Take a client off the tunnel, reversibly: it keeps its IP, keys, expiry and `.owcfg` |
+| `outwarp-server enable-client <name>` | Put a disabled client back on the tunnel, no re-enrolment needed |
 | `outwarp-server rotate-client <name>` | Re-issue a client's keys, keeping its IP and expiry |
 | `outwarp-server renew-cert` | Reissue the self-signed TLS certificate, reusing the key so clients keep validating |
 | `outwarp-server prune-expired` | Drop clients past their `expires_at` date |

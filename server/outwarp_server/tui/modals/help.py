@@ -22,6 +22,7 @@ _LINES = [
     "  /      Search",
     "  a      Add",
     "  r      Revoke selected",
+    "  d      Disable / enable selected",
     "",
     "[bold]Doctor[/bold]",
     "  F      Apply auto-fix",

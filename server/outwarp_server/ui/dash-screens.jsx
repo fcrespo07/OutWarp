@@ -45,7 +45,8 @@ function ScreenDashboard({ C }) {
   const ui = useUI();
   const { T, live, server, go } = C;
   const online = live.totals.online, idle = live.totals.idle, offline = live.totals.offline;
-  // Pending (unenrolled) slots are not peers yet; they don't count as offline.
+  // Pending (unenrolled) and disabled clients are not peers on the interface;
+  // they don't count as offline.
   const total = online + idle + offline;
   const services = deriveServices(live.status);
   const traffic = useTraffic(C, "24h");
@@ -212,6 +213,7 @@ function ScreenClients({ C }) {
     { value: "idle", label: T.idle },
     { value: "offline", label: T.offline },
     { value: "pending", label: T.pending },
+    { value: "disabled", label: T.disabled },
   ];
   const rows = live.clients.filter((c) => {
     if (filter !== "all" && c.state !== filter) return false;

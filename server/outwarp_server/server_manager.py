@@ -386,6 +386,24 @@ class ServerManager:
             log.warning("Could not persist WG config: %s", result.wg_persist_warning)
         log.info("Client '%s' revoked", name)
 
+    def set_client_enabled(self, name: str, enabled: bool) -> None:
+        """Disable a client reversibly, or enable it again (operations.set_client_enabled)."""
+        from outwarp_server import operations
+
+        with self._lock:
+            try:
+                result = operations.set_client_enabled(
+                    self._config, name, enabled, config_path=self._config_path,
+                )
+            except KeyError as exc:
+                raise ValueError(f"Client '{name}' not found") from exc
+            self._config = result.config
+            self._config_stamp = self._current_config_stamp()
+
+        if result.wg_persist_warning:
+            log.warning("Could not persist WG config: %s", result.wg_persist_warning)
+        log.info("Client '%s' %s", name, "enabled" if enabled else "disabled")
+
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _set_state(self, state: ServerState) -> None:

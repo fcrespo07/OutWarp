@@ -91,6 +91,7 @@ Other useful subcommands inside the container:
 
 ```bash
 docker exec outwarp-server outwarp-server --config-dir /data list-clients
+docker exec outwarp-server outwarp-server --config-dir /data disable-client laptop   # reversible: enable-client
 docker exec outwarp-server outwarp-server --config-dir /data revoke-client laptop
 docker exec outwarp-server outwarp-server --config-dir /data status
 docker exec outwarp-server outwarp-server --config-dir /data doctor
@@ -188,6 +189,7 @@ Other admin commands work the same way:
 
 ```bash
 kubectl -n outwarp exec "$POD" -- outwarp-server --config-dir /data list-clients
+kubectl -n outwarp exec "$POD" -- outwarp-server --config-dir /data disable-client laptop   # reversible: enable-client
 kubectl -n outwarp exec "$POD" -- outwarp-server --config-dir /data revoke-client laptop
 kubectl -n outwarp exec "$POD" -- outwarp-server --config-dir /data doctor
 ```

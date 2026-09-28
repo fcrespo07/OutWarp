@@ -319,6 +319,8 @@ const Icons = {
   qr: (s) => IC(<><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M21 14v7M17 21h-3M21 21h-1"/></>, s),
   copy: (s) => IC(<><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/></>, s),
   rotate: (s) => IC(<><path d="M21 12a9 9 0 1 1-3-6.7L21 7"/><path d="M21 3v4h-4"/></>, s),
+  pause: (s) => IC(<><path d="M9 5v14M15 5v14"/></>, s),
+  play: (s) => IC(<><path d="M7 4l13 8-13 8z"/></>, s),
   trash: (s) => IC(<><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></>, s),
   x: (s) => IC(<><path d="M6 6l12 12M18 6L6 18"/></>, s),
   menu: (s) => IC(<><path d="M3 6h18M3 12h18M3 18h18"/></>, s),

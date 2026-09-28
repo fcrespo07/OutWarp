@@ -35,8 +35,9 @@ const ipOnly = (addr) => (addr ? String(addr).split("/")[0] : "—");
 // derived live rate + sparkline computed in useLiveData.
 function adaptClient(row, derived) {
   // "unknown" = enrolled but not on the interface right now; "pending" (no
-  // public key yet, token unredeemed) is a state of its own — there is no
-  // peer to be online or offline.
+  // public key yet, token unredeemed) and "disabled" (taken off the interface
+  // by an admin) are states of their own — there is no peer to be online or
+  // offline.
   const state = row.status === "unknown" ? "offline" : row.status;
   return {
     name: row.name,
@@ -62,7 +63,7 @@ function useLiveData() {
     ref.current = {
       status: null,
       clients: [],
-      totals: { online: 0, idle: 0, offline: 0, pending: 0, rxBps: 0, txBps: 0 },
+      totals: { online: 0, idle: 0, offline: 0, pending: 0, disabled: 0, rxBps: 0, txBps: 0 },
       rxSeries: new Array(60).fill(0),
       txSeries: new Array(60).fill(0),
       logs: [],
@@ -78,7 +79,7 @@ function useLiveData() {
   const onClients = useCallback((rows) => {
     const s = ref.current;
     const browserNow = Date.now() / 1000;
-    let totRx = 0, totTx = 0, online = 0, idle = 0, offline = 0, pending = 0;
+    let totRx = 0, totTx = 0, online = 0, idle = 0, offline = 0, pending = 0, disabled = 0;
     const adapted = (rows || []).map((row) => {
       // The server stamps each sample with the time it actually took it
       // (sampled_at). Using that instead of the browser's clock keeps the
@@ -102,6 +103,7 @@ function useLiveData() {
       if (state === "online") { online++; totRx += rxBps; totTx += txBps; }
       else if (state === "idle") idle++;
       else if (state === "pending") pending++;
+      else if (state === "disabled") disabled++;
       else offline++;
       // Normalize to 0..1 for the sparkline — see makeBoundedPeak's comment
       // (dash-data.jsx) for why a bounded peak-hold, not a raw or decaying one.
@@ -112,7 +114,7 @@ function useLiveData() {
       return adaptClient(row, { rxBps, txBps, spark: normSpark });
     });
     s.clients = adapted;
-    s.totals = { online, idle, offline, pending, rxBps: totRx, txBps: totTx };
+    s.totals = { online, idle, offline, pending, disabled, rxBps: totRx, txBps: totTx };
     s.rxSeries = s.rxSeries.slice(1).concat(totRx);
     s.txSeries = s.txSeries.slice(1).concat(totTx);
     force((x) => x + 1);

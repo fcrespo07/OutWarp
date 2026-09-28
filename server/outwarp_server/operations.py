@@ -29,6 +29,7 @@ from outwarp_server.owcfg import build_owcfg, write_owcfg
 from outwarp_server.wireguard import (
     add_peer_live,
     build_platform_wg_conf,
+    is_live_peer,
     remove_peer_live,
 )
 
@@ -62,6 +63,17 @@ class RevokeResult:
     name: str
     config: ServerConfig
     hot_removed: bool
+    wg_persist_warning: str | None
+
+
+@dataclass
+class SetEnabledResult:
+    name: str
+    enabled: bool
+    config: ServerConfig
+    # False when the live interface could not be updated (WireGuard not
+    # running); the persisted config is right either way.
+    hot_applied: bool
     wg_persist_warning: str | None
 
 
@@ -302,14 +314,17 @@ def complete_enrollment(
         if target.public_key:
             raise ValueError(f"Client '{name}' already has a registered public key.")
 
-        hot_added = True
-        try:
-            add_peer_live(client_public_key, target.address, psk=target.psk)
-        except Exception as exc:
-            log.warning(
-                "Could not hot-add enrolled peer (WireGuard may not be running): %s", exc
-            )
-            hot_added = False
+        # A slot disabled before its token was redeemed enrols (the token is
+        # already spent) but stays off the interface until it is enabled.
+        hot_added = target.state == "active"
+        if hot_added:
+            try:
+                add_peer_live(client_public_key, target.address, psk=target.psk)
+            except Exception as exc:
+                log.warning(
+                    "Could not hot-add enrolled peer (WireGuard may not be running): %s", exc
+                )
+                hot_added = False
 
         enrolled_at = _today()
         store.mark_enrolled(name, client_public_key, enrolled_at=enrolled_at, conn=conn)
@@ -401,6 +416,61 @@ def revoke_client(
     )
 
 
+def set_client_enabled(
+    config: ServerConfig,
+    name: str,
+    enabled: bool,
+    *,
+    config_path: Path,
+) -> SetEnabledResult:
+    """Disable a client (reversibly) or enable it again.
+
+    Disabling takes the peer off the interface and out of the OS wg config but
+    keeps the row — name, IP, keys, PSK, expiry — so enabling it restores the
+    same peer without re-enrolling or redistributing a .owcfg. Unlike
+    revoking, any outstanding enrolment token stays valid. Idempotent.
+
+    Raises KeyError if the name is unknown or revoked.
+    """
+    with locked_config(config_path):
+        config = ServerConfig.load(config_path)
+
+        from outwarp_server.client_store import ClientStore
+        store = ClientStore(config_path.parent / "clients.sqlite")
+
+        with store.transaction() as conn:
+            target = store.get(name, conn)
+            if target is None or target.state == "revoked":
+                raise KeyError(f"Client '{name}' not found.")
+            new_state = "active" if enabled else "disabled"
+            store.set_state(name, new_state, conn=conn)
+            updated_entry = replace(target, state=new_state)
+
+            hot_applied = True
+            try:
+                if enabled and is_live_peer(updated_entry, _today()):
+                    add_peer_live(target.public_key, target.address, psk=target.psk)
+                elif not enabled and target.public_key:
+                    remove_peer_live(target.public_key)
+            except Exception as exc:
+                log.warning(
+                    "Could not update the live interface (WireGuard may not be running): %s",
+                    exc,
+                )
+                hot_applied = False
+
+        updated = replace(config, clients=store.list_active())
+        updated.save(config_path)
+
+    return SetEnabledResult(
+        name=name,
+        enabled=enabled,
+        config=updated,
+        hot_applied=hot_applied,
+        wg_persist_warning=_persist_wg_config(updated),
+    )
+
+
 def rotate_client(
     config: ServerConfig,
     name: str,
@@ -442,20 +512,23 @@ def rotate_client(
                 raise ValueError(f"Client '{name}' not found.")
 
             hot_rotated = True
-            try:
-                remove_peer_live(target.public_key)
-            except Exception as exc:
-                log.warning(
-                    "Could not hot-remove old peer (WireGuard may not be running): %s", exc
-                )
-                hot_rotated = False
-            try:
-                add_peer_live(new_public, target.address, psk=new_psk)
-            except Exception as exc:
-                log.warning(
-                    "Could not hot-add rotated peer (WireGuard may not be running): %s", exc
-                )
-                hot_rotated = False
+            # A disabled client has no peer to swap: it gets new keys and
+            # stays off the interface.
+            if target.state == "active":
+                try:
+                    remove_peer_live(target.public_key)
+                except Exception as exc:
+                    log.warning(
+                        "Could not hot-remove old peer (WireGuard may not be running): %s", exc
+                    )
+                    hot_rotated = False
+                try:
+                    add_peer_live(new_public, target.address, psk=new_psk)
+                except Exception as exc:
+                    log.warning(
+                        "Could not hot-add rotated peer (WireGuard may not be running): %s", exc
+                    )
+                    hot_rotated = False
 
             store.update_keys(name, new_public, new_psk, conn=conn)
 
