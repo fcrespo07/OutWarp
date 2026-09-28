@@ -3,6 +3,9 @@ const { Card, SLabel, PageHead, Btn, Pill, Dot, Toggle, Segmented, Stat, Field, 
         Sparkline, AreaChart, BarSeries, Donut, KV, Icons, useUI } = window;
 const { fmtBytes, fmtBps, fmtDuration, fmtAgo, tr } = window.DSfmt;
 
+// Seconds between live throughput samples (the server's clients poll, api.py).
+const LIVE_SAMPLE_S = 2;
+
 const stateTone = (s) => s === "online" ? "good" : s === "idle" || s === "pending" ? "warn" : "neutral";
 
 const MiniKV = ({ k, v, last }) => (
@@ -109,7 +112,7 @@ function ScreenDashboard({ C }) {
         </div>
         <AreaChart rx={live.rxSeries} tx={live.txSeries} h={150} />
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--text-3)" }}>
-          <span>-60s</span><span>{T.dash_now}</span>
+          <span>-{live.rxSeries.length * LIVE_SAMPLE_S}s</span><span>{T.dash_now}</span>
         </div>
       </Card>
 

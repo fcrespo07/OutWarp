@@ -179,10 +179,11 @@ const Input = (props) => {
 // ── Sparkline ────────────────────────────────────────────────────────────
 const Sparkline = ({ data, w = 72, h = 22, color = "var(--brand-2)", fill = true }) => {
   if (!data || !data.length) return <svg width={w} height={h}/>;
+  data = window.DSfmt.smoothSeries(data, [1, 2, 1]);
   const max = Math.max(...data, 0.0001);
   const step = w / (data.length - 1);
   const pts = data.map((v, i) => [i * step, h - (v / max) * (h - 2) - 1]);
-  const d = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
+  const d = window.DSfmt.smoothPath(pts, 0, h);
   return (
     <svg width={w} height={h} style={{ display: "block", overflow: "visible" }}>
       {fill && <path d={`${d} L${w} ${h} L0 ${h} Z`} fill={`color-mix(in srgb, ${color} 16%, transparent)`}/>}
@@ -192,8 +193,10 @@ const Sparkline = ({ data, w = 72, h = 22, color = "var(--brand-2)", fill = true
 };
 
 // ── Area throughput chart (dual: rx up, tx down-mirrored) ─────────────────
-const AreaChart = ({ rx, tx, h = 150 }) => {
+const AreaChart = ({ rx: rawRx, tx: rawTx, h = 150 }) => {
   const W = 1000, P = 4;
+  const rx = window.DSfmt.smoothSeries(rawRx);
+  const tx = window.DSfmt.smoothSeries(rawTx);
   const dataMax = Math.max(...rx, ...tx, 0.0001);
   // Bounded peak-hold, not a decaying one: see window.DSfmt.makeBoundedPeak's
   // comment (dash-data.jsx). A raw per-tick max made a steady trickle of
@@ -206,13 +209,17 @@ const AreaChart = ({ rx, tx, h = 150 }) => {
   const max = holdRef.current(dataMax);
   const n = rx.length;
   const mid = h / 2;
+  // Smoothed like the client GUI's chart: the 2 s samples are noisy, and a
+  // polyline through them read as a row of spikes.
   const line = (arr, mirror) => {
     const step = (W - P * 2) / (n - 1);
-    return arr.map((v, i) => {
-      const x = P + i * step;
-      const y = mirror ? mid + (v / max) * (mid - P) : mid - (v / max) * (mid - P);
-      return `${i ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
-    }).join(" ");
+    const pts = arr.map((v, i) => [
+      P + i * step,
+      mirror ? mid + (v / max) * (mid - P) : mid - (v / max) * (mid - P),
+    ]);
+    return mirror
+      ? window.DSfmt.smoothPath(pts, mid, h - P)
+      : window.DSfmt.smoothPath(pts, P, mid);
   };
   return (
     <svg viewBox={`0 0 ${W} ${h}`} width="100%" height={h} preserveAspectRatio="none" style={{ display: "block" }}>
@@ -231,9 +238,9 @@ const AreaChart = ({ rx, tx, h = 150 }) => {
       </defs>
       <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--line)" strokeDasharray="2 5"/>
       <path d={`${line(rx)} L${W - P} ${mid} L${P} ${mid} Z`} fill="url(#owGradRx)"/>
-      <path d={line(rx)} fill="none" stroke="var(--brand)" strokeWidth="1.8"/>
+      <path d={line(rx)} fill="none" stroke="var(--brand)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
       <path d={`${line(tx, true)} L${W - P} ${mid} L${P} ${mid} Z`} fill="url(#owGradTx)"/>
-      <path d={line(tx, true)} fill="none" stroke="var(--brand-2)" strokeWidth="1.8"/>
+      <path d={line(tx, true)} fill="none" stroke="var(--brand-2)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
     </svg>
   );
 };

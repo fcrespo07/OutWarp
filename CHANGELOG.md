@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Server dashboard: the live throughput chart and the per-client sparklines
+  draw smooth curves**, like the client GUI's traffic chart, instead of a
+  spiky polyline. The 2 s samples are drawn through a light moving average
+  (the rates shown as numbers stay raw) and a Catmull-Rom curve whose control
+  points cannot overshoot the centre axis. The chart's time label now says
+  what it shows (`-120s`, 60 samples × 2 s) instead of `-60s`.
+
 ## [0.15.0] — 2026-09-26
 
 ### ⚠️ Update by hand once from 0.11–0.14

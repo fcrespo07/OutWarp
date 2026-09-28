@@ -474,5 +474,44 @@ function makeBoundedPeak(memory) {
   };
 }
 
+// SVG path through `pts` ([x, y] pairs) as a smooth curve instead of a spiky
+// polyline: uniform Catmull-Rom converted to cubic béziers, the same curve the
+// client GUI's traffic chart draws. Control points are clamped to
+// [yMin, yMax] so a sharp jump cannot overshoot past the chart's centre axis
+// or out of its box; the curve still passes through every sample.
+function smoothPath(pts, yMin = -Infinity, yMax = Infinity) {
+  if (!pts.length) return "";
+  const f = (n) => n.toFixed(1);
+  const cy = (y) => Math.min(yMax, Math.max(yMin, y));
+  let d = `M${f(pts[0][0])} ${f(pts[0][1])}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = cy(p1[1] + (p2[1] - p0[1]) / 6);
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = cy(p2[1] - (p3[1] - p1[1]) / 6);
+    d += ` C${f(c1x)} ${f(c1y)}, ${f(c2x)} ${f(c2y)}, ${f(p2[0])} ${f(p2[1])}`;
+  }
+  return d;
+}
+
+// Weighted moving average for what a chart *draws* (the numbers shown next to
+// it stay raw). The 2 s rate samples jitter by tens of percent even under
+// steady traffic, which a curve alone still draws as a comb of small peaks.
+// The kernel is renormalised at the edges so the newest sample is not pulled
+// toward zero.
+function smoothSeries(values, kernel = [1, 2, 3, 2, 1]) {
+  const r = (kernel.length - 1) / 2;
+  return values.map((_, i) => {
+    let sum = 0, weight = 0;
+    kernel.forEach((k, j) => {
+      const v = values[i + j - r];
+      if (v !== undefined) { sum += v * k; weight += k; }
+    });
+    return sum / weight;
+  });
+}
+
 window.DS_STR = DS_STR;
-window.DSfmt = { fmtBytes, fmtBps, fmtDuration, fmtAgo, tr, nowClock, makeBoundedPeak };
+window.DSfmt = { fmtBytes, fmtBps, fmtDuration, fmtAgo, tr, nowClock, makeBoundedPeak, smoothPath, smoothSeries };

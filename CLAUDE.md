@@ -325,7 +325,7 @@ Legado (hecho):
 - **Fase 2 — Producto → 0.17.0/0.18.0.**
   - Pulido de UI/UX, que termina con los **textos congelados**.
   - Servidor Windows vía Docker; se puede hacer en paralelo con cualquier fase.
-  - **Gráfica de tráfico de la dashboard del servidor** (Home + sparkline por cliente): rehacerla, que se ve fea. No depende de nada congelado, así que se adelanta a 0.16.0. No es B-022 (la escala tras un pico, que salió en 0.14.0): es el aspecto. 👤 El autor concreta qué falla (captura).
+  - **Gráfica de tráfico de la dashboard del servidor** (Home + sparkline por cliente) con el estilo fluido y sin puntas de la GUI del cliente. **Requisito indispensable de 0.16.0** (decisión del autor, 2026-09-28): puede refrescar más rápido que la del cliente, pero no dibujar picos de muestra a muestra. No es B-022 (la escala tras un pico, 0.14.0). *(Código hecho 2026-09-28: `DSfmt.smoothSeries` + `DSfmt.smoothPath`; falta 👤 verlo en el panel real.)*
   - README y wizard honestos con el anti-DPI. El banner "not yet ready" se quita en la RC.
   - 👤 Pruebas reales de la GUI de Linux (X11/Wayland) y de una Omarchy limpia, que cierran los dos `[~]`.
 - **Fase 3 — Idiomas → 0.19.0.**
