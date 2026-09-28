@@ -6,6 +6,7 @@ from textual.containers import Container
 from textual.widgets import Static
 
 from outwarp.config import ClientConfig
+from outwarp.i18n import t as tr
 
 
 def _truncate(s: str, max_len: int = 24) -> str:
@@ -32,7 +33,7 @@ class TunnelCard(Container):
     def compose(self):
         wg = self._config.wireguard
         tn = self._config.tunnel
-        yield Static("TUNNEL", classes="card-title")
+        yield Static(tr("tui.card.tunnel"), classes="card-title")
         yield Static(f"iface   {wg.tunnel_name}", id="tc-iface", classes="value")
         yield Static(f"peer    {_truncate(wg.server_public_key)}", id="tc-peer", classes="value")
         yield Static(f"remote  {tn.remote_host}:{tn.remote_port}", id="tc-remote", classes="value")

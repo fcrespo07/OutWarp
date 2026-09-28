@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 from PIL import Image
 
+from outwarp.i18n import t
 from outwarp.tray import (
-    _STATE_TOOLTIPS,
     TrayApp,
     icon_for_state,
     load_base_icon,
@@ -57,7 +57,7 @@ def test_tray_state_change_updates_icon() -> None:
     # docstring on _x11_safe_title). Assert on the post-sanitisation value
     # plus the invariant that the result is latin-1-encodable.
     from outwarp.tray import _x11_safe_title
-    assert fake_icon.title == _x11_safe_title(_STATE_TOOLTIPS[TunnelState.CONNECTED])
+    assert fake_icon.title == _x11_safe_title(t("tray.state.connected", tray._lang()))
     fake_icon.title.encode("latin-1")
 
 

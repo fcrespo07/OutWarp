@@ -62,7 +62,7 @@ function ScreenDashboard({ C }) {
           <Donut size={96} stroke={13} center={
             <div>
               <div style={{ fontSize: 26, fontWeight: 700, fontFamily: "var(--font-mono)", lineHeight: 1 }}>{online}</div>
-              <div style={{ fontSize: 9.5, color: "var(--text-3)", fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: ".1em" }}>online</div>
+              <div style={{ fontSize: 9.5, color: "var(--text-3)", fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: ".1em" }}>{T.online}</div>
             </div>}
             segments={[
               { value: online, color: "var(--brand-2)" },
@@ -581,7 +581,9 @@ function ScreenSettings({ C }) {
         <SLabel style={{ marginBottom: 9 }}>{T.set_appearance}</SLabel>
         <Card style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <Field label={T.set_language} style={{ minWidth: 160 }}>
-            <Segmented options={[{ value: "es", label: "ES" }, { value: "en", label: "EN" }]} value={C.lang} onChange={C.setLang} />
+            <Segmented options={[{ value: "auto", label: T.set_languageAuto },
+              ...window.OWi18n.LANGS.map((l) => ({ value: l, label: l.toUpperCase() }))]}
+              value={C.langPref} onChange={C.setLang} />
           </Field>
           <Field label={T.set_theme} style={{ minWidth: 160 }}>
             <Segmented options={[{ value: "light", label: T.set_themeLight }, { value: "dark", label: T.set_themeDark }]} value={C.theme} onChange={(v) => { if (v !== C.theme) C.toggleTheme(); }} />

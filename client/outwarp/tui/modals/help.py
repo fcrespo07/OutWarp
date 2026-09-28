@@ -5,55 +5,65 @@ from textual.containers import Container
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
-_LINES = [
-    "[bold]Global[/bold]",
-    "  q      Quit",
-    "  s      Settings (TLS-intercept, auto-reconnect, auto-connect)",
-    "  ?      Help",
-    "  Esc    Back / cancel",
-    "",
-    "[bold]Dashboard[/bold]",
-    "  k      Disconnect",
-    "  r      Reconnect",
-    "  l      Logs (fullscreen)",
-    "  p      Edit profile",
-    "  c      Copy server endpoint to clipboard",
-    "",
-    "[bold]Connecting[/bold]",
-    "  k      Cancel",
-    "",
-    "[bold]Empty state[/bold]",
-    "  i      Import .owcfg",
-    "",
-    "[bold]Logs screen[/bold]",
-    "  /      Search / filter",
-    "  e      Toggle errors-only filter",
-    "  w      Toggle warnings+ filter",
-    "  p      Pause / resume live tail",
-    "  g      Jump to top",
-    "  G      Jump to bottom",
-    "",
-    "[bold]Linux service (Settings)[/bold]",
-    "  Background service  Toggle the user-level systemd daemon",
-    "  Start before login  Toggle loginctl linger (auto-start)",
-    "",
-    "[bold]Doctor[/bold]",
-    "  r      Re-run all checks",
-    "  f      Apply auto-fixable check",
+from outwarp.i18n import t as tr
+
+# (heading key, [(keys, description key), ...]) — rendered in the UI language.
+_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("tui.help.global", [
+        ("q", "tui.key.quit"),
+        ("s", "tui.help.settings"),
+        ("?", "tui.key.help"),
+        ("Esc", "tui.help.back"),
+    ]),
+    ("tui.help.dashboard", [
+        ("k", "tui.help.disconnect"),
+        ("r", "tui.help.reconnect"),
+        ("l", "tui.help.logs"),
+        ("p", "tui.help.edit_profile"),
+        ("c", "tui.help.copy_endpoint"),
+    ]),
+    ("tui.help.connecting", [("k", "tui.key.cancel")]),
+    ("tui.help.empty", [("i", "tui.empty.key_import")]),
+    ("tui.help.logs_screen", [
+        ("/", "tui.help.search"),
+        ("e", "tui.help.errors"),
+        ("w", "tui.help.warnings"),
+        ("p", "tui.help.pause"),
+        ("g", "tui.help.top"),
+        ("G", "tui.help.bottom"),
+    ]),
+    ("tui.help.service", [
+        ("", "tui.help.service_daemon"),
+        ("", "tui.help.service_linger"),
+    ]),
+    ("tui.help.doctor", [
+        ("r", "tui.help.rerun"),
+        ("f", "tui.help.fix"),
+    ]),
 ]
+
+
+def _lines() -> list[str]:
+    lines: list[str] = []
+    for heading, rows in _SECTIONS:
+        if lines:
+            lines.append("")
+        lines.append(f"[bold]{tr(heading)}[/bold]")
+        lines.extend(f"  {keys:<6} {tr(desc)}" if keys else f"  {tr(desc)}" for keys, desc in rows)
+    return lines
 
 
 class HelpModal(ModalScreen[None]):
     BINDINGS = [
-        ("escape", "dismiss", "Back"),
-        ("q", "dismiss", "Back"),
-        ("question_mark", "dismiss", "Back"),
+        ("escape", "dismiss", tr("tui.key.back")),
+        ("q", "dismiss", tr("tui.key.back")),
+        ("question_mark", "dismiss", tr("tui.key.back")),
     ]
 
     def compose(self) -> ComposeResult:
         with Container(id="help-modal"):
             yield Static("[bold]OutWarp · client[/bold]")
-            for line in _LINES:
+            for line in _lines():
                 yield Static(line)
 
     def action_dismiss(self) -> None:

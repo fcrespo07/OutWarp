@@ -28,37 +28,20 @@ from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Static, Switch
 
+from outwarp.i18n import t as tr
 from outwarp.settings import load_settings, save_settings
 from outwarp.tui.tokens import BAD, OK
 
 log = logging.getLogger(__name__)
 
 
-# (key, label, hint) for each toggle exposed in this modal. Order = display
+# (key, label i18n key, hint i18n key) for each toggle exposed in this modal. Order = display
 # order. Update the help modal if you add or remove rows here.
 _TOGGLES: list[tuple[str, str, str]] = [
-    (
-        "allow_tls_intercept",
-        "Allow TLS-intercepting networks",
-        "Tolerate a certificate-fingerprint mismatch (corporate/school proxies)."
-        " WireGuard's own crypto still protects the traffic.",
-    ),
-    (
-        "auto_reconnect",
-        "Auto-reconnect on drop",
-        "Replay the reconnect schedule when the tunnel goes down unexpectedly.",
-    ),
-    (
-        "auto_connect",
-        "Auto-connect at launch",
-        "Bring the tunnel up automatically when 'outwarp tui' starts.",
-    ),
-    (
-        "kill_switch",
-        "Kill switch",
-        "Block all traffic outside the tunnel while it is unexpectedly down "
-        "(reconnecting / failed). Needs nftables and the privileged helper.",
-    ),
+    ("allow_tls_intercept", "tui.set.tls", "tui.set.tls_hint"),
+    ("auto_reconnect", "tui.set.reconnect", "tui.set.reconnect_hint"),
+    ("auto_connect", "tui.set.autoconnect", "tui.set.autoconnect_hint"),
+    ("kill_switch", "tui.set.killswitch", "tui.set.killswitch_hint"),
 ]
 
 # Pseudo-keys for Linux system-level toggles that don't map to settings.json.
@@ -84,9 +67,9 @@ class SettingsModal(ModalScreen[None]):
     """Toggle-board for client preferences. Persists to ``settings.json``."""
 
     BINDINGS = [
-        ("escape", "dismiss", "Close"),
-        ("q", "dismiss", "Close"),
-        ("p", "edit_profile", "Edit profile"),
+        ("escape", "dismiss", tr("tui.key.close")),
+        ("q", "dismiss", tr("tui.key.close")),
+        ("p", "edit_profile", tr("tui.help.edit_profile")),
     ]
 
     def __init__(self) -> None:
@@ -99,10 +82,8 @@ class SettingsModal(ModalScreen[None]):
         from outwarp.service import is_linger_enabled
 
         with Container(id="settings-modal"):
-            yield Static("[bold]Settings[/bold]")
-            yield Static(
-                "[dim]Toggles persist to settings.json and are shared with the GUI.[/]"
-            )
+            yield Static(f"[bold]{tr('tui.key.settings')}[/bold]")
+            yield Static(f"[dim]{tr('tui.set.persist')}[/]")
             for key, label, hint in _TOGGLES:
                 with Horizontal(classes="settings-row"):
                     yield Switch(
@@ -110,8 +91,8 @@ class SettingsModal(ModalScreen[None]):
                         id=f"switch-{key}",
                     )
                     with Container(classes="settings-text"):
-                        yield Static(f"[b]{label}[/b]")
-                        yield Static(f"[dim]{hint}[/]")
+                        yield Static(f"[b]{tr(label)}[/b]")
+                        yield Static(f"[dim]{tr(hint)}[/]")
 
             # Linux-only: background service + linger management
             if sys.platform == "linux" and shutil.which("systemctl") is not None:
@@ -119,7 +100,7 @@ class SettingsModal(ModalScreen[None]):
 
                 supported, why = service_supported()
                 yield Static(
-                    "\n[b]Background service (Linux)[/b]",
+                    f"\n[b]{tr('tui.set.service_header')}[/b]",
                     classes="settings-section-header",
                 )
                 with Horizontal(classes="settings-row"):
@@ -128,11 +109,9 @@ class SettingsModal(ModalScreen[None]):
                         disabled=not supported,
                     )
                     with Container(classes="settings-text"):
-                        yield Static("[b]Run as background daemon[/b]")
+                        yield Static(f"[b]{tr('tui.set.daemon')}[/b]")
                         yield Static(
-                            "[dim]Hand the tunnel to a systemd --user unit that keeps it up "
-                            "without this TUI (which then just shows its status). "
-                            "Equivalent to [bold]outwarp service install[/bold].[/]"
+                            f"[dim]{tr('tui.set.daemon_hint')}[/]"
                             + (f"\n[{BAD}]{why}[/]" if not supported else "")
                         )
                 with Horizontal(classes="settings-row"):
@@ -140,17 +119,16 @@ class SettingsModal(ModalScreen[None]):
                         value=is_linger_enabled(), id=f"switch-{_KEY_LINGER}",
                     )
                     with Container(classes="settings-text"):
-                        yield Static("[b]Start before login[/b]")
-                        yield Static(
-                            "[dim]Enable systemd linger so the daemon starts at boot "
-                            "before the first login (requires root or sudo NOPASSWD).[/]"
-                        )
+                        yield Static(f"[b]{tr('tui.set.linger')}[/b]")
+                        yield Static(f"[dim]{tr('tui.set.linger_hint')}[/]")
 
             if sys.platform == "linux":
                 from outwarp.ui_choice import INSTALL_HINT, gui_available
 
                 gui_ok, gui_why = gui_available()
-                yield Static("\n[b]Interface (Linux)[/b]", classes="settings-section-header")
+                yield Static(
+                    f"\n[b]{tr('tui.set.ui_header')}[/b]", classes="settings-section-header"
+                )
                 if gui_ok:
                     with Horizontal(classes="settings-row"):
                         yield Switch(
@@ -158,18 +136,11 @@ class SettingsModal(ModalScreen[None]):
                             id=f"switch-{_KEY_PREFER_GUI}",
                         )
                         with Container(classes="settings-text"):
-                            yield Static("[b]Open the graphical window from the app menu[/b]")
-                            yield Static(
-                                "[dim]On: the launcher opens the tray + window "
-                                f"({gui_why}). Off: it opens this terminal UI. "
-                                "Same as [bold]outwarp ui gui[/bold] / "
-                                "[bold]outwarp ui tui[/bold].[/]"
-                            )
+                            yield Static(f"[b]{tr('tui.set.prefer_gui')}[/b]")
+                            yield Static(f"[dim]{tr('tui.set.prefer_gui_hint', why=gui_why)}[/]")
                 else:
                     yield Static(
-                        f"[dim]Graphical window not installed ({gui_why}).\n"
-                        f"Add it with [bold]{INSTALL_HINT}[/bold]; this terminal UI "
-                        "stays available either way.[/]",
+                        f"[dim]{tr('tui.set.no_gui', why=gui_why, hint=INSTALL_HINT)}[/]",
                         classes="settings-row",
                     )
 
@@ -178,14 +149,14 @@ class SettingsModal(ModalScreen[None]):
             # the entry point so users discover it from the same surface where
             # they tweak preferences.
             yield Static(
-                "[b]Connection profile[/b]\n"
-                "[dim]Edit name, MTU, DNS, address, bypass routes and reconnect schedule.[/]\n"
-                "[dim]Press [b]p[/b] to open the editor.[/]",
+                f"[b]{tr('tui.set.profile')}[/b]\n"
+                f"[dim]{tr('tui.set.profile_hint')}[/]\n"
+                f"[dim]{tr('tui.set.profile_open')}[/]",
                 classes="settings-profile-link",
             )
             yield Static("", id="settings-status")
             yield Static(
-                "[dim]Press [b]Esc[/b] / [b]q[/b] to close. Changes save instantly.[/]"
+                f"[dim]{tr('tui.set.close_hint')}[/]"
             )
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
@@ -211,11 +182,12 @@ class SettingsModal(ModalScreen[None]):
             except OSError as exc:
                 log.exception("Could not save settings.json")
                 self.query_one("#settings-status", Static).update(
-                    f"[{BAD}]Could not save: {exc}[/]"
+                    f"[{BAD}]{tr('tui.set.save_failed', error=exc)}[/]"
                 )
                 return
             self.query_one("#settings-status", Static).update(
-                f"[{OK}]✓[/] launcher opens the {'GUI' if new_value else 'TUI'}"
+                f"[{OK}]✓[/] "
+                + tr("tui.set.launcher_gui" if new_value else "tui.set.launcher_tui")
             )
             return
 
@@ -228,7 +200,7 @@ class SettingsModal(ModalScreen[None]):
         except OSError as exc:
             log.exception("Could not save settings.json")
             self.query_one("#settings-status", Static).update(
-                f"[{BAD}]Could not save: {exc}[/]"
+                f"[{BAD}]{tr('tui.set.save_failed', error=exc)}[/]"
             )
             return
 
@@ -267,7 +239,7 @@ class SettingsModal(ModalScreen[None]):
         from outwarp.service import install_service, uninstall_service
 
         status = self.query_one("#settings-status", Static)
-        status.update("[dim]Applying service change…[/]")
+        status.update(f"[dim]{tr('tui.set.applying_service')}[/]")
         app = self.app
         lines: list[str] = []
 
@@ -297,8 +269,7 @@ class SettingsModal(ModalScreen[None]):
                             with contextlib.suppress(Exception):
                                 from outwarp.platforms import get_platform
                                 get_platform().uninstall_autostart()
-                        msg = (f"[{OK}]Service enabled — the tunnel now runs in the background; "
-                               "this TUI shows its status.[/]")
+                        msg = f"[{OK}]{tr('tui.set.service_on')}[/]"
                         app.call_from_thread(app.enter_viewer_mode)
                     else:
                         msg = f"[{BAD}]{_last() or f'service install failed (rc={rc})'}[/]"
@@ -306,7 +277,7 @@ class SettingsModal(ModalScreen[None]):
                 else:
                     rc = uninstall_service(echo=lines.append)
                     if rc == 0:
-                        msg = f"[{OK}]Service disabled — this TUI runs the tunnel again.[/]"
+                        msg = f"[{OK}]{tr('tui.set.service_off')}[/]"
                         app.call_from_thread(app.leave_viewer_mode)
                     else:
                         msg = f"[{BAD}]{_last() or f'service uninstall failed (rc={rc})'}[/]"
@@ -324,15 +295,12 @@ class SettingsModal(ModalScreen[None]):
         from outwarp.service import set_linger
 
         status = self.query_one("#settings-status", Static)
-        status.update("[dim]Applying linger change…[/]")
+        status.update(f"[dim]{tr('tui.set.applying_linger')}[/]")
 
         def _run() -> None:
             ok_flag, hint = set_linger(enable)
             if ok_flag:
-                msg = (
-                    f"[{OK}]Linger {'enabled' if enable else 'disabled'}. "
-                    f"{'Daemon will now start at boot.' if enable else ''}[/]"
-                )
+                msg = f"[{OK}]{tr('tui.set.linger_on' if enable else 'tui.set.linger_off')}[/]"
             else:
                 msg = f"[{BAD}]{hint}[/]"
             self.app.call_from_thread(

@@ -6,6 +6,7 @@ from textual.containers import Container
 from textual.widgets import Static
 
 from outwarp.config import ClientConfig
+from outwarp.i18n import t as tr
 from outwarp.tunnel import TunnelState
 
 # Maps the live tunnel state to (label, value-class). The value-class drives the
@@ -13,11 +14,11 @@ from outwarp.tunnel import TunnelState
 # the dashboard looked identical whether the tunnel was up or intentionally left
 # disconnected (auto_connect=off) — the user had no way to tell.
 _STATE_DISPLAY: dict[TunnelState, tuple[str, str]] = {
-    TunnelState.CONNECTED: ("Connected", "ok"),
-    TunnelState.CONNECTING: ("Connecting…", "warn"),
-    TunnelState.RECONNECTING: ("Reconnecting…", "warn"),
-    TunnelState.DISCONNECTED: ("Disconnected", "warn"),
-    TunnelState.FAILED: ("Failed", "bad"),
+    TunnelState.CONNECTED: ("tui.state.connected", "ok"),
+    TunnelState.CONNECTING: ("tui.state.connecting", "warn"),
+    TunnelState.RECONNECTING: ("tui.state.reconnecting", "warn"),
+    TunnelState.DISCONNECTED: ("tui.state.disconnected", "warn"),
+    TunnelState.FAILED: ("tui.state.failed", "bad"),
 }
 
 
@@ -38,13 +39,13 @@ class StatusCard(Container):
         self._geo: str | None = None
 
     def compose(self):
-        yield Static("STATUS", classes="card-title")
+        yield Static(tr("tui.card.status"), classes="card-title")
         yield Static("—", id="state", classes="value")
-        yield Static("EXIT", classes="card-title")
+        yield Static(tr("tui.card.exit"), classes="card-title")
         yield Static(self._render_endpoint(), id="endpoint", classes="value")
-        yield Static("LOCATION", classes="card-title")
+        yield Static(tr("tui.card.location"), classes="card-title")
         yield Static(self._geo or "—", id="geo", classes="value")
-        yield Static("WG ADDRESS", classes="card-title")
+        yield Static(tr("tui.card.wg_address"), classes="card-title")
         yield Static(self._config.wireguard.client_address, id="wg-address", classes="value")
 
     def _render_endpoint(self) -> str:
@@ -52,7 +53,8 @@ class StatusCard(Container):
         return f"{s.endpoint}:{s.port}"
 
     def set_state(self, state: TunnelState | None) -> None:
-        label, tone = _STATE_DISPLAY.get(state, ("—", ""))
+        key, tone = _STATE_DISPLAY.get(state, ("", ""))
+        label = tr(key) if key else "—"
         with contextlib.suppress(Exception):
             widget = self.query_one("#state", Static)
             widget.update(label)
@@ -60,7 +62,9 @@ class StatusCard(Container):
 
     def set_managed_by_service(self, up: bool | None) -> None:
         """Viewer mode: the daemon owns the tunnel; report the interface."""
-        label = "service · up" if up else ("service · down" if up is False else "service")
+        label = tr("tui.service_up") if up else (
+            tr("tui.service_down") if up is False else tr("tui.service")
+        )
         tone = "ok" if up else ("bad" if up is False else "")
         with contextlib.suppress(Exception):
             widget = self.query_one("#state", Static)

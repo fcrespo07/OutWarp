@@ -80,7 +80,7 @@ function App() {
   const [activeId, setActiveId] = useState(null);
   const [stats, setStats] = useState({ tx_bps: 0, rx_bps: 0, tx_total: 0, rx_total: 0, session_start: 0, last_handshake: 0 });
   const [logs, setLogs] = useState([]);
-  const [settings, setSettings] = useState({ language: "es", theme: "auto", advanced: false, allow_tls_intercept: false });
+  const [settings, setSettings] = useState({ language: "auto", theme: "auto", advanced: false, allow_tls_intercept: false });
   const [screen, setScreen] = useState("home");
   const [busyMsg, setBusyMsg] = useState("");
   const [connError, setConnError] = useState("");
@@ -212,8 +212,11 @@ function App() {
   const theme = isDark ? "dark" : "light";
 
   // language strings
-  const lang = settings.language === "en" ? "en" : "es";
-  const T = window.STR[lang];
+  const lang = window.OWi18n.resolveLang(settings.language, window.OWi18n.systemLangs());
+  const T = window.OWi18n.stringsFor(window.STR, lang);
+  useEffect(() => {
+    if (api && api.set_ui_language) api.set_ui_language(lang);
+  }, [api, lang]);
 
   const active = profiles[0] || null;
 
@@ -1561,7 +1564,8 @@ const Settings = ({ T, api, settings, onSetting }) => {
     { key: "appearance", title: T.set_groupAppearance, rows: [
       { title: T.set_language, control: (
         <SettingsSelect value={settings.language} onChange={(v) => apply("language", v)}
-          options={[["es", "Español"], ["en", "English"]]}/>
+          options={[["auto", T.set_languageAuto],
+            ...window.OWi18n.LANGS.map((l) => [l, window.OWi18n.LANG_NAMES[l]])]}/>
       )},
       { title: T.set_theme, control: (
         <SettingsSelect value={settings.theme} onChange={(v) => apply("theme", v)}

@@ -9,16 +9,17 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
+from outwarp.i18n import t as tr
 from outwarp.tui.tokens import BAD
 
 # Mirror the GUI stepper (shared.jsx step_*): the final "ready" row gives the
 # same close-the-loop confirmation before the screen flips to the dashboard.
 PHASE_LABELS: list[tuple[str, str]] = [
-    ("resolve", "dns + tcp connect"),
-    ("tls",     "tls handshake"),
-    ("wg",      "wireguard interface up"),
-    ("ws",      "wstunnel websocket upgrade"),
-    ("done",    "ready"),
+    ("resolve", tr("tui.phase.resolve")),
+    ("tls",     tr("tui.phase.tls")),
+    ("wg",      tr("tui.phase.wg")),
+    ("ws",      tr("tui.phase.ws")),
+    ("done",    tr("tui.phase.done")),
 ]
 PHASE_ORDER = [k for k, _ in PHASE_LABELS]
 
@@ -50,9 +51,9 @@ class ConnectingScreen(Screen):
     """Live stepper that mirrors `TunnelManager.phase`."""
 
     BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("question_mark", "help", "Help"),
-        ("k", "cancel", "Cancel"),
+        ("q", "quit", tr("tui.key.quit")),
+        ("question_mark", "help", tr("tui.key.help")),
+        ("k", "cancel", tr("tui.key.cancel")),
     ]
 
     def compose(self) -> ComposeResult:

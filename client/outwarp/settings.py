@@ -33,7 +33,9 @@ def default_settings() -> dict[str, Any]:
     """The complete, opinionated default set. Used as the merge target on load
     so a missing key in the on-disk file falls back to the default."""
     return {
-        "language": "es",
+        # "auto" follows the system language (GUI: the webview's; TUI/CLI: the
+        # locale); otherwise a code from outwarp.i18n.LANGS.
+        "language": "auto",
         "theme": "auto",
         "advanced": False,
         # Tolerate a pinned-fingerprint mismatch instead of aborting. For

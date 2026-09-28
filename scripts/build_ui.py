@@ -41,12 +41,15 @@ _LOCAL_ESBUILD = ROOT / "node_modules" / ".bin" / (
 
 # Order matters: each file relies on globals defined by previous ones
 # (React hooks, STR, Btn/Pill/StatusDot atoms).
-CLIENT_ORDER = ["brand.jsx", "shared.jsx", "app.jsx"]
+# Shared by both UIs; an absolute path, so `ui_dir / entry` leaves it alone.
+SHARED_UI = ROOT / "ui-shared"
+CLIENT_ORDER = [SHARED_UI / "i18n.jsx", "brand.jsx", "shared.jsx", "app.jsx"]
 SERVER_ORDER = [
     # Unified server dashboard (desktop pywebview + remote web panel). The
     # transport shim must come first (app.jsx reads window.OW); the old
     # srv-a/srv-b desktop GUI was replaced by this dash-* set.
     "transport.js",
+    SHARED_UI / "i18n.jsx",
     "brand.jsx",
     "dash-data.jsx",
     "dash-atoms.jsx",
@@ -84,13 +87,15 @@ def _esbuild_cmd() -> list[str]:
     return ["npx", "--yes", f"esbuild@{ESBUILD_VERSION}", *flags]
 
 
-def build(ui_dir: Path, order: list[str], *, check: bool = False) -> bool:
+def build(ui_dir: Path, order: list[str | Path], *, check: bool = False) -> bool:
     """Build ui_dir/bundle.js; with ``check``, only compare. Returns whether
     the committed bundle is (or now is) up to date."""
     print(f"[build_ui] {ui_dir.relative_to(ROOT)}")
     parts = [PROLOG]
-    for name in order:
-        src = (ui_dir / name).read_text(encoding="utf-8")
+    for entry in order:
+        src_path = ui_dir / entry
+        name = src_path.name if src_path.parent == ui_dir else src_path.relative_to(ROOT).as_posix()
+        src = src_path.read_text(encoding="utf-8")
         # Each .jsx file used to be its own <script>, so top-level const/let
         # bindings were script-scoped (two files may both declare
         # `const Stat = ...` without colliding). Wrapping each file in an

@@ -27,6 +27,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from outwarp.config import ClientConfig, ConfigError, default_config_path
+from outwarp.i18n import t
 from outwarp.killswitch import release_stale_async
 from outwarp.logs import setup_logging
 from outwarp.notify import notify as _notify
@@ -111,7 +112,7 @@ def run_daemon(
         log.info("daemon: tunnel state -> %s", state.value)
         if state is TunnelState.CONNECTED:
             was_connected[0] = True
-            _notify("OutWarp", "Connected")
+            _notify("OutWarp", t("notify.connected"))
         elif state is TunnelState.FAILED:
             err = manager.last_error or "unknown error"
             log.error("daemon: giving up after the reconnect schedule: %s", err)
@@ -120,11 +121,11 @@ def run_daemon(
             # network yet), and nagging every couple of minutes would just
             # teach the user to dismiss it.
             if was_connected[0]:
-                _notify("OutWarp", f"Connection failed: {err}", urgency="critical")
+                _notify("OutWarp", t("notify.failed", error=err), urgency="critical")
             gave_up.set()
             stop.set()
         elif state is TunnelState.RECONNECTING and prev is TunnelState.CONNECTED:
-            _notify("OutWarp", "Connection dropped — reconnecting...")
+            _notify("OutWarp", t("notify.reconnecting"))
 
     manager.add_listener(_on_state)
 

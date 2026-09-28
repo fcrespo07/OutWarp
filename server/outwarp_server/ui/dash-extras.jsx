@@ -130,7 +130,7 @@ function AddClientModal({ T, C, onClose }) {
             <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.01em" }}>{T.add_title}</div>
             <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 4, maxWidth: 420, lineHeight: 1.5 }}>{T.add_sub}</div>
           </div>
-          <button className="ow-iconbtn" onClick={onClose} aria-label="close">{EIcons.x(18)}</button>
+          <button className="ow-iconbtn" onClick={onClose} aria-label={T.a11y_close}>{EIcons.x(18)}</button>
         </div>
 
         {!result ? (
@@ -223,7 +223,7 @@ function ClientDrawer({ T, client, lang, C, onClose, confirm }) {
               </div>
             </div>
           </div>
-          <button className="ow-iconbtn" onClick={onClose} aria-label="close">{EIcons.x(18)}</button>
+          <button className="ow-iconbtn" onClick={onClose} aria-label={T.a11y_close}>{EIcons.x(18)}</button>
         </header>
 
         <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>

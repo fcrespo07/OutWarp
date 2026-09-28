@@ -9,6 +9,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from outwarp.diagnostics import CheckResult, Status, run_all
+from outwarp.i18n import t as tr
 from outwarp.tui.tokens import BAD, BRAND, DIM, OK, WARN
 
 log = logging.getLogger(__name__)
@@ -23,11 +24,11 @@ _ICON = {
 
 class DoctorScreen(Screen):
     BINDINGS = [
-        Binding("r", "rerun", "Re-run"),
-        Binding("f", "apply_fix", "Apply fix"),
-        Binding("escape", "app.pop_screen", "Back", priority=True),
-        Binding("q", "app.quit", "Quit", priority=True),
-        Binding("question_mark", "help", "Help"),
+        Binding("r", "rerun", tr("tui.doctor.key_rerun")),
+        Binding("f", "apply_fix", tr("tui.doctor.key_fix")),
+        Binding("escape", "app.pop_screen", tr("tui.key.back"), priority=True),
+        Binding("q", "app.quit", tr("tui.key.quit"), priority=True),
+        Binding("question_mark", "help", tr("tui.key.help")),
     ]
 
     def __init__(self) -> None:
@@ -37,14 +38,14 @@ class DoctorScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         yield DataTable(id="table", cursor_type="row")
-        yield Static("Running checks...", id="detail")
+        yield Static(tr("tui.doctor.running"), id="detail")
         yield Footer()
 
     def on_mount(self) -> None:
         t = self.query_one(DataTable)
-        t.add_columns(" ", "Check", "Detail")
+        t.add_columns(" ", tr("tui.doctor.col_check"), tr("tui.doctor.col_detail"))
         t.focus()
-        self.query_one("#detail", Static).update(f"[{DIM}]Running checks...[/]")
+        self.query_one("#detail", Static).update(f"[{DIM}]{tr('tui.doctor.running')}[/]")
         asyncio.create_task(self._run_async(), name="client-doctor-run")
 
     def action_rerun(self) -> None:
@@ -94,7 +95,7 @@ class DoctorScreen(Screen):
         r = self._results[idx]
         if r.fix_kind != "auto" or r.fix_callable is None:
             self.notify(
-                f"Fix is {r.fix_kind or 'unavailable'} — copy the command and run it manually.",
+                tr("tui.doctor.manual_fix", kind=r.fix_kind or "unavailable"),
                 severity="warning",
             )
             return
@@ -107,16 +108,16 @@ class DoctorScreen(Screen):
             try:
                 r.fix_callable()
             except Exception as exc:
-                self.notify(f"Fix failed: {exc}", severity="error")
+                self.notify(tr("tui.doctor.fix_failed", error=exc), severity="error")
                 return
-            self.notify("Fix applied. Re-running checks...", severity="information")
+            self.notify(tr("tui.doctor.fix_applied"), severity="information")
             self.action_rerun()
 
         self.app.push_screen(
             ConfirmModal(
-                title=f"Apply fix for '{r.name}'?",
-                body=r.remediation or "Run the recommended action.",
-                ok_label="Apply",
+                title=tr("tui.doctor.confirm_title", name=r.name),
+                body=r.remediation or tr("tui.doctor.confirm_body"),
+                ok_label=tr("tui.doctor.confirm_ok"),
             ),
             _go,
         )

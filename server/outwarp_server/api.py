@@ -99,7 +99,7 @@ def _settings_path() -> Path:
 
 def _default_settings() -> dict[str, Any]:
     return {
-        "language": "es",
+        "language": "auto",
         "theme": "auto",
         "advanced": False,
         "cli_on_path": False,

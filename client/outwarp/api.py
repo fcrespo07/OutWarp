@@ -41,6 +41,7 @@ from outwarp.config import (
     import_owcfg_text_with_verdict,
     original_config_path,
 )
+from outwarp.i18n import t
 from outwarp.integrity import IntegrityIssue, likely_av_quarantine
 from outwarp.logs import MemoryLogHandler
 from outwarp.platforms import PlatformError, get_platform
@@ -460,10 +461,7 @@ class Api:
         if self._service_managed:
             return {"ok": False, "error": _SERVICE_MANAGED_MSG}
         if self._manager.config.is_expired():
-            msg = (
-                f"Este perfil caducó el {self._manager.config.expires_at}. "
-                "Pide uno nuevo al administrador del servidor."
-            )
+            msg = t("api.profile_expired", date=self._manager.config.expires_at)
             self._record_log("error", msg)
             return {"ok": False, "error": msg}
         self._manager.start()
@@ -528,12 +526,12 @@ class Api:
         prev = self._prev_notified_state
         self._prev_notified_state = state
         if state is TunnelState.CONNECTED:
-            notify("OutWarp", "Connected")
+            notify("OutWarp", t("notify.connected"))
         elif state is TunnelState.FAILED:
             err = self._error_str() or "unknown error"
-            notify("OutWarp", f"Connection failed: {err}", urgency="critical")
+            notify("OutWarp", t("notify.failed", error=err), urgency="critical")
         elif state is TunnelState.RECONNECTING and prev is TunnelState.CONNECTED:
-            notify("OutWarp", "Connection dropped — reconnecting...")
+            notify("OutWarp", t("notify.reconnecting"))
 
     # ── profiles ──────────────────────────────────────────────────────────────
 
@@ -657,7 +655,7 @@ class Api:
         try:
             new_cfg.save(default_config_path())
         except OSError as exc:
-            return {"ok": False, "error": f"no se pudo guardar la configuración: {exc}"}
+            return {"ok": False, "error": t("api.save_failed", error=exc)}
 
         try:
             self._replace_manager(new_cfg)
@@ -679,16 +677,12 @@ class Api:
         try:
             new_cfg = ClientConfig.load(orig_path)
         except ConfigError:
-            return {
-                "ok": False,
-                "error": "No hay una configuración original guardada para este perfil. "
-                         "Vuelve a importar el .owcfg para restaurarla.",
-            }
+            return {"ok": False, "error": t("api.no_original")}
 
         try:
             new_cfg.save(default_config_path())
         except OSError as exc:
-            return {"ok": False, "error": f"no se pudo guardar la configuración: {exc}"}
+            return {"ok": False, "error": t("api.save_failed", error=exc)}
 
         try:
             self._replace_manager(new_cfg)
@@ -814,6 +808,14 @@ class Api:
         threading.Thread(target=_loop, daemon=True, name="outwarp-log-watcher").start()
 
     # ── settings ──────────────────────────────────────────────────────────────
+
+    def set_ui_language(self, lang: str) -> dict[str, Any]:
+        """The language the window resolved its "auto" setting to, so the
+        tray, notifications and messages sent to the window match it."""
+        from outwarp import i18n
+
+        i18n.set_ui_language(lang)
+        return {"ok": True, "lang": i18n.resolve_lang(None)}
 
     def get_settings(self) -> dict[str, Any]:
         with self._lock:
@@ -989,8 +991,7 @@ class Api:
             log.error("update integrity check failed: %s", detail)
             self._emit("update", {
                 "phase": "error",
-                "error": f"La verificación de integridad falló ({detail}). "
-                         "No se aplicará la actualización.",
+                "error": t("api.update_integrity", detail=detail),
             })
             return
         log.info("update integrity: %s", detail)

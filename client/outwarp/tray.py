@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from outwarp.i18n import resolve_lang, t
 from outwarp.tunnel import TunnelManager, TunnelState
 
 log = logging.getLogger(__name__)
@@ -33,27 +34,15 @@ _STATE_COLORS: dict[TunnelState, tuple[int, int, int]] = {
     TunnelState.FAILED:       (220,   0,   0),
 }
 
-_STATE_TOOLTIPS: dict[TunnelState, str] = {
-    TunnelState.DISCONNECTED: "OutWarp — desconectado",
-    TunnelState.CONNECTING:   "OutWarp — conectando...",
-    TunnelState.CONNECTED:    "OutWarp — conectado",
-    TunnelState.RECONNECTING: "OutWarp — reconectando...",
-    TunnelState.FAILED:       "OutWarp — fallo de conexión",
+# i18n keys for the tooltip of each state (outwarp/i18n.py).
+_STATE_TOOLTIP_KEYS: dict[TunnelState, str] = {
+    TunnelState.DISCONNECTED: "tray.state.disconnected",
+    TunnelState.CONNECTING:   "tray.state.connecting",
+    TunnelState.CONNECTED:    "tray.state.connected",
+    TunnelState.RECONNECTING: "tray.state.reconnecting",
+    TunnelState.FAILED:       "tray.state.failed",
 }
-
-_NO_CONFIG_TOOLTIP = "OutWarp — sin configuración"
 _NO_CONFIG_DOT = (100, 100, 100)
-
-# English tooltips mirror _STATE_TOOLTIPS. The Spanish dict stays the canonical
-# default (the tray defaults to es and the test suite pins it).
-_STATE_TOOLTIPS_EN: dict[TunnelState, str] = {
-    TunnelState.DISCONNECTED: "OutWarp — disconnected",
-    TunnelState.CONNECTING:   "OutWarp — connecting...",
-    TunnelState.CONNECTED:    "OutWarp — connected",
-    TunnelState.RECONNECTING: "OutWarp — reconnecting...",
-    TunnelState.FAILED:       "OutWarp — connection failed",
-}
-_NO_CONFIG_TOOLTIP_EN = "OutWarp — no configuration"
 
 
 def _x11_safe_title(text: str) -> str:
@@ -77,20 +66,6 @@ def _x11_safe_title(text: str) -> str:
     # Replace the typographic dashes first so we preserve the visual separator.
     fixed = text.replace("—", "-").replace("–", "-")
     return fixed.encode("latin-1", "replace").decode("latin-1")
-
-# Menu labels. Followed live via a lang_getter so the tray tracks the UI's
-# language setting (re-read each time the menu opens).
-_MENU_STR: dict[str, dict[str, str]] = {
-    "es": {
-        "open": "Abrir OutWarp", "connect": "Conectar", "disconnect": "Desconectar",
-        "reconnect": "Reconectar", "viewlogs": "Ver registro", "quit": "Parar y salir",
-    },
-    "en": {
-        "open": "Open OutWarp", "connect": "Connect", "disconnect": "Disconnect",
-        "reconnect": "Reconnect", "viewlogs": "View logs", "quit": "Stop and quit",
-    },
-}
-
 
 def load_base_icon() -> Image.Image:
     return Image.open(_BASE_ICON).convert("RGBA")
@@ -137,29 +112,22 @@ class TrayApp:
             manager.add_listener(self._on_state_change)
 
     def _lang(self) -> str:
-        if self._lang_getter is None:
-            return "es"
-        try:
-            lang = self._lang_getter()
-        except Exception:
-            return "es"
-        return lang if lang in _MENU_STR else "es"
+        """The UI's language setting, followed live (re-read each time the
+        menu opens or the state changes)."""
+        pref = None
+        if self._lang_getter is not None:
+            try:
+                pref = self._lang_getter()
+            except Exception:  # noqa: BLE001 — a broken getter still gets text
+                pref = None
+        return resolve_lang(pref)
 
     def _t(self, key: str) -> str:
-        return _MENU_STR[self._lang()].get(key, key)
+        return t(f"tray.{key}", self._lang())
 
     def _tooltip(self, state: TunnelState | None) -> str:
-        if self._lang() == "en":
-            if state is None:
-                text = _NO_CONFIG_TOOLTIP_EN
-            else:
-                text = _STATE_TOOLTIPS_EN.get(state, _NO_CONFIG_TOOLTIP_EN)
-        else:
-            if state is None:
-                text = _NO_CONFIG_TOOLTIP
-            else:
-                text = _STATE_TOOLTIPS.get(state, _NO_CONFIG_TOOLTIP)
-        return _x11_safe_title(text)
+        key = _STATE_TOOLTIP_KEYS.get(state, "tray.no_config") if state else "tray.no_config"
+        return _x11_safe_title(t(key, self._lang()))
 
     def _is_active(self) -> bool:
         st = self._manager.state if self._manager else None

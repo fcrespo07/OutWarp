@@ -195,8 +195,8 @@ const StatusChip = ({ T, live }) => {
   );
 };
 
-const ThemeBtn = ({ theme, onToggle }) => (
-  <button className="ow-iconbtn" onClick={onToggle} aria-label="theme">
+const ThemeBtn = ({ theme, onToggle, label }) => (
+  <button className="ow-iconbtn" onClick={onToggle} aria-label={label}>
     {theme === "dark" ? window.Icons.sun(18) : window.Icons.moon(18)}
   </button>
 );
@@ -204,7 +204,7 @@ const ThemeBtn = ({ theme, onToggle }) => (
 function App() {
   const [booted, setBooted] = useState(false);
   const [authed, setAuthed] = useState(OW.mode === "pywebview");
-  const [settings, setSettings] = useState({ language: "es", theme: "auto" });
+  const [settings, setSettings] = useState({ language: "auto", theme: "auto" });
   const [appInfo, setAppInfo] = useState({ version: "" });
   const [route, setRoute] = useState(() => localStorage.getItem("ow_dash_route") || "dashboard");
   const [selected, setSelected] = useState(null);
@@ -212,9 +212,9 @@ function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia("(max-width: 860px)").matches);
 
-  const lang = settings.language === "en" ? "en" : "es";
+  const lang = window.OWi18n.resolveLang(settings.language, window.OWi18n.systemLangs());
   const theme = resolveTheme(settings.theme);
-  const T = window.DS_STR[lang];
+  const T = window.OWi18n.stringsFor(window.DS_STR, lang);
   const ui = window.styleTokens("pulida");
 
   const { live, seedLogs, seedClients } = useLiveData();
@@ -283,7 +283,7 @@ function App() {
   const signOut = async () => { await OW.logout(); setAuthed(false); };
 
   const C = {
-    T, lang, live, server, go, appInfo,
+    T, lang, langPref: settings.language || "auto", live, server, go, appInfo,
     call: (m, ...a) => OW.call(m, ...a),
     openClient: (name) => setSelected(name),
     openAdd: () => setAddOpen(true),
@@ -319,7 +319,7 @@ function App() {
           <aside className="rail">
             <div className="rail-brand">
               <window.WSWordmark size={16} color="var(--text)" accent="var(--brand)" />
-              <ThemeBtn theme={theme} onToggle={toggleTheme} />
+              <ThemeBtn theme={theme} onToggle={toggleTheme} label={T.a11y_theme} />
             </div>
             <div style={{ padding: "0 8px 16px", fontSize: 10.5, color: "var(--text-3)", letterSpacing: ".08em", textTransform: "uppercase", fontWeight: 600, fontFamily: "var(--font-mono)" }}>{T.serverAdmin}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -334,11 +334,11 @@ function App() {
 
         {isMobile && (
           <header className="m-appbar">
-            <button className="ow-iconbtn" onClick={() => setNavOpen(true)} aria-label="menu">{window.Icons.menu(20)}</button>
+            <button className="ow-iconbtn" onClick={() => setNavOpen(true)} aria-label={T.a11y_menu}>{window.Icons.menu(20)}</button>
             <window.WSWordmark size={15} color="var(--text)" accent="var(--brand)" />
             <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
               <StatusChip T={T} live={live} />
-              <ThemeBtn theme={theme} onToggle={toggleTheme} />
+              <ThemeBtn theme={theme} onToggle={toggleTheme} label={T.a11y_theme} />
             </div>
           </header>
         )}

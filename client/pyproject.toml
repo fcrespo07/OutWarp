@@ -110,6 +110,8 @@ select = ["E", "F", "W", "I", "B", "UP", "N", "SIM"]
 # for curve points. Renaming them to satisfy N806 would make the code
 # impossible to check line-by-line against the document it came from.
 "outwarp/minisign.py" = ["N803", "N806"]
+# Translation tables: one sentence per value, which translators edit as is.
+"outwarp/locales/*.py" = ["E501"]
 
 [tool.black]
 line-length = 100

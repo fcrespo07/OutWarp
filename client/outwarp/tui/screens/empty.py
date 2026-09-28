@@ -5,22 +5,24 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
+from outwarp.i18n import t as tr
+
 
 class EmptyScreen(Screen):
     """First-run state: no .owcfg imported yet."""
 
     BINDINGS = [
-        ("i", "import", "Import .owcfg"),
-        ("q", "quit", "Quit"),
-        ("question_mark", "help", "Help"),
+        ("i", "import", tr("tui.empty.key_import")),
+        ("q", "quit", tr("tui.key.quit")),
+        ("question_mark", "help", tr("tui.key.help")),
     ]
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="empty-shell"):
             yield Static("[bold]OutWarp[/bold]")
-            yield Static("No profile imported yet.")
-            yield Static("Press [b]i[/b] to import a .owcfg file, or [b]q[/b] to quit.")
+            yield Static(tr("tui.empty.none"))
+            yield Static(tr("tui.empty.hint"))
         yield Footer()
 
     def action_import(self) -> None:

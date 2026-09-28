@@ -3,6 +3,7 @@ from __future__ import annotations
 from textual.containers import Container
 from textual.widgets import Sparkline, Static
 
+from outwarp.i18n import t as tr
 from outwarp.tunnel_stats import TunnelStats
 
 
@@ -26,10 +27,10 @@ def _fmt_age(seconds: int | None) -> str:
     if seconds is None:
         return "—"
     if seconds < 60:
-        return f"{seconds}s ago"
+        return tr("tui.ago_s", n=seconds)
     if seconds < 3600:
-        return f"{seconds // 60}m ago"
-    return f"{seconds // 3600}h ago"
+        return tr("tui.ago_m", n=seconds // 60)
+    return tr("tui.ago_h", n=seconds // 3600)
 
 
 class TrafficCard(Container):
@@ -43,14 +44,14 @@ class TrafficCard(Container):
     """
 
     def compose(self):
-        yield Static("TRAFFIC", classes="card-title")
-        yield Static("down  —", id="down", classes="value")
+        yield Static(tr("tui.card.traffic"), classes="card-title")
+        yield Static(f"{tr('tui.traffic.down')}  —", id="down", classes="value")
         yield Sparkline([0.0], summary_function=max, id="rx_spark")
-        yield Static("up    —", id="up", classes="value")
+        yield Static(f"{tr('tui.traffic.up')}  —", id="up", classes="value")
         yield Sparkline([0.0], summary_function=max, id="tx_spark")
         yield Static("ping  —", id="ping", classes="value")
         yield Sparkline([0.0], summary_function=max, id="ping_spark")
-        yield Static("last handshake  —", id="hs", classes="value")
+        yield Static(f"{tr('tui.traffic.handshake')}  —", id="hs", classes="value")
 
     def update_stats(
         self,
@@ -60,11 +61,15 @@ class TrafficCard(Container):
         tx_history: list[float] | None = None,
     ) -> None:
         try:
-            self.query_one("#down", Static).update(f"down  {_fmt_rate(stats.rx_rate_bps)}")
-            self.query_one("#up", Static).update(f"up    {_fmt_rate(stats.tx_rate_bps)}")
+            self.query_one("#down", Static).update(
+                f"{tr('tui.traffic.down')}  {_fmt_rate(stats.rx_rate_bps)}"
+            )
+            self.query_one("#up", Static).update(
+                f"{tr('tui.traffic.up')}  {_fmt_rate(stats.tx_rate_bps)}"
+            )
             self.query_one("#ping", Static).update(f"ping  {_fmt_ms(stats.latency_ms)}")
             self.query_one("#hs", Static).update(
-                f"last handshake  {_fmt_age(stats.last_handshake_age_s)}"
+                f"{tr('tui.traffic.handshake')}  {_fmt_age(stats.last_handshake_age_s)}"
             )
             self.query_one("#ping_spark", Sparkline).data = ping_history or [0.0]
             self.query_one("#rx_spark", Sparkline).data = rx_history or [0.0]

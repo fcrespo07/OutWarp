@@ -8,6 +8,7 @@ import threading
 from textual.app import App
 
 from outwarp.config import ClientConfig, ConfigError, default_config_path
+from outwarp.i18n import t as tr
 from outwarp.killswitch import release_stale_async
 from outwarp.logs import setup_logging
 from outwarp.ownership import (
@@ -44,10 +45,10 @@ class OutWarpClientTUI(App):
         "doctor": DoctorScreen,
     }
     BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("question_mark", "help", "Help"),
-        ("s", "settings", "Settings"),
-        ("d", "doctor", "Doctor"),
+        ("q", "quit", tr("tui.key.quit")),
+        ("question_mark", "help", tr("tui.key.help")),
+        ("s", "settings", tr("tui.key.settings")),
+        ("d", "doctor", tr("tui.key.doctor")),
     ]
 
     def __init__(self) -> None:
@@ -99,7 +100,7 @@ class OutWarpClientTUI(App):
             if default_config_path().exists():
                 # A file that exists but does not parse is a different problem
                 # from "nothing imported yet" — say which (the CLI already did).
-                self._startup_error = f"Profile could not be loaded: {exc}"
+                self._startup_error = tr("tui.app.profile_unloadable", error=exc)
                 self._push_unique("failed")
                 return
             self._push_unique("empty")
@@ -114,7 +115,8 @@ class OutWarpClientTUI(App):
             lock = TunnelOwnerLock()
             if not lock.acquire():
                 self._startup_error = (
-                    f"The tunnel is already run by {describe_owner()}. {OWNED_ELSEWHERE_HINT}"
+                    tr("tui.app.owned_elsewhere", owner=describe_owner())
+                    + f" {OWNED_ELSEWHERE_HINT}"
                 )
                 self._push_unique("failed")
                 return
@@ -227,12 +229,12 @@ class OutWarpClientTUI(App):
     def _notify_state(self, state: TunnelState, prev: TunnelState | None) -> None:
         from outwarp.notify import notify
         if state is TunnelState.CONNECTED:
-            notify("OutWarp", "Connected")
+            notify("OutWarp", tr("notify.connected"))
         elif state is TunnelState.FAILED:
             err = self.manager.last_error if self.manager else None
-            notify("OutWarp", f"Connection failed: {err or 'unknown error'}", urgency="critical")
+            notify("OutWarp", tr("notify.failed", error=err or "unknown error"), urgency="critical")
         elif state is TunnelState.RECONNECTING and prev is TunnelState.CONNECTED:
-            notify("OutWarp", "Connection dropped — reconnecting...")
+            notify("OutWarp", tr("notify.reconnecting"))
 
     def action_help(self) -> None:
         from outwarp.tui.modals.help import HelpModal

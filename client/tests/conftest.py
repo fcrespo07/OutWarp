@@ -9,6 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
+# The suite asserts English text. Set before any test module imports the TUI,
+# whose key bindings are translated at class definition time.
+os.environ["OUTWARP_LANG"] = "en"
+
 
 @pytest.fixture(autouse=True)
 def _isolate_user_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

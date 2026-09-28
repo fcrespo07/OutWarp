@@ -5,11 +5,13 @@ from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
+from outwarp.i18n import t as tr
+
 
 class ConfirmModal(ModalScreen[bool]):
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
-        ("q", "cancel", "Cancel"),
+        ("escape", "cancel", tr("tui.key.cancel")),
+        ("q", "cancel", tr("tui.key.cancel")),
     ]
 
     def __init__(self, title: str, body: str, ok_label: str = "OK") -> None:
@@ -24,7 +26,7 @@ class ConfirmModal(ModalScreen[bool]):
             yield Static(self._body)
             with Horizontal(id="confirm-buttons"):
                 yield Button(self._ok_label, id="ok", variant="error")
-                yield Button("Cancel", id="cancel", variant="default")
+                yield Button(tr("tui.key.cancel"), id="cancel", variant="default")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "ok")

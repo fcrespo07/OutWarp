@@ -11,6 +11,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header
 
+from outwarp.i18n import t as tr
 from outwarp.logs import default_log_path
 from outwarp.tui.widgets.live_log import LiveLog
 from outwarp.tui.widgets.status_card import StatusCard
@@ -25,13 +26,13 @@ class DashboardScreen(Screen):
     """Two-column live status: cards on the left, tailing log on the right."""
 
     BINDINGS = [
-        ("k", "disconnect", "Disconnect"),
-        ("r", "reconnect", "Reconnect"),
-        ("l", "open_logs", "Logs"),
-        ("p", "open_profile", "Profile"),
-        ("c", "copy_endpoint", "Copy endpoint"),
-        ("q", "quit", "Quit"),
-        ("question_mark", "help", "Help"),
+        ("k", "disconnect", tr("tui.help.disconnect")),
+        ("r", "reconnect", tr("tui.help.reconnect")),
+        ("l", "open_logs", tr("tui.key.logs")),
+        ("p", "open_profile", tr("tui.dash.key_profile")),
+        ("c", "copy_endpoint", tr("tui.dash.key_copy")),
+        ("q", "quit", tr("tui.key.quit")),
+        ("question_mark", "help", tr("tui.key.help")),
     ]
 
     def action_open_logs(self) -> None:
@@ -168,8 +169,7 @@ class DashboardScreen(Screen):
 
     async def _async_disconnect(self) -> None:
         if getattr(self.app, "service_managed", False):
-            self.notify("Tunnel is run by outwarp-client.service — turn it off in Settings (s).",
-                        severity="warning")
+            self.notify(tr("tui.dash.service_owns_stop"), severity="warning")
             return
         mgr = self.app.manager
         if mgr is not None:
@@ -177,15 +177,14 @@ class DashboardScreen(Screen):
             with contextlib.suppress(Exception):
                 await loop.run_in_executor(None, mgr.stop)
         # Stay on the dashboard, disconnected: 'k' disconnects, 'q' quits (B-032).
-        self.notify("Disconnected — press r to connect again.")
+        self.notify(tr("tui.dash.disconnected"))
 
     def action_reconnect(self) -> None:
         asyncio.create_task(self._async_reconnect(), name="tui-reconnect")
 
     async def _async_reconnect(self) -> None:
         if getattr(self.app, "service_managed", False):
-            self.notify("Tunnel is run by outwarp-client.service — restart it with "
-                        "`systemctl --user restart outwarp-client`.", severity="warning")
+            self.notify(tr("tui.dash.service_owns_restart"), severity="warning")
             return
         mgr = self.app.manager
         if mgr is None:
@@ -219,7 +218,7 @@ class DashboardScreen(Screen):
                 )
         except Exception:
             pass
-        self.notify(f"Copied: {endpoint}", severity="information")
+        self.notify(tr("tui.dash.copied", endpoint=endpoint), severity="information")
 
     def action_help(self) -> None:
         from outwarp.tui.modals.help import HelpModal

@@ -9,6 +9,7 @@ from textual.containers import Container
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Input, RichLog, Static
 
+from outwarp.i18n import t as tr
 from outwarp.logs import default_log_path, tail_follow
 from outwarp.tui.tokens import BAD, DIM, WARN
 
@@ -43,20 +44,20 @@ class LogsScreen(Screen):
     """Full-screen log tail with search, level filters, and pause."""
 
     BINDINGS = [
-        Binding("escape", "back", "Back", priority=True),
-        Binding("g", "scroll_home", "Top"),
-        Binding("G", "scroll_end", "Bottom", show=True, key_display="G"),
-        Binding("q", "app.quit", "Quit", priority=True),
-        Binding("slash", "toggle_search", "Search"),
-        Binding("e", "toggle_errors", "Errors"),
-        Binding("w", "toggle_warnings", "Warnings+"),
-        Binding("p", "toggle_pause", "Pause"),
+        Binding("escape", "back", tr("tui.key.back"), priority=True),
+        Binding("g", "scroll_home", tr("tui.logs.key_top")),
+        Binding("G", "scroll_end", tr("tui.logs.key_bottom"), show=True, key_display="G"),
+        Binding("q", "app.quit", tr("tui.key.quit"), priority=True),
+        Binding("slash", "toggle_search", tr("tui.logs.key_search")),
+        Binding("e", "toggle_errors", tr("tui.logs.key_errors")),
+        Binding("w", "toggle_warnings", tr("tui.logs.key_warnings")),
+        Binding("p", "toggle_pause", tr("tui.logs.key_pause")),
     ]
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Container(id="root"):
-            yield Input(placeholder="filter text...", id="search")
+            yield Input(placeholder=tr("tui.logs.filter_ph"), id="search")
             yield RichLog(
                 id="log", highlight=False, markup=True, max_lines=5000,
             )
@@ -111,13 +112,13 @@ class LogsScreen(Screen):
     def _update_filter_bar(self) -> None:
         parts: list[str] = []
         if self._paused:
-            parts.append(f"[{WARN}]PAUSED[/]")
+            parts.append(f"[{WARN}]{tr('tui.logs.paused')}[/]")
         if self._level == "e":
-            parts.append(f"[{BAD}]errors only[/]")
+            parts.append(f"[{BAD}]{tr('tui.logs.errors_only')}[/]")
         elif self._level == "w":
-            parts.append(f"[{WARN}]warnings+[/]")
+            parts.append(f"[{WARN}]{tr('tui.logs.warnings_plus')}[/]")
         if self._search:
-            parts.append(f"[{DIM}]search: {self._search}[/]")
+            parts.append(f"[{DIM}]{tr('tui.logs.search', text=self._search)}[/]")
         bar = "  ".join(parts)
         with contextlib.suppress(Exception):
             self.query_one("#filter-bar", Static).update(bar)

@@ -287,7 +287,7 @@ def main() -> int:
             on_show=_show_window,
             on_quit=_on_quit,
             api=api,
-            lang_getter=lambda: api.get_settings().get("language", "es"),
+            lang_getter=lambda: api.get_settings().get("language", "auto"),
         )
         _stage("tray constructed")
 

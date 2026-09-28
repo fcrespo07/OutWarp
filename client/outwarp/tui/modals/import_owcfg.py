@@ -9,6 +9,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, ListItem, ListView, Static
 
 from outwarp.config import ConfigError, import_owcfg_with_verdict
+from outwarp.i18n import t as tr
 from outwarp.tui.tokens import BAD, DIM
 
 
@@ -37,8 +38,8 @@ class ImportModal(ModalScreen[bool]):
     """Prompts for a .owcfg file — shows a scan list if files are found."""
 
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
-        ("enter", "submit", "Import"),
+        ("escape", "cancel", tr("tui.key.cancel")),
+        ("enter", "submit", tr("tui.import.key")),
     ]
 
     def __init__(self) -> None:
@@ -47,23 +48,23 @@ class ImportModal(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Container(id="import-modal"):
-            yield Static("[bold]Import profile[/bold]")
+            yield Static(f"[bold]{tr('tui.import.title')}[/bold]")
             if self._found:
-                yield Static("Select a file or type a path below:")
+                yield Static(tr("tui.import.select"))
                 items = [
                     ListItem(Static(str(p)), id=f"item-{i}")
                     for i, p in enumerate(self._found)
                 ]
                 yield ListView(*items, id="file-list")
             else:
-                yield Static("Type the absolute path to a .owcfg file:")
+                yield Static(tr("tui.import.type_path"))
             yield Input(
                 placeholder=str(Path.home() / "Downloads" / "your-name.owcfg"),
                 id="path",
             )
             yield Static("", id="result")
             yield Static(
-                f"[{DIM}]Enter to import, Esc to cancel.[/]",
+                f"[{DIM}]{tr('tui.import.keys')}[/]",
             )
 
     def on_mount(self) -> None:
@@ -100,12 +101,12 @@ class ImportModal(ModalScreen[bool]):
                     return
             except Exception:
                 pass
-            self.query_one("#result", Static).update(f"[{BAD}]Path is required.[/]")
+            self.query_one("#result", Static).update(f"[{BAD}]{tr('tui.import.path_required')}[/]")
             return
         path = Path(raw).expanduser()
         if not path.exists():
             self.query_one("#result", Static).update(
-                f"[{BAD}]File not found: {path}[/]"
+                f"[{BAD}]{tr('tui.import.not_found', path=path)}[/]"
             )
             return
         self._do_import(path)
@@ -114,8 +115,10 @@ class ImportModal(ModalScreen[bool]):
         try:
             _config, trust_verdict = import_owcfg_with_verdict(path)
         except ConfigError as exc:
-            self.query_one("#result", Static).update(f"[{BAD}]Invalid .owcfg: {exc}[/]")
+            self.query_one("#result", Static).update(
+                f"[{BAD}]{tr('tui.import.invalid', error=exc)}[/]"
+            )
             return
         severity = "information" if trust_verdict.status == "verified" else "warning"
-        self.notify(trust_verdict.message, title="Profile signature", severity=severity)
+        self.notify(trust_verdict.message, title=tr("tui.import.signature"), severity=severity)
         self.dismiss(True)

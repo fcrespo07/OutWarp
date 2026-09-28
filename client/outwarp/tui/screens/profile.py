@@ -27,12 +27,13 @@ from outwarp.config import (
     default_config_path,
     original_config_path,
 )
+from outwarp.i18n import t as tr
 from outwarp.tui.tokens import BAD, OK
 
 log = logging.getLogger(__name__)
 
 
-# (key, label, hint, value_getter) per editable field.
+# (key, label i18n key, hint i18n key, value_getter) per editable field.
 # Order = display order. The getter pulls the current value from a ClientConfig
 # and renders it as a string the Input widget can show — Textual Inputs are
 # text-only, so list-valued fields (dns / bypass_ips / reconnect_delays) get
@@ -40,53 +41,50 @@ log = logging.getLogger(__name__)
 _FIELDS: list[tuple[str, str, str, Any]] = [
     (
         "name",
-        "Profile name",
-        "Human label for this profile (does not affect the WireGuard interface name).",
+        "tui.profile.name",
+        "tui.profile.name_hint",
         lambda c: c.name,
     ),
     (
         "mtu",
-        "MTU",
-        "WireGuard MTU. 576-1500; ~1380 is the calibrated value for WG-over-TLS.",
+        "tui.profile.mtu",
+        "tui.profile.mtu_hint",
         lambda c: str(c.wireguard.mtu),
     ),
     (
         "dns",
-        "DNS servers",
-        "Comma-separated IPv4/IPv6 list pushed to the WG interface.",
+        "tui.profile.dns",
+        "tui.profile.dns_hint",
         lambda c: ", ".join(c.wireguard.dns),
     ),
     (
         "client_address",
-        "Client address",
-        "WG address assigned by the server (e.g. 10.0.0.42/32). Rarely changed by hand.",
+        "tui.profile.client_address",
+        "tui.profile.client_address_hint",
         lambda c: c.wireguard.client_address,
     ),
     (
         "bypass_ips",
-        "Bypass IPs / hostnames",
-        "Routes that skip the tunnel — typically the server endpoint(s). "
-        "IP, CIDR or hostname, comma-separated.",
+        "tui.profile.bypass_ips",
+        "tui.profile.bypass_ips_hint",
         lambda c: ", ".join(c.routing.bypass_ips),
     ),
     (
         "reconnect_max_attempts",
-        "Reconnect attempts",
-        "How many times to retry before giving up (1-100).",
+        "tui.profile.reconnect_max_attempts",
+        "tui.profile.reconnect_max_attempts_hint",
         lambda c: str(c.reconnect.max_attempts),
     ),
     (
         "reconnect_delays",
-        "Reconnect delays (s)",
-        "Back-off schedule between retries, in seconds. Comma-separated.",
+        "tui.profile.reconnect_delays",
+        "tui.profile.reconnect_delays_hint",
         lambda c: ", ".join(str(d) for d in c.reconnect.delays_seconds),
     ),
     (
         "hostile_mode",
-        "Hostile-network mode",
-        "auto / on / off. 'auto' probes the network at connect and enables "
-        "DNS-bypass (1.1.1.1) only if interception is detected. 'on' forces it. "
-        "Useful on captive/edu/corp networks.",
+        "tui.profile.hostile_mode",
+        "tui.profile.hostile_mode_hint",
         lambda c: c.network.hostile_mode,
     ),
 ]
@@ -100,26 +98,25 @@ class ProfileScreen(Screen[None]):
     """
 
     BINDINGS = [
-        ("ctrl+s", "save", "Save"),
-        ("r", "reset", "Reset"),
-        ("escape", "back", "Back"),
-        ("q", "back", "Back"),
+        ("ctrl+s", "save", tr("tui.profile.key_save")),
+        ("r", "reset", tr("tui.profile.key_reset")),
+        ("escape", "back", tr("tui.key.back")),
+        ("q", "back", tr("tui.key.back")),
     ]
 
     def compose(self) -> ComposeResult:
         yield Header()
         with VerticalScroll(id="profile-scroll"):
-            yield Static("[bold]Edit profile[/bold]", classes="profile-title")
+            yield Static(f"[bold]{tr('tui.help.edit_profile')}[/bold]", classes="profile-title")
             yield Static(
-                "[dim]Server identity (endpoint, keys, TLS fingerprint) is not editable — "
-                "re-import the .owcfg if those change.[/]",
+                f"[dim]{tr('tui.profile.identity_locked')}[/]",
                 classes="profile-subtitle",
             )
             cfg = self._current_config()
             for key, label, hint, getter in _FIELDS:
                 with Container(classes="profile-row"):
-                    yield Static(f"[b]{label}[/b]", classes="profile-label")
-                    yield Static(f"[dim]{hint}[/]", classes="profile-hint")
+                    yield Static(f"[b]{tr(label)}[/b]", classes="profile-label")
+                    yield Static(f"[dim]{tr(hint)}[/]", classes="profile-hint")
                     yield Input(
                         value="" if cfg is None else getter(cfg),
                         id=f"field-{key}",
@@ -127,7 +124,7 @@ class ProfileScreen(Screen[None]):
                     )
             with Horizontal(classes="profile-actions"):
                 yield Static(
-                    "[dim]Ctrl+S to save · R to reset to import · Esc to go back[/]",
+                    f"[dim]{tr('tui.profile.keys')}[/]",
                     id="profile-status",
                 )
         yield Footer()
@@ -140,7 +137,7 @@ class ProfileScreen(Screen[None]):
     def action_save(self) -> None:
         cfg = self._current_config()
         if cfg is None:
-            self._set_status("No profile imported — nothing to save.", ok=False)
+            self._set_status(tr("tui.profile.nothing"), ok=False)
             return
 
         patch: dict[str, Any] = {}
@@ -167,11 +164,11 @@ class ProfileScreen(Screen[None]):
         try:
             new_cfg.save(target)
         except OSError as exc:
-            self._set_status(f"Could not write config: {exc}", ok=False)
+            self._set_status(tr("tui.profile.write_failed", error=exc), ok=False)
             return
 
         self._reload_manager(new_cfg)
-        self._set_status("Saved. Reconnecting with new settings…", ok=True)
+        self._set_status(tr("tui.profile.saved"), ok=True)
 
     def action_reset(self) -> None:
         target = default_config_path()
@@ -180,21 +177,21 @@ class ProfileScreen(Screen[None]):
             new_cfg = ClientConfig.load(orig)
         except ConfigError:
             self._set_status(
-                "No original snapshot found — re-import the .owcfg to restore defaults.",
+                tr("tui.profile.no_original"),
                 ok=False,
             )
             return
         try:
             new_cfg.save(target)
         except OSError as exc:
-            self._set_status(f"Could not write config: {exc}", ok=False)
+            self._set_status(tr("tui.profile.write_failed", error=exc), ok=False)
             return
         # Repopulate inputs with the restored values so the user sees what
         # they're getting before the manager swap finishes.
         for key, _label, _hint, getter in _FIELDS:
             self.query_one(f"#field-{key}", Input).value = getter(new_cfg)
         self._reload_manager(new_cfg)
-        self._set_status("Profile reset to its imported state.", ok=True)
+        self._set_status(tr("tui.profile.reset_done"), ok=True)
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -211,7 +208,7 @@ class ProfileScreen(Screen[None]):
             self.app.start_manager()
         except Exception as exc:  # noqa: BLE001 - surface unexpected errors to the user
             log.exception("start_manager failed after profile save")
-            self._set_status(f"Saved, but reconnect failed: {exc}", ok=False)
+            self._set_status(tr("tui.profile.reconnect_failed", error=exc), ok=False)
 
     def _set_status(self, message: str, *, ok: bool) -> None:
         colour = OK if ok else BAD
