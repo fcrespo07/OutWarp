@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -603,6 +604,7 @@ def test_update_server_config_happy_path(tmp_path):
     with (
         patch("outwarp_server.api.default_config_path", return_value=tmp_path / "srv.json"),
         patch.object(ServerConfig, "save", fake_save),
+        _no_background_bounce(),
     ):
         r = api.update_server_config({"port": 8443, "endpoint": "1.2.3.4"})
     assert r["ok"] is True
@@ -619,6 +621,7 @@ def test_rotate_tls_cert_happy_path(tmp_path):
               return_value=(tmp_path / "c.pem", tmp_path / "k.pem", "NEW:FP:FP", "NEW:SPKI")),
         patch("outwarp_server.api.default_config_path", return_value=tmp_path / "srv.json"),
         patch.object(ServerConfig, "save", fake_save),
+        _no_background_bounce(),
     ):
         r = api.rotate_tls_cert()
     assert r["ok"] is True
@@ -628,6 +631,17 @@ def test_rotate_tls_cert_happy_path(tmp_path):
 # ── Bug-1/Bug-2 fix: platform-aware bouncing ───────────────────────────────
 # The bounce runs in a background thread; these tests patch threading.Thread
 # to fire the target synchronously so we can assert about what got called.
+
+
+def _no_background_bounce():
+    """Run the config/cert bounce inline against a fake platform. Left as a
+    real thread it outlives the test and can call reconcile() on the next
+    test's patched platform (seen on the Windows runner)."""
+    stack = contextlib.ExitStack()
+    stack.enter_context(patch("outwarp_server.api.threading.Thread", _sync_thread()))
+    stack.enter_context(
+        patch("outwarp_server.api.get_server_platform", return_value=MagicMock()))
+    return stack
 
 
 def _sync_thread():
@@ -897,7 +911,10 @@ def test_update_server_config_does_not_clobber_secrets_written_by_another_proces
     )
     on_disk.save(path)
 
-    with patch("outwarp_server.api.default_config_path", return_value=path):
+    with (
+        patch("outwarp_server.api.default_config_path", return_value=path),
+        _no_background_bounce(),
+    ):
         r = api.update_server_config({"port": 8443})
 
     assert r["ok"] is True
