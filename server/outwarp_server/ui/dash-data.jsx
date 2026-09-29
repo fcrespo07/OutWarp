@@ -135,16 +135,29 @@ const DS_STR = {
 
     // traffic
     traffic_title: "Historial de tráfico",
-    traffic_sub: "Agregado de todos los peers · snapshots cada 60 s",
+    traffic_sub: "Todo el tráfico de los clientes por el túnel · una muestra por minuto, 7 días",
     traffic_window: "Ventana",
     traffic_1h: "1 h",
     traffic_24h: "24 h",
     traffic_7d: "7 d",
-    traffic_rxTotal: "RX total",
-    traffic_txTotal: "TX total",
+    traffic_rxTotal: "Recibido",
+    traffic_rxSub: "RX · lo que suben los clientes",
+    traffic_txTotal: "Enviado",
+    traffic_txSub: "TX · lo que bajan los clientes",
     traffic_peak: "Pico",
+    traffic_peakSub: "máximo entre dos muestras",
     traffic_avg: "Media",
+    traffic_avgSub: "en {span} con datos",
     traffic_perClient: "Por cliente",
+    traffic_chartTitle: "Tráfico en el tiempo",
+    traffic_emptyTitle: "Aún no hay datos",
+    traffic_emptyBody: "El servidor guarda una muestra del tráfico de cada cliente por minuto mientras el túnel está en marcha y las conserva 7 días. La primera aparecerá aquí en un par de minutos.",
+    traffic_emptyStopped: "El túnel está parado: no se registra tráfico hasta que vuelva a arrancar.",
+    traffic_noSamples: "sin datos",
+    traffic_partial: "Hay datos desde {t}; antes de eso no hay muestras.",
+    traffic_quiet: "Ningún cliente ha pasado tráfico en esta ventana.",
+    traffic_error: "No se pudo leer el historial: {error}",
+    traffic_share: "del total",
 
     // service
     service_title: "Servicio",
@@ -339,16 +352,29 @@ const DS_STR = {
     add_showQr: "Show QR",
 
     traffic_title: "Traffic history",
-    traffic_sub: "Aggregated across all peers · 60 s snapshots",
+    traffic_sub: "All client traffic through the tunnel · one sample a minute, 7 days",
     traffic_window: "Window",
     traffic_1h: "1 h",
     traffic_24h: "24 h",
     traffic_7d: "7 d",
-    traffic_rxTotal: "RX total",
-    traffic_txTotal: "TX total",
+    traffic_rxTotal: "Received",
+    traffic_rxSub: "RX · what clients upload",
+    traffic_txTotal: "Sent",
+    traffic_txSub: "TX · what clients download",
     traffic_peak: "Peak",
-    traffic_avg: "Avg",
+    traffic_peakSub: "highest between two samples",
+    traffic_avg: "Average",
+    traffic_avgSub: "over {span} with data",
     traffic_perClient: "Per client",
+    traffic_chartTitle: "Traffic over time",
+    traffic_emptyTitle: "No data yet",
+    traffic_emptyBody: "The server records each client's traffic once a minute while the tunnel runs and keeps it for 7 days. The first sample shows up here in a couple of minutes.",
+    traffic_emptyStopped: "The tunnel is stopped: no traffic is recorded until it starts again.",
+    traffic_noSamples: "no data",
+    traffic_partial: "Data since {t}; there are no samples before that.",
+    traffic_quiet: "No client has sent traffic in this window.",
+    traffic_error: "Could not read the history: {error}",
+    traffic_share: "of total",
 
     service_title: "Service",
     service_sub: "Control the systemd units OutWarp uses.",
@@ -447,6 +473,28 @@ function fmtAgo(sec, lang) {
   if (sec < 3600) return `${ago}${Math.floor(sec / 60)}m${post}`;
   if (sec < 86400) return `${ago}${Math.floor(sec / 3600)}h${post}`;
   return `${ago}${Math.floor(sec / 86400)}d${post}`;
+}
+// Axis tick for the Traffic chart: a clock time for windows up to a day,
+// a short day for the week.
+function fmtTick(ts, bucketSeconds, lang) {
+  const d = new Date(ts * 1000);
+  if (bucketSeconds >= 3600) return d.toLocaleDateString(lang, { weekday: "short", day: "numeric" });
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function fmtRange(ts, bucketSeconds, lang) {
+  const a = new Date(ts * 1000), b = new Date((ts + bucketSeconds) * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  const hm = (d) => `${p(d.getHours())}:${p(d.getMinutes())}`;
+  const day = bucketSeconds >= 3600 ? a.toLocaleDateString(lang, { weekday: "short", day: "numeric" }) + " " : "";
+  return `${day}${hm(a)}–${hm(b)}`;
+}
+// A stretch of time, coarse: "45 min", "3 h", "2 d".
+function fmtSpan(sec) {
+  sec = Math.max(0, Math.round(sec || 0));
+  if (sec < 3600) return `${Math.max(1, Math.round(sec / 60))} min`;
+  if (sec < 86400) return `${Math.round(sec / 3600)} h`;
+  return `${Math.round(sec / 86400)} d`;
 }
 function tr(str, vars) {
   if (!vars) return str;
@@ -565,4 +613,4 @@ function mergeLogs(logs, lastSeq, entries, max = 400) {
 }
 
 window.DS_STR = DS_STR;
-window.DSfmt = { fmtBytes, fmtBps, fmtDuration, fmtAgo, tr, nowClock, makeBoundedPeak, smoothPath, smoothSeries, nextRate, mergeLogs };
+window.DSfmt = { fmtBytes, fmtBps, fmtDuration, fmtAgo, fmtTick, fmtRange, fmtSpan, tr, nowClock, makeBoundedPeak, smoothPath, smoothSeries, nextRate, mergeLogs };

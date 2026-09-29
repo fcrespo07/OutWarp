@@ -1,7 +1,7 @@
 // OutWarp Server dashboard — screens (wired to the real Api via C.call).
 const { Card, SLabel, PageHead, Btn, Pill, Dot, Toggle, Segmented, Stat, Field, Input,
-        Sparkline, AreaChart, BarSeries, Donut, KV, Icons, useUI } = window;
-const { fmtBytes, fmtBps, fmtDuration, fmtAgo, tr } = window.DSfmt;
+        Sparkline, AreaChart, HistoryChart, EmptyState, Donut, KV, Icons, useUI } = window;
+const { fmtBytes, fmtBps, fmtDuration, fmtAgo, fmtSpan, tr } = window.DSfmt;
 
 
 const stateTone = (s) => s === "online" ? "good" : s === "idle" || s === "pending" ? "warn" : "neutral";
@@ -27,15 +27,27 @@ function deriveServices(status) {
   ];
 }
 
-// traffic history fetch — backed by Api.get_traffic_history(window) (Fase 4).
+// Traffic history (Api.get_traffic_history): refetched when the window
+// changes and every minute, which is how often the server records a sample.
+// The previous window's data stays on screen while the next one loads.
+const TRAFFIC_REFRESH_MS = 60 * 1000;
 function useTraffic(C, win) {
-  const [data, setData] = React.useState(null);
+  const [state, setState] = React.useState({ data: null, error: "", loading: true });
   React.useEffect(() => {
     let alive = true;
-    C.call("get_traffic_history", win).then((d) => { if (alive && d && !d.error) setData(d); }).catch(() => {});
-    return () => { alive = false; };
+    const load = () => {
+      setState((s) => ({ ...s, loading: true }));
+      C.call("get_traffic_history", win).then((d) => {
+        if (!alive) return;
+        if (d && !d.error) setState({ data: d, error: "", loading: false });
+        else setState((s) => ({ ...s, error: (d && d.error) || "?", loading: false }));
+      }).catch((e) => { if (alive) setState((s) => ({ ...s, error: String(e && e.message || e), loading: false })); });
+    };
+    load();
+    const id = setInterval(load, TRAFFIC_REFRESH_MS);
+    return () => { alive = false; clearInterval(id); };
   }, [win]);
-  return data;
+  return state;
 }
 
 // ════════════════════════ DASHBOARD ════════════════════════════════════
@@ -47,7 +59,8 @@ function ScreenDashboard({ C }) {
   // they don't count as offline.
   const total = online + idle + offline;
   const services = deriveServices(live.status);
-  const traffic = useTraffic(C, "24h");
+  const traffic = useTraffic(C, "24h").data;
+  const trafficKnown = !!(traffic && traffic.has_data);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: ui.sectionGap }}>
@@ -87,9 +100,9 @@ function ScreenDashboard({ C }) {
           </div>
           <div style={{ textAlign: "right", fontFamily: "var(--font-mono)" }} className="dash-hero-traffic">
             <SLabel style={{ textAlign: "right" }}>{T.dash_traffic24}</SLabel>
-            <div style={{ fontSize: 28, fontWeight: 600, marginTop: 6 }}>{traffic ? fmtBytes((traffic.rx_total || 0) + (traffic.tx_total || 0)) : "—"}</div>
+            <div style={{ fontSize: 28, fontWeight: 600, marginTop: 6 }}>{trafficKnown ? fmtBytes((traffic.rx_total || 0) + (traffic.tx_total || 0)) : "—"}</div>
             <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 2 }}>
-              {traffic ? `↓ ${fmtBytes(traffic.rx_total || 0)} · ↑ ${fmtBytes(traffic.tx_total || 0)}` : "—"}
+              {trafficKnown ? `↓ ${fmtBytes(traffic.rx_total || 0)} · ↑ ${fmtBytes(traffic.tx_total || 0)}` : T.traffic_noSamples}
             </div>
           </div>
         </div>
@@ -284,52 +297,85 @@ function ScreenTraffic({ C }) {
     { value: "24h", label: T.traffic_24h },
     { value: "7d", label: T.traffic_7d },
   ];
-  const data = useTraffic(C, win);
-  const rx = (data && data.rx_buckets) || [];
-  const tx = (data && data.tx_buckets) || [];
-  const perClient = (data && data.per_client) || [...live.clients].map((c) => ({ name: c.name, rx: c.rxTotal, tx: c.txTotal, state: c.state }));
-  const maxRx = Math.max(...perClient.map((x) => x.rx), 1);
+  const { data, error, loading } = useTraffic(C, win);
+  const running = !!(live.status && live.status.status === "running");
+  const has = !!(data && data.has_data && data.window === win);
+  const stateOf = Object.fromEntries(live.clients.map((c) => [c.name, c.state]));
+  const perClient = has ? data.per_client : [];
+  const grand = perClient.reduce((a, c) => a + c.rx + c.tx, 0);
+  const maxClient = Math.max(1, ...perClient.map((c) => c.rx + c.tx));
+  const windowSec = { "1h": 3600, "24h": 86400, "7d": 604800 }[win];
+  const partial = has && data.first_ts != null && data.covered_seconds < windowSec - 2 * data.bucket_seconds;
+  const since = has && data.first_ts != null ? new Date(data.first_ts * 1000).toLocaleString(C.lang, { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "";
+  const value = (v) => (has ? v : "—");
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: ui.gap }}>
       <PageHead title={T.traffic_title} sub={T.traffic_sub}
         right={<Segmented options={windows} value={win} onChange={setWin} />} />
 
-      <div className="dash-triad" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: ui.gap }}>
-        <Stat label={T.traffic_rxTotal} value={data ? fmtBytes(data.rx_total || 0) : "—"} sub="↓ peers" tone="var(--brand)" />
-        <Stat label={T.traffic_txTotal} value={data ? fmtBytes(data.tx_total || 0) : "—"} sub="↑ peers" tone="var(--brand-2)" />
-        <Stat label={T.traffic_peak} value={data ? fmtBps(data.peak_bps || 0) : "—"} sub={win} />
-        <Stat label={T.traffic_avg} value={data ? fmtBps(data.avg_bps || 0) : "—"} sub={win} />
-      </div>
+      {error && !has && (
+        <Card><EmptyState icon={Icons.warn(20)} title={T.traffic_emptyTitle} body={tr(T.traffic_error, { error })} /></Card>
+      )}
 
-      <Card>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <SLabel>RX · {win}</SLabel>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--brand)" }}>↓ download</span>
-        </div>
-        {rx.length ? <BarSeries data={rx} h={120} color="var(--brand)" /> : <div style={{ color: "var(--text-3)", fontFamily: "var(--font-mono)", fontSize: 12 }}>—</div>}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "22px 0 14px" }}>
-          <SLabel>TX · {win}</SLabel>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--brand-2)" }}>↑ upload</span>
-        </div>
-        {tx.length ? <BarSeries data={tx} h={90} color="var(--brand-2)" /> : <div style={{ color: "var(--text-3)", fontFamily: "var(--font-mono)", fontSize: 12 }}>—</div>}
-      </Card>
+      {!error && !has && (
+        <Card>
+          <EmptyState icon={loading && !data ? Icons.refresh(20) : Icons.clock(20)}
+            title={loading && !data ? "…" : T.traffic_emptyTitle}
+            body={loading && !data ? "" : (running ? T.traffic_emptyBody : `${T.traffic_emptyStopped} ${T.traffic_emptyBody}`)} />
+        </Card>
+      )}
 
-      <Card>
-        <SLabel style={{ marginBottom: 14 }}>{T.traffic_perClient}</SLabel>
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {[...perClient].sort((a, b) => b.rx - a.rx).map((c) => (
-            <div key={c.name} style={{ display: "grid", gridTemplateColumns: "minmax(110px,1fr) 2fr auto", gap: 12, alignItems: "center" }}>
-              <span style={{ fontSize: 12.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 7 }}>
-                <Dot tone={stateTone(c.state || "offline")} size={6} />{c.name}
-              </span>
-              <div style={{ height: 8, background: "var(--bg-sunk)", borderRadius: 4, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${Math.max(2, (c.rx / maxRx) * 100)}%`, background: c.state === "offline" ? "var(--text-3)" : "var(--brand)", borderRadius: 4 }} />
-              </div>
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-2)", textAlign: "right", whiteSpace: "nowrap" }}>↓{fmtBytes(c.rx)} ↑{fmtBytes(c.tx)}</span>
+      {has && <>
+        <div className="dash-triad tr-stats" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: ui.gap, opacity: loading ? 0.7 : 1, transition: "opacity .2s" }}>
+          <Stat label={T.traffic_rxTotal} value={value(fmtBytes(data.rx_total))} sub={T.traffic_rxSub} tone="var(--brand)" />
+          <Stat label={T.traffic_txTotal} value={value(fmtBytes(data.tx_total))} sub={T.traffic_txSub} tone="var(--brand-2)" />
+          <Stat label={T.traffic_peak} value={value(fmtBps(data.peak_bps))} sub={T.traffic_peakSub} />
+          <Stat label={T.traffic_avg} value={value(fmtBps(data.avg_bps))} sub={tr(T.traffic_avgSub, { span: fmtSpan(data.covered_seconds) })} />
+        </div>
+
+        <Card>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10, flexWrap: "wrap" }}>
+            <SLabel>{T.traffic_chartTitle} · {windows.find((w) => w.value === win).label}</SLabel>
+            <div style={{ display: "flex", gap: 14, fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
+              <span style={{ color: "var(--brand-2)" }}>▲ {T.traffic_txTotal}</span>
+              <span style={{ color: "var(--brand)" }}>▼ {T.traffic_rxTotal}</span>
             </div>
-          ))}
-        </div>
-      </Card>
+          </div>
+          <HistoryChart rx={data.rx_buckets} tx={data.tx_buckets} start={data.start} bucketSeconds={data.bucket_seconds}
+            firstTs={data.first_ts} lang={C.lang} T={T} h={230} />
+          {partial && <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--text-3)", display: "flex", alignItems: "center", gap: 6 }}>
+            {Icons.clock(13)} {tr(T.traffic_partial, { t: since })}
+          </div>}
+        </Card>
+
+        <Card pad={0} style={{ overflow: "hidden" }}>
+          <div style={{ padding: `${ui.cardPad}px ${ui.cardPad}px 10px` }}><SLabel>{T.traffic_perClient}</SLabel></div>
+          {perClient.length === 0 || grand === 0
+            ? <EmptyState compact icon={Icons.inbox(18)} title={T.traffic_quiet} />
+            : perClient.map((c) => {
+              const st = stateOf[c.name] || "offline";
+              const share = grand ? Math.round(((c.rx + c.tx) / grand) * 100) : 0;
+              return (
+                <button key={c.name} className="ow-row ow-rowbtn tr-row" onClick={() => stateOf[c.name] && C.openClient(c.name)}
+                  style={{ width: "100%", boxSizing: "border-box", padding: `${ui.rowPadY}px ${ui.cardPad}px`, borderTop: "1px solid var(--line)",
+                    cursor: stateOf[c.name] ? "pointer" : "default" }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                    <Dot tone={stateTone(st)} size={7} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+                  </span>
+                  <div className="tr-bar" title={`${share}% ${T.traffic_share}`} style={{ display: "flex", height: 8, background: "var(--bg-sunk)", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ width: `${(c.tx / maxClient) * 100}%`, background: "var(--brand-2)" }} />
+                    <div style={{ width: `${(c.rx / maxClient) * 100}%`, background: "var(--brand)" }} />
+                  </div>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-2)", textAlign: "right", whiteSpace: "nowrap" }}>
+                    <span style={{ color: "var(--brand-2)" }}>↑{fmtBytes(c.tx)}</span>{"  "}<span style={{ color: "var(--brand)" }}>↓{fmtBytes(c.rx)}</span>
+                    <span style={{ color: "var(--text-3)", marginLeft: 8 }}>{share}%</span>
+                  </span>
+                </button>
+              );
+            })}
+        </Card>
+      </>}
     </div>
   );
 }

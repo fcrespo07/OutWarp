@@ -102,6 +102,14 @@
     @media (max-width: 820px) { .dash-triad { grid-template-columns: 1fr 1fr !important; } }
     @media (max-width: 520px) { .dash-triad { grid-template-columns: 1fr !important; } .set-grid { grid-template-columns: 1fr !important; } }
 
+    /* traffic screen */
+    .tr-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(90px, 2fr) auto; gap: 14px; align-items: center; }
+    @media (max-width: 640px) {
+      .tr-row { grid-template-columns: 1fr auto; row-gap: 7px; }
+      .tr-row .tr-bar { grid-column: 1 / -1; grid-row: 2; }
+      .tr-stats { grid-template-columns: 1fr 1fr !important; }
+    }
+
     /* login responsive */
     @media (max-width: 800px) {
       .login-wrap { grid-template-columns: 1fr !important; }

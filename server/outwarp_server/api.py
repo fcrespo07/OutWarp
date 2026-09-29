@@ -513,8 +513,22 @@ class Api:
             "clients_count": len(cfg.clients),
             "clients_pending": sum(1 for c in cfg.clients if not c.public_key),
             "service_control": self._service_control(),
+            "host_kind": self._host_kind(),
+            "tls_mode": cfg.tls_mode,
             **self._tls_info(cfg),
         }
+
+    @staticmethod
+    def _host_kind() -> str:
+        """Where the transport runs, for the texts that name it: "container"
+        (the image's `serve`), "windows" (the server app / service) or
+        "systemd" (Linux units)."""
+        # Same test as get_server_platform(), without building a platform
+        # every second for the live poll.
+        if (os.environ.get("OUTWARP_PLATFORM") == "kubernetes"
+                or "KUBERNETES_SERVICE_HOST" in os.environ):
+            return "container"
+        return "windows" if sys.platform == "win32" else "systemd"
 
     def _service_control(self) -> str:
         """What the Service screen may do from *this* process.
@@ -662,44 +676,63 @@ class Api:
         log.info("apply_remediation: auto-fix for %r completed", check_name)
         return {"ok": True, "name": check_name}
 
+    # window → (length, bucket width) in seconds.
+    _TRAFFIC_WINDOWS = {"1h": (3600, 60), "24h": (86400, 900), "7d": (7 * 86400, 3600)}
+
     def get_traffic_history(self, window: str = "24h") -> dict[str, Any]:
         """Aggregate transfer history for the Traffic screen.
 
-        Wraps the SQLite snapshots the snapshot scheduler already persists
-        (traffic_history.py) — no new storage. Returns hourly rx/tx buckets,
-        totals, peak/avg rate and a per-client breakdown.
+        Reads the snapshots `serve` writes every minute to
+        `<config dir>/traffic.sqlite` (traffic_history.py). `has_data` is
+        false until two snapshots exist, and the screen says so instead of
+        drawing zeros; `covered_seconds` is how much of the window has data.
+        RX/TX are the server's: RX is what the clients sent.
         """
         if self._manager is None:
             return {"error": "server not configured"}
-        hours = {"1h": 1, "24h": 24, "7d": 168}.get(window, 24)
+        if window not in self._TRAFFIC_WINDOWS:
+            window = "24h"
+        length, width = self._TRAFFIC_WINDOWS[window]
         try:
             if self._traffic_history is None:
                 from outwarp_server.traffic_history import TrafficHistory
-                self._traffic_history = TrafficHistory(config=self._manager.config)
+
+                self._traffic_history = TrafficHistory.for_config_dir(
+                    self._manager._config_path.parent,  # noqa: SLF001
+                    config=self._manager.config,
+                )
             hist = self._traffic_history
-            buckets = hist.hourly_buckets(hours=hours)
-            rx_buckets = [b[1] for b in buckets]
-            tx_buckets = [b[2] for b in buckets]
-            rx_total = sum(rx_buckets)
-            tx_total = sum(tx_buckets)
-            span = max(1, hours * 3600)
-            peak_hourly = max([*rx_buckets, *tx_buckets, 0])
-            talkers = hist.top_talkers(since_seconds=span, limit=20)
+            hist.bind_config(self._manager.config)  # names of clients added since
+            data = hist.series(length, width)
+            names = hist.client_names()
         except Exception as exc:
             log.exception("get_traffic_history failed")
             return {"error": str(exc)}
-        per_client = [
-            {"name": t["name"], "rx": t["rx_delta"], "tx": t["tx_delta"]}
-            for t in talkers
-        ]
+        rx_total = sum(data["rx"])
+        tx_total = sum(data["tx"])
+        covered = data["covered_seconds"]
+        per_client = sorted(
+            (
+                {"name": names.get(key, key[:8] + "…"), "rx": rx, "tx": tx}
+                for key, (rx, tx) in data["per_key"].items()
+            ),
+            key=lambda c: c["rx"] + c["tx"],
+            reverse=True,
+        )
         return {
             "window": window,
+            "has_data": data["last_ts"] is not None and bool(data["per_key"]),
+            "bucket_seconds": width,
+            "start": data["start"],
+            "first_ts": data["first_ts"],
+            "last_ts": data["last_ts"],
+            "covered_seconds": covered,
             "rx_total": rx_total,
             "tx_total": tx_total,
-            "peak_bps": peak_hourly // 3600,
-            "avg_bps": (rx_total + tx_total) // span,
-            "rx_buckets": rx_buckets,
-            "tx_buckets": tx_buckets,
+            "peak_bps": data["peak_bps"],
+            "avg_bps": (rx_total + tx_total) // covered if covered > 0 else 0,
+            "rx_buckets": data["rx"],
+            "tx_buckets": data["tx"],
             "per_client": per_client,
         }
 

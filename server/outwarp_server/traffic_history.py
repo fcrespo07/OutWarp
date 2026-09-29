@@ -9,6 +9,8 @@ recording a fake gigabyte.
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -20,7 +22,11 @@ from outwarp_server.wireguard import get_live_peers
 log = logging.getLogger(__name__)
 
 
-DEFAULT_DB_PATH = Path("/var/lib/outwarp/traffic.sqlite")
+# Where the history lived until 0.16: outside the config dir, so in a pod
+# the `serve` container wrote a database the panel container never saw, and
+# the pod's filesystem lost it on every restart (B-041).
+LEGACY_DB_PATH = Path("/var/lib/outwarp/traffic.sqlite")
+DB_FILENAME = "traffic.sqlite"
 _RETENTION_SECONDS = 7 * 24 * 3600
 DEFAULT_INTERVAL_SECONDS = 60
 
@@ -37,6 +43,34 @@ CREATE INDEX IF NOT EXISTS idx_ts ON snapshot(ts);
 """
 
 
+def traffic_db_path(config_dir: Path | None = None) -> Path:
+    """The history database: next to the server config, so every process
+    reading that config (`serve`, the panel, the TUI) shares one history
+    and a container keeps it on its config volume."""
+    if config_dir is None:
+        from outwarp_server.config import default_config_dir
+
+        config_dir = default_config_dir()
+    return Path(config_dir) / DB_FILENAME
+
+
+def _adopt_legacy_db(target: Path, legacy: Path = LEGACY_DB_PATH) -> None:
+    """Copy a pre-0.17 database into its new home once. Copied, not moved:
+    another process may still have the old one open, and the copy goes via a
+    temp file so a reader never sees half a database."""
+    if target.exists() or target == legacy or not legacy.is_file():
+        return
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy, tmp)
+        os.replace(tmp, target)
+        log.info("Traffic history moved from %s to %s", legacy, target)
+    except OSError as exc:
+        log.warning("Could not adopt the old traffic history %s: %s", legacy, exc)
+        tmp.unlink(missing_ok=True)
+
+
 class TrafficHistory:
     def __init__(
         self,
@@ -45,7 +79,10 @@ class TrafficHistory:
         config: ServerConfig | None = None,
         peer_source=None,
     ) -> None:
-        self._db_path = Path(db_path) if db_path else DEFAULT_DB_PATH
+        if db_path is None:
+            db_path = traffic_db_path()
+            _adopt_legacy_db(db_path)
+        self._db_path = Path(db_path)
         self._config = config
         # Source of {public_key: LivePeer} — injectable so tests can stub it
         # without needing a real `wg` binary.
@@ -53,12 +90,22 @@ class TrafficHistory:
         self._lock = threading.Lock()
         self._ensure_schema()
 
+    @classmethod
+    def for_config_dir(
+        cls, config_dir: Path, *, config: ServerConfig | None = None,
+    ) -> TrafficHistory:
+        path = traffic_db_path(config_dir)
+        _adopt_legacy_db(path)
+        return cls(path, config=config)
+
     @property
     def db_path(self) -> Path:
         return self._db_path
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._db_path, isolation_level=None)
+        # `serve` writes while the panel (another process, maybe another
+        # container on the same volume) reads: wait out the other's lock.
+        return sqlite3.connect(self._db_path, isolation_level=None, timeout=5)
 
     def _ensure_schema(self) -> None:
         try:
@@ -141,6 +188,91 @@ class TrafficHistory:
                 log.warning("Traffic hourly read failed: %s", exc)
                 return []
 
+    def series(
+        self, window_seconds: int, bucket_seconds: int, *, now: int | None = None,
+    ) -> dict:
+        """Everything the panel's Traffic screen draws for one window.
+
+        Buckets are dense (an empty stretch is a run of zeros, not a missing
+        bar) and aligned to `bucket_seconds`, the newest one holding `now`.
+        Each byte delta between two snapshots of a peer is counted in the
+        bucket of the later snapshot; a counter that went backwards (the
+        interface restarted) counts as zero. `peak_bps` is the highest
+        all-peers rate between two consecutive snapshots, not a bucket
+        average. `covered_seconds` is how much of the window actually has
+        snapshots, so a fresh install does not report its first ten minutes
+        averaged over a day.
+        """
+        now = int(time.time()) if now is None else int(now)
+        n = max(1, window_seconds // bucket_seconds)
+        end = (now // bucket_seconds + 1) * bucket_seconds
+        start = end - n * bucket_seconds
+        rx = [0] * n
+        tx = [0] * n
+        per_key: dict[str, list[int]] = {}
+        rate_at: dict[int, float] = {}
+        first_ts = last_ts = None
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    # Look back a little before the window so its first
+                    # snapshot still has a predecessor to diff against.
+                    cur = conn.execute(
+                        """
+                        WITH deltas AS (
+                            SELECT ts, public_key,
+                                   rx_bytes - LAG(rx_bytes) OVER w AS d_rx,
+                                   tx_bytes - LAG(tx_bytes) OVER w AS d_tx,
+                                   ts - LAG(ts) OVER w AS dt
+                            FROM snapshot
+                            WHERE ts >= ?
+                            WINDOW w AS (PARTITION BY public_key ORDER BY ts)
+                        )
+                        SELECT ts, public_key, d_rx, d_tx, dt FROM deltas
+                        WHERE ts >= ? AND dt IS NOT NULL
+                        """,
+                        (start - 6 * 3600, start),
+                    )
+                    rows = cur.fetchall()
+                    first_ts, last_ts = conn.execute(
+                        "SELECT MIN(ts), MAX(ts) FROM snapshot WHERE ts >= ?", (start,),
+                    ).fetchone()
+            except sqlite3.Error as exc:
+                log.warning("Traffic series read failed: %s", exc)
+                rows = []
+        for ts, public_key, d_rx, d_tx, dt in rows:
+            d_rx = max(0, int(d_rx or 0))
+            d_tx = max(0, int(d_tx or 0))
+            i = (int(ts) - start) // bucket_seconds
+            if 0 <= i < n:
+                rx[i] += d_rx
+                tx[i] += d_tx
+            totals = per_key.setdefault(public_key, [0, 0])
+            totals[0] += d_rx
+            totals[1] += d_tx
+            if dt and dt > 0:
+                rate_at[int(ts)] = rate_at.get(int(ts), 0.0) + (d_rx + d_tx) / dt
+        covered = 0 if first_ts is None else max(0, now - max(int(first_ts), now - window_seconds))
+        return {
+            "bucket_seconds": bucket_seconds,
+            "start": start,
+            "rx": rx,
+            "tx": tx,
+            "per_key": per_key,
+            "peak_bps": int(max(rate_at.values(), default=0.0)),
+            "covered_seconds": covered,
+            "first_ts": None if first_ts is None else int(first_ts),
+            "last_ts": None if last_ts is None else int(last_ts),
+        }
+
+    def bind_config(self, config: ServerConfig | None) -> None:
+        self._config = config
+
+    def client_names(self) -> dict[str, str]:
+        if self._config is None:
+            return {}
+        return {c.public_key: c.name for c in self._config.clients}
+
     def top_talkers(
         self, since_seconds: int = 3600, limit: int = 5,
     ) -> list[dict]:
@@ -183,9 +315,7 @@ class TrafficHistory:
             except sqlite3.Error as exc:
                 log.warning("Traffic top_talkers read failed: %s", exc)
                 return []
-        name_for: dict[str, str] = {}
-        if self._config is not None:
-            name_for = {c.public_key: c.name for c in self._config.clients}
+        name_for = self.client_names()
         out: list[dict] = []
         for public_key, d_rx, d_tx in raw:
             out.append({
@@ -226,18 +356,27 @@ class _SnapshotScheduler:
         return self._history.snapshot()
 
     def _run(self) -> None:
-        while not self._stop.wait(self._interval):
+        # First snapshot right away: a server restarted every few minutes
+        # (or a fresh one) would otherwise never record anything.
+        while True:
             try:
                 self._history.snapshot()
             except Exception:
                 log.exception("Traffic history scheduler tick failed")
+            if self._stop.wait(self._interval):
+                return
 
 
 def build_scheduler(
     config: ServerConfig,
     *,
     db_path: Path | None = None,
+    config_dir: Path | None = None,
     interval: float = DEFAULT_INTERVAL_SECONDS,
 ) -> _SnapshotScheduler:
-    history = TrafficHistory(db_path, config=config)
+    if db_path is None and config_dir is not None:
+        history = TrafficHistory.for_config_dir(config_dir, config=config)
+    else:
+        history = TrafficHistory(db_path, config=config)
+    log.info("Traffic history: %s (a snapshot every %ds)", history.db_path, int(interval))
     return _SnapshotScheduler(history, interval)

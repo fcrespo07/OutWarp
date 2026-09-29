@@ -69,7 +69,7 @@ class OutWarpServerTUI(App):
             self.push_screen(_NoConfigScreen(tr("tui.app.load_failed", error=exc)))
             return
         try:
-            self.history = TrafficHistory(config=self.config)
+            self.history = TrafficHistory.for_config_dir(self._config_dir, config=self.config)
         except Exception as exc:
             log.warning("TrafficHistory init failed: %s", exc)
             self.history = TrafficHistory.__new__(TrafficHistory)  # placeholder

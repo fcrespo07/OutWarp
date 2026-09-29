@@ -538,7 +538,9 @@ class ServerManager:
 
             try:
                 from outwarp_server.traffic_history import build_scheduler
-                self._traffic_scheduler = build_scheduler(self._config)
+                self._traffic_scheduler = build_scheduler(
+                    self._config, config_dir=self._config_path.parent,
+                )
                 self._traffic_scheduler.start()
             except Exception:
                 log.exception("Could not start traffic-history scheduler")

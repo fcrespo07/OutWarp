@@ -234,20 +234,96 @@ const AreaChart = ({ samples, h = 150 }) => {
   );
 };
 
-// ── Bars (24h history) ───────────────────────────────────────────────────
-const BarSeries = ({ data, h = 120, color = "var(--brand)" }) => {
-  const max = Math.max(...data, 0.0001);
-  const n = data.length;
-  const gap = 2;
+// ── Traffic history chart (Traffic screen) ───────────────────────────────
+// One bar per bucket, what the clients sent (RX) growing down and what they
+// received (TX) growing up, like the live chart. Buckets before the first
+// snapshot are shaded as "no data" rather than drawn as a flat zero, and
+// hovering a bar shows its time range and bytes.
+const HistoryChart = ({ rx, tx, start, bucketSeconds, firstTs, lang, T, h = 220 }) => {
+  const [hover, setHover] = React.useState(null);
+  const boxRef = React.useRef(null);
+  const n = rx.length;
+  const W = 760, H = h, PAD = 6, AXIS = 22;
+  const plotH = H - AXIS;
+  const mid = plotH / 2;
+  const half = mid - PAD;
+  const peak = Math.max(1, ...rx, ...tx);
+  const slot = W / n;
+  const barW = Math.max(1, slot - Math.min(2, slot * 0.25));
+  const firstIdx = firstTs == null ? n : Math.max(0, Math.floor((firstTs - start) / bucketSeconds));
+  const { fmtBytes, fmtTick, fmtRange } = window.DSfmt;
+  const ticks = 5;
+  const onMove = (e) => {
+    const r = boxRef.current.getBoundingClientRect();
+    const i = Math.floor(((e.clientX - r.left) / r.width) * n);
+    setHover(i >= 0 && i < n ? i : null);
+  };
+  const hoverX = hover == null ? 0 : ((hover + 0.5) / n) * 100;
   return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap, height: h, width: "100%" }}>
-      {data.map((v, i) => (
-        <div key={i} style={{ flex: 1, height: `${Math.max(2, (v / max) * 100)}%`,
-          background: color, opacity: 0.35 + 0.65 * (v / max), borderRadius: 1, minWidth: 0 }}/>
-      ))}
+    <div ref={boxRef} style={{ position: "relative" }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block" }}
+        role="img" aria-label={T.traffic_chartTitle}>
+        <defs>
+          <pattern id="owNoData" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke="var(--line-strong)" strokeWidth="1.2" />
+          </pattern>
+        </defs>
+        {firstIdx > 0 && <rect x="0" y={PAD} width={Math.min(n, firstIdx) * slot} height={plotH - PAD * 2} fill="url(#owNoData)" opacity="0.35" />}
+        {[0.5, 1].map((f) => (
+          <g key={f}>
+            <line x1="0" x2={W} y1={mid - f * half} y2={mid - f * half} stroke="var(--line)" strokeDasharray="2 5" />
+            <line x1="0" x2={W} y1={mid + f * half} y2={mid + f * half} stroke="var(--line)" strokeDasharray="2 5" />
+          </g>
+        ))}
+        {rx.map((v, i) => {
+          const up = (tx[i] / peak) * half, down = (v / peak) * half;
+          const x = i * slot + (slot - barW) / 2;
+          const dim = hover != null && hover !== i ? 0.45 : 1;
+          return (
+            <g key={i} opacity={dim}>
+              {up > 0 && <rect x={x} y={mid - Math.max(1, up)} width={barW} height={Math.max(1, up)} rx={Math.min(2, barW / 3)} fill="var(--brand-2)" />}
+              {down > 0 && <rect x={x} y={mid} width={barW} height={Math.max(1, down)} rx={Math.min(2, barW / 3)} fill="var(--brand)" />}
+            </g>
+          );
+        })}
+        <line x1="0" x2={W} y1={mid} y2={mid} stroke="var(--line-strong)" />
+        {hover != null && <rect x={hover * slot} y={PAD} width={slot} height={plotH - PAD * 2} fill="var(--text)" opacity="0.06" />}
+      </svg>
+      <div aria-hidden style={{ position: "absolute", left: 0, top: PAD - 2, fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-3)" }}>↑ {fmtBytes(peak)}</div>
+      <div aria-hidden style={{ position: "absolute", left: 0, top: plotH - PAD - 14, fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-3)" }}>↓ {fmtBytes(peak)}</div>
+      <div aria-hidden style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: AXIS, display: "flex", justifyContent: "space-between", alignItems: "flex-end",
+        fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--text-3)" }}>
+        {Array.from({ length: ticks }).map((_, k) => (
+          <span key={k}>{fmtTick(start + (k / (ticks - 1)) * n * bucketSeconds, bucketSeconds, lang)}</span>
+        ))}
+      </div>
+      {hover != null && (
+        <div role="tooltip" style={{ position: "absolute", top: 4, left: `${hoverX}%`, transform: `translateX(${hoverX > 70 ? "-104%" : "4%"})`,
+          background: "var(--bg-2)", border: "1px solid var(--line-strong)", borderRadius: 8, padding: "7px 10px", pointerEvents: "none",
+          boxShadow: "0 8px 22px -10px rgba(0,0,0,.45)", fontFamily: "var(--font-mono)", fontSize: 11.5, whiteSpace: "nowrap", zIndex: 2 }}>
+          <div style={{ color: "var(--text-3)", marginBottom: 4 }}>{fmtRange(start + hover * bucketSeconds, bucketSeconds, lang)}</div>
+          {hover < firstIdx ? <div style={{ color: "var(--text-3)" }}>{T.traffic_noSamples}</div> : <>
+            <div style={{ color: "var(--brand)" }}>↓ {T.traffic_rxTotal} {fmtBytes(rx[hover])}</div>
+            <div style={{ color: "var(--brand-2)" }}>↑ {T.traffic_txTotal} {fmtBytes(tx[hover])}</div>
+          </>}
+        </div>
+      )}
     </div>
   );
 };
+
+// ── Empty / placeholder state ────────────────────────────────────────────
+// Says what is missing and why instead of a lone "—".
+const EmptyState = ({ icon, title, body, action, compact }) => (
+  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 8,
+    padding: compact ? "18px 12px" : "34px 20px", color: "var(--text-2)" }}>
+    {icon && <div style={{ width: 40, height: 40, borderRadius: 12, display: "grid", placeItems: "center",
+      background: "var(--bg-sunk)", color: "var(--text-3)", marginBottom: 2 }}>{icon}</div>}
+    <div style={{ fontSize: compact ? 13 : 14, fontWeight: 600, color: "var(--text)" }}>{title}</div>
+    {body && <div style={{ fontSize: 12.5, lineHeight: 1.55, maxWidth: 460, color: "var(--text-3)" }}>{body}</div>}
+    {action && <div style={{ marginTop: 6 }}>{action}</div>}
+  </div>
+);
 
 // ── Donut (clients online/idle/offline) ──────────────────────────────────
 const Donut = ({ segments, size = 92, stroke = 12, center }) => {
@@ -327,6 +403,8 @@ const Icons = {
   device: (type, s) => IC(<path d={deviceIcon[type] || deviceIcon.laptop}/>, s),
   lock: (s) => IC(<><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></>, s),
   power: (s) => IC(<><path d="M12 4v8"/><path d="M7 7a8 8 0 1 0 10 0"/></>, s),
+  clock: (s) => IC(<><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>, s),
+  inbox: (s) => IC(<><path d="M3 13l3-8h12l3 8v6H3z"/><path d="M3 13h5l1 3h6l1-3h5"/></>, s),
   globe: (s) => IC(<><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></>, s),
 };
 
@@ -335,5 +413,5 @@ window.useUI = useUI;
 window.styleTokens = styleTokens;
 Object.assign(window, {
   Card, SLabel, PageHead, Btn, Pill, Dot, Toggle, Segmented, Stat, Field, Input,
-  Sparkline, AreaChart, BarSeries, Donut, KV, Icons,
+  Sparkline, AreaChart, HistoryChart, EmptyState, Donut, KV, Icons,
 });

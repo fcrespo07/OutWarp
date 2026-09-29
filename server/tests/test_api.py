@@ -450,18 +450,62 @@ def test_get_traffic_history_shapes_buckets(tmp_path):
     api, _ = _make_api(mgr)
 
     class FakeHist:
-        def hourly_buckets(self, hours):
-            return [(0, 100, 40), (3600, 200, 60)]
+        def bind_config(self, config):
+            pass
 
-        def top_talkers(self, since_seconds, limit):
-            return [{"name": "felix", "rx_delta": 300, "tx_delta": 100, "public_key": "k"}]
+        def client_names(self):
+            return {"kF": "felix"}
+
+        def series(self, length, width):
+            assert (length, width) == (86400, 900)
+            return {
+                "bucket_seconds": width, "start": 0, "rx": [100, 200], "tx": [40, 60],
+                "per_key": {"kF": [250, 90], "kGone": [50, 10]}, "peak_bps": 9,
+                "covered_seconds": 100, "first_ts": 1, "last_ts": 2,
+            }
 
     api._traffic_history = FakeHist()
     out = api.get_traffic_history("24h")
+    assert out["has_data"] is True
     assert out["rx_total"] == 300
     assert out["tx_total"] == 100
     assert out["rx_buckets"] == [100, 200]
-    assert out["per_client"] == [{"name": "felix", "rx": 300, "tx": 100}]
+    assert out["avg_bps"] == 4          # over the 100 s with data, not the whole day
+    assert out["peak_bps"] == 9
+    assert out["per_client"] == [
+        {"name": "felix", "rx": 250, "tx": 90},
+        {"name": "kGone…", "rx": 50, "tx": 10},
+    ]
+
+
+def test_get_traffic_history_reads_what_serve_wrote(tmp_path):
+    """B-041: the panel and `serve` are different processes (containers in
+    the pod). Both must use `<config dir>/traffic.sqlite`."""
+    from outwarp_server.traffic_history import TrafficHistory
+
+    mgr = _make_mgr()
+    mgr._config_path = tmp_path / "server_config.json"
+    now = int(__import__("time").time())
+    serve_side = TrafficHistory.for_config_dir(tmp_path)
+    import sqlite3
+    with sqlite3.connect(serve_side.db_path) as conn:
+        conn.executemany("INSERT INTO snapshot VALUES (?, ?, ?, ?)", [
+            (now - 120, "k", 0, 0), (now - 60, "k", 6000, 1200),
+        ])
+    api, _ = _make_api(mgr)
+    out = api.get_traffic_history("1h")
+    assert out["has_data"] is True
+    assert out["rx_total"] == 6000 and out["tx_total"] == 1200
+    assert len(out["rx_buckets"]) == 60 and out["bucket_seconds"] == 60
+
+
+def test_get_traffic_history_with_nothing_recorded(tmp_path):
+    mgr = _make_mgr()
+    mgr._config_path = tmp_path / "server_config.json"
+    api, _ = _make_api(mgr)
+    out = api.get_traffic_history("7d")
+    assert out["has_data"] is False
+    assert len(out["rx_buckets"]) == 168
 
 
 # ── B.3 client detail / rotate ─────────────────────────────────────────────
