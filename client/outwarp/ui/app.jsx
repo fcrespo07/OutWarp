@@ -88,6 +88,8 @@ function App() {
   // Connect-progress hint emitted by the manager: "" between attempts,
   // "resolve"|"tls"|"wg"|"ws"|"done" while connecting. Drives the stepper.
   const [phase, setPhase] = useState("");
+  // Which fallback rung carried the connection ({id, label, port}) or null.
+  const [route, setRoute] = useState(null);
   const [ready, setReady] = useState(false);
   // Non-empty when bootstrap itself threw — the splash shows a retry instead of
   // spinning forever on a half-initialised bridge.
@@ -138,6 +140,7 @@ function App() {
         setConnError(s.error || "");
         setAttemptInfo({ attempt: s.attempt || 0, max_attempts: s.max_attempts || 0 });
         setPhase(s.phase || "");
+        setRoute(s.route || null);
         setProfiles(ps);
         setSettings(st);
         setLogs(lg);
@@ -157,6 +160,7 @@ function App() {
     setConnError(d.error || "");
     setAttemptInfo({ attempt: d.attempt || 0, max_attempts: d.max_attempts || 0 });
     setPhase(d.phase || "");
+    if ("route" in d) setRoute(d.route || null);
     if (d.status === "connected" || d.status === "disconnected" || d.status === "empty") setBusyMsg("");
   }, []));
   useBridgeEvent("stats", useCallback((d) => {
@@ -204,6 +208,7 @@ function App() {
         setConnError(s.error || "");
         setAttemptInfo({ attempt: s.attempt || 0, max_attempts: s.max_attempts || 0 });
         setPhase(s.phase || "");
+        setRoute(s.route || null);
       } catch (_) {}
       if (alive) setTimeout(tick, 1000);
     };
@@ -360,6 +365,11 @@ function App() {
               onReconnect={onReconnect}
               onImport={() => setScreen("import")}
               onLogs={() => setScreen("logs")}
+              onSettings={() => setScreen("settings")}
+              route={route}
+              killSwitch={!!settings.kill_switch}
+              profiles={profiles}
+              onSwitch={onSwitchProfile}
             />
           )}
           {screen === "import"  && <Import T={T} api={api} active={active} profiles={profiles} confirm={confirm} onImported={async (p) => { setActiveId(p.id); await refreshProfiles(); setScreen("home"); }} onRemove={onRemoveProfile} onSwitch={onSwitchProfile} onProfilesChanged={refreshProfiles}/>}
@@ -551,7 +561,8 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced, update })
     ["home",     T.nav_home,     "M3 11 L12 3 L21 11 M5 10 V20 H19 V10"],
     ["import",   T.nav_profiles, "M12 8 m-4 0 a4 4 0 1 0 8 0 a4 4 0 1 0 -8 0 M4 21 C4 16 8 14 12 14 C16 14 20 16 20 21"],
     ["logs",     T.nav_logs,     "M5 4 H19 V20 H5 Z M8 8 H16 M8 12 H16 M8 16 H13"],
-    ["settings", T.nav_settings, "M12 9 a3 3 0 1 1 0 6 a3 3 0 1 1 0 -6 M12 2 V4 M12 20 V22 M2 12 H4 M20 12 H22"],
+    // Sliders: the previous dot-with-four-ticks did not read as "settings".
+    ["settings", T.nav_settings, "M4 6 H13 M17 6 H20 M15 4 V8 M4 12 H7 M11 12 H20 M9 10 V14 M4 18 H14 M18 18 H20 M16 16 V20"],
     ["about",    T.nav_about,    "M3 12 a9 9 0 1 1 18 0 a9 9 0 1 1 -18 0 M12 8 V13 M12 16 V16.01"],
   ];
   const tone =
@@ -614,7 +625,9 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced, update })
           {T.upd_sidebar.replace("{v}", update)}
         </button>
       )}
-      <div className="ow-sidebar-foot" style={{
+      <button type="button" className="ow-sidebar-foot ow-sidebar-foot--btn" onClick={() => onScreen("import")}
+        title={T.home_manage} style={{
+        appearance: "none", font: "inherit", color: "inherit", textAlign: "left", cursor: "pointer",
         marginTop: update ? 0 : "auto",
         padding: 12,
         borderRadius: advanced ? 0 : 12,
@@ -627,22 +640,23 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced, update })
           <div className="ow-sidebar-foot-text" style={{ fontSize: 13, fontWeight: 600 }}>{profileName || "—"}</div>
         </div>
         <div className="ow-sidebar-foot-text" style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)" }}>{label}</div>
-      </div>
+      </button>
     </aside>
   );
 };
 
 // ── Home ───────────────────────────────────────────────────────────
-const Home = ({ T, lang, status, active, stats, history, advanced, busyMsg, connError, attemptInfo, phase, onConnect, onDisconnect, onReconnect, onImport, onLogs }) => {
+const Home = (props) => {
+  const { T, status, active, busyMsg, connError, attemptInfo, phase, onReconnect, onImport, onLogs } = props;
   if (status === "empty" || !active) {
     return <EmptyHome T={T} onImport={onImport}/>;
   }
-  if (status === "connected") return <ConnectedHome T={T} lang={lang} active={active} stats={stats} history={history} advanced={advanced} onDisconnect={onDisconnect} onLogs={onLogs}/>;
+  if (status === "connected") return <ConnectedHome {...props}/>;
   if (status === "connecting" || status === "reconnecting") {
     return <ConnectingHome T={T} active={active} busyMsg={busyMsg} reconnecting={status === "reconnecting"} attemptInfo={attemptInfo} phase={phase}/>;
   }
-  if (status === "error") return <ErrorHome T={T} active={active} connError={connError} onReconnect={onReconnect} onImport={onImport}/>;
-  return <DisconnectedHome T={T} active={active} onConnect={onConnect}/>;
+  if (status === "error") return <ErrorHome T={T} active={active} connError={connError} onReconnect={onReconnect} onImport={onImport} onLogs={onLogs}/>;
+  return <DisconnectedHome {...props}/>;
 };
 
 const EmptyHome = ({ T, onImport }) => (
@@ -661,27 +675,97 @@ const EmptyHome = ({ T, onImport }) => (
   </div>
 );
 
-const DisconnectedHome = ({ T, active, onConnect }) => (
-  <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+// A menu to switch to another profile without going through the Profiles
+// screen; with only one profile it links to Profiles to import another.
+const ProfileSwitcher = ({ T, active, profiles, onSwitch, onManage }) => {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  const others = (profiles || []).filter((p) => p.id !== active.id);
+  return (
+    <div ref={boxRef} style={{ position: "relative", display: "inline-block" }}>
+      <window.Btn kind="ghost" size="md" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu"
+        icon={HomeIcon(<><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></>, 14)}>
+        {T.home_switch}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ marginLeft: 2 }}><path d="M6 9l6 6 6-6"/></svg>
+      </window.Btn>
+      {open && (
+        <div className="ow-pop" role="menu" style={{ textAlign: "left" }}>
+          {others.map((p) => (
+            <button key={p.id} type="button" role="menuitem" className="ow-pop-item" onClick={() => { setOpen(false); onSwitch(p); }}>
+              <window.StatusDot tone="neutral"/>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "block", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                <span style={{ display: "block", fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>{p.endpoint}</span>
+              </span>
+            </button>
+          ))}
+          {others.length > 0 && <div className="ow-pop-sep"/>}
+          <button type="button" role="menuitem" className="ow-pop-item" onClick={() => { setOpen(false); onManage(); }}>{T.home_manage}</button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// What the user wants to know about the connection before and while it is
+// up. Replaces three static marketing tiles, one of which ("pinned
+// certificate, no dynamic DNS") was false for CA-verified profiles.
+const DetailItem = ({ icon, k, v, action, tone }) => (
+  <div className="ow-detail">
+    <div className="ow-detail-ic" style={tone ? { color: tone } : undefined}>{icon}</div>
+    <div style={{ minWidth: 0 }}>
+      <div className="ow-detail-k">{k}</div>
+      <div className="ow-detail-v" title={typeof v === "string" ? v : undefined}>{v}</div>
+    </div>
+    {action || <span/>}
+  </div>
+);
+const ConnectionDetails = ({ T, active, killSwitch, route, onSettings }) => (
+  <section className="ow-card ow-card--md" style={{ padding: "6px 18px 4px" }}>
+    <div style={{ fontSize: 11, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase", fontWeight: 600, padding: "12px 0 2px" }}>{T.home_details}</div>
+    <div className="ow-details">
+      <DetailItem icon={<IconRoute size={15}/>} k={T.home_server} v={active.endpoint}/>
+      <DetailItem icon={<IconLock size={15}/>} k={T.home_security} v={active.tls_verify === "ca" ? T.sec_ca : T.sec_pin} tone="var(--brand-2)"/>
+      <DetailItem icon={<IconShield size={15}/>} k={T.home_killSwitch} v={killSwitch ? T.ks_on : T.ks_off}
+        tone={killSwitch ? "var(--brand-2)" : undefined}
+        action={<button type="button" className="ow-link" onClick={onSettings}>{T.home_change}</button>}/>
+      {route
+        ? <DetailItem icon={HomeIcon(<path d="M4 12h16M14 6l6 6-6 6"/>, 15)} k={T.home_route} v={window.OWfmt.routeLabel(route, T)}/>
+        : <DetailItem icon={HomeIcon(<><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></>, 15)}
+            k={T.home_expires} v={active.expires_at || T.home_never} tone={active.expired ? "var(--brand-bad)" : undefined}/>}
+    </div>
+  </section>
+);
+
+const DisconnectedHome = ({ T, active, profiles, killSwitch, onConnect, onSwitch, onImport, onSettings }) => (
+  <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
     <Header title={T.nav_home} sub={T.home_ribbon}/>
     <section className="ow-hero">
       <div className="ow-hero-grid">
-        <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 }}>{T.disconnected}</div>
-          <div style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1 }}>{active.name}</div>
-          <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{active.endpoint}</div>
-          <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 14 }}>{T.home_clickToConnect}</div>
+        <div style={{ minWidth: 0 }}>
+          <div className="ow-hero-status" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <window.StatusDot tone="neutral"/>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.disconnected}</span>
+          </div>
+          <div style={{ fontSize: 32, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1, overflowWrap: "anywhere" }}>{active.name}</div>
+          <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{T.home_clickToConnect}</div>
+          <div className="ow-hero-actions" style={{ marginTop: 18, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <ProfileSwitcher T={T} active={active} profiles={profiles} onSwitch={onSwitch} onManage={onImport}/>
+          </div>
         </div>
         <Dial status="disconnected" onClick={onConnect} label={T.connect}/>
       </div>
       <BgGlow/>
     </section>
-
-    <div className="ow-info-grid">
-      <InfoCard icon={<IconShield/>} title={T.home_secure_title}  body={T.home_secure_body}/>
-      <InfoCard icon={<IconLock/>}   title={T.home_pinned_title}  body={T.home_pinned_body}/>
-      <InfoCard icon={<IconRoute/>}  title={T.home_routing_title} body={T.home_routing_body}/>
-    </div>
+    <ConnectionDetails T={T} active={active} killSwitch={killSwitch} onSettings={onSettings}/>
   </div>
 );
 
@@ -788,29 +872,36 @@ const StepIcon = ({ state }) => {
   );
 };
 
-const ConnectedHome = ({ T, lang, active, stats, history, advanced, onDisconnect, onLogs }) => {
+const ConnectedHome = ({ T, lang, active, stats, history, advanced, route, killSwitch, profiles, onDisconnect, onLogs, onSwitch, onImport, onSettings }) => {
   const sessionSec = stats.session_start ? (Date.now() / 1000 - stats.session_start) : 0;
-  // Headline the live exit IP once it's known; fall back to the profile name
-  // while the exit-IP probe is still resolving.
-  const heroTitle = stats.exit_ip || active.name;
-  const heroSub = [stats.exit_location, `${T.profile} ${active.name}`].filter(Boolean).join(" · ");
   // Latency trend (was mistakenly fed download bytes, on the latency card).
   const spark = (history || []).slice(-12).map((s) => s.lat || 0);
   const lastHs = stats.last_handshake ? fmtAgo(stats.last_handshake, lang) : "—";
+  const via = window.OWfmt.routeLabel(route, T);
+  // The profile is the headline (it is what the user picked); the exit IP and
+  // place go underneath once the probe has them.
+  const exitLine = [stats.exit_ip && `${T.home_exit} ${stats.exit_ip}`, stats.exit_location].filter(Boolean).join(" · ");
   return (
-    <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+    <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <Header title={T.nav_home} sub={T.home_ribbon}/>
 
       <section className="ow-hero">
         <div className="ow-hero-grid">
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-              <window.StatusDot tone="good"/>
+          <div style={{ minWidth: 0 }}>
+            <div className="ow-hero-status" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <window.StatusDot tone="good" pulse/>
               <span style={{ fontSize: 12, fontWeight: 600, color: "var(--brand-2)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.connected}</span>
+              <span style={{ fontSize: 12, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>· {fmtDuration(sessionSec)}</span>
             </div>
-            <div style={{ fontSize: 36, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.05 }}>{heroTitle}</div>
-            <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{heroSub}</div>
-            <div className="ow-hero-actions" style={{ marginTop: 18, display: "flex", gap: 8 }}>
+            <div style={{ fontSize: 32, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1, overflowWrap: "anywhere" }}>{active.name}</div>
+            <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{exitLine || active.endpoint}</div>
+            <div className="ow-chips" style={{ marginTop: 14 }}>
+              {via && <span className="ow-chip ow-chip--brand">{HomeIcon(<path d="M4 12h16M14 6l6 6-6 6"/>, 12)}{via}</span>}
+              <span className="ow-chip ow-chip--good"><IconLock size={12}/>{active.tls_verify === "ca" ? T.sec_ca : T.sec_pin}</span>
+              {killSwitch && <span className="ow-chip ow-chip--good"><IconShield size={12}/>{T.home_killSwitch}</span>}
+            </div>
+            <div className="ow-hero-actions" style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <ProfileSwitcher T={T} active={active} profiles={profiles} onSwitch={onSwitch} onManage={onImport}/>
               <window.Btn kind="ghost" size="md" icon={<IconLogs size={14}/>} onClick={onLogs}>{T.nav_logs}</window.Btn>
             </div>
           </div>
@@ -834,47 +925,53 @@ const ConnectedHome = ({ T, lang, active, stats, history, advanced, onDisconnect
           <KV k={T.endpoint} v={active.endpoint}/>
           <KV k={T.fingerprint} v={active.fingerprint || "—"}/>
           <KV k={T.clientIp} v={active.client_address || "—"}/>
-          <KV k="DNS" v={(active.dns || []).join(", ") || "—"} last/>
+          <KV k="DNS" v={(active.dns || []).join(", ") || "—"}/>
+          <KV k={T.home_route} v={route ? `${route.id} · ${route.label}` : "—"} last/>
         </section>
       )}
+      {!advanced && <ConnectionDetails T={T} active={active} killSwitch={killSwitch} route={route} onSettings={onSettings}/>}
     </div>
   );
 };
 
-const ErrorHome = ({ T, active, connError, onReconnect, onImport }) => (
-  <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-    <Header title={T.nav_home} sub={T.home_ribbon}/>
-    <section className="ow-hero" style={{ padding: 28 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-        <window.StatusDot tone="bad"/>
-        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--brand-bad)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.error}</span>
-      </div>
-      <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em" }}>{T.error_title}</div>
-      {connError ? (
-        <div style={{
-          marginTop: 12, padding: "10px 12px", borderRadius: 8,
-          background: "color-mix(in srgb, var(--brand-bad) 10%, transparent)",
-          border: "1px solid color-mix(in srgb, var(--brand-bad) 35%, transparent)",
-          fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text)",
-          wordBreak: "break-word", maxWidth: 560,
-        }}>
-          {connError}
+// Plain-language hint first, from the kind of failure; the raw message the
+// tunnel raised stays one click away under "Technical details".
+const ErrorHome = ({ T, active, connError, onReconnect, onImport, onLogs }) => {
+  const kind = window.OWfmt.classifyError(connError);
+  const hint = {
+    unreachable: T.err_hint_unreachable, cert: T.err_hint_cert, token: T.err_hint_token,
+    blocked: T.err_hint_blocked, network: T.err_hint_network, expired: T.err_hint_expired,
+  }[kind] || T.error_genericBody;
+  return (
+    <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <Header title={T.nav_home} sub={T.home_ribbon}/>
+      <section className="ow-hero" style={{ padding: 28 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <window.StatusDot tone="bad"/>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--brand-bad)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.error}</span>
+          <span style={{ fontSize: 12, color: "var(--text-3)" }}>· {active.name}</span>
         </div>
-      ) : (
-        <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6, maxWidth: 540 }}>
-          {T.error_genericBody}
+        <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em" }}>{T.error_title}</div>
+        <div className="ow-hint" style={{ marginTop: 14 }} role="alert">
+          <span style={{ color: "var(--brand-warn)" }}>{HomeIcon(<><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></>, 18)}</span>
+          <span>{hint}</span>
         </div>
-      )}
-      <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 10 }}>
-        {T.error_checkLog}
-      </div>
-      <div style={{ marginTop: 18, display: "flex", gap: 8 }}>
-        <window.Btn kind="primary" size="md" onClick={onReconnect}>{T.retry}</window.Btn>
-        <window.Btn kind="ghost" size="md" onClick={onImport}>{T.error_importNew}</window.Btn>
-      </div>
-    </section>
-  </div>
-);
+        {connError && (
+          <details className="ow-raw" style={{ marginTop: 12 }}>
+            <summary>{T.err_details}</summary>
+            <pre>{connError}</pre>
+          </details>
+        )}
+        <div style={{ marginTop: 18, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <window.Btn kind="primary" size="md" onClick={onReconnect}>{T.retry}</window.Btn>
+          <window.Btn kind="ghost" size="md" icon={<IconLogs size={14}/>} onClick={onLogs}>{T.err_viewLog}</window.Btn>
+          {(kind === "token" || kind === "expired" || kind === "cert") &&
+            <window.Btn kind="ghost" size="md" onClick={onImport}>{T.error_importNew}</window.Btn>}
+        </div>
+      </section>
+    </div>
+  );
+};
 
 const Header = ({ title, sub, right }) => (
   <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
@@ -986,14 +1083,6 @@ const Stat = ({ label, value, sub, trend }) => (
 );
 
 // ── Design atoms ─────────────────────────
-const InfoCard = ({ icon, title, body }) => (
-  <div className="ow-card ow-card--md ow-card--hover" style={{ padding: 16 }}>
-    <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--chip)", display: "grid", placeItems: "center", color: "var(--brand)" }}>{icon}</div>
-    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 12 }}>{title}</div>
-    <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 4 }}>{body}</div>
-  </div>
-);
-
 const BgGlow = () => (
   <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden", borderRadius: "var(--radius-lg)" }}>
     <div style={{ position: "absolute", right: -80, top: -80, width: 280, height: 280, background: "radial-gradient(circle, color-mix(in srgb, var(--brand) 22%, transparent), transparent 60%)" }}/>
@@ -1060,11 +1149,12 @@ const Dial = ({ status = "disconnected", onClick, label }) => {
         </defs>
         <circle cx="100" cy="100" r="86" stroke="var(--line-strong)" strokeWidth="1" fill="none"/>
         <circle cx="100" cy="100" r="72" stroke="var(--line)" strokeWidth="1" fill="none" strokeDasharray="2 4"/>
-        {connected && (
-          <circle cx="100" cy="100" r="86" stroke="url(#dial-grad)" strokeWidth="3" fill="none"
-            strokeDasharray={`${2*Math.PI*86*0.78} ${2*Math.PI*86}`}
-            transform="rotate(-90 100 100)" strokeLinecap="round"/>
-        )}
+        {/* Connected: a closed ring. It used to be a fixed 78 % arc left over
+            from the design mock, which read as half-done progress (B-043). */}
+        {connected && <>
+          <circle className="ow-dial-live" cx="100" cy="100" r="92" stroke="url(#dial-grad)" strokeWidth="8" fill="none" style={{ filter: "blur(6px)" }}/>
+          <circle cx="100" cy="100" r="86" stroke="url(#dial-grad)" strokeWidth="3" fill="none"/>
+        </>}
         {busy && (
           <circle className="ow-dial-spin" cx="100" cy="100" r="86" stroke="var(--brand-warn)"
             strokeWidth="3" fill="none"
@@ -1497,7 +1587,7 @@ const Logs = ({ T, logs, api, onClear }) => {
 
   return (
     <section className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%" }}>
-      <Header title={T.logs_title} sub="outwarp-client" right={
+      <Header title={T.logs_title} sub={T.logs_sub} right={
         <>
           <select className="ow-input" value={level} onChange={(e) => setLevel(e.target.value)}
             aria-label={T.logs_level} style={{ width: "auto", height: 30, fontSize: 12 }}>

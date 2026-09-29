@@ -474,9 +474,19 @@ class Api:
             p = getattr(self._manager, "phase", "")
             if isinstance(p, str):
                 phase = p
+        route = None
+        if self._manager is not None:
+            r = getattr(self._manager, "active_route", None)
+            if isinstance(r, dict):
+                route = r
         return {
             "status": self._status_str(),
             "active_profile_id": self._active_profile_id(),
+            # Which rung of the fallback ladder carried the connection, for the
+            # home screen ("direct", "direct-hostile", "direct-proxy",
+            # "port-<n>" or a server-provisioned id). None while not connected.
+            "route": route,
+            "kill_switch": bool(self._settings.get("kill_switch", False)),
             "error": self._error_str(),
             "attempt": attempt,
             "max_attempts": max_attempts,

@@ -777,6 +777,14 @@ class TunnelManager:
         with self._lock:
             return self._phase
 
+    @property
+    def active_route(self) -> dict[str, object] | None:
+        """The rung carrying the connection ({id, label, port}), or None."""
+        strat = self._tunnel.active_strategy
+        if strat is None:
+            return None
+        return {"id": strat.id, "label": strat.label, "port": strat.port}
+
     def _set_phase(self, phase: str) -> None:
         """Update the connect-phase flag and notify listeners.
 

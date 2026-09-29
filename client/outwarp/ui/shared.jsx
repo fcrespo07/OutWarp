@@ -108,6 +108,7 @@ const STR = {
 
     // Logs
     logs_title: "Registro de actividad",
+    logs_sub: "Lo que OutWarp va haciendo, en vivo.",
     logs_clear: "Limpiar",
     logs_export: "Exportar",
     logs_filter: "Filtrar…",
@@ -198,14 +199,35 @@ const STR = {
 
     // Misc
     profile: "Perfil",
-    home_ribbon: "Tu tráfico viaja cifrado por wstunnel → WireGuard.",
+    home_ribbon: "Todo tu tráfico sale cifrado por tu propio servidor.",
     home_clickToConnect: "Pulsa el botón para conectar.",
-    home_secure_title: "Tráfico cifrado",
-    home_secure_body: "WireGuard sobre WebSocket (wstunnel).",
-    home_pinned_title: "Certificado anclado",
-    home_pinned_body: "Verificación por huella SHA-256, sin DNS dinámico.",
-    home_routing_title: "Ruteo automático",
-    home_routing_body: "Bypass del endpoint y reconexión con backoff.",
+    home_details: "Esta conexión",
+    home_server: "Servidor",
+    home_security: "Seguridad",
+    home_killSwitch: "Kill switch",
+    home_expires: "Caduca",
+    home_never: "Nunca",
+    home_route: "Ruta",
+    home_exit: "IP de salida",
+    home_change: "Cambiar",
+    home_switch: "Cambiar de perfil",
+    home_manage: "Gestionar perfiles",
+    sec_pin: "Certificado anclado a tu servidor",
+    sec_ca: "Certificado verificado por una CA",
+    ks_on: "Activo: sin túnel no sale nada",
+    ks_off: "Desactivado",
+    route_direct: "Directa",
+    route_hostile: "Directa, con DNS público",
+    route_proxy: "Por el proxy HTTP",
+    route_port: "Puerto alternativo {port}",
+    err_hint_unreachable: "No se llega al servidor. Comprueba que está encendido y que su puerto está abierto en el firewall o el router.",
+    err_hint_cert: "El certificado del servidor no es el de tu perfil. Si lo han reinstalado o renovado, pide un .owcfg nuevo; si no, algo en esta red podría estar interceptando la conexión.",
+    err_hint_token: "El token de este perfil ha caducado o ya se usó. Pide al administrador un .owcfg nuevo.",
+    err_hint_blocked: "El antivirus o Windows ha bloqueado wstunnel. Restáuralo desde la cuarentena de Microsoft Defender o reinstala OutWarp.",
+    err_hint_network: "Esta red no deja pasar el túnel por ninguna de las rutas probadas. Prueba en otra red; un servidor con dominio y certificado real pasa por más redes.",
+    err_hint_expired: "Este perfil ha caducado. Pide al administrador uno nuevo.",
+    err_details: "Detalles técnicos",
+    err_viewLog: "Ver registro",
     throughput_title: "Tráfico",
     throughput_window: "últimos {n} s",
     throughput_empty: "Recogiendo muestras…",
@@ -311,6 +333,7 @@ const STR = {
     set_errorTitle: "Couldn't apply the setting",
 
     logs_title: "Activity log",
+    logs_sub: "What OutWarp is doing, live.",
     logs_clear: "Clear",
     logs_export: "Export",
     logs_filter: "Filter…",
@@ -393,14 +416,35 @@ const STR = {
     step_done: "Done",
 
     profile: "Profile",
-    home_ribbon: "Your traffic is encrypted via wstunnel → WireGuard.",
+    home_ribbon: "All your traffic leaves encrypted through your own server.",
     home_clickToConnect: "Click the dial to connect.",
-    home_secure_title: "Encrypted traffic",
-    home_secure_body: "WireGuard over WebSocket (wstunnel).",
-    home_pinned_title: "Pinned certificate",
-    home_pinned_body: "SHA-256 fingerprint verification, no dynamic DNS.",
-    home_routing_title: "Automatic routing",
-    home_routing_body: "Endpoint bypass and reconnect with backoff.",
+    home_details: "This connection",
+    home_server: "Server",
+    home_security: "Security",
+    home_killSwitch: "Kill switch",
+    home_expires: "Expires",
+    home_never: "Never",
+    home_route: "Route",
+    home_exit: "Exit IP",
+    home_change: "Change",
+    home_switch: "Switch profile",
+    home_manage: "Manage profiles",
+    sec_pin: "Certificate pinned to your server",
+    sec_ca: "Certificate verified by a CA",
+    ks_on: "On: nothing leaves without the tunnel",
+    ks_off: "Off",
+    route_direct: "Direct",
+    route_hostile: "Direct, public DNS",
+    route_proxy: "Through the HTTP proxy",
+    route_port: "Alternate port {port}",
+    err_hint_unreachable: "The server can't be reached. Check that it is running and that its port is open on the firewall or router.",
+    err_hint_cert: "The server's certificate is not the one in your profile. If it was reinstalled or renewed, ask for a new .owcfg; otherwise something on this network may be intercepting the connection.",
+    err_hint_token: "This profile's token has expired or was already used. Ask the administrator for a new .owcfg.",
+    err_hint_blocked: "Your antivirus or Windows blocked wstunnel. Restore it from Microsoft Defender's quarantine or reinstall OutWarp.",
+    err_hint_network: "This network lets the tunnel through none of the routes tried. Try another network; a server with a domain and a real certificate gets through more of them.",
+    err_hint_expired: "This profile has expired. Ask the administrator for a new one.",
+    err_details: "Technical details",
+    err_viewLog: "View log",
     throughput_title: "Traffic",
     throughput_window: "last {n} s",
     throughput_empty: "Gathering samples…",
@@ -445,7 +489,32 @@ const fmtDuration = (sec) => {
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 };
-window.OWfmt = { fmtBps, fmtBytes, fmtAgo, fmtDuration };
+// What kind of failure a connection error is, from the (English) message the
+// tunnel raised, so the error screen can say what to do in plain words. The
+// raw message stays available under "Technical details".
+const classifyError = (msg) => {
+  const m = String(msg || "").toLowerCase();
+  if (!m) return "generic";
+  if (/defender|smart app control|quarantin|wstunnel binary not found|could not be run|was removed/.test(m)) return "blocked";
+  if (/expired profile|profile has expired|profile expired/.test(m)) return "expired";
+  if (/token|enrol/.test(m)) return "token";
+  if (/fingerprint mismatch|certificate verify|certificate_verify|pin mismatch|spki/.test(m)) return "cert";
+  if (/cannot reach|connection refused|unreachable|timed out|no route to host|name or service not known|getaddrinfo/.test(m)) return "unreachable";
+  if (/all connection strategies failed|no wireguard handshake|no traffic through tunnel/.test(m)) return "network";
+  return "generic";
+};
+
+// The fallback-ladder rung that carried the connection, as the user reads it.
+const routeLabel = (route, T) => {
+  if (!route || !route.id) return "";
+  if (route.id === "direct") return T.route_direct;
+  if (route.id === "direct-hostile") return T.route_hostile;
+  if (route.id === "direct-proxy") return T.route_proxy;
+  if (/^port-\d+$/.test(route.id)) return T.route_port.replace("{port}", String(route.port || route.id.slice(5)));
+  return route.label || route.id;
+};
+
+window.OWfmt = { fmtBps, fmtBytes, fmtAgo, fmtDuration, classifyError, routeLabel };
 
 // hook to read tweaks from a parent
 const useUiState = (initial) => {
