@@ -123,13 +123,16 @@ def run_setup(config_dir: Path) -> int:
             "[cyan]1. I have a domain[/cyan] (recommended)\n"
             "   Caddy holds port 443 with a real Let's Encrypt certificate and serves an\n"
             "   ordinary web page; the tunnel lives on a secret path behind it. Clients\n"
-            "   validate the certificate normally. This is the only option that works on\n"
-            "   networks that inspect TLS — corporate Wi-Fi, schools, hotel captive portals.\n\n"
-            "[cyan]2. No domain[/cyan]\n"
+            "   validate the certificate normally. This is the option that also gets\n"
+            "   through networks that check certificates and block unknown ones.\n\n"
+            "[cyan]2. No domain[/cyan] (only against blocked UDP)\n"
             "   wstunnel holds the port with a self-signed certificate and clients pin it.\n"
             "   Nothing to buy or configure, and it is enough where the only obstacle is\n"
-            "   blocked UDP — but the certificate is recognisably not a real one, so a\n"
-            "   network that inspects TLS can single it out.",
+            "   blocked UDP or a port filter — but the certificate is recognisably not a\n"
+            "   real one, so a network that inspects TLS can single it out.\n\n"
+            "[dim]Neither option gets through deep packet inspection: a network that\n"
+            "fingerprints TLS clients (JA3/JA4) or inspects WebSocket upgrades will\n"
+            "block the tunnel either way.[/dim]",
             border_style="cyan",
             title="Transport",
         )

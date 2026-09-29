@@ -8,6 +8,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-09-29
+
+### Fixed
+- **Web panel: the Traffic screen showed all zeros in Docker/Kubernetes**
+  (B-041). The history database lived in `/var/lib/outwarp`, inside the
+  `serve` container: the panel read an empty database of its own, and the
+  pod lost the real one on every restart. It now lives next to the server
+  config (`<config dir>/traffic.sqlite`, `/data` in the image), shared by
+  `serve`, the panel and the TUI; an existing database is copied over once.
+- **Web panel: things it showed that were not true** (B-042): a decorative QR
+  code nobody could scan (removed), the client drawer's upload sparkline
+  (the download one drawn backwards), "Top talkers · last hour" (it ranked
+  lifetime counters), "All services healthy" even with the tunnel stopped,
+  hard-coded `TLS 1.3 · ws`, `NAT MASQUERADE`, systemd unit names and
+  `journalctl` inside a container or on Windows, and an "Add client" text
+  saying the server generates the client's keys (it issues a one-time token;
+  the client makes its own keys).
+- Client: "Check for updates on startup" only checked when Settings was
+  opened. It now checks once at start-up and flags a newer version in the
+  sidebar.
+
+### Changed
+- **Web panel: Traffic screen redone.** A time chart per window (1 h: one bar
+  a minute, 24 h: every 15 min, 7 d: hourly) with axis, tooltip and the time
+  before the first sample shaded; peak is the real highest rate between two
+  samples and the average covers only the time with data. With nothing
+  recorded yet it says so instead of showing `0 B`. Per-client rows show
+  sent/received and their share, and open the client.
+- Web panel: the dashboard and Service screen say where the tunnel runs (this
+  process, the `serve` container, systemd units or the Windows app) and what
+  the page may do with it; the TLS card shows the mode (self-signed or Let's
+  Encrypt via Caddy); empty states explain instead of `—`; errors from
+  service actions and config changes are shown; focus outlines and ARIA
+  states for keyboard and screen-reader use.
+- Server: the traffic history takes its first sample when the tunnel starts,
+  not a minute later.
+
+### Added
+- **Windows server via Docker Desktop, the recommended way**:
+  `deploy/docker/compose.yml` + `.env.example` run the tunnel and the web
+  panel like the Kubernetes pod (shared `/data`, network and process
+  namespaces), with bridge networking so the same file works on Linux and on
+  Docker Desktop (WSL 2). Guide in `deploy/README.md`.
+- README: what OutWarp gets through and what it does not (a table per kind of
+  network filtering, including deep packet inspection, which neither transport
+  passes), supported platforms and known limitations. The server's setup
+  wizard says the same when you pick the transport.
+
 ## [0.16.4] — 2026-09-29
 
 ### Fixed

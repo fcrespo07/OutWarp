@@ -1,12 +1,17 @@
 # Deploying OutWarp Server with Docker / Kubernetes
 
 The OutWarp server runs perfectly fine on bare metal via the standard installer
-(`curl … install.sh | sudo bash`). This document covers the two containerised
+(`curl … install.sh | sudo bash`). This document covers the containerised
 paths instead:
 
-- **Docker / Docker Compose** — single-host deployments (VPS, home server).
+- **Docker Compose** (`deploy/docker/compose.yml`) — single host: a VPS, a
+  home server, or **a Windows PC with Docker Desktop** (the recommended way to
+  run the server on Windows).
 - **Kubernetes (k3s / k8s)** — clusters with persistent storage and the rolling
-  `ghcr.io/<owner>/outwarp-server:main` image.
+  `ghcr.io/fcrespo07/outwarp-server:main` image.
+
+The image is public: `docker pull ghcr.io/fcrespo07/outwarp-server:latest`
+works without logging in to GitHub.
 
 > The OutWarp **client** is a desktop / TUI application. Don't containerise it —
 > install it on the machine that needs the tunnel.
@@ -24,9 +29,9 @@ In every scenario you need:
   (default `443`). Client enrolment goes through this same port — there is no
   second public port to open. Open it on your firewall / router / cloud
   security group **before** running the installer's probe.
-- Linux kernel ≥ 5.6 on the **host** (kernel WireGuard module). The container
-  itself does not need to ship `wireguard.ko`; it just calls into the host
-  kernel via `wg-quick`.
+- A kernel with WireGuard: Linux ≥ 5.6 on a Linux host, or Docker Desktop's
+  own Linux VM on Windows (WSL 2 backend). The container does not ship
+  `wireguard.ko`; `wg-quick` uses the kernel it runs on.
 - `NET_ADMIN` + `NET_RAW` capabilities for the container (configured in the
   manifests below — Docker compose and the k8s Deployment already grant
   them).
@@ -38,14 +43,16 @@ In every scenario you need:
 The published image lives at:
 
 ```
-ghcr.io/<repo-owner>/outwarp-server:latest    # rolling, follows main
-ghcr.io/<repo-owner>/outwarp-server:0.5.5     # pinned to a release tag
-ghcr.io/<repo-owner>/outwarp-server:main      # alias of latest while main is default branch
+ghcr.io/fcrespo07/outwarp-server:latest    # rolling, follows main
+ghcr.io/fcrespo07/outwarp-server:0.17.0    # pinned to a release tag
+ghcr.io/fcrespo07/outwarp-server:main      # alias of latest while main is default branch
 ```
 
 Multi-arch: `linux/amd64` + `linux/arm64` (Raspberry Pi 5 included).
 
-### One-shot `docker run`
+### One-shot `docker run` (Linux, tunnel only)
+
+Without the web panel; prefer Compose above.
 
 ```bash
 docker volume create outwarp-data
@@ -62,7 +69,7 @@ docker run -d \
   -e OUTWARP_SUBNET="10.0.0.0/24" \
   -e OUTWARP_SERVER_ADDRESS="10.0.0.1/24" \
   -v outwarp-data:/data \
-  ghcr.io/<repo-owner>/outwarp-server:latest
+  ghcr.io/fcrespo07/outwarp-server:latest
 ```
 
 Notes:
@@ -84,7 +91,8 @@ Notes:
 # Generate a profile for a new client and copy it out of the container:
 docker exec outwarp-server outwarp-server --config-dir /data add-client laptop
 docker cp outwarp-server:/data/laptop.owcfg ./laptop.owcfg
-# laptop.owcfg now contains the private key — treat as a credential.
+# laptop.owcfg carries a one-time enrolment token (15 min): whoever imports
+# it first becomes this client. Send it over a private channel.
 ```
 
 Other useful subcommands inside the container:
@@ -97,41 +105,84 @@ docker exec outwarp-server outwarp-server --config-dir /data status
 docker exec outwarp-server outwarp-server --config-dir /data doctor
 ```
 
-### Docker Compose
+### Docker Compose (recommended)
 
-Save as `docker-compose.yml`:
-
-```yaml
-services:
-  outwarp-server:
-    image: ghcr.io/<repo-owner>/outwarp-server:latest
-    container_name: outwarp-server
-    restart: unless-stopped
-    network_mode: host
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    environment:
-      OUTWARP_ENDPOINT: "your-server.example.com"
-      OUTWARP_PORT: "443"
-      OUTWARP_WG_PORT: "51820"
-      OUTWARP_SUBNET: "10.0.0.0/24"
-      OUTWARP_SERVER_ADDRESS: "10.0.0.1/24"
-    volumes:
-      - outwarp-data:/data
-
-volumes:
-  outwarp-data:
-```
-
-Bring it up:
+`deploy/docker/compose.yml` runs the same two containers as the Kubernetes
+pod: `outwarp-server` (the tunnel) and `outwarp-panel` (the web admin panel),
+sharing `/data` and the server's network and process namespaces. It uses
+bridge networking, so the same file works on a Linux host and on Docker
+Desktop for Windows.
 
 ```bash
+cd deploy/docker
+cp .env.example .env        # set OUTWARP_ENDPOINT (and the port if not 443)
 docker compose up -d
-docker compose logs -f outwarp-server          # follow startup
-docker compose exec outwarp-server outwarp-server --config-dir /data add-client phone
+docker compose logs -f outwarp-server
+# The panel's admin token, printed once on the first start:
+docker compose logs outwarp-panel
+# Lost it? Make a new one (the old one and its sessions stop working):
+docker compose exec outwarp-panel outwarp-server --config-dir /data admin-token --rotate
+```
+
+The panel listens on `https://localhost:9443` on the Docker host only (it is
+published on `127.0.0.1`). From another machine, reach it through an SSH
+tunnel (`ssh -L 9443:localhost:9443 host`) or put a reverse proxy with its
+own authentication in front of it; do not publish it on the internet.
+
+Add clients from the panel (Clients → Add client, then download the
+`.owcfg`) or from the command line:
+
+```bash
+docker compose exec -w /data outwarp-server outwarp-server --config-dir /data add-client phone
 docker compose cp outwarp-server:/data/phone.owcfg ./phone.owcfg
 ```
+
+Everything the server keeps lives in the `outwarp-data` volume: config, TLS
+certificate, client database, traffic history (`traffic.sqlite`) and logs.
+Back it up with `docker run --rm -v outwarp_outwarp-data:/data -v "$PWD":/b alpine tar czf /b/outwarp-data.tgz -C /data .`.
+
+To update: `docker compose pull && docker compose up -d`.
+
+### Windows (Docker Desktop)
+
+On Windows the recommended server is this same Compose file under Docker
+Desktop: the same image and code path as every Linux and Kubernetes server,
+with the web panel included. The native Windows server (the installer's
+"server" option, WireGuard for Windows + wstunnel under the OutWarp Server
+app) remains available as an alternative.
+
+1. Install [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)
+   with the **WSL 2 backend** (the default). Hyper-V-only mode is not supported.
+2. Get `deploy/docker/compose.yml` and `.env.example` (clone the repository
+   or download both files into a folder), copy `.env.example` to `.env` and
+   set `OUTWARP_ENDPOINT` to your public IP or DNS name.
+3. In PowerShell, in that folder:
+   ```powershell
+   docker compose up -d
+   docker compose logs outwarp-panel
+   ```
+   The last command shows the panel's admin token, printed once on the first
+   start. Save it in your password manager.
+4. Open `https://localhost:9443`, accept the self-signed certificate warning
+   and log in with the token.
+5. Let the tunnel port in:
+   - **Windows Defender Firewall**: if clients cannot connect, allow inbound
+     TCP on `OUTWARP_PORT`.
+   - **Router**: forward TCP `OUTWARP_PORT` to this PC's LAN IP.
+6. Check it from the panel's Doctor screen, or with
+   `docker compose exec outwarp-server outwarp-server --config-dir /data doctor`.
+
+Things to know on Windows:
+
+- The tunnel is only up while Docker Desktop runs: enable *Start Docker
+  Desktop when you sign in* in its settings, and keep the PC from sleeping.
+- Port 443 may already be taken on Windows (IIS, another VPN, a web server).
+  Pick another port in `.env` (e.g. `8443`) and forward that one instead;
+  clients get it in their `.owcfg`.
+- WireGuard runs in Docker Desktop's Linux VM, not on Windows: nothing is
+  installed in Windows itself and uninstalling is `docker compose down -v`.
+
+---
 
 ---
 
@@ -234,8 +285,10 @@ ConfigMap by hand.
 The PVC uses `storageClassName: local-path`, which is the default on k3s
 (provisions a directory under `/var/lib/rancher/k3s/storage/`). On full
 upstream Kubernetes you'll need to change that to whatever your cluster
-exposes (`standard`, `gp2`, …). 256 Mi is more than enough — the persistent
-data is just `server_config.json` plus the per-client `.owcfg` files.
+exposes (`standard`, `gp2`, …). 256 Mi is more than enough: the persistent
+data is `server_config.json`, the TLS certificate, `clients.sqlite`, the
+traffic history (`traffic.sqlite`, 7 days of one-a-minute samples) and
+`logs/`.
 
 ---
 

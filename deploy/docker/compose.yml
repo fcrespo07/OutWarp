@@ -1,0 +1,83 @@
+# OutWarp server with Docker Compose — Linux hosts and Docker Desktop on
+# Windows (WSL 2 backend). See deploy/README.md → "Docker Compose" and
+# "Windows (Docker Desktop)".
+#
+#   1. Copy .env.example to .env and set OUTWARP_ENDPOINT.
+#   2. docker compose up -d
+#   3. docker compose logs outwarp-panel   → the admin token, printed once
+#   4. Open https://localhost:9443 (the panel) and add clients from there.
+#
+# Two containers from the same image, like the Kubernetes pod: `outwarp-server`
+# runs the tunnel (wstunnel + WireGuard), `outwarp-panel` the web admin panel.
+# The panel shares the server's network and process namespaces, so it sees the
+# live WireGuard peers and the `serve` process, and both share /data (config,
+# client database, traffic history, logs).
+name: outwarp
+
+services:
+  outwarp-server:
+    image: ghcr.io/fcrespo07/outwarp-server:${OUTWARP_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN   # wg-quick + iptables MASQUERADE
+      - NET_RAW
+    # Bridge networking, not `network_mode: host`: it behaves the same on a
+    # Linux host and inside Docker Desktop's VM on Windows, where host
+    # networking is an opt-in setting. WireGuard lives in the container's own
+    # network namespace and NATs out through Docker, so only the tunnel port
+    # is published. The e2e test in CI runs the image this way.
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - "${OUTWARP_PORT:-443}:${OUTWARP_PORT:-443}/tcp"
+      # The panel listens inside this network namespace (see outwarp-panel).
+      # Bound to localhost: reach it from this machine, an SSH tunnel or a
+      # reverse proxy, never straight from the internet.
+      - "127.0.0.1:${OUTWARP_PANEL_PORT:-9443}:9443/tcp"
+    environment:
+      OUTWARP_ENDPOINT: ${OUTWARP_ENDPOINT:?set OUTWARP_ENDPOINT in .env}
+      OUTWARP_PORT: ${OUTWARP_PORT:-443}
+      OUTWARP_WG_PORT: ${OUTWARP_WG_PORT:-51820}
+      OUTWARP_SUBNET: ${OUTWARP_SUBNET:-10.13.13.0/24}
+      OUTWARP_SERVER_ADDRESS: ${OUTWARP_SERVER_ADDRESS:-10.13.13.1/24}
+    volumes:
+      - outwarp-data:/data
+      - outwarp-wg:/etc/wireguard
+    healthcheck:
+      # Ready once `init` has written the config and the tunnel is up.
+      test: ["CMD-SHELL", "test -f /data/server_config.json && pgrep -x wstunnel >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  outwarp-panel:
+    image: ghcr.io/fcrespo07/outwarp-server:${OUTWARP_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    # The panel will not start without an admin token. On the first start
+    # `admin-token` creates one and prints it (once) to this container's log,
+    # like the Kubernetes init container; afterwards it only says one exists.
+    # A new one: docker compose exec outwarp-panel outwarp-server --config-dir /data admin-token --rotate
+    command:
+      - sh
+      - -c
+      - >-
+        outwarp-server --config-dir /data admin-token &&
+        exec outwarp-server --config-dir /data web --host 0.0.0.0 --port 9443
+    network_mode: "service:outwarp-server"
+    pid: "service:outwarp-server"
+    cap_add:
+      - NET_ADMIN   # wg syncconf when a client is added, disabled or revoked
+      - NET_RAW
+    volumes:
+      - outwarp-data:/data
+      - outwarp-wg:/etc/wireguard
+    depends_on:
+      outwarp-server:
+        condition: service_healthy
+
+volumes:
+  outwarp-data:
+  outwarp-wg:

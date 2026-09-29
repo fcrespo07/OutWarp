@@ -41,7 +41,8 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       when `bundle.js` is stale. No ES-module rewrite of the UI.
 - [x] **Retire the unsigned-manifest fallback** *(done in 0.15.0)* in both updaters
       (fail-closed; see "Security follow-ups").
-- [ ] **Honest README and wizard about DPI.** Replace the "corporate
+- [~] **Honest README and wizard about DPI.** *(Done 2026-09-29; the banner
+      goes in the RC.)* Replace the "corporate
       networks / captive Wi-Fi" claim with the adversary table (self-signed:
       UDP-blocked only; ACME branch: also certificate inspection; neither:
       TLS fingerprint / Upgrade DPI). ACME as the recommended path in `setup`.
@@ -71,7 +72,9 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       stays; "keep this session" now really persists — cookie Max-Age +
       hashed sessions on disk bound to the current token — and the form works
       with password managers.)*
-- [ ] **Windows server via Docker as the recommended path.** Docker Desktop
+- [~] **Windows server via Docker as the recommended path.** *(Done
+      2026-09-29: `deploy/docker/compose.yml` + guide; the image pulls
+      without login. A real Docker Desktop test remains.)* Docker Desktop
       (WSL2) + the `server/Dockerfile` image, a ready `compose.yml` and a
       guide in `deploy/README.md`; native SCM stays as the alternative. The
       image is already published to ghcr.io — make sure it is pullable.
@@ -111,13 +114,13 @@ Items marked *(added)* joined the gate with this plan. 👤 marks a task for the
   1. Enable/disable clients, with an e2e case.
   2. i18n infrastructure, en/es only. *(Done 2026-09-28: shared JS resolver, Python catalogs for tray, notifications, API messages and both TUIs; CLI messages and the `setup` wizard stay English until phase 3.)*
   3. Multi-profile. *(Done 2026-09-28.)*
-- **Phase 2 — Product → 0.17.0/0.18.0.**
-  - UI/UX polish, ending in a string freeze.
-  - Windows server via Docker, which can run in parallel with any phase.
+- **Phase 2 — Product → 0.17.0/0.18.0.** *(0.17.0 in code 2026-09-29: Traffic with real data, first polish pass, Windows server via Docker, honest README. Left: the second polish pass ending in the string freeze, and the 👤 tests.)*
+  - UI/UX polish, ending in a string freeze. *(First pass 2026-09-29 on the web panel and client GUI, B-042; TUIs, CLI and wizard texts and the freeze remain.)*
+  - Windows server via Docker, which can run in parallel with any phase. *(Done 2026-09-29: `deploy/docker/compose.yml`; 👤 test on real Docker Desktop.)*
   - **B-034: after shutting down without disconnecting, WireGuard comes back at boot and leaves Windows offline. Required for 0.16.0.** *(Code done 2026-09-28: cleanup when the GUI starts plus SYSTEM scheduled tasks at boot and logon; needs a test on real Windows with Fast Startup.)*
   - **Server dashboard traffic chart** (Home chart + per-client sparkline) with the client GUI's smooth, spike-free look. **Required for 0.16.0.** It may refresh faster than the client's, but must not draw sample-to-sample peaks. Not B-022 (the post-spike scale, fixed in 0.14.0). *(Code done 2026-09-28: `DSfmt.smoothSeries` + `DSfmt.smoothPath`.)*
-  - **Panel "Traffic" screen (1 h / 24 h / 7 d history) with real data. Required for the next release** (author, 2026-09-29): in the pod everything reads 0. Cause (B-041): the history DB lives at `/var/lib/outwarp/traffic.sqlite` inside the `serve` container; the panel container reads its own empty copy, and `serve`'s is lost on every pod restart. Move it to the config dir (shared `/data`), keep existing native installs' data, show honest empty states, verify on the pod replica.
-  - Honest README and wizard.
+  - **Panel "Traffic" screen (1 h / 24 h / 7 d history) with real data. Required for the next release** (author, 2026-09-29): in the pod everything reads 0. Cause (B-041): the history DB lives at `/var/lib/outwarp/traffic.sqlite` inside the `serve` container; the panel container reads its own empty copy, and `serve`'s is lost on every pod restart. Move it to the config dir (shared `/data`), keep existing native installs' data, show honest empty states, verify on the pod replica. *(Done 2026-09-29.)*
+  - Honest README and wizard. *(Done 2026-09-29 except dropping the banner, which happens in the RC.)*
   - 👤 Real-desktop Linux GUI testing (X11/Wayland). *(The clean Omarchy install was dropped on 2026-09-28.)*
 - **Phase 3 — Languages → 0.19.0.**
   - zh-Hans, fr and pt.
