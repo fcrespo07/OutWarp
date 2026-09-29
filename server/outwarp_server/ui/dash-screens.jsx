@@ -7,7 +7,7 @@ const { fmtBytes, fmtBps, fmtDuration, fmtAgo, fmtSpan, tr } = window.DSfmt;
 const stateTone = (s) => s === "online" ? "good" : s === "idle" || s === "pending" ? "warn" : "neutral";
 
 const MiniKV = ({ k, v, last }) => (
-  <div style={{ display: "grid", gridTemplateColumns: "82px 1fr", gap: 8, padding: "5px 0", borderBottom: last ? "none" : "1px solid var(--line)" }}>
+  <div style={{ display: "grid", gridTemplateColumns: "minmax(82px, max-content) 1fr", gap: 12, padding: "5px 0", borderBottom: last ? "none" : "1px solid var(--line)" }}>
     <span style={{ color: "var(--text-3)" }}>{k}</span>
     <span style={{ color: "var(--text)", wordBreak: "break-all" }}>{v}</span>
   </div>
@@ -19,13 +19,18 @@ const shortFp = (fp) => {
   return parts.length > 6 ? `${parts.slice(0, 3).join(":")}…${parts.slice(-1)}` : fp;
 };
 
-function deriveServices(status) {
-  const running = !!(status && status.status === "running");
-  return [
-    { id: "wstunnel", name: "wstunnel", running },
-    { id: "wg", name: "wg-quick@wg0", running },
-  ];
+// Where the tunnel runs and what this page may do with it, in words: the
+// panel used to name systemd units even inside a container or on Windows.
+function runsIn(T, st) {
+  st = st || {};
+  if (st.service_control === "full") return T.host_here;
+  return { container: T.host_container, windows: T.host_windows, systemd: T.host_systemd }[st.host_kind] || "—";
 }
+function controlLabel(T, st) {
+  const c = (st && st.service_control) || "none";
+  return c === "full" ? T.svc_controlFull : c === "restart" ? T.svc_controlRestart : T.svc_controlNone;
+}
+const isRunning = (st) => !!(st && st.status === "running");
 
 // Traffic history (Api.get_traffic_history): refetched when the window
 // changes and every minute, which is how often the server records a sample.
@@ -58,7 +63,9 @@ function ScreenDashboard({ C }) {
   // Pending (unenrolled) and disabled clients are not peers on the interface;
   // they don't count as offline.
   const total = online + idle + offline;
-  const services = deriveServices(live.status);
+  const st = live.status || {};
+  const running = isRunning(st);
+  const acme = st.tls_mode === "acme";
   const traffic = useTraffic(C, "24h").data;
   const trafficKnown = !!(traffic && traffic.has_data);
 
@@ -82,20 +89,22 @@ function ScreenDashboard({ C }) {
             ]} />
           <div style={{ minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
-              <Dot tone={live.status && live.status.status === "running" ? "good" : "neutral"} pulse={!!(live.status && live.status.status === "running")} />
-              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--brand-2)", letterSpacing: ".08em", textTransform: "uppercase", fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>
-                {live.status && live.status.status === "running" ? T.running : T.stopped}
+              <Dot tone={running ? "good" : "bad"} pulse={running} />
+              <span style={{ fontSize: 12, fontWeight: 700, color: running ? "var(--brand-2)" : "var(--brand-bad)", letterSpacing: ".08em", textTransform: "uppercase", fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>
+                {running ? T.running : T.stopped}
               </span>
             </div>
             <div style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.05, fontFamily: ui.headFont }}>
               {online} / {total} <span style={{ color: "var(--text-3)", fontWeight: 500 }}>{T.dash_clientsOnline}</span>
             </div>
             <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 7, fontFamily: "var(--font-mono)" }}>
-              wstunnel + wg-quick@wg0
+              {T.svc_runsIn}: {runsIn(T, st)}
             </div>
             <div style={{ display: "flex", gap: 7, marginTop: 12, flexWrap: "wrap" }}>
-              <Pill tone="good">{Icons.check(13)} {T.dash_allHealthy}</Pill>
-              {server.daysLeft !== "—" && <Pill tone="neutral">{tr(T.dash_daysLeft, { n: server.daysLeft })} · TLS</Pill>}
+              {running
+                ? <Pill tone="good">{Icons.check(13)} {T.dash_tunnelUp}</Pill>
+                : <Pill tone="bad">{Icons.warn(13)} {T.dash_tunnelDown}</Pill>}
+              {server.daysLeft !== "—" && <Pill tone={server.daysLeft < 21 ? "warn" : "neutral"}>{tr(T.dash_daysLeft, { n: server.daysLeft })} · TLS</Pill>}
             </div>
           </div>
           <div style={{ textAlign: "right", fontFamily: "var(--font-mono)" }} className="dash-hero-traffic">
@@ -115,7 +124,7 @@ function ScreenDashboard({ C }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <SLabel>{T.dash_throughput}</SLabel>
-            <Dot tone="good" pulse size={6} />
+            <Dot tone={running ? "good" : "neutral"} pulse={running} size={6} />
           </div>
           <div style={{ display: "flex", gap: 18, fontFamily: "var(--font-mono)", fontSize: 12.5 }}>
             <span style={{ color: "var(--brand)" }}>↓ {fmtBps(live.totals.rxBps)}</span>
@@ -132,14 +141,10 @@ function ScreenDashboard({ C }) {
       <div className="dash-triad" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: ui.gap }}>
         <Card>
           <SLabel style={{ marginBottom: 12 }}>{T.dash_services}</SLabel>
-          <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-            {services.map((s) => (
-              <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                <Dot tone={s.running ? "good" : "neutral"} />
-                <span style={{ fontSize: 12.5, fontFamily: "var(--font-mono)", fontWeight: 600 }}>{s.name}</span>
-                <span style={{ marginLeft: "auto", fontSize: 11, color: s.running ? "var(--brand-2)" : "var(--text-3)", fontFamily: "var(--font-mono)" }}>{s.running ? "active" : "inactive"}</span>
-              </div>
-            ))}
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
+            <MiniKV k={T.col_status} v={<span style={{ color: running ? "var(--brand-2)" : "var(--brand-bad)" }}>{running ? T.running : T.stopped}</span>} />
+            <MiniKV k={T.svc_runsIn} v={runsIn(T, st)} />
+            <MiniKV k={T.svc_control} v={controlLabel(T, st)} last />
           </div>
         </Card>
         <Card>
@@ -147,16 +152,16 @@ function ScreenDashboard({ C }) {
           <div style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
             <MiniKV k={T.dash_endpoint} v={server.endpoint} />
             <MiniKV k={T.dash_subnet} v={server.subnet} />
-            <MiniKV k={T.dash_wgListen} v={server.wgListen} />
-            <MiniKV k={T.dash_nat} v={<span style={{ color: "var(--brand-2)" }}>MASQUERADE</span>} last />
+            <MiniKV k={T.dash_serverIp} v={(st.server_address || "—").split("/")[0]} />
+            <MiniKV k={T.dash_wgListen} v={server.wgListen} last />
           </div>
         </Card>
         <Card>
           <SLabel style={{ marginBottom: 12 }}>{T.dash_tls}</SLabel>
           <div style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
-            <MiniKV k={T.dash_fingerprint} v={shortFp(server.fingerprint)} />
-            <MiniKV k={T.dash_validUntil} v={server.validUntil} />
-            <MiniKV k={T.dash_transport} v="TLS 1.3 · ws" last />
+            <MiniKV k={T.dash_tlsMode} v={acme ? T.tls_acme : T.tls_selfSigned} />
+            {!acme && <MiniKV k={T.dash_fingerprint} v={shortFp(server.fingerprint)} />}
+            <MiniKV k={T.dash_validUntil} v={server.validUntil} last />
           </div>
         </Card>
       </div>
@@ -165,33 +170,34 @@ function ScreenDashboard({ C }) {
       <div className="dash-split" style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: ui.gap }}>
         <Card>
           <SLabel style={{ marginBottom: 14 }}>{T.dash_topTalkers}</SLabel>
-          <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-            {[...live.clients].filter((c) => c.state !== "offline").sort((a, b) => b.rxTotal - a.rxTotal).slice(0, 4).map((c) => {
-              const maxRx = Math.max(...live.clients.map((x) => x.rxTotal), 1);
-              return (
-                <div key={c.name} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                      <span style={{ fontSize: 12.5, fontWeight: 600 }}>{c.name}</span>
-                      <span style={{ fontSize: 11.5, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>{fmtBytes(c.rxTotal)}</span>
+          {(() => {
+            const top = trafficKnown ? traffic.per_client.filter((c) => c.rx + c.tx > 0).slice(0, 4) : [];
+            if (!top.length) return <EmptyState compact icon={Icons.traffic(18)} title={T.dash_noTop} />;
+            const max = Math.max(1, ...top.map((c) => c.rx + c.tx));
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
+                {top.map((c) => (
+                  <div key={c.name} style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, gap: 8 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+                      <span style={{ fontSize: 11.5, color: "var(--text-3)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{fmtBytes(c.rx + c.tx)}</span>
                     </div>
-                    <div style={{ height: 6, background: "var(--bg-sunk)", borderRadius: 3, overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${Math.max(4, (c.rxTotal / maxRx) * 100)}%`, background: "var(--brand)", borderRadius: 3 }} />
+                    <div style={{ display: "flex", height: 6, background: "var(--bg-sunk)", borderRadius: 3, overflow: "hidden" }}>
+                      <div style={{ width: `${(c.tx / max) * 100}%`, background: "var(--brand-2)" }} />
+                      <div style={{ width: `${(c.rx / max) * 100}%`, background: "var(--brand)" }} />
                     </div>
                   </div>
-                </div>
-              );
-            })}
-            {live.clients.filter((c) => c.state !== "offline").length === 0 &&
-              <div style={{ color: "var(--text-3)", fontFamily: "var(--font-mono)", fontSize: 12 }}>—</div>}
-          </div>
+                ))}
+              </div>
+            );
+          })()}
         </Card>
         <Card pad={0} style={{ overflow: "hidden" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: `${ui.cardPad}px ${ui.cardPad}px 12px` }}>
             <SLabel>{T.dash_activeClients}</SLabel>
             <button className="ow-link" onClick={() => go("clients")}>{T.dash_viewAll} →</button>
           </div>
-          {live.clients.filter((c) => c.state !== "offline").slice(0, 5).map((c) => (
+          {live.clients.filter((c) => c.state === "online" || c.state === "idle").slice(0, 5).map((c) => (
             <button key={c.name} className="ow-row" onClick={() => C.openClient(c.name)} style={{
               all: "unset", cursor: "pointer", display: "grid", gridTemplateColumns: "auto 1fr auto auto", gap: 11,
               alignItems: "center", padding: `10px ${ui.cardPad}px`, borderTop: "1px solid var(--line)", boxSizing: "border-box", width: "100%" }}>
@@ -204,8 +210,8 @@ function ScreenDashboard({ C }) {
               <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-2)", textAlign: "right", whiteSpace: "nowrap" }}>↓{fmtBps(c.rxBps)}</div>
             </button>
           ))}
-          {live.clients.filter((c) => c.state !== "offline").length === 0 &&
-            <div style={{ padding: 24, textAlign: "center", color: "var(--text-3)", fontFamily: "var(--font-mono)", fontSize: 13, borderTop: "1px solid var(--line)" }}>—</div>}
+          {live.clients.filter((c) => c.state === "online" || c.state === "idle").length === 0 &&
+            <div style={{ borderTop: "1px solid var(--line)" }}><EmptyState compact icon={Icons.clients(18)} title={T.dash_noActive} /></div>}
         </Card>
       </div>
     </div>
@@ -280,7 +286,10 @@ function ScreenClients({ C }) {
               <span style={{ color: "var(--text-3)", display: "flex", justifyContent: "flex-end" }}>{Icons.chevR(16)}</span>
             </button>
           ))}
-          {rows.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "var(--text-3)", fontFamily: "var(--font-mono)", fontSize: 13 }}>—</div>}
+          {rows.length === 0 && (live.clients.length === 0
+            ? <EmptyState icon={Icons.clients(20)} title={T.clients_empty} body={T.clients_emptyBody}
+                action={<Btn kind="primary" size="sm" icon={Icons.plus(14)} onClick={() => C.openAdd()}>{T.clients_add}</Btn>} />
+            : <EmptyState compact icon={Icons.search(18)} title={T.clients_noMatch} />)}
         </div>
       </Card>
     </div>
@@ -385,47 +394,52 @@ function ScreenService({ C }) {
   const ui = useUI();
   const { T, live } = C;
   const [busy, setBusy] = React.useState("");
-  const services = deriveServices(live.status);
+  const [error, setError] = React.useState("");
+  const st = live.status || {};
+  const running = isRunning(st);
   // What this process may do: "full" (it runs wstunnel itself), "restart"
   // (systemd units it can bounce), "none" (a panel next to a `serve`
   // container it cannot drive). See Api._service_control.
-  const control = (live.status && live.status.service_control) || "none";
+  const control = st.service_control || "none";
   const canStartStop = control === "full";
   const canRestart = control !== "none";
   const act = async (kind, confirmBody) => {
     if (confirmBody) { const ok = await C.confirm({ title: T[`service_${kind}`] || kind, body: confirmBody }); if (!ok) return; }
-    setBusy(kind);
-    try { await C.call(`${kind}_service`); await C.refresh(); } finally { setBusy(""); }
+    setBusy(kind); setError("");
+    try {
+      const r = await C.call(`${kind}_service`);
+      if (r && r.ok === false) setError(r.error || "error");
+      await C.refresh();
+    } finally { setBusy(""); }
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: ui.gap }}>
       <PageHead title={T.service_title} sub={T.service_sub} />
-      <div className="svc-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: ui.gap }}>
-        {services.map((s) => (
-          <Card key={s.id}>
-            <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-              <Dot tone={s.running ? "good" : "neutral"} pulse={s.running} />
-              <span style={{ fontSize: 13.5, fontWeight: 600, fontFamily: "var(--font-mono)" }}>{s.name}</span>
-              <Pill tone={s.running ? "good" : "neutral"} style={{ marginLeft: "auto" }}>{s.running ? "active" : "inactive"}</Pill>
-            </div>
-            <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 10 }}>
-              {s.running ? T.running : T.stopped}
-            </div>
-          </Card>
-        ))}
-      </div>
+      <Card lg>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <Dot tone={running ? "good" : "bad"} pulse={running} size={10} />
+          <span style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.01em" }}>{running ? T.dash_tunnelUp : T.dash_tunnelDown}</span>
+          <Pill tone={running ? "good" : "bad"} style={{ marginLeft: "auto" }}>{running ? T.running : T.stopped}</Pill>
+        </div>
+        <div style={{ marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12 }}>
+          <MiniKV k={T.svc_runsIn} v={runsIn(T, st)} />
+          <MiniKV k={T.svc_control} v={controlLabel(T, st)} />
+          <MiniKV k={T.dash_endpoint} v={C.server.endpoint} last />
+        </div>
+      </Card>
       <Card>
         <SLabel style={{ marginBottom: 14 }}>{T.service_actions}</SLabel>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
-          <Btn kind="primary" icon={Icons.power(15)} disabled={!!busy || !canStartStop} onClick={() => act("start")}>{T.service_start}</Btn>
-          <Btn icon={Icons.refresh(15)} disabled={!!busy || !canRestart} onClick={() => act("restart", T.service_confirmRestart)}>{T.service_restart}</Btn>
-          <Btn kind="danger" icon={Icons.power(15)} disabled={!!busy || !canStartStop} onClick={() => act("stop", T.service_confirmRestart)}>{T.service_stop}</Btn>
+          {canStartStop && <Btn kind="primary" icon={Icons.power(15)} disabled={!!busy || running} onClick={() => act("start")}>{busy === "start" ? "…" : T.service_start}</Btn>}
+          <Btn icon={Icons.refresh(15)} disabled={!!busy || !canRestart} onClick={() => act("restart", T.service_confirmRestart)}>{busy === "restart" ? "…" : T.service_restart}</Btn>
+          {canStartStop && <Btn kind="danger" icon={Icons.power(15)} disabled={!!busy || !running} onClick={() => act("stop", T.service_confirmRestart)}>{busy === "stop" ? "…" : T.service_stop}</Btn>}
         </div>
         {control !== "full" && (
-          <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 12 }}>
+          <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 12, lineHeight: 1.55 }}>
             {control === "restart" ? T.service_managedBySystemd : T.service_managedElsewhere}
           </div>
         )}
+        {error && <div role="alert" style={{ fontSize: 12, color: "var(--brand-bad)", marginTop: 10, fontFamily: "var(--font-mono)" }}>{error}</div>}
       </Card>
     </div>
   );
@@ -478,6 +492,7 @@ function ScreenLogs({ C }) {
           const el = e.target; const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 28;
           if (!bottom && follow) setFollow(false);
         }} style={{ flex: 1, overflow: "auto", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.7, padding: 14 }}>
+          {rows.length === 0 && <EmptyState compact icon={Icons.logs(18)} title={live.logs.length ? T.logs_noMatch : T.logs_empty} />}
           {rows.map((l) => (
             <div key={l.seq} className="log-line" style={{ display: "grid", gridTemplateColumns: "92px 52px 1fr", gap: 10 }}>
               <span style={{ color: "var(--text-3)" }}>{l.t}</span>
@@ -485,7 +500,7 @@ function ScreenLogs({ C }) {
               <span style={{ color: "var(--text)", wordBreak: "break-word" }}>{l.msg}</span>
             </div>
           ))}
-          <div style={{ marginTop: 4 }}><span style={{ display: "inline-block", width: 7, height: 13, background: "var(--brand)", animation: "ws-blink 1s steps(2,end) infinite", verticalAlign: "middle" }} /></div>
+          <div style={{ marginTop: 4 }} aria-hidden><span style={{ display: "inline-block", width: 7, height: 13, background: "var(--brand)", animation: "ws-blink 1s steps(2,end) infinite", verticalAlign: "middle" }} /></div>
         </div>
         {!follow && (
           <button className="ow-btn" onClick={() => { setFollow(true); if (scrollerRef.current) scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight; }}
@@ -534,7 +549,7 @@ function ScreenDoctor({ C }) {
           <Btn size="sm" icon={Icons.refresh(14)} disabled={running} onClick={run}>{T.doctor_rerun}</Btn>
         </>} />
       <Card pad={0} style={{ overflow: "hidden" }}>
-        {checks.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "var(--text-3)", fontFamily: "var(--font-mono)", fontSize: 13 }}>{running ? "…" : "—"}</div>}
+        {checks.length === 0 && <EmptyState compact icon={Icons.doctor(18)} title={running ? T.doctor_running : "—"} />}
         {checks.map((c, i) => {
           const st = norm(c.status);
           return (
@@ -574,13 +589,16 @@ function ScreenSettings({ C }) {
   const { T, server, appInfo } = C;
   const st = C.live.status || {};
   const [copied, setCopied] = React.useState(false);
+  const [applyError, setApplyError] = React.useState("");
   const [form, setForm] = React.useState({ port: st.port || "", wg: st.wg_listen_port || "", endpoint: st.endpoint || "", subnet: st.subnet || "" });
   React.useEffect(() => { setForm({ port: st.port || "", wg: st.wg_listen_port || "", endpoint: st.endpoint || "", subnet: st.subnet || "" }); }, [st.port, st.wg_listen_port, st.endpoint, st.subnet]);
   const copyFp = () => { navigator.clipboard?.writeText("sha256:" + server.fingerprint); setCopied(true); setTimeout(() => setCopied(false), 1600); };
   const apply = async () => {
     const ok = await C.confirm({ title: T.set_apply, body: T.service_confirmRestart });
     if (!ok) return;
-    await C.call("update_server_config", { port: Number(form.port), wg_listen_port: Number(form.wg), endpoint: form.endpoint });
+    setApplyError("");
+    const r = await C.call("update_server_config", { port: Number(form.port), wg_listen_port: Number(form.wg), endpoint: form.endpoint });
+    if (r && r.ok === false) setApplyError(r.error || "error");
     await C.refresh();
   };
   const rotate = async () => {
@@ -600,24 +618,32 @@ function ScreenSettings({ C }) {
             <Field label={T.set_port}><Input value={form.port} onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))} mono /></Field>
             <Field label={T.set_wgPort}><Input value={form.wg} onChange={(e) => setForm((f) => ({ ...f, wg: e.target.value }))} mono /></Field>
             <Field label={T.set_endpoint} style={{ gridColumn: "1 / -1" }}><Input value={form.endpoint} onChange={(e) => setForm((f) => ({ ...f, endpoint: e.target.value }))} mono /></Field>
-            <Field label={T.set_subnet} style={{ gridColumn: "1 / -1" }}><Input value={form.subnet} readOnly mono style={{ opacity: 0.6 }} /></Field>
+            <Field label={T.set_subnet} style={{ gridColumn: "1 / -1" }}>
+              <Input value={form.subnet} readOnly aria-readonly="true" mono style={{ opacity: 0.6 }} />
+              <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{T.set_subnetFixed}</span>
+            </Field>
           </div>
           <div style={{ marginTop: 16 }}><Btn kind="primary" icon={Icons.check(15)} onClick={apply}>{T.set_apply}</Btn></div>
+          {applyError && <div role="alert" style={{ marginTop: 10, fontSize: 12, color: "var(--brand-bad)", fontFamily: "var(--font-mono)" }}>{applyError}</div>}
         </Card>
       </div>
 
       <div>
         <SLabel style={{ marginBottom: 9 }}>{T.set_cert}</SLabel>
         <Card>
-          <div style={{ fontSize: 12, color: "var(--text-3)" }}>{T.set_certSub}</div>
-          <div style={{ marginTop: 12, padding: 12, background: "var(--bg-sunk)", borderRadius: ui.radiusSm, fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-2)", wordBreak: "break-all" }}>
-            sha256:{server.fingerprint}
-          </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-            <Btn size="sm" icon={Icons.copy(14)} onClick={copyFp}>{copied ? T.copied + " ✓" : T.set_copyFp}</Btn>
-            <Btn size="sm" kind="danger" icon={Icons.rotate(14)} onClick={rotate}>{T.set_rotateCert}</Btn>
-          </div>
-          <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 10, lineHeight: 1.5 }}>{T.set_rotateCertSub}</div>
+          {st.tls_mode === "acme" ? (
+            <div style={{ fontSize: 12.5, color: "var(--text-2)", lineHeight: 1.55 }}>{T.set_certSubAcme}</div>
+          ) : <>
+            <div style={{ fontSize: 12, color: "var(--text-3)" }}>{T.set_certSub}</div>
+            <div style={{ marginTop: 12, padding: 12, background: "var(--bg-sunk)", borderRadius: ui.radiusSm, fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-2)", wordBreak: "break-all" }}>
+              sha256:{server.fingerprint}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+              <Btn size="sm" icon={Icons.copy(14)} onClick={copyFp}>{copied ? T.copied + " ✓" : T.set_copyFp}</Btn>
+              <Btn size="sm" kind="danger" icon={Icons.rotate(14)} onClick={rotate}>{T.set_rotateCert}</Btn>
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 10, lineHeight: 1.5 }}>{T.set_rotateCertSub}</div>
+          </>}
         </Card>
       </div>
 

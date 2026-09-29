@@ -3,22 +3,6 @@ const { Card: ECard, Btn: EBtn, Pill: EPill, Dot: EDot, Toggle: ETog, Field: EFi
         KV: EKV, Sparkline: ESpark, Icons: EIcons, useUI: EuseUI } = window;
 const EF = window.DSfmt;
 
-// ── QR placeholder ───────────────────────────────────────────────────────
-// Decorative only — a scannable QR of the .owcfg lands in a later pass
-// (the server already ships `qrcode` in the [tui] extra).
-const QRGlyph = ({ size = 150, seed = 13 }) => (
-  <svg viewBox="0 0 25 25" width={size} height={size} shapeRendering="crispEdges">
-    <rect x="0" y="0" width="25" height="25" fill="#fff" />
-    {Array.from({ length: 25 }).flatMap((_, y) => Array.from({ length: 25 }).map((_, x) => {
-      const s = (x * 47 + y * 19 + seed) % 19;
-      const isFinder = (x < 7 && y < 7) || (x > 17 && y < 7) || (x < 7 && y > 17);
-      const fx = x > 17 ? 21 : 3, fy = y > 17 ? 21 : 3;
-      const fill = isFinder ? ((Math.abs(x - fx) <= 1 && Math.abs(y - fy) <= 1) || Math.abs(x - fx) === 3 || Math.abs(y - fy) === 3 ? 1 : 0) : (s > 9 ? 1 : 0);
-      return fill ? <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" fill="#0a0d12" /> : null;
-    }))}
-  </svg>
-);
-
 // ── LOGIN ────────────────────────────────────────────────────────────────
 function LoginScreen({ T, theme, appInfo, onLogin }) {
   const [token, setToken] = React.useState("");
@@ -113,7 +97,6 @@ function AddClientModal({ T, C, onClose }) {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
   const [result, setResult] = React.useState(null); // { name, path, owcfg_base64 }
-  const [showQr, setShowQr] = React.useState(false);
   const generate = async () => {
     if (!name.trim() || busy) return;
     setBusy(true); setError("");
@@ -135,9 +118,9 @@ function AddClientModal({ T, C, onClose }) {
 
         {!result ? (
           <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 13 }}>
-            <EField label={T.add_name}><EInput value={name} onChange={(e) => setName(e.target.value)} placeholder={T.add_namePh} autoFocus /></EField>
+            <EField label={T.add_name}><EInput value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") generate(); }} placeholder={T.add_namePh} autoFocus /></EField>
             <div style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>{T.add_autoAssigned}</div>
-            {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>{error}</div>}
+            {error && <div role="alert" style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--brand-bad)" }}>{error}</div>}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 6 }}>
               <EBtn kind="ghost" onClick={onClose}>{T.cancel}</EBtn>
               <EBtn kind="primary" icon={EIcons.plus(15)} disabled={!name.trim() || busy} onClick={generate} style={{ opacity: name.trim() && !busy ? 1 : 0.5 }}>{busy ? "…" : T.add_generate}</EBtn>
@@ -145,13 +128,12 @@ function AddClientModal({ T, C, onClose }) {
           </div>
         ) : (
           <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ display: "grid", gridTemplateColumns: showQr ? "auto 1fr" : "1fr", gap: 16, alignItems: "start" }}>
-              {showQr && <div style={{ background: "#fff", padding: 8, borderRadius: ui.radiusSm, border: "1px solid var(--line-strong)" }}><QRGlyph size={132} seed={result.name.length * 3 + 7} /></div>}
+            <div>
               <div>
                 <div style={{ border: "1px solid color-mix(in srgb, var(--brand-2) 36%, transparent)", background: "color-mix(in srgb, var(--brand-2) 7%, transparent)", borderRadius: ui.radiusSm, padding: "12px 14px", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.7 }}>
                   <div><span style={{ color: "var(--brand-2)" }}>✓</span> <b>{result.name}.owcfg</b> <span style={{ color: "var(--text-3)" }}>· {T.add_done}</span></div>
                   {result.path && <div style={{ color: "var(--text-3)", wordBreak: "break-all" }}>{T.add_writtenTo} {result.path}</div>}
-                  <div><span style={{ color: "var(--brand-2)" }}>✓</span> <span style={{ color: "var(--text-2)" }}>hot-added · wg syncconf wg0</span></div>
+                  <div><span style={{ color: "var(--brand-warn)" }}>⏱</span> <span style={{ color: "var(--text-2)" }}>{T.add_token}</span></div>
                 </div>
               </div>
             </div>
@@ -159,7 +141,6 @@ function AddClientModal({ T, C, onClose }) {
               <span style={{ color: "var(--brand-warn)", fontWeight: 600 }}>⚠ </span>{T.add_warnKey}
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <EBtn kind="ghost" icon={EIcons.qr(15)} onClick={() => setShowQr((s) => !s)}>{T.add_showQr}</EBtn>
               <EBtn kind="ghost" icon={EIcons.download(15)} onClick={download}>{T.detail_download}</EBtn>
               <EBtn kind="primary" icon={EIcons.check(15)} onClick={onClose}>{T.add_close}</EBtn>
             </div>
@@ -241,7 +222,7 @@ function ClientDrawer({ T, client, lang, C, onClose, confirm }) {
               </div>
               <div>
                 <div style={{ fontSize: 10, color: "var(--text-3)", fontFamily: "var(--font-mono)", textTransform: "uppercase" }}>↑ {EF.fmtBps(client.txBps)}</div>
-                <ESpark data={[...client.spark].reverse()} w={120} h={28} color="var(--brand-2)" />
+                <ESpark data={client.sparkTx} w={120} h={28} color="var(--brand-2)" />
               </div>
             </div>
           </ECard>
@@ -250,14 +231,12 @@ function ClientDrawer({ T, client, lang, C, onClose, confirm }) {
             <EKV k={T.detail_transfer} v={`↓ ${EF.fmtBytes(client.rxTotal)} · ↑ ${EF.fmtBytes(client.txTotal)}`} mono />
             <EKV k={T.col_handshake} v={EF.fmtAgo(client.hsSec, lang)} mono tone={client.state === "online" ? "var(--brand-2)" : "var(--text)"} />
             <EKV k={T.detail_endpoint} v={client.endpoint} mono />
-            <EKV k="IP" v={client.ip} mono />
+            <EKV k={T.col_ip} v={client.ip} mono />
             <EKV k={T.detail_allowed} v={allowed} mono />
             <EKV k={T.detail_pubkey} v={client.pub} mono last />
           </div>
 
           <div style={{ borderTop: "1px solid var(--line)", paddingTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
-            <EBtn kind="ghost" icon={EIcons.download(15)} disabled={!!busy} style={{ justifyContent: "flex-start" }}
-              onClick={() => rotateAndDownload("regenerate_owcfg", true)}>{T.detail_regen}</EBtn>
             <EBtn kind="ghost" icon={EIcons.rotate(15)} disabled={!!busy} style={{ justifyContent: "flex-start" }}
               onClick={() => rotateAndDownload("rotate_client_keys", true)}>{T.detail_rotate}</EBtn>
             {client.state === "disabled" ? (
@@ -276,4 +255,4 @@ function ClientDrawer({ T, client, lang, C, onClose, confirm }) {
   );
 }
 
-Object.assign(window, { LoginScreen, ConfirmDialog, AddClientModal, ClientDrawer, QRGlyph });
+Object.assign(window, { LoginScreen, ConfirmDialog, AddClientModal, ClientDrawer });

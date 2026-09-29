@@ -53,6 +53,7 @@ function adaptClient(row, derived) {
     rxBps: derived.rxBps || 0,
     txBps: derived.txBps || 0,
     spark: derived.spark || new Array(SPARK_RING_LEN).fill(0),
+    sparkTx: derived.sparkTx || new Array(SPARK_RING_LEN).fill(0),
   };
 }
 
@@ -84,7 +85,8 @@ function useLiveData() {
   // Keyed by client name: pending clients all share an empty public_key and
   // used to collapse into one row of rate/sparkline state.
   const prevRef = useRef({});       // name -> {rx, tx, t, rxBps, txBps}
-  const sparkRef = useRef({});      // name -> number[]
+  const sparkRef = useRef({});      // name -> number[] (rx)
+  const sparkTxRef = useRef({});    // name -> number[] (tx)
   const peakRef = useRef({});       // name -> boundedPeak() instance (sparkline scale)
 
   const onClients = useCallback((rows) => {
@@ -104,8 +106,12 @@ function useLiveData() {
         const ring = (sparkRef.current[row.name] || new Array(SPARK_RING_LEN).fill(0)).slice(1);
         ring.push(rxBps);
         sparkRef.current[row.name] = ring;
+        const ringTx = (sparkTxRef.current[row.name] || new Array(SPARK_RING_LEN).fill(0)).slice(1);
+        ringTx.push(txBps);
+        sparkTxRef.current[row.name] = ringTx;
       }
       const ring = sparkRef.current[row.name] || new Array(SPARK_RING_LEN).fill(0);
+      const ringTx = sparkTxRef.current[row.name] || new Array(SPARK_RING_LEN).fill(0);
       const state = row.status === "unknown" ? "offline" : row.status;
       if (state === "online") { online++; totRx += rxBps; totTx += txBps; }
       else if (state === "idle") idle++;
@@ -118,7 +124,11 @@ function useLiveData() {
       peakRef.current[row.name] = boundedPeak;
       const peak = advanced ? boundedPeak(Math.max(...ring, 1)) : Math.max(...ring, 1);
       const normSpark = ring.map((v) => Math.min(1, v / peak));
-      return adaptClient(row, { rxBps, txBps, spark: normSpark });
+      // The upload sparkline scales on its own: it used to be the download
+      // one drawn backwards.
+      const peakTx = Math.max(...ringTx, 1);
+      const normSparkTx = ringTx.map((v) => v / peakTx);
+      return adaptClient(row, { rxBps, txBps, spark: normSpark, sparkTx: normSparkTx });
     });
     s.clients = adapted;
     s.totals = { online, idle, offline, pending, disabled, rxBps: totRx, txBps: totTx };
@@ -191,7 +201,7 @@ const SCREENS = {
 const NavList = ({ T, route, go }) => (
   <>
     {NAV.map(([id, key, icon]) => (
-      <button key={id} className="nav-item" data-active={route === id} onClick={() => go(id)}>
+      <button key={id} className="nav-item" data-active={route === id} aria-current={route === id ? "page" : undefined} onClick={() => go(id)}>
         <span className="nav-ic">{window.Icons[icon](18)}</span>
         {T[key]}
       </button>
@@ -405,7 +415,7 @@ function App() {
             <aside className="m-drawer">
               <div className="rail-brand">
                 <window.WSWordmark size={16} color="var(--text)" accent="var(--brand)" />
-                <button className="ow-iconbtn" onClick={() => setNavOpen(false)}>{window.Icons.x(18)}</button>
+                <button className="ow-iconbtn" onClick={() => setNavOpen(false)} aria-label={T.a11y_close}>{window.Icons.x(18)}</button>
               </div>
               <div style={{ padding: "0 8px 16px", fontSize: 10.5, color: "var(--text-3)", letterSpacing: ".08em", textTransform: "uppercase", fontWeight: 600, fontFamily: "var(--font-mono)" }}>{T.serverAdmin}</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>

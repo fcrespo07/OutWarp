@@ -111,8 +111,8 @@ const Dot = ({ tone = "good", pulse = false, size = 8 }) => {
 };
 
 // ── Toggle ───────────────────────────────────────────────────────────────
-const Toggle = ({ on, onChange }) => (
-  <button onClick={() => onChange?.(!on)} aria-pressed={on} className="ow-btn" style={{
+const Toggle = ({ on, onChange, label }) => (
+  <button type="button" role="switch" onClick={() => onChange?.(!on)} aria-checked={on} aria-label={label} className="ow-btn" style={{
     width: 38, height: 22, borderRadius: 999, padding: 2, border: "none",
     background: on ? "var(--brand)" : "var(--line-strong)", cursor: "pointer",
     display: "inline-flex", alignItems: "center", transition: "background .15s", flex: "none" }}>
@@ -126,11 +126,11 @@ const Toggle = ({ on, onChange }) => (
 const Segmented = ({ options, value, onChange }) => {
   const ui = useUI();
   return (
-    <div style={{ display: "inline-flex", gap: 3, padding: 3, background: "var(--bg-sunk)", borderRadius: ui.radiusSm, border: ui.style === "tecnica" ? "1px solid var(--line)" : "none" }}>
+    <div role="group" style={{ display: "inline-flex", gap: 3, padding: 3, background: "var(--bg-sunk)", borderRadius: ui.radiusSm, border: ui.style === "tecnica" ? "1px solid var(--line)" : "none" }}>
       {options.map((o) => {
         const active = o.value === value;
         return (
-          <button key={o.value} onClick={() => onChange(o.value)} className="ow-btn" style={{
+          <button key={o.value} type="button" aria-pressed={active} onClick={() => onChange(o.value)} className="ow-btn" style={{
             border: "none", cursor: "pointer", padding: "5px 12px", borderRadius: Math.max(2, ui.radiusSm - 2),
             fontSize: 12, fontWeight: 600, fontFamily: ui.mono ? "var(--font-mono)" : "var(--font-sans)",
             background: active ? "var(--bg-2)" : "transparent", color: active ? "var(--text)" : "var(--text-3)",
