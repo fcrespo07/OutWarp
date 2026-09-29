@@ -71,7 +71,8 @@ const STR = {
 
     // Settings
     set_checkUpdates: "Buscar actualizaciones al iniciar",
-    set_checkUpdatesSub: "Comprobar si hay una versión nueva al abrir Ajustes.",
+    set_checkUpdatesSub: "Al abrir OutWarp comprueba si hay una versión nueva y lo avisa en la barra lateral.",
+    upd_sidebar: "Versión {v} disponible",
     set_killSwitch: "Kill switch",
     set_killSwitchSub: "Bloquea todo el tráfico de internet si el túnel se cae.",
     set_autoconnect: "Reintento automático",
@@ -274,7 +275,8 @@ const STR = {
     upd_copied: "Copied",
 
     set_checkUpdates: "Check for updates on startup",
-    set_checkUpdatesSub: "Check for a newer version when opening Settings.",
+    set_checkUpdatesSub: "When OutWarp opens, check for a newer version and flag it in the sidebar.",
+    upd_sidebar: "Version {v} available",
     set_killSwitch: "Kill switch",
     set_killSwitchSub: "Block all internet traffic if the tunnel drops.",
     set_autoconnect: "Automatic retry",

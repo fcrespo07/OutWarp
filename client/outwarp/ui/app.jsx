@@ -113,6 +113,11 @@ function App() {
   // successful disconnect/import resets the relevant state.
   const [hostile, setHostile] = useState(null);
   const [hostileDismissed, setHostileDismissed] = useState(false);
+  // "Check for updates on startup": one check once the bridge is up; a newer
+  // version is flagged in the sidebar (it used to check only when Settings
+  // was opened, despite the setting's name).
+  const [updateAvail, setUpdateAvail] = useState("");
+  const updateChecked = useRef(false);
 
   // bootstrap
   useEffect(() => {
@@ -287,6 +292,12 @@ function App() {
     return api.set_settings({ [k]: v });
   };
 
+  useEffect(() => {
+    if (!ready || !api || updateChecked.current || !settings.check_updates_on_start) return;
+    updateChecked.current = true;
+    api.check_for_updates().then((r) => { if (r && r.available && r.latest) setUpdateAvail(r.latest); }).catch(() => {});
+  }, [ready, api, settings.check_updates_on_start]);
+
   // Hold the first paint until the bridge has answered — otherwise the app
   // briefly renders the "empty / import" screen even when a profile exists.
   // The title bar renders in both states so the window stays draggable and
@@ -328,6 +339,7 @@ function App() {
           status={status}
           profileName={active?.name}
           advanced={!!settings.advanced}
+          update={updateAvail}
         />
         <main style={{ overflow: "auto", padding: "28px 36px 36px", minWidth: 0 }} className="ws-scroll">
           {screen === "home" && (
@@ -534,7 +546,7 @@ const ResizeHandles = ({ api }) => (
 );
 
 // ── Sidebar ──────────────────
-const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
+const Sidebar = ({ T, screen, onScreen, status, profileName, advanced, update }) => {
   const items = [
     ["home",     T.nav_home,     "M3 11 L12 3 L21 11 M5 10 V20 H19 V10"],
     ["import",   T.nav_profiles, "M12 8 m-4 0 a4 4 0 1 0 8 0 a4 4 0 1 0 -8 0 M4 21 C4 16 8 14 12 14 C16 14 20 16 20 21"],
@@ -592,8 +604,18 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced }) => {
         })}
       </div>
 
+      {update && (
+        <button onClick={() => onScreen("settings")} className="ow-nav ow-sidebar-foot-text" style={{
+          appearance: "none", font: "inherit", textAlign: "left", marginTop: "auto", marginBottom: 10,
+          display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: advanced ? 0 : 8,
+          border: "1px solid color-mix(in srgb, var(--brand) 40%, transparent)",
+          background: "color-mix(in srgb, var(--brand) 10%, transparent)", color: "var(--brand)", fontSize: 12, fontWeight: 600 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          {T.upd_sidebar.replace("{v}", update)}
+        </button>
+      )}
       <div className="ow-sidebar-foot" style={{
-        marginTop: "auto",
+        marginTop: update ? 0 : "auto",
         padding: 12,
         borderRadius: advanced ? 0 : 12,
         background: "var(--bg-sunk)",
