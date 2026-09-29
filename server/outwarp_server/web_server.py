@@ -197,6 +197,10 @@ class _PanelHandler(BaseHTTPRequestHandler):
         return self.ctx.sessions.validate(self._session_id())
 
     def _read_body(self) -> bytes:
+        body = getattr(self, "_body", None)
+        return body if body is not None else self._consume_body()
+
+    def _consume_body(self) -> bytes:
         try:
             length = int(self.headers.get("Content-Length", 0))
         except (TypeError, ValueError):
@@ -206,6 +210,7 @@ class _PanelHandler(BaseHTTPRequestHandler):
         # Cap request bodies — nothing the panel accepts is large, and an
         # unbounded read is a trivial memory-exhaustion vector.
         if length > 1_000_000:
+            self.close_connection = True  # unread body: never reuse this connection
             return b""
         return self.rfile.read(length)
 
@@ -247,6 +252,11 @@ class _PanelHandler(BaseHTTPRequestHandler):
         self._serve_static(path)
 
     def do_POST(self) -> None:  # noqa: N802
+        # Read the body before anything can answer. A 401 sent without reading
+        # it left the body on the keep-alive connection, where the next request
+        # a reverse proxy sent down it started with those bytes: "[]POST /auth"
+        # came back 501 and the login failed (B-039).
+        self._body = self._consume_body()
         path = self.path.split("?", 1)[0]
         if path == "/auth":
             self._handle_auth()

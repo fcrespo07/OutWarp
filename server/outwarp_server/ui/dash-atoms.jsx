@@ -192,86 +192,44 @@ const Sparkline = ({ data, w = 72, h = 22, color = "var(--brand-2)", fill = true
   );
 };
 
-// ── Area throughput chart (dual: rx up, tx down-mirrored) ─────────────────
-//
-// Points sit at their own time (the server's sampled_at), not at their index,
-// and the view scrolls with the clock: one requestAnimationFrame per frame
-// moves a single transform, the path is rebuilt only when a sample arrives.
-// The right edge trails real time by `delaySec`, so the newest sample is
-// normally already there when its moment scrolls into view; samples that
-// arrive late or in a bunch (a proxy buffering the event stream) land where
-// they belong instead of shoving the line sideways.
-const AreaChart = ({ samples, h = 150, windowSec = 120, delaySec = 4 }) => {
-  const W = 1000, P = 4;
-  const mid = h / 2;
-  const pxPerSec = (W - P * 2) / windowSec;
-  const holdRef = React.useRef(null);
-  if (holdRef.current === null) holdRef.current = window.DSfmt.makeBoundedPeak(10);
-  const groupRef = React.useRef(null);
-  // Server clock → browser clock: the smallest arrival delay seen so far.
-  const offsetRef = React.useRef(null);
-
-  const pts = samples || [];
-  const last = pts[pts.length - 1];
-  for (const p of pts) {
-    if (p.at == null) continue;
-    const off = p.at - p.t;
-    if (offsetRef.current === null || off < offsetRef.current) offsetRef.current = off;
+// ── Area throughput chart ──────────────────────────────────────────────────
+// The client GUI's chart, as is: one sample a second redrawn as it arrives,
+// the history filling the width, a Catmull-Rom curve, a 64 KB/s scale floor
+// so a trickle still shows. Download grows down, upload up.
+const AreaChart = ({ samples, h = 150 }) => {
+  const W = 760, H = h, P = 8;
+  const history = samples || [];
+  const peak = history.reduce((m, s) => Math.max(m, s.rx || 0, s.tx || 0), 0);
+  const scale = Math.max(peak, 64 * 1024);
+  const mid = H / 2;
+  const innerH = mid - P;
+  const innerW = W - P * 2;
+  const xAt = (i) => history.length <= 1 ? P : P + (i * innerW) / (history.length - 1);
+  const ptsFor = (key, sign) => history.map((s, i) => [xAt(i), mid + sign * ((s[key] || 0) / scale) * innerH]);
+  // Clamped to its own half so the curve never dips across the centre axis.
+  const line = (key, sign) => window.DSfmt.smoothPath(ptsFor(key, sign),
+    sign > 0 ? mid : P, sign > 0 ? H - P : mid);
+  const area = (key, sign) => history.length ? `${line(key, sign)} L ${(W - P).toFixed(1)} ${mid} L ${P} ${mid} Z` : "";
+  if (history.length < 2) {
+    return <div style={{ height: H }} />;
   }
-  const t0 = pts.length ? pts[0].t : 0;
-
-  const geom = React.useMemo(() => {
-    if (pts.length < 2) return null;
-    const rx = window.DSfmt.smoothSeries(pts.map((p) => p.rx));
-    const tx = window.DSfmt.smoothSeries(pts.map((p) => p.tx));
-    const max = holdRef.current(Math.max(...rx, ...tx, 0.0001));
-    const xs = pts.map((p) => P + (p.t - t0) * pxPerSec);
-    const up = window.DSfmt.smoothPath(xs.map((x, i) => [x, mid - (rx[i] / max) * (mid - P)]), P, mid);
-    const down = window.DSfmt.smoothPath(xs.map((x, i) => [x, mid + (tx[i] / max) * (mid - P)]), mid, h - P);
-    return { up, down, x0: xs[0], x1: xs[xs.length - 1] };
-  }, [pts.length, last && last.t, t0, h]);
-
-  React.useEffect(() => {
-    const g = groupRef.current;
-    if (!g) return undefined;
-    const still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let raf = 0;
-    const place = () => {
-      const serverNow = Date.now() / 1000 - (offsetRef.current || 0);
-      // Time at the left edge of the view.
-      const left = serverNow - delaySec - windowSec;
-      g.setAttribute("transform", `translate(${(-(left - t0) * pxPerSec).toFixed(2)} 0)`);
-    };
-    const frame = () => { place(); raf = requestAnimationFrame(frame); };
-    if (still || typeof requestAnimationFrame !== "function") place();
-    else raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
-  }, [t0, pxPerSec, windowSec, delaySec]);
-
   return (
-    <svg viewBox={`0 0 ${W} ${h}`} width="100%" height={h} preserveAspectRatio="none" style={{ display: "block", overflow: "hidden" }}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block" }}>
       <defs>
-        {/* fade toward the centre axis → transparent, like the Windows GUI */}
-        <linearGradient id="owGradRx" gradientUnits="userSpaceOnUse" x1="0" y1={P} x2="0" y2={mid}>
-          <stop offset="0" stopColor="var(--brand)" stopOpacity="0.5"/>
-          <stop offset="0.7" stopColor="var(--brand)" stopOpacity="0.16"/>
-          <stop offset="1" stopColor="var(--brand)" stopOpacity="0"/>
+        <linearGradient id="owGradRx" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="var(--brand)" stopOpacity="0"/>
+          <stop offset="1" stopColor="var(--brand)" stopOpacity="0.55"/>
         </linearGradient>
-        <linearGradient id="owGradTx" gradientUnits="userSpaceOnUse" x1="0" y1={mid} x2="0" y2={h - P}>
-          <stop offset="0" stopColor="var(--brand-2)" stopOpacity="0"/>
-          <stop offset="0.3" stopColor="var(--brand-2)" stopOpacity="0.16"/>
-          <stop offset="1" stopColor="var(--brand-2)" stopOpacity="0.5"/>
+        <linearGradient id="owGradTx" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="var(--brand-2)" stopOpacity="0.55"/>
+          <stop offset="1" stopColor="var(--brand-2)" stopOpacity="0"/>
         </linearGradient>
       </defs>
-      <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--line)" strokeDasharray="2 5"/>
-      <g ref={groupRef}>
-        {geom && <>
-          <path d={`${geom.up} L${geom.x1} ${mid} L${geom.x0} ${mid} Z`} fill="url(#owGradRx)"/>
-          <path d={geom.up} fill="none" stroke="var(--brand)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
-          <path d={`${geom.down} L${geom.x1} ${mid} L${geom.x0} ${mid} Z`} fill="url(#owGradTx)"/>
-          <path d={geom.down} fill="none" stroke="var(--brand-2)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
-        </>}
-      </g>
+      <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--line)" strokeDasharray="2 4"/>
+      <path d={area("rx", +1)} fill="url(#owGradRx)"/>
+      <path d={line("rx", +1)} stroke="var(--brand)" fill="none" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round"/>
+      <path d={area("tx", -1)} fill="url(#owGradTx)"/>
+      <path d={line("tx", -1)} stroke="var(--brand-2)" fill="none" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round"/>
     </svg>
   );
 };

@@ -353,7 +353,7 @@ Legado (hecho):
 
 ## Estado actual
 
-**Versión actual: `0.16.2`** (en código; borrador pendiente de firmar y publicar; 0.16.1 publicada). El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
+**Versión actual: `0.16.3`** (en código; borrador pendiente de firmar y publicar; 0.16.2 publicada). El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
 
 - **Cliente**: Windows (instalador `.exe`, GUI pywebview + tray) y Linux (`install.sh`, GUI por defecto con escritorio, TUI y `outwarp` headless) completos.
 - **Servidor**: Linux/systemd, Windows (SCM) y Docker/Kubernetes (`platforms/kubernetes.py`, `deploy/`).
@@ -401,7 +401,7 @@ Legado (hecho):
 - `restart` según quién es dueño del transporte: systemd → reescribe y reinicia las units; contenedor → `SIGHUP` al proceso `serve` (B-030); Windows → `transport_owner_note` (la app del servidor lo lleva).
 - `ServerManager.effective_state` reconcilia contra el SO cuando otro proceso lleva el servicio (pod k3s: `shareProcessNamespace: true`); `refresh_config()` recarga si otro proceso cambió la config.
 - **Panel web**: token de admin (hash scrypt) + sesiones persistidas hasheadas en `panel_sessions.json`, atadas al token vigente.
-- **Panel en contenedor** (`web` como proceso aparte del `serve`): el registro sale de `<config>/logs/serve.log`, que escribe `serve` y sigue `logs.FileTail`. Los eventos `outwarp:status` llevan el `get_status()` completo y la UI **fusiona** (nunca sustituye) el estado. Si no llegan eventos en 5 s la página consulta cada 2 s (proxies que cortan o almacenan SSE). La gráfica en vivo coloca los puntos por `sampled_at` y se desplaza con el reloj. El secreto de la ruta de upgrade nunca va a un log (`server_manager.redact_command` / `redact_secrets`). Un cambio de UI del panel se verifica contra dos procesos + proxy, no contra un panel local (B-037).
+- **Panel en contenedor** (`web` como proceso aparte del `serve`): el registro sale de `<config>/logs/serve.log`, que escribe `serve` y sigue `logs.FileTail`. Los eventos `outwarp:status` llevan el `get_status()` completo y la UI **fusiona** (nunca sustituye) el estado. Si no llegan eventos en 5 s la página consulta cada 2 s (proxies que cortan o almacenan SSE). La gráfica en vivo es la del cliente (una muestra por segundo, redibujada al llegar); el sondeo del panel va a 1 s. La página comprueba la sesión al cargar (`get_app_info`) antes de enseñar el login, y `do_POST` lee siempre el cuerpo (conexiones keep-alive tras un proxy, B-039). El secreto de la ruta de upgrade nunca va a un log (`server_manager.redact_command` / `redact_secrets`). Un cambio de UI del panel se verifica contra dos procesos + proxy, no contra un panel local (B-037).
 
 ### Pendiente para la primera versión estable
 

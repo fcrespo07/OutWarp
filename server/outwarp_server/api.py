@@ -423,7 +423,7 @@ class Api:
         return {"ok": True}
 
     def _start_live_poll(self) -> None:
-        """Re-emit status + client list every 2s.
+        """Re-emit status + client list every second.
 
         wg handshakes happen at the kernel level and never fire a Python
         callback — without this poll the UI's "online/offline" pill for each
@@ -443,7 +443,7 @@ class Api:
                         self._emit("clients", self.list_clients())
                 except Exception:
                     log.exception("live poll iteration failed")
-                self._poll_stop.wait(2.0)
+                self._poll_stop.wait(1.0)
 
         self._poll_thread = threading.Thread(
             target=_loop, daemon=True, name="outwarp-server-poll",

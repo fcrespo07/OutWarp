@@ -246,6 +246,14 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 
 ---
 
+### ✅ B-039 — Panel: "mantener la sesión" no mantenía nada, y login con 501 detrás de un proxy
+**Síntomas:** Reportado por el autor (2026-09-29, 0.16.2, Brave): cada vez que abría el panel tenía que volver a meter el token.
+**Causa raíz (dos):**
+1. La página del panel **nunca comprobaba** si ya había sesión: en modo web arrancaba siempre con `authed = false` y enseñaba el login, aunque la cookie (30 días) y la sesión guardada en el servidor siguieran siendo válidas.
+2. Al arreglarlo apareció otro fallo: una llamada rechazada con 401 se respondía **sin leer el cuerpo** de la petición. Detrás de un proxy que reutiliza la conexión (Caddy, Cloudflare), esos bytes quedaban delante de la siguiente petición, que llegaba como `[]POST /auth` y el panel contestaba 501: el login fallaba.
+**Fix (2026-09-29):** la página empieza en "comprobando" y llama a `get_app_info`; si responde, entra directa y solo muestra el login ante un 401. `do_POST` lee siempre el cuerpo antes de responder (y cierra la conexión si no puede). Test de una conexión keep-alive con un 401 seguido del login (`test_web_server.py`). Verificado en la réplica del pod detrás de Caddy: recargar o abrir otra pestaña ya no pide el token.
+**Prevención:** en HTTP/1.1 persistente, toda respuesta consume el cuerpo de su petición.
+
 ### ✅ B-037 — Panel del servidor en Docker/Kubernetes: parpadeo, registro vacío y gráfica a tirones (0.16.1 no lo arregló)
 **Síntomas:** Reportado por el autor (2026-09-28) tras 0.16.1, en su pod: la información del dashboard parpadea cada poco, el Registro sale vacío y la gráfica va a tirones. B-036 se había verificado contra un panel de prueba local, que no reproduce el despliegue real.
 **Reproducción:** réplica del pod con Docker: `serve` y `web` en contenedores separados que comparten `/data`, red y PID, Caddy delante como proxy y un cliente real moviendo tráfico, observada con Chromium durante minutos (campos del dashboard cada 100 ms, posición de la gráfica, líneas del registro).
@@ -255,6 +263,7 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 3. **Gráfica:** los puntos iban por índice y el trazo saltaba una posición por muestra; con el flujo de eventos atravesando proxies las muestras llegan a destiempo o agrupadas, y dos lecturas casi simultáneas de los contadores daban tasas de 0 o picos.
 4. Al arreglar el registro apareció un problema de seguridad: la línea "Starting wstunnel" incluía el secreto de la ruta de upgrade (la credencial del túnel); se habría visto en el panel y en disco.
 **Fix (2026-09-28):** los eventos de estado llevan el `get_status()` completo y la página fusiona en vez de sustituir; `serve` escribe también `<config>/logs/serve.log` y el panel lo sigue (`logs.FileTail`, con rotación), mostrando cada línea con su hora y su nivel (también los de wstunnel) y sin códigos de color; el secreto se oculta en el comando registrado y en cualquier línea que llegue al panel; la gráfica coloca cada punto por su `sampled_at` y se desplaza con el reloj (un `transform` por fotograma, el trazo solo se recalcula al llegar una muestra), va 4 s por detrás y descarta lecturas a menos de 1 s de la anterior; si no llegan eventos en 5 s la página consulta cada 2 s (un proxy que corta el flujo ya no congela nada). Verificado en la réplica: 0 parpadeos en 1400 capturas, desplazamiento constante sin saltos atrás, registro con las líneas del `serve`, también con un proxy que rompe `/events`.
+**Nota (0.16.3):** la gráfica por tiempo con desplazamiento continuo de 0.16.2 se veía lenta (iba 4 s por detrás y cada muestra tardaba 2 s); se sustituyó por la de la GUI del cliente tal cual: una muestra por segundo, redibujada al llegar, escala mínima de 64 KB/s. Las tasas pequeñas salían sin redondear (`303.178… B/s`).
 **Prevención:** un arreglo de UI del panel se verifica contra el despliegue real (dos procesos + proxy), no contra un panel local con datos simulados. Un evento parcial nunca reemplaza estado.
 
 ### ✅ B-038 — Cliente: cerrar la ventana seguía saliendo de OutWarp (0.16.1)

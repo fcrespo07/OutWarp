@@ -3,8 +3,6 @@ const { Card, SLabel, PageHead, Btn, Pill, Dot, Toggle, Segmented, Stat, Field, 
         Sparkline, AreaChart, BarSeries, Donut, KV, Icons, useUI } = window;
 const { fmtBytes, fmtBps, fmtDuration, fmtAgo, tr } = window.DSfmt;
 
-// Seconds of history the live chart shows (matches app.jsx's LIVE_WINDOW_S).
-const LIVE_WINDOW_S = 120;
 
 const stateTone = (s) => s === "online" ? "good" : s === "idle" || s === "pending" ? "warn" : "neutral";
 
@@ -111,9 +109,9 @@ function ScreenDashboard({ C }) {
             <span style={{ color: "var(--brand-2)" }}>↑ {fmtBps(live.totals.txBps)}</span>
           </div>
         </div>
-        <AreaChart samples={live.samples} h={150} windowSec={LIVE_WINDOW_S} />
+        <AreaChart samples={live.samples} h={150} />
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--text-3)" }}>
-          <span>-{LIVE_WINDOW_S}s</span><span>{T.dash_now}</span>
+          <span>-{live.samples.length}s</span><span>{T.dash_now}</span>
         </div>
       </Card>
 

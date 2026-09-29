@@ -421,7 +421,7 @@ const DS_STR = {
 // ── formatters ──────────────────────────────────────────────────────────────
 function fmtBytes(b) {
   if (b == null) return "—";
-  if (b < 1024) return b + " B";
+  if (b < 1024) return Math.round(b) + " B";
   const u = ["KB", "MB", "GB", "TB"];
   let i = -1, n = b;
   do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);

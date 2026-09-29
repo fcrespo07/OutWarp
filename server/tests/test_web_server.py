@@ -240,3 +240,23 @@ def test_sse_connection_closes_after_too_many_idle_heartbeats(panel, monkeypatch
     data = resp.read()  # blocks until the server closes the connection
     conn.close()
     assert data.count(b": ping\n\n") <= 3  # connected + a couple pings, then close
+
+
+def test_a_rejected_call_does_not_poison_the_kept_alive_connection(panel):
+    """A reverse proxy reuses one connection for many requests. A 401 sent
+    without reading the request body left it on the socket, so the next
+    request (the login) arrived as '[]POST /auth' and came back 501 (B-039)."""
+    httpd, _api, token = panel
+    conn = _conn(httpd)
+    conn.request("POST", "/api/get_app_info", body=b"[]", headers={
+        "Content-Type": "application/json", "X-OutWarp-Panel": "1"})
+    first = conn.getresponse()
+    first.read()
+    assert first.status == 401
+    body = json.dumps({"token": token, "remember": True}).encode()
+    conn.request("POST", "/auth", body=body, headers={"Content-Type": "application/json"})
+    second = conn.getresponse()
+    second.read()
+    conn.close()
+    assert second.status == 200
+    assert "Max-Age=" in second.getheader("Set-Cookie", "")

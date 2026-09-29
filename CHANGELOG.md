@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.3] — 2026-09-29
+
+### Fixed
+- **Web panel: "Keep this session" works** (B-039). The page never checked for
+  an existing session and always opened on the login screen, whatever the
+  cookie said; it now goes straight to the dashboard while the session is
+  valid. Behind a reverse proxy that reuses connections (Caddy, Cloudflare), a
+  rejected request also left its body on the connection and made the next
+  one — the login — fail with 501; every request now reads its body first.
+- **Server dashboard: the live chart is the client's.** 0.16.2's scrolling
+  chart ran several seconds behind and felt slow. It is now the client GUI's
+  chart as is: one sample a second, drawn as it arrives, with a 64 KB/s scale
+  floor. The panel samples every second (was 2 s).
+- Small rates showed unrounded (`303.17889579135374 B/s`).
+
 ## [0.16.2] — 2026-09-28
 
 ### Fixed

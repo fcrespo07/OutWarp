@@ -12,7 +12,7 @@
 const { useState, useEffect, useRef, useCallback } = React;
 const OW = window.OW;
 
-// Per-client sparkline: how many 2 s samples the visible ring holds, plus how
+// Per-client sparkline: how many samples (one a second) the visible ring holds, plus how
 // many *additional* window-max samples window.DSfmt.makeBoundedPeak below
 // remembers past that — see its own comment (dash-data.jsx) for why this
 // pairing matters.
@@ -59,9 +59,9 @@ function adaptClient(row, derived) {
 // Samples closer together than this are dropped: the same counters read
 // twice a few ms apart (an SSE event and a fetch, or a burst a proxy held back)
 // give a rate of 0 or a huge spike, which the chart drew as a dip or a peak.
-const MIN_SAMPLE_GAP_S = 1.0;
-// Seconds of history the live chart keeps.
-const LIVE_WINDOW_S = 120;
+const MIN_SAMPLE_GAP_S = 0.5;
+// Samples the live chart keeps: one a second, like the client's chart.
+const LIVE_POINTS = 60;
 const MAX_LOGS = 400;
 
 function useLiveData() {
@@ -122,11 +122,7 @@ function useLiveData() {
     });
     s.clients = adapted;
     s.totals = { online, idle, offline, pending, disabled, rxBps: totRx, txBps: totTx };
-    if (newest) {
-      s.samples = s.samples
-        .filter((p) => p.t > newest - LIVE_WINDOW_S - 30)
-        .concat({ t: newest, rx: totRx, tx: totTx, at: browserNow });
-    }
+    if (newest) s.samples = s.samples.concat({ rx: totRx, tx: totTx }).slice(-LIVE_POINTS);
     force((x) => x + 1);
   }, []);
 
@@ -223,7 +219,10 @@ const ThemeBtn = ({ theme, onToggle, label }) => (
 
 function App() {
   const [booted, setBooted] = useState(false);
-  const [authed, setAuthed] = useState(OW.mode === "pywebview");
+  // Web: null until we know whether the browser still holds a valid session
+  // cookie. It used to start at false, so every reload showed the login
+  // screen and "keep this session" seemed to do nothing (B-039).
+  const [authed, setAuthed] = useState(OW.mode === "pywebview" ? true : null);
   const [settings, setSettings] = useState({ language: "auto", theme: "auto" });
   const [appInfo, setAppInfo] = useState({ version: "" });
   const [route, setRoute] = useState(() => localStorage.getItem("ow_dash_route") || "dashboard");
@@ -284,19 +283,25 @@ function App() {
     }
   }, [onStatus, onClients, addLogs]);
 
+  useEffect(() => {
+    if (authed !== null) return;
+    OW.call("get_app_info")
+      .then((info) => { if (info) setAppInfo(info); setAuthed(true); })
+      .catch(() => setAuthed(false));
+  }, [authed]);
   useEffect(() => { if (authed) bootstrap(); }, [authed, bootstrap]);
   // The live stream dropped and came back (transport.js): fetch what it missed.
   useEffect(() => OW.on("resync", () => { if (authed) poll().catch(() => {}); }), [authed, poll]);
   // Fallback: no live event for a while (a proxy buffering the stream, a
-  // renderer that stopped taking them) → fetch every 2 s until they resume.
+  // renderer that stopped taking them) → fetch every second until they resume.
   useEffect(() => {
     if (!authed || !booted) return undefined;
     let busy = false;
     const id = setInterval(async () => {
-      if (busy || document.hidden || Date.now() - live.lastEventAt < 5000) return;
+      if (busy || document.hidden || Date.now() - live.lastEventAt < 3000) return;
       busy = true;
       try { await poll(); } catch (_e) { /* next tick */ } finally { busy = false; }
-    }, 2000);
+    }, 1000);
     return () => clearInterval(id);
   }, [authed, booted, poll, live]);
 
@@ -338,6 +343,7 @@ function App() {
   };
 
   // ── login gate (web only) ────────────────────────────────────────────────
+  if (authed === null) return null;
   if (!authed) {
     return (
       <window.OWUIContext.Provider value={ui}>

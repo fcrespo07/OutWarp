@@ -59,3 +59,10 @@ describe("mergeLogs (B-037)", () => {
     expect(st.logs.map((l) => l.seq)).toEqual([2, 3]);
   });
 });
+
+describe("small rates are rounded (B-039)", () => {
+  it("never prints a long fraction", () => {
+    expect(DSfmt.fmtBps(303.17889579135374)).toBe("303 B/s");
+    expect(DSfmt.fmtBytes(0.4)).toBe("0 B");
+  });
+});
