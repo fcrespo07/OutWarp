@@ -319,7 +319,7 @@ function App() {
               <window.Btn kind="primary" size="md" onClick={() => window.location.reload()} style={{ marginTop: 14 }}>{T.retry}</window.Btn>
             </div>
           ) : (
-            <window.WSLogoMark size={40} color="var(--text-3)" accent="var(--brand)"/>
+            <window.WSLogoMark size={40}/>
           )}
         </div>
         {caps.native_drag_resize && !maximized && <ResizeHandles api={api}/>}
@@ -1171,7 +1171,7 @@ const Dial = ({ status = "disconnected", onClick, label }) => {
           boxShadow: connected ? "0 14px 30px -10px color-mix(in srgb, var(--brand) 55%, transparent)" : "none",
         }}>
           {connected
-            ? <window.WSLogoMark size={34} color="#fff" accent="rgba(255,255,255,.6)"/>
+            ? <window.WSLogoMark size={34} colors={["rgba(255,255,255,.45)", "rgba(255,255,255,.72)", "#fff"]}/>
             : <PowerGlyph size={30} color={busy ? "var(--brand-warn)" : "var(--brand)"}/>}
           {label && <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "-0.01em" }}>{label}</span>}
         </div>

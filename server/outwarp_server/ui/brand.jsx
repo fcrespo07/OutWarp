@@ -3,26 +3,27 @@
 // Two arcs that gap on the right where a chevron arrow pierces through,
 // and a small spark/tail indicating the "warp" / momentum.
 
-// Chevron Stack — three sharp chevron strokes with growing opacity, accent on
-// the rightmost. Stroked with miter joins + butt caps (NOT round) so the tips
-// are crisp points and the arms have clean flat ends, matching the brand logo
-// (see the reference PNG). strokeWidth 8 gives the bold, uniform arm weight.
-const OWLogoMark = ({ size = 28, color = "currentColor", accent }) => {
-  const a = accent || color;
-  return (
-    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true"
-      fill="none" strokeLinecap="butt" strokeLinejoin="miter" strokeMiterlimit="10" strokeWidth="8">
-      <polyline points="8,12 16,24 8,36"   stroke={color} opacity="0.25"/>
-      <polyline points="20,12 28,24 20,36" stroke={color} opacity="0.55"/>
-      <polyline points="32,12 40,24 32,36" stroke={a}/>
-    </svg>
-  );
-};
+// Chevron Stack — the app icon (resources/app_icon.png / .ico), redrawn as
+// SVG so it stays sharp at any size. Geometry measured on the 512 px PNG:
+// three right-angled chevrons (45° arms) with square-cut ends, a 5.3-unit
+// stroke on a 48-unit box, one every 11.06 units. Colours are the icon's own:
+// light grey, dark grey and warp blue. Until 0.17 the UI drew thinner, steeper
+// chevrons tinted with the text colour, which did not match the icon.
+const OW_ICON_COLORS = ["#BBBBB9", "#747577", "#2463FE"];
+const OWLogoMark = ({ size = 28, colors = OW_ICON_COLORS }) => (
+  <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true"
+    fill="none" strokeLinecap="butt" strokeLinejoin="miter" strokeMiterlimit="10" strokeWidth="5.3">
+    {[0, 1, 2].map((i) => {
+      const x = 5.44 + i * 11.06;
+      return <polyline key={i} points={`${x},10.97 ${x + 13.03},24 ${x},37.03`} stroke={colors[i]}/>;
+    })}
+  </svg>
+);
 
 const OWWordmark = ({ size = 18, color = "currentColor", accent, withMark = true, gap = 8 }) => {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap, color, fontFamily: "var(--font-display)", fontWeight: 600, letterSpacing: "-0.02em", fontSize: size }}>
-      {withMark ? <OWLogoMark size={Math.round(size * 1.55)} color={color} accent={accent}/> : null}
+      {withMark ? <OWLogoMark size={Math.round(size * 1.55)}/> : null}
       <span>
         Out<span style={{ color: accent || color, fontWeight: 700 }}>Warp</span>
       </span>
@@ -66,6 +67,7 @@ const TunnelViz = ({ active = true, height = 84, throughput = 1 }) => {
 // Backwards compatibility aliases — every existing file references window.WSWordmark / WSLogoMark.
 // Re-export the new brand under both names so we don't have to rewrite ~6 files.
 window.OWLogoMark = OWLogoMark;
+window.OW_ICON_COLORS = OW_ICON_COLORS;
 window.OWWordmark = OWWordmark;
 window.WSLogoMark = OWLogoMark;
 window.WSWordmark = OWWordmark;

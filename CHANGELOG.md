@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The logo in the interfaces now matches the app icon.** The client GUI,
+  the server GUI and the web panel drew thinner, steeper chevrons tinted with
+  the text colour; the mark is now the `.ico` redrawn as SVG (right-angled
+  chevrons, its light grey / dark grey / blue), 98 % pixel overlap with the
+  512 px icon.
+- Client: the connect dial's ring closes when connected (B-043).
+
 ## [0.17.0] — 2026-09-29
 
 ### Fixed
