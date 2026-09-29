@@ -320,6 +320,11 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 
 ## Abiertos
 
+### 🟡 B-043 — GUI del cliente: el anillo del botón de conectar sale incompleto al conectar
+**Síntomas:** Reportado por el autor (2026-09-29): conectado, el círculo alrededor del botón no se cierra.
+**Causa raíz:** `Dial` (`client/outwarp/ui/app.jsx`) dibuja en estado conectado un arco fijo del 78 % (`strokeDasharray` con `0.78`), herencia del mock de diseño. No mide nada: parece progreso a medias o un fallo.
+**Plan:** entra en la auditoría y rediseño de la GUI del cliente (fase 2, próxima versión): anillo completo al conectar, o que represente algo real.
+
 ### 🟡 B-024 — Windows: dos iconos en la bandeja tras una cuarentena de `wstunnel.exe` (mitigado, sin reproducir)
 **Síntomas:** Reportado por el autor (2026-09-26): Microsoft Defender / Smart App Control quitó `wstunnel.exe` de repente; al volver a abrir OutWarp aparecieron dos iconos de OutWarp en la bandeja.
 **Hipótesis (sin reproducir, varias causas posibles):**
