@@ -200,6 +200,10 @@ _LOG_LINE_RE = re.compile(
 )
 # wstunnel's own lines, relayed by server_manager: "[wstunnel] <iso time> LEVEL rest"
 _WSTUNNEL_RE = re.compile(r"^\[wstunnel\] \S+Z\s+(TRACE|DEBUG|INFO|WARN|ERROR)\s+(.*)$", re.S)
+_ROUTINE_WSTUNNEL = (
+    "Error while upgrading cnx: hyper::Error(Shutdown",
+    "tls handshake eof",
+)
 _LEVELS = {"ERROR": "error", "CRITICAL": "error", "WARNING": "warn", "WARN": "warn",
            "DEBUG": "debug", "TRACE": "debug"}
 
@@ -226,7 +230,13 @@ def _parse_log_line(line: str) -> tuple[float | None, str, str]:
     level = _LEVELS.get(level, "info")
     w = _WSTUNNEL_RE.match(msg)
     if w:
-        return ts, _LEVELS.get(w.group(1), "info"), f"wstunnel: {w.group(2)}"
+        level, rest = _LEVELS.get(w.group(1), "info"), w.group(2)
+        # Routine, not errors: a client keeps a few idle pre-opened connections
+        # that are recycled every minute, and health probes open and drop TLS.
+        # As ERROR they buried the lines that matter.
+        if any(n in rest for n in _ROUTINE_WSTUNNEL):
+            level = "debug"
+        return ts, level, f"wstunnel: {rest}"
     return ts, level, f"{name.rsplit('.', 1)[-1]}: {msg}"
 
 

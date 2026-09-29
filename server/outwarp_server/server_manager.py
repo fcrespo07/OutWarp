@@ -91,7 +91,9 @@ def redact_command(cmd: list[str]) -> str:
     return redact_secrets(" ".join(cmd))
 
 
-_SECRET_ARG_RE = re.compile(r"(upgrade-path-prefix[= ])\S+")
+# The prefix on wstunnel's own command line, and in its log line for every
+# accepted tunnel ("... matched restriction: Allow path prefix <secret>").
+_SECRET_ARG_RE = re.compile(r"(upgrade-path-prefix[= ]|[Pp]ath prefix\s+)\S+")
 
 
 def redact_secrets(text: str) -> str:
@@ -585,7 +587,7 @@ class ServerManager:
             for line in proc.stdout:
                 stripped = line.rstrip()
                 if stripped:
-                    log.info("[wstunnel] %s", stripped)
+                    log.info("[wstunnel] %s", redact_secrets(stripped))
         except Exception:
             log.debug("_read_output: stdout reader exited unexpectedly", exc_info=True)
 

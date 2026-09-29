@@ -296,7 +296,12 @@ def main() -> int:
         def _on_closing() -> bool:
             # Shutdown or sign-out closes every window: never block it, and
             # let _on_quit take the tunnel down (see B-034).
-            if quit_done.is_set() or _session_ending() or not api.hide_on_close():
+            if quit_done.is_set():
+                return True
+            if _session_ending():
+                log.info("window closing: the session is ending, quitting")
+                return True
+            if not api.hide_on_close():
                 return True
             threading.Thread(target=api.hide_to_tray, daemon=True).start()
             return False

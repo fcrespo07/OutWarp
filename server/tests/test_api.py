@@ -1186,3 +1186,19 @@ def test_log_lines_show_their_own_time_level_and_no_secret():
         "/usr/local/bin/wstunnel server --restrict-http-upgrade-path-prefix=XhlBBN-s3cret wss://0.0.0.0:443"
     )
     assert "s3cret" not in api.get_logs(0)[-1]["msg"]
+
+
+def test_wstunnels_own_log_line_does_not_show_the_secret_and_routine_noise_is_debug():
+    from outwarp_server.api import _parse_log_line
+    from outwarp_server.server_manager import redact_secrets
+
+    line = ('2026-09-29 16:18:41,717 [INFO] outwarp_server.server_manager: [wstunnel] '
+            '2026-09-29T16:18:41.717Z INFO cnx{peer="203.0.113.9:1"}:tunnel{id="x"}: '
+            'wstunnel::tunnel::server::server: Tunnel accepted due to matched restriction: '
+            'Allow path prefix s3cretPrefixValue')
+    assert "s3cretPrefixValue" not in redact_secrets(line)
+    _, level, _ = _parse_log_line(
+        '2026-09-29 16:03:59,052 [INFO] outwarp_server.server_manager: [wstunnel] '
+        '2026-09-29T16:03:59.052Z ERROR cnx{peer="203.0.113.9:59516"}: wstunnel::tunnel::'
+        'server::server: Error while upgrading cnx: hyper::Error(Shutdown, Os { code: 32 })')
+    assert level == "debug"

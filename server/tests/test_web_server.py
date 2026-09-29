@@ -260,3 +260,23 @@ def test_a_rejected_call_does_not_poison_the_kept_alive_connection(panel):
     conn.close()
     assert second.status == 200
     assert "Max-Age=" in second.getheader("Set-Cookie", "")
+
+
+def test_the_panel_is_never_cached_and_asks_for_this_versions_bundle(panel):
+    """No cache header let Cloudflare and the browser keep an old bundle.js
+    after an update, so a new panel never showed up (B-040)."""
+    from outwarp_server import __version__
+
+    httpd, _api, _token = panel
+    conn = _conn(httpd)
+    conn.request("GET", "/")
+    resp = conn.getresponse()
+    html = resp.read().decode()
+    assert resp.getheader("Cache-Control") == "no-store"
+    assert f'src="bundle.js?v={__version__}"' in html
+    assert f'href="styles.css?v={__version__}"' in html
+    conn.request("GET", f"/bundle.js?v={__version__}")
+    js = conn.getresponse()
+    js.read()
+    conn.close()
+    assert js.status == 200 and js.getheader("Cache-Control") == "no-store"

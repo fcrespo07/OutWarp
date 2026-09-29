@@ -432,9 +432,25 @@ class _PanelHandler(BaseHTTPRequestHandler):
         except OSError:
             self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, "read failed")
             return
+        if target.name == "index.html":
+            data = _versioned_index(data)
         ctype = _CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
-        self._send_headers(HTTPStatus.OK, ctype, len(data))
+        # Never cached: with no header at all, Cloudflare (and the browser)
+        # kept serving an old bundle.js after an update, so a new version of
+        # the panel did not show up at all (B-040).
+        self._send_headers(HTTPStatus.OK, ctype, len(data), extra={"Cache-Control": "no-store"})
         self.wfile.write(data)
+
+
+def _versioned_index(html: bytes) -> bytes:
+    """index.html asks for bundle.js / styles.css with the version in the URL,
+    so a copy a proxy cached before an update is never used afterwards."""
+    from outwarp_server import __version__
+
+    text = html.decode("utf-8")
+    for name in ("bundle.js", "styles.css"):
+        text = text.replace(f'"{name}"', f'"{name}?v={__version__}"')
+    return text.encode("utf-8")
 
 
 def serve(

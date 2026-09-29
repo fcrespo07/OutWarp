@@ -286,10 +286,13 @@ class Api:
         """Whether closing the window should leave OutWarp running in the
         tray: the setting is on and there is a tray icon to come back from
         (never hide an app the user could not get back to)."""
-        return bool(
-            self.get_settings().get("close_to_tray", True)
-            and self.tray_available and self.tray_available()
-        )
+        setting = bool(self.get_settings().get("close_to_tray", True))
+        tray = bool(self.tray_available and self.tray_available())
+        # Logged on purpose: when the window "just closes" on someone's
+        # machine, this line says which of the two conditions failed.
+        log.info("window close: close_to_tray=%s tray_icon=%s -> %s",
+                 setting, tray, "hide" if setting and tray else "quit")
+        return setting and tray
 
     def hide_to_tray(self) -> None:
         if self._window is None:

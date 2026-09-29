@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.4] — 2026-09-29
+
+### Fixed
+- **Web panel updates did not reach the browser** (B-040). The panel served
+  its files with no cache header, so Cloudflare and the browser kept running
+  an old `bundle.js` after an update (0.16.3's fixes were invisible behind
+  it). Everything is now `Cache-Control: no-store` and the page loads
+  `bundle.js?v=<version>`, so an update is picked up at once.
+- **The upgrade-path secret was still in wstunnel's own log line** for every
+  accepted tunnel; it is now redacted where it is written (`serve.log`, the
+  container log) and in the panel.
+- Routine wstunnel lines (a client's idle pre-opened connections recycled
+  every minute, probes that drop the TLS handshake) show as debug instead of
+  flooding the Logs screen with ERRORs.
+- Client: every close of the window now logs what it decided and why
+  (`window close: close_to_tray=… tray_icon=… -> hide|quit`).
+
 ## [0.16.3] — 2026-09-29
 
 ### Fixed

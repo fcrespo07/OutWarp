@@ -246,6 +246,12 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 
 ---
 
+### ✅ B-040 — Panel: una versión nueva no llegaba al navegador; el secreto seguía en el log de wstunnel
+**Síntomas:** Reportado por el autor (2026-09-29): con 0.16.3 en el pod, el panel seguía mostrando la cifra sin redondear que 0.16.3 corrige; es decir, el navegador ejecutaba el `bundle.js` viejo. En los logs que pegó, wstunnel escribía el secreto de la ruta de upgrade en cada túnel aceptado («… matched restriction: Allow path prefix <secreto>»).
+**Causa raíz:** (1) el panel servía sus ficheros sin ninguna cabecera de caché; Cloudflare cachea los `.js` en su borde por defecto y el navegador puede reutilizarlos, así que tras actualizar seguía corriendo la interfaz antigua (probablemente también parte de lo que se vio "igual" con 0.16.1 y 0.16.2). (2) La redacción de 0.16.2 solo cubría el comando de arranque, no el mensaje del propio wstunnel.
+**Fix (2026-09-29):** todo lo estático va con `Cache-Control: no-store` y `index.html` pide `bundle.js?v=<versión>` / `styles.css?v=<versión>`, así que una copia vieja en cualquier caché queda descartada al cambiar de versión. El secreto se oculta ya al escribir las líneas de wstunnel (`serve.log` y stdout del contenedor) y también en el panel. Las líneas rutinarias de wstunnel (conexiones de reserva del cliente que se reciclan cada minuto, sondas que cierran el TLS) pasan de ERROR a debug.
+**Prevención:** todo lo que sirve el panel lleva la versión en la URL o `no-store`; un cambio de UI se verifica también en el despliegue real tras un proxy con caché.
+
 ### ✅ B-039 — Panel: "mantener la sesión" no mantenía nada, y login con 501 detrás de un proxy
 **Síntomas:** Reportado por el autor (2026-09-29, 0.16.2, Brave): cada vez que abría el panel tenía que volver a meter el token.
 **Causa raíz (dos):**
