@@ -253,6 +253,12 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 **Verificación:** réplica del pod (serve y panel en contenedores separados con `/data` compartido, Caddy delante, cliente real moviendo tráfico): `traffic.sqlite` aparece en `/data`, `serve` escribe una muestra por minuto y el panel las muestra (totales, pico, media y la fila del cliente); reiniciar el contenedor del `serve` conserva el historial y toma una muestra nueva al arrancar. También con `deploy/docker/compose.yml`.
 **Prevención:** todo lo que un proceso del servidor escribe para que otro lo lea va al directorio de config, nunca a una ruta fija del sistema.
 
+### ✅ B-043 — GUI del cliente: el anillo del botón de conectar sale incompleto al conectar
+**Síntomas:** Reportado por el autor (2026-09-29): conectado, el círculo alrededor del botón no se cierra.
+**Causa raíz:** `Dial` (`client/outwarp/ui/app.jsx`) dibujaba en estado conectado un arco fijo del 78 % (`strokeDasharray` con `0.78`), herencia del mock de diseño. No medía nada: parecía progreso a medias o un fallo.
+**Fix (2026-09-30, 0.18.0):** conectado dibuja un anillo cerrado con un brillo lento (`ow-dial-live`, sin animación con `prefers-reduced-motion`).
+**Prevención:** un indicador gráfico representa algo real o está completo; nada de valores de relleno heredados de un mock.
+
 ### ✅ B-042 — Panel: datos que no eran verdad
 **Síntomas:** Pasada de pulido de la fase 2 (2026-09-29).
 **Hallazgos:** (1) «Ver QR» enseñaba un QR decorativo que no se podía escanear. (2) La sparkline de subida del detalle de cliente era la de bajada dibujada al revés. (3) «Top talkers · última hora» ordenaba por contadores acumulados desde que subió la interfaz. (4) «Todos los servicios sanos» salía siempre, también con el túnel parado; los dos «servicios» eran el mismo booleano. (5) Filas fijas: `TLS 1.3 · ws`, `NAT MASQUERADE`, `wstunnel + wg-quick@wg0`, `journalctl …` y «unidades systemd», también en contenedor y en Windows; la versión `v0.4.2` en una cadena. (6) «Añadir cliente» decía que el servidor genera las claves del cliente y que el `.owcfg` lleva su clave privada; desde 0.13 lleva un token de un solo uso. (7) «Regenerar .owcfg» y «Rotar claves» hacían lo mismo. (8) Los errores de las acciones de servicio y de «Aplicar cambios» no se enseñaban, y los botones desactivados no lo parecían. (9) En el cliente, «Buscar actualizaciones al iniciar» solo buscaba al abrir Ajustes.
@@ -319,11 +325,6 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 **Prevención:** ningún texto visible fuera de una tabla de idioma; el test "every key the code uses exists" y la paridad de claves lo vigilan.
 
 ## Abiertos
-
-### 🟡 B-043 — GUI del cliente: el anillo del botón de conectar sale incompleto al conectar
-**Síntomas:** Reportado por el autor (2026-09-29): conectado, el círculo alrededor del botón no se cierra.
-**Causa raíz:** `Dial` (`client/outwarp/ui/app.jsx`) dibuja en estado conectado un arco fijo del 78 % (`strokeDasharray` con `0.78`), herencia del mock de diseño. No mide nada: parece progreso a medias o un fallo.
-**Plan:** entra en la auditoría y rediseño de la GUI del cliente (fase 2, próxima versión): anillo completo al conectar, o que represente algo real.
 
 ### 🟡 B-024 — Windows: dos iconos en la bandeja tras una cuarentena de `wstunnel.exe` (mitigado, sin reproducir)
 **Síntomas:** Reportado por el autor (2026-09-26): Microsoft Defender / Smart App Control quitó `wstunnel.exe` de repente; al volver a abrir OutWarp aparecieron dos iconos de OutWarp en la bandeja.

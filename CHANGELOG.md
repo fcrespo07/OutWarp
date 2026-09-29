@@ -8,13 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-09-30
+
 ### Fixed
 - **The logo in the interfaces now matches the app icon.** The client GUI,
   the server GUI and the web panel drew thinner, steeper chevrons tinted with
   the text colour; the mark is now the `.ico` redrawn as SVG (right-angled
   chevrons, its light grey / dark grey / blue), 98 % pixel overlap with the
-  512 px icon.
-- Client: the connect dial's ring closes when connected (B-043).
+  512 px icon. The panel login's background mark uses it too, and no longer
+  shows a bare `v` before the version loads.
+- **Client: the connect dial's ring is closed when connected** (B-043). It drew
+  a fixed 78 % arc left over from the design mock, which read as half-done
+  progress. It is now a full ring with a slow glow.
+
+### Changed
+- **Client home screen redesigned** (first part of the GUI audit):
+  - Connected: the profile is the headline, the exit IP and place go under it,
+    the session time sits next to the state. Chips say which route carried the
+    connection (direct, direct with public DNS, HTTP proxy, alternate port),
+    the certificate model and whether the kill switch is on. A new
+    "Switch profile" menu changes profile without going through Profiles.
+  - Disconnected: the three static tiles (one of them false for profiles
+    verified by a CA) become a "This connection" list: server, security, kill
+    switch (with a link to Settings) and expiry.
+  - Error: a plain-language hint for the kind of failure (server unreachable,
+    certificate mismatch, expired or used token, wstunnel blocked, a network
+    that lets none of the routes through); the raw message is folded under
+    "Technical details"; a "View log" button; "Import a new .owcfg" only when
+    it helps.
+  - Narrow window: the dial goes above the text. Sidebar: a recognisable
+    Settings icon, and the profile box opens Profiles. Texts speak to the user
+    ("All your traffic leaves encrypted through your own server") instead of
+    naming wstunnel and WireGuard.
+- The client's status now carries the route that carried the connection
+  (`route`) and the kill switch state, for the home screen.
 
 ## [0.17.0] — 2026-09-29
 
