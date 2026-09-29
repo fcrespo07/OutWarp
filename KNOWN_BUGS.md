@@ -307,6 +307,11 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 
 ## Abiertos
 
+### 🟠 B-041 — Panel en contenedor: la pantalla «Tráfico» sale toda a 0
+**Síntomas:** Reportado por el autor (2026-09-29, 0.16.4 en el pod): «Historial de tráfico» muestra RX/TX total 0 B, pico y media 0 B/s, gráficas vacías y «Por cliente» sin filas, con clientes conectados y moviendo datos.
+**Causa (vista en el código, pendiente de confirmar en la réplica):** `traffic_history.DEFAULT_DB_PATH = /var/lib/outwarp/traffic.sqlite`. El `serve` toma los snapshots cada 60 s en esa ruta, que en el pod está dentro de su propio contenedor (no en el volumen `/data`); el panel es otro contenedor y lee su propia base, vacía. Además la del `serve` se pierde en cada reinicio del pod. En Windows esa ruta tampoco tiene sentido.
+**Plan:** requisito de la próxima versión (fase 2 del plan): base en el directorio de config, compartida por `serve` y panel, con migración de la ruta antigua en instalaciones nativas; estados vacíos honestos; verificación en la réplica del pod.
+
 ### 🟡 B-024 — Windows: dos iconos en la bandeja tras una cuarentena de `wstunnel.exe` (mitigado, sin reproducir)
 **Síntomas:** Reportado por el autor (2026-09-26): Microsoft Defender / Smart App Control quitó `wstunnel.exe` de repente; al volver a abrir OutWarp aparecieron dos iconos de OutWarp en la bandeja.
 **Hipótesis (sin reproducir, varias causas posibles):**

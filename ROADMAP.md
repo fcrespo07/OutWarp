@@ -116,6 +116,7 @@ Items marked *(added)* joined the gate with this plan. 👤 marks a task for the
   - Windows server via Docker, which can run in parallel with any phase.
   - **B-034: after shutting down without disconnecting, WireGuard comes back at boot and leaves Windows offline. Required for 0.16.0.** *(Code done 2026-09-28: cleanup when the GUI starts plus SYSTEM scheduled tasks at boot and logon; needs a test on real Windows with Fast Startup.)*
   - **Server dashboard traffic chart** (Home chart + per-client sparkline) with the client GUI's smooth, spike-free look. **Required for 0.16.0.** It may refresh faster than the client's, but must not draw sample-to-sample peaks. Not B-022 (the post-spike scale, fixed in 0.14.0). *(Code done 2026-09-28: `DSfmt.smoothSeries` + `DSfmt.smoothPath`.)*
+  - **Panel "Traffic" screen (1 h / 24 h / 7 d history) with real data. Required for the next release** (author, 2026-09-29): in the pod everything reads 0. Cause (B-041): the history DB lives at `/var/lib/outwarp/traffic.sqlite` inside the `serve` container; the panel container reads its own empty copy, and `serve`'s is lost on every pod restart. Move it to the config dir (shared `/data`), keep existing native installs' data, show honest empty states, verify on the pod replica.
   - Honest README and wizard.
   - 👤 Real-desktop Linux GUI testing (X11/Wayland). *(The clean Omarchy install was dropped on 2026-09-28.)*
 - **Phase 3 — Languages → 0.19.0.**
