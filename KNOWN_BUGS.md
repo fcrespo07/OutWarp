@@ -260,6 +260,12 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 **Pendiente:** confirmarlo en Windows real. Si vuelve a fallar, `outwarp-update.log` y el `Setup Log` dicen dónde se rompió.
 **Prevención:** un arranque que espera el usuario (tras instalar o actualizar) nunca depende de la preferencia de arrancar oculto.
 
+### ✅ B-047 — Cliente: el «aura» del botón de conectar se cortaba en un cuadrado
+**Síntomas:** Reportado por el autor (2026-09-30, captura de 0.18.0): el brillo alrededor del botón conectado termina en un borde recto, como si su caja fuese pequeña.
+**Causa raíz:** el brillo que añadió B-043 (círculo de radio 92, trazo de 8 y desenfoque) sobrepasa la caja de 200 px del SVG del botón, y un SVG recorta lo que sale de ella.
+**Fix (2026-09-30, 0.19.0):** `overflow: visible` en el SVG del botón. Además, `release.yml` mueve el commit objetivo de un borrador existente al volver a lanzarlo (antes conservaba el viejo y al publicar se etiquetaba ese commit).
+**Prevención:** un efecto que se sale del dibujo (sombra, brillo) se comprueba a tamaño real, no solo el trazo.
+
 ### ✅ B-046 — Instalador de Windows: página «Seleccionar componentes» con un desplegable vacío
 **Síntomas:** Reportado por el autor (2026-09-30), instalador solo cliente: una ventana con el desplegable «Instalación completa» que no despliega nada.
 **Causa raíz:** las ediciones cliente y servidor definen un único tipo de instalación y componentes fijos; Inno Setup enseña igualmente la página de componentes.

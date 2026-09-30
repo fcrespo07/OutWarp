@@ -1153,7 +1153,10 @@ const Dial = ({ status = "disconnected", onClick, label }) => {
 
   const body = (
     <>
-      <svg width="200" height="200" viewBox="0 0 200 200">
+      {/* overflow: visible — the connected glow (r 92 + stroke + blur) reaches past the
+          200 px box, and the SVG root clips whatever leaves it: the aura showed a hard
+          square edge. */}
+      <svg width="200" height="200" viewBox="0 0 200 200" style={{ overflow: "visible" }}>
         <defs>
           <linearGradient id="dial-grad" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0" stopColor="var(--brand)"/>

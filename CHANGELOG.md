@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step of a first install. The update helper also keeps a log
   (`%TEMP%\outwarp-update.log`), has Setup write its own (`Setup Log … .txt` in
   `%TEMP%`), and starts the client itself if Setup's relaunch did not.
+- **Client: the connect button's glow was cut off by a square edge** (B-047).
+  The connected ring's glow reaches past the 200 px box of the drawing, and an
+  SVG clips what leaves its box; it now fades out freely.
+- Release workflow: re-drafting an existing draft now moves its target commit
+  too, so publishing it tags the commit the assets were built from.
 - **Windows installer: a "Select Components" page with an empty drop-down**
   (B-046). The client-only and server-only installers have a single install type
   and nothing to choose; that page is skipped there. The full installer keeps

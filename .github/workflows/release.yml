@@ -162,7 +162,10 @@ jobs:
               echo "::error::$tag is already published; releases are immutable. Bump the version instead." >&2
               exit 1
             fi
-            gh release edit "$tag" --notes-file notes.md
+            # Refreshing a draft made from an older commit must move its target
+            # too: publishing creates the tag there, and the assets below are
+            # built from this run's commit.
+            gh release edit "$tag" --notes-file notes.md ${target:+--target "$target"}
             # shellcheck disable=SC2086
             gh release upload "$tag" $assets --clobber
           else
