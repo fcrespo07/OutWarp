@@ -253,6 +253,19 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 **Verificación:** réplica del pod (serve y panel en contenedores separados con `/data` compartido, Caddy delante, cliente real moviendo tráfico): `traffic.sqlite` aparece en `/data`, `serve` escribe una muestra por minuto y el panel las muestra (totales, pico, media y la fila del cliente); reiniciar el contenedor del `serve` conserva el historial y toma una muestra nueva al arrancar. También con `deploy/docker/compose.yml`.
 **Prevención:** todo lo que un proceso del servidor escribe para que otro lo lea va al directorio de config, nunca a una ruta fija del sistema.
 
+### ✅ B-045 — Windows: tras «Actualizar» la app se cerraba y no volvía a abrirse
+**Síntomas:** Reportado por el autor (2026-09-30): la actualización desde el botón se descarga bien, pero al aplicarla la app se cierra y no se reabre.
+**Causa raíz (probable, no reproducida en Windows real):** el instalador silencioso relanza el cliente (`[Run]`, `IsAutoUpdate`), pero el cliente arranca oculto en la bandeja cuando «minimizar a la bandeja» está activo (por defecto): la ventana no reaparecía, y en Windows 11 el icono nuevo queda en la flecha de iconos ocultos. Sin registro del ayudante, un fallo de Setup tampoco se podía diagnosticar.
+**Fix (2026-09-30, 0.19.0):** el relanzamiento (y el «Lanzar OutWarp Client» de una instalación normal) pasa `--show-window`, que fuerza la ventana visible. El ayudante que espera a que el cliente muera escribe `%TEMP%\outwarp-update.log`, pide a Setup su propio registro (`/LOG`, `Setup Log … .txt` en `%TEMP%`), espera a que termine y, si el cliente no está corriendo 5 s después, lo arranca él con `--show-window`. `_ensure_elevated` conserva los argumentos al relanzar con UAC. Tests en `test_api.py`, `test_app.py` y `test_installer_iss.py`.
+**Pendiente:** confirmarlo en Windows real. Si vuelve a fallar, `outwarp-update.log` y el `Setup Log` dicen dónde se rompió.
+**Prevención:** un arranque que espera el usuario (tras instalar o actualizar) nunca depende de la preferencia de arrancar oculto.
+
+### ✅ B-046 — Instalador de Windows: página «Seleccionar componentes» con un desplegable vacío
+**Síntomas:** Reportado por el autor (2026-09-30), instalador solo cliente: una ventana con el desplegable «Instalación completa» que no despliega nada.
+**Causa raíz:** las ediciones cliente y servidor definen un único tipo de instalación y componentes fijos; Inno Setup enseña igualmente la página de componentes.
+**Fix (2026-09-30, 0.19.0):** `ShouldSkipPage` la salta en las ediciones que no son `full`; los componentes siguen seleccionados y `/COMPONENTS=` funciona. Test estático en `test_installer_iss.py`.
+**Prevención:** una página del asistente sin nada que elegir no se muestra.
+
 ### ✅ B-044 — Cliente: las líneas del registro anteriores a abrir la ventana salían todas como INFO
 **Síntomas:** Encontrado en la auditoría de la GUI (2026-09-30): un error registrado durante el arranque aparecía en la pantalla Registro como una línea informativa.
 **Causa raíz:** `Api.bind_window` vuelca el buffer acumulado antes de abrir la ventana y etiquetaba cada línea `info`; solo el vigilante en vivo leía el nivel de `[ERROR]`/`[WARNING]`/`[DEBUG]`.

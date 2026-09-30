@@ -193,23 +193,44 @@ const Sparkline = ({ data, w = 72, h = 22, color = "var(--brand-2)", fill = true
 };
 
 // ── Area throughput chart ──────────────────────────────────────────────────
-// The client GUI's chart, as is: one sample a second redrawn as it arrives,
-// the history filling the width, a Catmull-Rom curve, a 64 KB/s scale floor
-// so a trickle still shows. Download grows down, upload up.
-const AreaChart = ({ samples, h = 150 }) => {
-  const W = 760, H = h, P = 8;
+// Same look as the client GUI's chart (Catmull-Rom curve, 64 KB/s scale
+// floor, download down and upload up) but it glides instead of stepping: the
+// curve is laid out once per sample (one a second) in *time* coordinates and a
+// frame loop only slides it left with the clock. The right edge shows the
+// moment `lagS` ago, always between two samples already received, so nothing
+// waits for data and nothing jumps when a sample arrives. 0.16.2 tried a
+// sliding chart too, but with 2 s samples and a 4 s delay it felt slow; the
+// samples are now 1 s apart and the delay 1.5 s.
+const AreaChart = ({ samples, h = 150, windowS = 60, lagS = 1.5 }) => {
+  const W = 760, H = h, P = 8, K = W / windowS;
+  const gRef = React.useRef(null);
   const history = samples || [];
+  const t0 = history.length ? history[0].t : 0;
   const peak = history.reduce((m, s) => Math.max(m, s.rx || 0, s.tx || 0), 0);
   const scale = Math.max(peak, 64 * 1024);
   const mid = H / 2;
   const innerH = mid - P;
-  const innerW = W - P * 2;
-  const xAt = (i) => history.length <= 1 ? P : P + (i * innerW) / (history.length - 1);
-  const ptsFor = (key, sign) => history.map((s, i) => [xAt(i), mid + sign * ((s[key] || 0) / scale) * innerH]);
+  const ptsFor = (key, sign) => history.map((s) => [(s.t - t0) * K, mid + sign * ((s[key] || 0) / scale) * innerH]);
   // Clamped to its own half so the curve never dips across the centre axis.
   const line = (key, sign) => window.DSfmt.smoothPath(ptsFor(key, sign),
     sign > 0 ? mid : P, sign > 0 ? H - P : mid);
-  const area = (key, sign) => history.length ? `${line(key, sign)} L ${(W - P).toFixed(1)} ${mid} L ${P} ${mid} Z` : "";
+  const xLast = history.length ? (history[history.length - 1].t - t0) * K : 0;
+  const area = (key, sign) => history.length
+    ? `${line(key, sign)} L ${xLast.toFixed(1)} ${mid} L 0 ${mid} Z` : "";
+  const place = () => {
+    if (!gRef.current) return;
+    const shift = window.DSfmt.chartShift(t0, Date.now() / 1000, lagS, windowS) * K;
+    gRef.current.setAttribute("transform", `translate(${(-shift).toFixed(2)} 0)`);
+  };
+  // After every render (a new sample) so the new layout and the shift change
+  // together, and on every frame in between.
+  React.useLayoutEffect(place);
+  React.useEffect(() => {
+    let raf = 0;
+    const tick = () => { place(); raf = requestAnimationFrame(tick); };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [t0, K, lagS, windowS]);
   if (history.length < 2) {
     return <div style={{ height: H }} />;
   }
@@ -226,10 +247,12 @@ const AreaChart = ({ samples, h = 150 }) => {
         </linearGradient>
       </defs>
       <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--line)" strokeDasharray="2 4"/>
-      <path d={area("rx", +1)} fill="url(#owGradRx)"/>
-      <path d={line("rx", +1)} stroke="var(--brand)" fill="none" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round"/>
-      <path d={area("tx", -1)} fill="url(#owGradTx)"/>
-      <path d={line("tx", -1)} stroke="var(--brand-2)" fill="none" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round"/>
+      <g ref={gRef}>
+        <path d={area("rx", +1)} fill="url(#owGradRx)"/>
+        <path d={line("rx", +1)} stroke="var(--brand)" fill="none" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+        <path d={area("tx", -1)} fill="url(#owGradTx)"/>
+        <path d={line("tx", -1)} stroke="var(--brand-2)" fill="none" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+      </g>
     </svg>
   );
 };

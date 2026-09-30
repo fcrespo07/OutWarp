@@ -29,7 +29,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from outwarp import killswitch, profiles, updater
@@ -1144,15 +1144,40 @@ class Api:
         # Single-quote-escape the path for the PS string literal so paths
         # containing apostrophes (rare but possible under %TEMP%) survive.
         path_esc = str(path).replace("'", "''")
+        # The client to bring back if Setup's own relaunch did not: the frozen
+        # exe we are running from (the install directory is the same one Setup
+        # overwrites). Empty when not frozen.
+        client_exe = sys.executable if getattr(sys, "frozen", False) else ""
+        client_esc = client_exe.replace("'", "''")
+        client_name = PureWindowsPath(client_exe).stem.replace("'", "''") if client_exe else ""
         ps_cmd = (
-            "$ErrorActionPreference='SilentlyContinue';"
+            "$ErrorActionPreference='Continue';"
+            "$log=Join-Path $env:TEMP 'outwarp-update.log';"
+            "function L($m){Add-Content -Path $log -Value ((Get-Date -Format s)+' '+$m)};"
+            f"L 'update: waiting for pid {pid} to exit';"
             f"Wait-Process -Id {pid} -ErrorAction SilentlyContinue;"
             # Brief settle so Windows finishes unmapping the .exe before Inno
             # opens it for write. Belt-and-braces — Wait-Process already
             # returns post-exit.
             "Start-Sleep -Milliseconds 750;"
-            f"Start-Process -FilePath '{path_esc}' "
-            f"-ArgumentList '{self._INSTALLER_SILENT_ARGS}' -Verb RunAs"
+            "L 'update: starting the installer';"
+            # /LOG (no path) makes Setup write "Setup Log <date>.txt" in %TEMP%.
+            f"try{{$p=Start-Process -FilePath '{path_esc}' "
+            f"-ArgumentList '{self._INSTALLER_SILENT_ARGS} /LOG' -Verb RunAs -Wait -PassThru;"
+            "L ('update: installer exited with '+$p.ExitCode)}"
+            "catch{L ('update: installer could not start: '+$_)};"
+            # Setup relaunches the client itself ([Run], IsAutoUpdate). If it
+            # is not running a few seconds later, start it here: an update that
+            # ends with the app gone reads as a crash.
+            + (
+                "Start-Sleep -Seconds 5;"
+                f"if(-not (Get-Process -Name '{client_name}' -ErrorAction SilentlyContinue))"
+                "{L 'update: the client is not running, starting it';"
+                f"try{{Start-Process -FilePath '{client_esc}' -ArgumentList '--show-window'}}"
+                "catch{L ('update: could not start the client: '+$_)}}"
+                "else{L 'update: the client is running'}"
+                if client_exe else ""
+            )
         )
         # DETACHED_PROCESS so the helper survives our exit; CREATE_NO_WINDOW
         # so no console flashes.

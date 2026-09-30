@@ -75,7 +75,8 @@ def _ensure_elevated() -> None:
 
     if getattr(sys, "frozen", False):
         executable = sys.executable
-        params = None
+        # Keep the flags (--show-window after an update) across the UAC relaunch.
+        params = " ".join(f'"{a}"' for a in sys.argv[1:]) or None
     elif sys.argv[0].endswith(".exe"):
         executable = sys.argv[0]
         params = None
@@ -232,7 +233,13 @@ def main() -> int:
         # (no profile yet) — the tray icon alone is useless if the user has
         # nothing to import yet, they need to see the import screen.
         settings = api.get_settings()
-        start_hidden = bool(settings.get("minimize_to_tray", True)) and config is not None
+        # --show-window: the installer relaunches the client after an update or
+        # a first install; the user is waiting for it, so never hide it then.
+        start_hidden = (
+            bool(settings.get("minimize_to_tray", True))
+            and config is not None
+            and "--show-window" not in sys.argv[1:]
+        )
         if start_hidden:
             log.info(
                 "minimize_to_tray=on — starting with the window hidden. "

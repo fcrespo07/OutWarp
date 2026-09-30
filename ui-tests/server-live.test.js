@@ -66,3 +66,45 @@ describe("small rates are rounded (B-039)", () => {
     expect(DSfmt.fmtBytes(0.4)).toBe("0 B");
   });
 });
+
+describe("the live chart's clock", () => {
+  it("moves a sample onto the browser's clock by the fastest delivery seen", () => {
+    // Server clock 1000 s behind the browser's; deliveries take 0.4, 0.15, 0.9 s.
+    let recent = [];
+    const offsets = [];
+    for (const delay of [0.4, 0.15, 0.9]) {
+      const c = DSfmt.nextClockOffset(recent, 1000 + delay);
+      recent = c.recent;
+      offsets.push(c.offset);
+    }
+    expect(offsets).toEqual([1000.4, 1000.15, 1000.15]);
+  });
+
+  it("forgets an old fast delivery after `keep` samples", () => {
+    let recent = [];
+    let offset = 0;
+    for (let i = 0; i < 40; i++) {
+      const c = DSfmt.nextClockOffset(recent, i === 0 ? 0.1 : 0.8, 30);
+      recent = c.recent;
+      offset = c.offset;
+    }
+    expect(offset).toBe(0.8);
+  });
+
+  it("never puts a sample before the previous one", () => {
+    expect(DSfmt.sampleTime(10, 100, null)).toBe(110);
+    expect(DSfmt.sampleTime(10, 100, 109)).toBe(110);
+    expect(DSfmt.sampleTime(10, 99.5, 110)).toBeCloseTo(110.05);
+  });
+
+  it("slides the layer so the right edge is `lag` seconds ago and the left one a window before", () => {
+    const firstT = 200, now = 300, lag = 1.5, windowS = 60;
+    const shift = DSfmt.chartShift(firstT, now, lag, windowS);
+    // A sample at time t sits at x = t - firstT (seconds); on screen at x - shift.
+    const screen = (t) => (t - firstT) - shift;
+    expect(screen(now - lag)).toBe(windowS);      // right edge
+    expect(screen(now - lag - windowS)).toBe(0);  // left edge
+    // and it keeps moving with the clock, a frame at a time
+    expect(DSfmt.chartShift(firstT, now + 1 / 60, lag, windowS) - shift).toBeCloseTo(1 / 60);
+  });
+});

@@ -133,7 +133,7 @@ function ScreenDashboard({ C }) {
         </div>
         <AreaChart samples={live.samples} h={150} />
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--text-3)" }}>
-          <span>{live.samples.length > 1 ? `-${live.samples.length}s` : ""}</span><span>{T.dash_now}</span>
+          <span>{live.samples.length > 1 ? `-${Math.min(60, live.samples.length)}s` : ""}</span><span>{T.dash_now}</span>
         </div>
       </Card>
 

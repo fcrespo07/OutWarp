@@ -61,8 +61,9 @@ function adaptClient(row, derived) {
 // twice a few ms apart (an SSE event and a fetch, or a burst a proxy held back)
 // give a rate of 0 or a huge spike, which the chart drew as a dip or a peak.
 const MIN_SAMPLE_GAP_S = 0.5;
-// Samples the live chart keeps: one a second, like the client's chart.
-const LIVE_POINTS = 60;
+// Samples the live chart keeps: one a second, the 60 s it shows plus a few
+// that have slid off its left edge (its curve needs them to reach the edge).
+const LIVE_POINTS = 66;
 const MAX_LOGS = 400;
 
 function useLiveData() {
@@ -132,7 +133,15 @@ function useLiveData() {
     });
     s.clients = adapted;
     s.totals = { online, idle, offline, pending, disabled, rxBps: totRx, txBps: totTx };
-    if (newest) s.samples = s.samples.concat({ rx: totRx, tx: totTx }).slice(-LIVE_POINTS);
+    if (newest) {
+      // Placed by the moment the server took it, on this browser's clock, so a
+      // late or bunched delivery cannot bend the curve (see AreaChart).
+      const clock = window.DSfmt.nextClockOffset(s.clockRecent || [], browserNow - newest);
+      s.clockRecent = clock.recent;
+      const last = s.samples.length ? s.samples[s.samples.length - 1].t : null;
+      const t = window.DSfmt.sampleTime(newest, clock.offset, last);
+      s.samples = s.samples.concat({ t, rx: totRx, tx: totTx }).slice(-LIVE_POINTS);
+    }
     force((x) => x + 1);
   }, []);
 

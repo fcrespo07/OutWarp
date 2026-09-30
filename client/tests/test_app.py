@@ -213,6 +213,40 @@ class TestMainEntryPoint:
         kwargs = fake_webview.create_window.call_args.kwargs
         assert kwargs["hidden"] is True
 
+    def test_show_window_flag_overrides_minimize_to_tray(self, tmp_path) -> None:
+        """The installer relaunches the client with --show-window after an
+        update. With minimize_to_tray on (the default) it used to come back
+        hidden in the tray: the app closed and "never reopened"."""
+        from outwarp import app as app_mod
+
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(_VALID_OWCFG))
+        (tmp_path / "settings.json").write_text(json.dumps({"minimize_to_tray": True}))
+
+        fake_webview = MagicMock()
+        fake_webview.create_window.return_value = MagicMock()
+
+        class _FakeTrayApp:
+            def __init__(self, manager, on_show, on_quit, api=None, lang_getter=None):
+                pass
+            def run(self): pass
+            def stop(self): pass
+            def update_manager(self, m): pass
+
+        with (
+            patch("outwarp.app.default_config_path", return_value=config_path),
+            patch("outwarp.api.default_config_path", return_value=config_path),
+            patch("outwarp.tunnel.TunnelManager", return_value=MagicMock()),
+            patch.dict(sys.modules, {"webview": fake_webview}),
+            patch("outwarp.tray.TrayApp", _FakeTrayApp),
+            patch.object(sys, "argv", ["outwarp-gui.exe", "--show-window"]),
+            patch.object(app_mod._SingleInstanceLock, "acquire", return_value=True),
+            patch.object(app_mod._SingleInstanceLock, "release"),
+        ):
+            app_mod.main()
+
+        assert fake_webview.create_window.call_args.kwargs["hidden"] is False
+
     def test_minimize_to_tray_off_keeps_window_visible(self, tmp_path) -> None:
         """With minimize_to_tray=False, the window is shown on launch even if
         a profile already exists."""

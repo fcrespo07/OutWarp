@@ -8,7 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-09-30
+
 ### Fixed
+- **Windows: after "Update" the app closed and did not come back** (B-045).
+  Setup relaunched the client, but the client starts hidden in the tray when
+  "minimize to tray" is on (the default), so the window never reappeared. The
+  relaunch now passes `--show-window`, and so does the "Launch OutWarp Client"
+  step of a first install. The update helper also keeps a log
+  (`%TEMP%\outwarp-update.log`), has Setup write its own (`Setup Log … .txt` in
+  `%TEMP%`), and starts the client itself if Setup's relaunch did not.
+- **Windows installer: a "Select Components" page with an empty drop-down**
+  (B-046). The client-only and server-only installers have a single install type
+  and nothing to choose; that page is skipped there. The full installer keeps
+  it (client / server / both is a real choice).
 - **Client: the log lines from before the window opened all showed as INFO**
   (B-044); an error logged during start-up looked routine. The level is now
   read from each line.
@@ -16,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   have their own columns).
 
 ### Changed
+- **Web panel and server GUI: the live throughput chart glides instead of
+  stepping.** Same look as before, but the curve is laid out once per sample
+  and slid left with the clock every frame; its right edge shows the moment
+  1.5 s ago, always between two samples already received, so nothing waits
+  for data and nothing jumps when a sample arrives. Measured in a browser:
+  60 frames a second, a constant 12.65 px/s slide. (0.16.2's sliding chart
+  felt slow: 2 s samples and a 4 s delay.)
 - Client: the home chart keeps three minutes (was one) and shows its frame
   from the first second instead of a text placeholder. On a wide window the
   content keeps a readable width and centres. Profiles show the certificate

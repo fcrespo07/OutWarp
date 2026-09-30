@@ -223,7 +223,7 @@ Filename: "schtasks.exe"; \
     Flags: runhidden; Components: client
 
 ; Launch the client at the end of setup if only the client was selected.
-Filename: "{app}\client\{#ClientExeName}"; \
+Filename: "{app}\client\{#ClientExeName}"; Parameters: "--show-window"; \
     Description: "Lanzar OutWarp Client"; \
     Flags: postinstall skipifsilent shellexec; \
     Components: client; Check: NotInstallingServer
@@ -232,7 +232,7 @@ Filename: "{app}\client\{#ClientExeName}"; \
 ; Api._launch_installer) and runs Setup /VERYSILENT. This entry omits
 ; skipifsilent so it still fires, and only when /AUTOUPDATE=1 was passed, so it
 ; never double-launches alongside the interactive entry above.
-Filename: "{app}\client\{#ClientExeName}"; \
+Filename: "{app}\client\{#ClientExeName}"; Parameters: "--show-window"; \
     Flags: postinstall shellexec; \
     Check: IsAutoUpdate
 #endif
@@ -303,4 +303,19 @@ end;
 function NotInstallingServer: Boolean;
 begin
   Result := not WizardIsComponentSelected('server');
+end;
+
+{ The client-only and server-only installers have a single install type and
+  every component fixed: the "Select Components" page offered a drop-down with
+  one entry ("Instalación completa") and nothing to choose. Skip it there; the
+  full installer keeps it, where client / server / both is a real choice. The
+  components are still selected (they are the default type), and
+  /COMPONENTS= on the command line still works. }
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+#if Edition != "full"
+  if PageID = wpSelectComponents then
+    Result := True;
+#endif
 end;

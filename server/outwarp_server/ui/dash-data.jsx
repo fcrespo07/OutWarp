@@ -637,6 +637,27 @@ function nextRate(prev, row, now, minGap = 1.0) {
   };
 }
 
+// The live chart places each sample by the moment the server took it, moved
+// onto this browser's clock. The two clocks differ by an unknown skew plus
+// the delivery delay of each sample, so the offset is the smallest
+// (arrival − sampled_at) among the last few: it is the skew plus the fastest
+// delivery, and every other sample then lands at or after its own moment.
+function nextClockOffset(recent, lag, keep = 30) {
+  const r = recent.slice(-(keep - 1)).concat(lag);
+  return { recent: r, offset: Math.min(...r) };
+}
+// Browser-clock time of a sample; never earlier than the previous one, so a
+// shrinking offset cannot reorder the curve.
+function sampleTime(serverT, offset, lastT) {
+  const t = serverT + offset;
+  return lastT == null ? t : Math.max(t, lastT + 0.05);
+}
+// Seconds the chart's layer has slid left of its first sample: the right edge
+// shows `lagS` ago, the left edge `windowS` before that.
+function chartShift(firstT, nowS, lagS, windowS) {
+  return nowS - lagS - windowS - firstT;
+}
+
 // Log entries arrive from live events and from fetches; the server's
 // sequence number keeps each one once. A restarted server counts from 1
 // again, so a batch starting at 1 below what we have starts over.
@@ -655,4 +676,4 @@ function mergeLogs(logs, lastSeq, entries, max = 400) {
 }
 
 window.DS_STR = DS_STR;
-window.DSfmt = { fmtBytes, fmtBps, fmtDuration, fmtAgo, fmtTick, fmtRange, fmtSpan, tr, nowClock, makeBoundedPeak, smoothPath, smoothSeries, nextRate, mergeLogs };
+window.DSfmt = { fmtBytes, fmtBps, fmtDuration, fmtAgo, fmtTick, fmtRange, fmtSpan, tr, nowClock, makeBoundedPeak, smoothPath, smoothSeries, nextRate, mergeLogs, nextClockOffset, sampleTime, chartShift };

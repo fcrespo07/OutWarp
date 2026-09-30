@@ -57,3 +57,25 @@ def test_uninstaller_removes_the_cleanup_tasks_and_markers() -> None:
     assert r'/Delete /F /TN ""OutWarp\RecoverTunnelBoot""' in run
     assert r'/Delete /F /TN ""OutWarp\RecoverTunnelLogon""' in run
     assert r'{commonappdata}\WireGuard\*.outwarp-client' in _section("UninstallDelete")
+
+
+def test_single_component_editions_skip_the_components_page() -> None:
+    """The client-only installer showed a "Select Components" page whose
+    drop-down held one entry ("Instalación completa") and nothing to choose."""
+    text = _ISS.read_text(encoding="utf-8")
+    code = text[text.index("[Code]"):]
+    assert "function ShouldSkipPage(PageID: Integer): Boolean;" in code
+    guarded = re.search(
+        r'#if Edition != "full"\s+if PageID = wpSelectComponents then\s+Result := True;\s+#endif',
+        code,
+    )
+    assert guarded, "only the slim editions may skip the components page"
+
+
+def test_the_client_is_relaunched_with_its_window_shown() -> None:
+    """After an update or a first install the user is waiting for the app;
+    minimize_to_tray (on by default) used to bring it back hidden in the tray."""
+    entries = re.sub(r"\\\n\s*", " ", _section("Run")).splitlines()  # join `\` continuations
+    launches = [ln for ln in entries if "postinstall" in ln and "ClientExeName" in ln]
+    assert len(launches) == 2, "interactive launch and auto-update relaunch"
+    assert all('Parameters: "--show-window"' in ln for ln in launches)

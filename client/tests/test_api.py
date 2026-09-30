@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -879,6 +881,38 @@ def test_run_update_does_not_quit_if_installer_launch_fails(_mock_check, _mock_d
     api._quit_for_update.assert_not_called()
     phases = [c.args[1]["phase"] for c in api._emit.call_args_list]
     assert phases[-1] == "error"
+
+
+def _installer_command(frozen: bool) -> str:
+    api, _ = _make_api()
+    with patch("outwarp.api.subprocess.Popen") as popen, \
+         patch("outwarp.api.subprocess.DETACHED_PROCESS", 0x8, create=True), \
+         patch("outwarp.api.subprocess.CREATE_NEW_PROCESS_GROUP", 0x200, create=True), \
+         patch("outwarp.api.sys.executable", r"C:\Apps\OutWarp\client\outwarp-gui.exe"), \
+         patch.object(sys, "frozen", frozen, create=True):
+        assert api._launch_installer(Path(r"C:\Temp\OutWarpSetup-9.9.9.exe")) is True
+    return popen.call_args.args[0][-1]
+
+
+def test_update_helper_runs_the_installer_logs_and_reopens_the_client():
+    """The app closed for an update and nothing came back. The helper now
+    keeps a log in %TEMP%, has Setup write its own, and starts the client
+    itself if Setup's relaunch did not, showing the window."""
+    cmd = _installer_command(frozen=True)
+    assert "Wait-Process -Id" in cmd
+    assert "OutWarpSetup-9.9.9.exe" in cmd
+    assert "/AUTOUPDATE=1 /LOG" in cmd
+    assert "outwarp-update.log" in cmd
+    assert "-Wait -PassThru" in cmd
+    assert "Get-Process -Name 'outwarp-gui'" in cmd
+    assert (
+        r"Start-Process -FilePath 'C:\Apps\OutWarp\client\outwarp-gui.exe' "
+        "-ArgumentList '--show-window'"
+    ) in cmd
+
+
+def test_update_helper_does_not_guess_a_client_when_not_frozen():
+    assert "Get-Process" not in _installer_command(frozen=False)
 
 
 def test_emit_disables_window_on_failure_and_skips_logging():
