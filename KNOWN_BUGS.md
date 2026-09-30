@@ -253,6 +253,12 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 **Verificación:** réplica del pod (serve y panel en contenedores separados con `/data` compartido, Caddy delante, cliente real moviendo tráfico): `traffic.sqlite` aparece en `/data`, `serve` escribe una muestra por minuto y el panel las muestra (totales, pico, media y la fila del cliente); reiniciar el contenedor del `serve` conserva el historial y toma una muestra nueva al arrancar. También con `deploy/docker/compose.yml`.
 **Prevención:** todo lo que un proceso del servidor escribe para que otro lo lea va al directorio de config, nunca a una ruta fija del sistema.
 
+### ✅ B-044 — Cliente: las líneas del registro anteriores a abrir la ventana salían todas como INFO
+**Síntomas:** Encontrado en la auditoría de la GUI (2026-09-30): un error registrado durante el arranque aparecía en la pantalla Registro como una línea informativa.
+**Causa raíz:** `Api.bind_window` vuelca el buffer acumulado antes de abrir la ventana y etiquetaba cada línea `info`; solo el vigilante en vivo leía el nivel de `[ERROR]`/`[WARNING]`/`[DEBUG]`.
+**Fix (2026-09-30):** `_log_level()` lo lee de la línea en los dos caminos. Test `test_lines_from_before_the_window_keep_their_level` (falla sin el fix).
+**Prevención:** un mismo dato (el nivel de una línea) se deriva en un solo sitio.
+
 ### ✅ B-043 — GUI del cliente: el anillo del botón de conectar sale incompleto al conectar
 **Síntomas:** Reportado por el autor (2026-09-29): conectado, el círculo alrededor del botón no se cierra.
 **Causa raíz:** `Dial` (`client/outwarp/ui/app.jsx`) dibujaba en estado conectado un arco fijo del 78 % (`strokeDasharray` con `0.78`), herencia del mock de diseño. No medía nada: parecía progreso a medias o un fallo.

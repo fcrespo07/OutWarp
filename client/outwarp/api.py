@@ -121,6 +121,16 @@ def _autostart_command() -> list[str]:
     return [sys.executable, "-m", "outwarp"]
 
 
+def _log_level(line: str) -> str:
+    """Level of a MemoryLogHandler line ("ts [LEVEL] name: msg"). The backfill
+    at start-up used to label every line "info", so an error from before the
+    window opened showed up as routine."""
+    for token in ("ERROR", "WARNING", "DEBUG"):
+        if f"[{token}]" in line:
+            return token.lower().replace("warning", "warn")
+    return "info"
+
+
 def _profile_from_config(cfg: ClientConfig, profile_id: str | None = None) -> dict[str, Any]:
     """Public-facing projection of a ClientConfig — no private keys.
 
@@ -229,7 +239,7 @@ class Api:
         # WebView2). The UI picks the backfill up on first paint via
         # api.get_logs(0); the watcher below covers everything after.
         for line in self._memory_handler.snapshot():
-            self._record_log("info", line)
+            self._record_log(_log_level(line), line)
         self._window = window
         # Keep the custom title bar's maximize/restore glyph in sync when the
         # window state changes outside our buttons (Aero Snap, Win+Up, the
@@ -889,13 +899,7 @@ class Api:
                 # new lines on a client that had been up for a while.
                 lines, seen = self._memory_handler.since(seen)
                 for line in lines:
-                    # lines from MemoryLogHandler are "ts [LEVEL] name: msg"
-                    level = "info"
-                    for token in ("ERROR", "WARNING", "DEBUG"):
-                        if f"[{token}]" in line:
-                            level = token.lower().replace("warning", "warn")
-                            break
-                    self._record_log(level, line)
+                    self._record_log(_log_level(line), line)
                 time.sleep(0.25)
 
         threading.Thread(target=_loop, daemon=True, name="outwarp-log-watcher").start()

@@ -350,6 +350,9 @@
 /* Soft fade when switching screens / connection states, instead of a hard
    cut. Keyed by React remounting the screen subtree. */
 .ow-screen { animation: ow-fade-in .18s ease-out; }
+/* Wide window: the content keeps a readable width and centres instead of
+   stretching cards across a 1900 px screen. Logs keep the full height. */
+.ow-body > main > .ow-screen { max-width: 1040px; margin-left: auto; margin-right: auto; }
 
 /* ── Hero dial (primary connect/disconnect control) ───────────────────── */
 .ow-dial {

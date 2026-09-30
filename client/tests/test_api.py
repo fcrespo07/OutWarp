@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -673,6 +674,29 @@ def test_get_logs_returns_buffer():
     after_first = api.get_logs(1)
     assert len(after_first) == 1
     assert after_first[0]["msg"] == "second"
+
+
+def test_lines_from_before_the_window_keep_their_level():
+    """The backfill at bind_window used to label everything "info": an error
+    logged during start-up looked routine in the Logs screen."""
+    from outwarp.logs import _DEFAULT_FORMAT
+
+    api, handler = _make_api()
+    handler.setFormatter(logging.Formatter(_DEFAULT_FORMAT))  # as setup_logging does
+    lg = logging.getLogger("outwarp.test_backfill")
+    lg.addHandler(handler)
+    lg.setLevel(logging.DEBUG)
+    try:
+        lg.error("wstunnel is missing")
+        lg.warning("slow DNS")
+        lg.info("started")
+    finally:
+        lg.removeHandler(handler)
+    api.bind_window(MagicMock())
+    levels = {e["msg"].rsplit(": ", 1)[-1]: e["level"] for e in api.get_logs(0)}
+    assert levels["wstunnel is missing"] == "error"
+    assert levels["slow DNS"] == "warn"
+    assert levels["started"] == "info"
 
 
 # ── profile editing ───────────────────────────────────────────────────────

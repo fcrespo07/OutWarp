@@ -73,6 +73,9 @@ function useConfirmState() {
 }
 
 // ── App root ───────────────────────────────────────────────────────
+// Samples the home chart keeps: one a second, three minutes (it was one).
+const HISTORY_POINTS = 180;
+
 function App() {
   const [api, setApi] = useState(null);
   const [status, setStatus] = useState("empty");
@@ -167,7 +170,7 @@ function App() {
     setStats(d);
     setHistory((h) => {
       const next = h.concat({ rx: d.rx_bps || 0, tx: d.tx_bps || 0, lat: d.latency_ms || 0 });
-      return next.length > 60 ? next.slice(-60) : next;
+      return next.length > HISTORY_POINTS ? next.slice(-HISTORY_POINTS) : next;
     });
   }, []));
   useBridgeEvent("log",     useCallback((e) => setLogs((l) => [...l.slice(-1999), e]), []));
@@ -989,7 +992,8 @@ const Header = ({ title, sub, right }) => (
 // we have at least two samples — one point doesn't define a line.
 const ThroughputChart = ({ T, history }) => {
   const W = 760, H = 140, P = 8;
-  const window_s = T.throughput_window.replace("{n}", String(history.length));
+  const span = history.length < 120 ? `${history.length} s` : `${Math.round(history.length / 60)} min`;
+  const window_s = T.throughput_window.replace("{n}", span);
   const peak = history.reduce((m, s) => Math.max(m, s.rx || 0, s.tx || 0), 0);
   // Floor the scale so tiny constant traffic still draws a visible band.
   // 64 KB/s = 524288 b/s; one cell-tower screenshot's worth of upload, ish.
@@ -1041,8 +1045,17 @@ const ThroughputChart = ({ T, history }) => {
         </div>
       </div>
       {history.length < 2 ? (
-        <div style={{ height: H, display: "grid", placeItems: "center", color: "var(--text-3)", fontSize: 12, fontFamily: "var(--font-mono)" }}>
-          {T.throughput_empty}
+        // The frame of the chart from the first second (centre line and the
+        // scale the samples will use), so it does not jump from text to chart.
+        <div style={{ position: "relative", height: H }}>
+          <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" aria-hidden>
+            <line x1="0" y1={mid} x2={W} y2={mid} stroke="var(--line)" strokeDasharray="2 4"/>
+            <line x1="0" y1={mid - innerH / 2} x2={W} y2={mid - innerH / 2} stroke="var(--line)" strokeDasharray="1 6" opacity=".6"/>
+            <line x1="0" y1={mid + innerH / 2} x2={W} y2={mid + innerH / 2} stroke="var(--line)" strokeDasharray="1 6" opacity=".6"/>
+          </svg>
+          <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "var(--text-3)", fontSize: 12, fontFamily: "var(--font-mono)" }}>
+            {T.throughput_empty}
+          </div>
         </div>
       ) : (
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
@@ -1402,6 +1415,10 @@ const ProfileRow = ({ T, profile, onEdit, onUse, onRemove }) => (
           fontSize: 12, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)",
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>{profile.endpoint}</div>
+        <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 3 }}>
+          {profile.tls_verify === "ca" ? T.sec_ca : T.sec_pin}
+          {profile.expires_at ? ` · ${T.home_expires} ${profile.expires_at}` : ""}
+        </div>
       </div>
     </div>
     <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
@@ -1537,6 +1554,9 @@ const ProfileEditor = ({ T, api, active, confirm, onUpdated, onClose }) => {
 };
 
 // ── Logs ───────────────────────────────────────────────────────────
+// The line arrives as "2026-09-30 13:47:16,527 [INFO] logger: text": the time
+// and level already have their own columns, so drop that prefix from the text.
+const logText = (msg) => String(msg).replace(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d[,.]\d+ \[[A-Z]+\] /, "");
 const LOG_LEVEL_COLOR = {
   error: "var(--brand-bad)", warn: "var(--brand-warn)", debug: "var(--text-3)",
 };
@@ -1611,7 +1631,7 @@ const Logs = ({ T, logs, api, onClear }) => {
             <div key={l.seq} style={{ display: "grid", gridTemplateColumns: "84px 60px 1fr", gap: 10 }}>
               <span style={{ color: "var(--text-3)" }}>{fmtClock(l.ts)}</span>
               <span style={{ color: LOG_LEVEL_COLOR[l.level] || "var(--text-2)", textTransform: "uppercase" }}>{l.level}</span>
-              <span style={{ color: "var(--text)", wordBreak: "break-all" }}>{l.msg}</span>
+              <span style={{ color: "var(--text)", wordBreak: "break-word" }}>{logText(l.msg)}</span>
             </div>
           ))}
           {filtered.length === 0 && <div style={{ opacity: .5 }}>{T.logs_empty}</div>}
@@ -1927,6 +1947,15 @@ const About = ({ T, api, settings }) => {
   // realistic failure is a Linux box without a default browser, which we
   // can't fix from here anyway.
   const openUrl = (url) => api?.open_url(url);
+  // For a bug report: version, system and Python in one line.
+  const [copied, setCopied] = useState(false);
+  const copyInfo = async () => {
+    try {
+      await navigator.clipboard.writeText(`OutWarp ${info.version} · ${info.platform} · Python ${info.python}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {}
+  };
 
   if (!info) {
     return (
@@ -1942,20 +1971,26 @@ const About = ({ T, api, settings }) => {
 
       <div className="ow-card ow-card--md" style={{ padding: 24 }}>
         <window.WSWordmark size={22} color="var(--text)" accent="var(--brand)"/>
-        <div style={{
-          marginTop: 14, fontFamily: "var(--font-mono)", fontSize: 12,
-          color: "var(--text-3)",
-        }}>
-          v{info.version} · {info.platform} · Python {info.python}
+        <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <window.Pill tone="brand">{T.about_version} {info.version}</window.Pill>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-3)" }}>
+            {info.platform} · Python {info.python}
+          </span>
         </div>
         <div style={{
           marginTop: 14, fontSize: 13, color: "var(--text-2)", lineHeight: 1.6,
         }}>
           {T.about_blurb}
         </div>
-        <div style={{ marginTop: 18, display: "flex", gap: 8 }}>
+        <div style={{ marginTop: 18, display: "flex", gap: 8, flexWrap: "wrap" }}>
           <window.Btn kind="primary" size="md" onClick={() => openUrl(info.repo_url)}>
             {T.about_openRepo}
+          </window.Btn>
+          <window.Btn kind="ghost" size="md" onClick={() => openUrl(`${info.repo_url}/releases`)}>
+            {T.about_releases}
+          </window.Btn>
+          <window.Btn kind="ghost" size="md" onClick={copyInfo}>
+            {copied ? `${T.upd_copied} ✓` : T.about_copy}
           </window.Btn>
         </div>
       </div>

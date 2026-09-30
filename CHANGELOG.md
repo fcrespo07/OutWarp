@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Client: the log lines from before the window opened all showed as INFO**
+  (B-044); an error logged during start-up looked routine. The level is now
+  read from each line.
+- Client: log rows no longer repeat the date and level inside the text (they
+  have their own columns).
+
+### Changed
+- Client: the home chart keeps three minutes (was one) and shows its frame
+  from the first second instead of a text placeholder. On a wide window the
+  content keeps a readable width and centres. Profiles show the certificate
+  model and expiry of each profile. About shows the version as a badge and has
+  "What's new" and "Copy info" (version, system and Python in one line, for a
+  bug report).
+
 ## [0.18.0] — 2026-09-30
 
 ### Fixed
