@@ -574,3 +574,58 @@ async def test_profiles_modal_opens_and_lists(tmp_path: Path, monkeypatch) -> No
         await pilot.press("escape")
         await pilot.pause(0.1)
         assert not isinstance(app.screen, ProfilesModal)
+
+
+# ─── Dashboard cards, language picker ───────────────────────────────────────
+
+
+@pytest.mark.parametrize(("route", "expected"), [
+    (None, "—"),
+    ({"id": "direct", "label": "Direct", "port": 443}, "Direct"),
+    ({"id": "direct-hostile", "label": "x", "port": 443}, "Direct, public DNS"),
+    ({"id": "direct-proxy", "label": "x", "port": 443}, "Through the HTTP proxy"),
+    ({"id": "port-8443", "label": "x", "port": 8443}, "Alternate port 8443"),
+    ({"id": "srv-7", "label": "Server fallback", "port": 9}, "Server fallback"),
+])
+def test_route_label_uses_the_gui_wording(route, expected) -> None:
+    from outwarp.tui.widgets.status_card import route_label
+
+    assert route_label(route) == expected
+
+
+@pytest.mark.asyncio
+async def test_language_picker_persists_and_spanish_labels_follow(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    from textual.widgets import Select
+
+    app = OutWarpClientTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.press("s")
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, SettingsModal)
+        app.screen.query_one("#select-language", Select).value = "es"
+        await pilot.pause(0.2)
+
+        from outwarp.settings import load_settings
+
+        assert load_settings()["language"] == "es"
+        assert app._settings["language"] == "es"
+
+
+def test_status_card_rows_carry_profile_route_and_kill_switch(tmp_path: Path) -> None:
+    from outwarp.config import ClientConfig
+    from outwarp.tui.widgets.status_card import StatusCard
+
+    cfg = ClientConfig.loads(_write_owcfg(tmp_path).read_text(encoding="utf-8"))
+    card = StatusCard(cfg)
+    assert card._row("tui.card.profile", "laptop").startswith("[")
+    assert "Kill switch" in card._row("tui.card.kill_switch", card._kill_text())
+    card._kill_switch = True
+    assert card._kill_text() == "on"

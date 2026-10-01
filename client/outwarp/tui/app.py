@@ -7,6 +7,7 @@ import threading
 
 from textual.app import App
 
+from outwarp import __version__
 from outwarp.config import ClientConfig, ConfigError, default_config_path
 from outwarp.i18n import t as tr
 from outwarp.killswitch import release_stale_async
@@ -35,6 +36,10 @@ class OutWarpClientTUI(App):
 
     CSS_PATH = "styles.tcss"
     TITLE = "OutWarp · client"
+    SUB_TITLE = f"v{__version__}"
+    # The palette's own chrome ("^p palette") is English-only and nothing in the
+    # TUI relies on it: every action has a visible key.
+    ENABLE_COMMAND_PALETTE = False
     SCREENS = {
         "empty": EmptyScreen,
         "connecting": ConnectingScreen,
@@ -236,7 +241,10 @@ class OutWarpClientTUI(App):
             notify("OutWarp", tr("notify.connected"))
         elif state is TunnelState.FAILED:
             err = self.manager.last_error if self.manager else None
-            notify("OutWarp", tr("notify.failed", error=err or "unknown error"), urgency="critical")
+            notify(
+                "OutWarp", tr("notify.failed", error=err or tr("cli.unknown_error")),
+                urgency="critical",
+            )
         elif state is TunnelState.RECONNECTING and prev is TunnelState.CONNECTED:
             notify("OutWarp", tr("notify.reconnecting"))
 

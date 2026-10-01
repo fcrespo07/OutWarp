@@ -26,8 +26,9 @@ import threading
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Static, Switch
+from textual.widgets import Select, Static, Switch
 
+from outwarp.i18n import LANG_NAMES, LANGS
 from outwarp.i18n import t as tr
 from outwarp.settings import load_settings, save_settings
 from outwarp.tui.tokens import BAD, OK
@@ -84,6 +85,16 @@ class SettingsModal(ModalScreen[None]):
         with Container(id="settings-modal"):
             yield Static(f"[bold]{tr('tui.key.settings')}[/bold]")
             yield Static(f"[dim]{tr('tui.set.persist')}[/]")
+            with Container(classes="settings-text settings-row"):
+                yield Static(f"[b]{tr('tui.set.language')}[/b]")
+                yield Static(f"[dim]{tr('tui.set.language_hint')}[/]")
+                yield Select(
+                    [(tr("tui.set.language_auto"), "auto"),
+                     *((LANG_NAMES.get(code, code), code) for code in LANGS)],
+                    value=self._settings.get("language", "auto"),
+                    allow_blank=False,
+                    id="select-language",
+                )
             for key, label, hint in _TOGGLES:
                 with Horizontal(classes="settings-row"):
                     yield Switch(
@@ -159,6 +170,25 @@ class SettingsModal(ModalScreen[None]):
                 f"[dim]{tr('tui.set.close_hint')}[/]"
             )
 
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "select-language" or not isinstance(event.value, str):
+            return
+        if self._settings.get("language", "auto") == event.value:
+            return
+        self._settings["language"] = event.value
+        try:
+            save_settings(self._settings)
+        except OSError as exc:
+            log.exception("Could not save settings.json")
+            self.query_one("#settings-status", Static).update(
+                f"[{BAD}]{tr('tui.set.save_failed', error=exc)}[/]"
+            )
+            return
+        self.app._settings = dict(self._settings)
+        self.query_one("#settings-status", Static).update(
+            f"[{OK}]✓[/] {tr('tui.set.language_saved')}"
+        )
+
     def on_switch_changed(self, event: Switch.Changed) -> None:
         sid = event.switch.id or ""
         if not sid.startswith("switch-"):
@@ -220,8 +250,11 @@ class SettingsModal(ModalScreen[None]):
                     with contextlib.suppress(Exception):
                         from outwarp.platforms import get_platform
                         get_platform().release_kill_switch()
+        # The dashboard cards read the app's copy.
+        self.app._settings = dict(self._settings)
+        label = next((tr(row[1]) for row in _TOGGLES if row[0] == key), key)
         self.query_one("#settings-status", Static).update(
-            f"[{OK}]✓[/] {key.replace('_', ' ')} = {new_value}"
+            f"[{OK}]✓[/] {label}: {tr('tui.on') if new_value else tr('tui.off')}"
         )
 
     def _toggle_service(self, enable: bool) -> None:
