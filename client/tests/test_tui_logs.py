@@ -29,13 +29,18 @@ async def test_export_saves_the_filtered_lines_and_clear_empties_the_view(
     monkeypatch.chdir(tmp_path)
     app = _Host()
     async with app.run_test(size=(120, 30)) as pilot:
-        await pilot.pause(0.3)
-        await pilot.press("e", "x")
+        for _ in range(50):
+            await pilot.pause(0.1)
+            if len(app.screen._all_lines) == 2:
+                break
+        assert len(app.screen._all_lines) == 2
+        app.screen.action_toggle_errors()
+        app.screen.action_export()
         await pilot.pause()
         files = list(tmp_path.glob("outwarp-logs-*.txt"))
         assert len(files) == 1
         assert files[0].read_text().strip().endswith("[ERROR] boom")
         assert "[INFO]" not in files[0].read_text()
-        await pilot.press("c")
+        app.screen.action_clear_view()
         await pilot.pause()
         assert app.screen._all_lines == []
