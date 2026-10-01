@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Client CLI: every message follows the interface language.** `outwarp`'s
+  output (`import`, `connect`, `status`, `profile`, `logs`, `update`, `ui`,
+  `service`, `uninstall`, `gui --install`), its `--help` texts and the whole
+  of `outwarp doctor` (check names, details and remediation hints) were fixed
+  English; they now go through the same tables as the tray and the TUI
+  (English and Spanish, `OUTWARP_LANG` or the `language` setting decide).
+  Commands to copy and paste stay literal. argparse's own words (`usage:`,
+  `options:`, `-h`) are still the standard library's.
+
 ## [0.19.0] — 2026-09-30
 
 ### Fixed
