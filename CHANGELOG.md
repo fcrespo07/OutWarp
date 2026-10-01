@@ -16,8 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `setup` wizard (the transport explanation, every prompt and the final
   summary) were fixed English; they now go through the same tables as the
   tray and the TUI (English and Spanish; `OUTWARP_LANG` or the `language`
-  setting decide). Logs stay in English. Error text raised from inside the
-  library (a malformed config file, say) still arrives as written.
+  setting decide). `outwarp-server doctor` (and the TUI's doctor screen) now
+  does too: every check name, finding and suggested fix is translated; the
+  commands to copy and paste are not. Logs stay in English. Error text raised
+  from inside the library (a malformed config file, say) still arrives as
+  written.
 
 ## [0.19.0] — 2026-09-30
 
