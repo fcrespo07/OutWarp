@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Client TUI: check for updates (`u`).** It looks for a newer release and
+  tells you to run `sudo outwarp update` (installing needs root, so, like the
+  GUI on Linux, it does not do it for you).
+
 ### Changed
 - **Client TUI: the dashboard says what the GUI says.** The connection card
   now shows the profile, the route the connection took (direct, public DNS,

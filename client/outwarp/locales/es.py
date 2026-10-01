@@ -511,4 +511,11 @@ STRINGS: dict[str, str] = {
     "tui.set.language_hint": "Lo usan esta interfaz de terminal, la ventana y la línea de comandos. Se aplica la próxima vez que la abras.",
     "tui.set.language_auto": "Automático (idioma del sistema)",
     "tui.set.language_saved": "Idioma guardado. Se aplica la próxima vez que abras la interfaz.",
+    "tui.key.update": "Actualizar",
+    "tui.help.update": "Buscar una versión nueva",
+    "tui.update.checking": "Buscando actualizaciones (actual: v{current})...",
+    "tui.update.current": "Tienes la última versión (v{latest}).",
+    "tui.update.no_wheel": "Ha salido la v{latest}, pero aún no tiene paquete para Linux. Mira {url}",
+    "tui.update.available": "Hay una versión nueva, la v{latest}. Sal y ejecuta: sudo outwarp update",
+    "tui.update.failed": "No se pudo buscar actualizaciones: {error}",
 }
