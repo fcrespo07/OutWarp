@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Client TUI logs: export and clear the view.** `x` saves the lines the
+  filters show to `outwarp-logs-<date>.txt` in the current directory and `c`
+  empties the screen, like the GUI's export and clear (the log file itself is
+  never touched).
+
+### Fixed
+- **Client TUI: the logs screen showed nothing with recent Textual versions.**
+  It passed `markup=` to `RichLog.write()`, which newer Textual no longer
+  accepts (markup is a property of the widget, already on), so every line
+  raised and was dropped. It also broke the filters.
+
 ## [0.19.0] — 2026-09-30
 
 ### Fixed

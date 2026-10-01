@@ -204,4 +204,12 @@ STRINGS: dict[str, str] = {
     "tui.profiles.remove_body": "Its keys are deleted; you will need its .owcfg again to use it.",
     "tui.profiles.switched": "Active profile: {name}. Press r to connect.",
     "tui.help.profiles": "Profiles: switch, remove, import",
+    "tui.logs.key_export": "Export",
+    "tui.logs.key_clear": "Clear view",
+    "tui.logs.exported": "Saved {n} line(s) to {path}",
+    "tui.logs.export_failed": "Could not save the log: {error}",
+    "tui.logs.nothing_to_export": "Nothing to export yet.",
+    "tui.logs.cleared": "View cleared. The log file is untouched.",
+    "tui.help.export": "Save the shown lines to a file",
+    "tui.help.clear_view": "Clear the view",
 }

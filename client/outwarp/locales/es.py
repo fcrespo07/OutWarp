@@ -203,4 +203,12 @@ STRINGS: dict[str, str] = {
     "tui.profiles.remove_body": "Se borran sus claves; para volver a usarlo necesitarás su .owcfg.",
     "tui.profiles.switched": "Perfil activo: {name}. Pulsa r para conectar.",
     "tui.help.profiles": "Perfiles: cambiar, eliminar, importar",
+    "tui.logs.key_export": "Exportar",
+    "tui.logs.key_clear": "Vaciar vista",
+    "tui.logs.exported": "{n} línea(s) guardadas en {path}",
+    "tui.logs.export_failed": "No se pudo guardar el registro: {error}",
+    "tui.logs.nothing_to_export": "Todavía no hay nada que exportar.",
+    "tui.logs.cleared": "Vista vaciada. El fichero de registro no se toca.",
+    "tui.help.export": "Guardar las líneas visibles en un fichero",
+    "tui.help.clear_view": "Vaciar la vista",
 }

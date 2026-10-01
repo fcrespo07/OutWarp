@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
+from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -52,6 +54,8 @@ class LogsScreen(Screen):
         Binding("e", "toggle_errors", tr("tui.logs.key_errors")),
         Binding("w", "toggle_warnings", tr("tui.logs.key_warnings")),
         Binding("p", "toggle_pause", tr("tui.logs.key_pause")),
+        Binding("x", "export", tr("tui.logs.key_export")),
+        Binding("c", "clear_view", tr("tui.logs.key_clear")),
     ]
 
     def compose(self) -> ComposeResult:
@@ -86,9 +90,7 @@ class LogsScreen(Screen):
                 self._all_lines.append(line)
                 if not self._paused and self._line_visible(line):
                     with contextlib.suppress(Exception):
-                        self.query_one("#log", RichLog).write(
-                            _style_line(line), markup=True,
-                        )
+                        self.query_one("#log", RichLog).write(_style_line(line))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -104,7 +106,7 @@ class LogsScreen(Screen):
         log_widget.clear()
         for line in self._all_lines:
             if self._line_visible(line):
-                log_widget.write(_style_line(line), markup=True)
+                log_widget.write(_style_line(line))
         with contextlib.suppress(Exception):
             log_widget.scroll_end(animate=False)
         self._update_filter_bar()
@@ -171,6 +173,26 @@ class LogsScreen(Screen):
             # Resume: scroll to bottom.
             with contextlib.suppress(Exception):
                 self.query_one("#log", RichLog).scroll_end(animate=False)
+
+    def action_export(self) -> None:
+        """Save the lines the filters currently show, like the GUI's export."""
+        lines = [line for line in self._all_lines if self._line_visible(line)]
+        if not lines:
+            self.notify(tr("tui.logs.nothing_to_export"), severity="warning")
+            return
+        path = Path.cwd() / f"outwarp-logs-{time.strftime('%Y%m%d-%H%M%S')}.txt"
+        try:
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as exc:
+            self.notify(tr("tui.logs.export_failed", error=exc), severity="error")
+            return
+        self.notify(tr("tui.logs.exported", n=len(lines), path=path))
+
+    def action_clear_view(self) -> None:
+        """Empty what is on screen (the GUI's "clear" empties its buffer, not the file)."""
+        self._all_lines.clear()
+        self._redraw()
+        self.notify(tr("tui.logs.cleared"))
 
     def action_scroll_home(self) -> None:
         with contextlib.suppress(Exception):
