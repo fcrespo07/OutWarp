@@ -45,6 +45,10 @@ class CheckResult:
     # Callable invoked by the TUI when fix_kind == "auto" and the user confirms.
     # Receives the ServerConfig the check ran against. Should raise on failure.
     fix_callable: Callable[[ServerConfig], None] | None = field(default=None, repr=False)
+    # Stable id of the check that produced this result (`Check.key`), set by
+    # run_all. `name` is translated, so anything that looks a result up again
+    # (apply_remediation) matches on this instead.
+    key: str = ""
 
 
 @dataclass
@@ -1229,14 +1233,14 @@ def run_all(config: ServerConfig) -> list[CheckResult]:
     results: list[CheckResult] = []
     for check in gather_checks():
         try:
-            results.append(check.runner(config))
+            result = check.runner(config)
         except Exception as exc:
             log.exception("Diagnostics check %r raised", check.key)
-            results.append(
-                CheckResult(
-                    name=check.key,
-                    status=Status.FAIL,
-                    detail=t("dx.check_crashed", error=exc),
-                )
+            result = CheckResult(
+                name=check.key,
+                status=Status.FAIL,
+                detail=t("dx.check_crashed", error=exc),
             )
+        result.key = check.key
+        results.append(result)
     return results
