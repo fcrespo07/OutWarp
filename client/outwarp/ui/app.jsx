@@ -1963,13 +1963,14 @@ const DiagnosticsPanel = ({ T, api }) => {
 
   const tone = { pass: "good", warn: "warn", fail: "bad", skip: "neutral" };
   const label = { pass: T.diag_pass, warn: T.diag_warn, fail: T.diag_fail, skip: T.diag_skip };
-  // The remediation often quotes the command; the command gets its own copyable
-  // line, so don't show it twice.
+  // The command gets its own copyable line. Drop it from the remediation only
+  // when it closes the sentence ("…: cmd"); cutting it from the middle leaves
+  // broken prose ("Run `` (writes …)").
   const hint = (r) => {
     if (r.status !== "fail" && r.status !== "warn") return "";
-    let t = r.remediation || "";
-    if (r.command) t = t.replace(r.command, "");
-    return t.replace(/[\s:：]+$/, "");
+    const t = (r.remediation || "").trim();
+    if (!r.command || !t.endsWith(r.command)) return t;
+    return t.slice(0, -r.command.length).replace(/[\s:：`]+$/, "");
   };
   const problems = results.filter((r) => r.status === "fail" || r.status === "warn").length;
 
@@ -1999,7 +2000,7 @@ const DiagnosticsPanel = ({ T, api }) => {
               <div style={{ fontSize: 13, fontWeight: 500 }}>{r.name}</div>
               {r.detail && <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 2, wordBreak: "break-word" }}>{r.detail}</div>}
               {hint(r) && (
-                <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>{hint(r)}</div>
+                <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{hint(r)}</div>
               )}
               {r.command && (r.status === "fail" || r.status === "warn") && (
                 <button type="button" onClick={() => copy(r.command)} className="ow-link" style={{
