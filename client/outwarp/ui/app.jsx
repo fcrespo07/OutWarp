@@ -1690,15 +1690,6 @@ const Settings = ({ T, api, settings, onSetting }) => {
   // the error inline; the persisted value is rolled back by the backend and
   // arrives via outwarp:settings, so the toggle's visual state self-corrects.
   const [error, setError] = useState("");
-  // Real version for the subtitle (don't hardcode — About reads it too).
-  const [version, setVersion] = useState("");
-  useEffect(() => {
-    if (!api) return;
-    let alive = true;
-    api.get_app_info().then((d) => { if (alive && d) setVersion(d.version || ""); });
-    return () => { alive = false; };
-  }, [api]);
-
   const apply = async (k, v) => {
     setError("");
     const r = await onSetting(k, v);
@@ -1732,9 +1723,6 @@ const Settings = ({ T, api, settings, onSetting }) => {
         <SettingsSelect value={settings.theme} onChange={(v) => apply("theme", v)}
           options={[["auto", T.set_themeAuto], ["light", T.set_themeLight], ["dark", T.set_themeDark]]}/>
       )},
-      { title: T.set_advanced, sub: T.set_advancedSub, control: (
-        <window.Toggle on={!!settings.advanced} onChange={(v) => apply("advanced", v)}/>
-      )},
     ]},
     { key: "connection", title: T.set_groupConnection, rows: [
       { title: T.set_autoconnectLaunch, sub: T.set_autoconnectLaunchSub, control: (
@@ -1743,6 +1731,8 @@ const Settings = ({ T, api, settings, onSetting }) => {
       { title: T.set_autoconnect, sub: T.set_autoconnectSub, control: (
         <window.Toggle on={!!settings.auto_reconnect} onChange={(v) => apply("auto_reconnect", v)}/>
       )},
+    ]},
+    { key: "security", title: T.set_groupSecurity, rows: [
       { title: T.set_killSwitch, sub: T.set_killSwitchSub, control: (
         <window.Toggle on={!!settings.kill_switch} onChange={(v) => apply("kill_switch", v)}/>
       )},
@@ -1750,7 +1740,7 @@ const Settings = ({ T, api, settings, onSetting }) => {
         <window.Toggle on={!!settings.allow_tls_intercept} onChange={(v) => apply("allow_tls_intercept", v)}/>
       )},
     ]},
-    { key: "system", title: T.set_groupSystem, rows: [
+    { key: "startup", title: T.set_groupStartup, rows: [
       { title: T.set_startup, sub: T.set_startupSub, control: (
         <window.Toggle on={!!settings.start_at_boot} onChange={(v) => apply("start_at_boot", v)}/>
       )},
@@ -1760,22 +1750,27 @@ const Settings = ({ T, api, settings, onSetting }) => {
       { title: T.set_closeTray, sub: T.set_closeTraySub, control: (
         <window.Toggle on={settings.close_to_tray !== false} onChange={(v) => apply("close_to_tray", v)}/>
       )},
-      // Linux only: the .desktop entry runs `outwarp launch`, which honours
-      // preferred_ui. On Windows the GUI is the only UI, so the row is noise.
-      ...(isLinux ? [{ title: T.set_preferTui, sub: T.set_preferTuiSub, control: (
-        <window.Toggle on={settings.preferred_ui === "tui"} onChange={(v) => apply("preferred_ui", v ? "tui" : "auto")}/>
-      )}] : []),
-      // Linux only: hand the tunnel to the systemd user unit (same toggle as
-      // the TUI). Not a settings.json key — it is system state read live.
-      ...(isLinux && svc && svc.supported ? [{ title: T.set_service, sub: T.set_serviceSub + (svc.active ? " " + T.set_serviceActive : ""), control: (
-        <window.Toggle on={!!svc.active} onChange={applyService}/>
-      )}] : []),
     ]},
+  ];
+  const advancedRows = [
+    { title: T.set_advanced, sub: T.set_advancedSub, control: (
+      <window.Toggle on={!!settings.advanced} onChange={(v) => apply("advanced", v)}/>
+    )},
+    // Linux only: the .desktop entry runs `outwarp launch`, which honours
+    // preferred_ui. On Windows the GUI is the only UI, so the row is noise.
+    ...(isLinux ? [{ title: T.set_preferTui, sub: T.set_preferTuiSub, control: (
+      <window.Toggle on={settings.preferred_ui === "tui"} onChange={(v) => apply("preferred_ui", v ? "tui" : "auto")}/>
+    )}] : []),
+    // Linux only: hand the tunnel to the systemd user unit (same toggle as
+    // the TUI). Not a settings.json key — it is system state read live.
+    ...(isLinux && svc && svc.supported ? [{ title: T.set_service, sub: T.set_serviceSub + (svc.active ? " " + T.set_serviceActive : ""), control: (
+      <window.Toggle on={!!svc.active} onChange={applyService}/>
+    )}] : []),
   ];
 
   return (
     <section className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 22, maxWidth: 720 }}>
-      <Header title={T.nav_settings} sub={`outwarp-client${version ? " · v" + version : ""}`}/>
+      <Header title={T.nav_settings} sub={T.set_subtitle}/>
 
       {error && (
         <div style={{
@@ -1789,6 +1784,14 @@ const Settings = ({ T, api, settings, onSetting }) => {
         </div>
       )}
 
+      {groups.map((g) => (
+        <SettingsCard key={g.key} title={g.title}>
+          {g.rows.map((r, i) => (
+            <SettingsRow key={r.title} title={r.title} sub={r.sub}
+              control={r.control} isLast={i === g.rows.length - 1}/>
+          ))}
+        </SettingsCard>
+      ))}
       <div>
         <div style={{
           fontSize: 11, fontWeight: 600, color: "var(--text-3)",
@@ -1802,14 +1805,12 @@ const Settings = ({ T, api, settings, onSetting }) => {
         </div>
       </div>
 
-      {groups.map((g) => (
-        <SettingsCard key={g.key} title={g.title}>
-          {g.rows.map((r, i) => (
-            <SettingsRow key={r.title} title={r.title} sub={r.sub}
-              control={r.control} isLast={i === g.rows.length - 1}/>
-          ))}
-        </SettingsCard>
-      ))}
+      <SettingsCard title={T.set_groupAdvanced}>
+        {advancedRows.map((r, i) => (
+          <SettingsRow key={r.title} title={r.title} sub={r.sub}
+            control={r.control} isLast={i === advancedRows.length - 1}/>
+        ))}
+      </SettingsCard>
     </section>
   );
 };
