@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from outwarp_server.config import ServerConfig
+from outwarp_server.i18n import t
 
 log = logging.getLogger(__name__)
 
@@ -83,25 +84,27 @@ def _sc(*args: str) -> subprocess.CompletedProcess[str]:
 
 def check_config_loadable(config: ServerConfig) -> CheckResult:
     return CheckResult(
-        name="Server config loadable",
+        name=t("dx.config.name"),
         status=Status.PASS,
-        detail=f"endpoint={config.endpoint}:{config.port}, subnet={config.subnet}",
+        detail=t(
+            "dx.config.detail", endpoint=config.endpoint, port=config.port, subnet=config.subnet
+        ),
     )
 
 
 def check_clients_registered(config: ServerConfig) -> CheckResult:
     if not config.clients:
         return CheckResult(
-            name="Clients registered",
+            name=t("dx.clients.name"),
             status=Status.WARN,
-            detail="No clients registered yet.",
-            remediation="Run `outwarp-server add-client <name>` to issue a profile.",
+            detail=t("dx.clients.none"),
+            remediation=t("dx.clients.none_fix"),
             remediation_command="outwarp-server add-client <name>",
         )
     return CheckResult(
-        name="Clients registered",
+        name=t("dx.clients.name"),
         status=Status.PASS,
-        detail=f"{len(config.clients)} client(s)",
+        detail=t("dx.clients.count", n=len(config.clients)),
     )
 
 
@@ -115,14 +118,14 @@ def check_tls_cert_files(config: ServerConfig) -> CheckResult:
     missing = [p for p in (cert, key) if not p.exists()]
     if missing:
         return CheckResult(
-            name="TLS cert + key present",
+            name=t("dx.tls.name"),
             status=Status.FAIL,
-            detail=f"Missing: {', '.join(str(p) for p in missing)}",
-            remediation="Re-run `outwarp-server setup` to regenerate the TLS material.",
+            detail=t("dx.tls.missing", files=", ".join(str(p) for p in missing)),
+            remediation=t("dx.tls.fix"),
             remediation_command="outwarp-server setup",
         )
     return CheckResult(
-        name="TLS cert + key present",
+        name=t("dx.tls.name"),
         status=Status.PASS,
         detail=str(cert.parent),
     )
@@ -132,18 +135,18 @@ def check_caddy_front(config: ServerConfig) -> CheckResult:
     """In the domain branch, Caddy is the thing holding the public port."""
     from outwarp_server import caddy
 
-    name = "Caddy front"
+    name = t("dx.caddy.name")
     if not config.behind_reverse_proxy:
         return CheckResult(
-            name=name, status=Status.SKIP, detail="server is in self-signed mode"
+            name=name, status=Status.SKIP, detail=t("dx.caddy.selfsigned")
         )
 
     if caddy.find_caddy() is None:
         return CheckResult(
             name=name,
             status=Status.FAIL,
-            detail="caddy is not installed, so nothing is terminating TLS on the public port",
-            remediation=f"Install Caddy: {caddy.install_hint()}",
+            detail=t("dx.caddy.missing"),
+            remediation=t("dx.caddy.install_fix", hint=caddy.install_hint()),
             remediation_command=caddy.install_hint(),
             fix_kind="interactive",
         )
@@ -151,8 +154,8 @@ def check_caddy_front(config: ServerConfig) -> CheckResult:
         return CheckResult(
             name=name,
             status=Status.FAIL,
-            detail=f"{caddy.CADDY_SITE_FILE} is missing",
-            remediation="Re-run `outwarp-server setup` to regenerate the Caddy front.",
+            detail=t("dx.caddy.site_missing", path=caddy.CADDY_SITE_FILE),
+            remediation=t("dx.caddy.setup_fix"),
             remediation_command="outwarp-server setup",
         )
     ok, detail = caddy.validate()
@@ -160,8 +163,8 @@ def check_caddy_front(config: ServerConfig) -> CheckResult:
         return CheckResult(
             name=name,
             status=Status.FAIL,
-            detail=f"`caddy validate` rejected the configuration: {detail}",
-            remediation="Fix the reported error, then: systemctl reload caddy",
+            detail=t("dx.caddy.invalid", detail=detail),
+            remediation=t("dx.caddy.invalid_fix"),
             remediation_command="systemctl reload caddy",
         )
     return CheckResult(name=name, status=Status.PASS, detail=str(caddy.CADDY_SITE_FILE))
@@ -176,10 +179,10 @@ def check_public_certificate(config: ServerConfig) -> CheckResult:
     """
     import ssl
 
-    name = "Public certificate trusted"
+    name = t("dx.cert.name")
     if not config.behind_reverse_proxy:
         return CheckResult(
-            name=name, status=Status.SKIP, detail="self-signed mode pins instead"
+            name=name, status=Status.SKIP, detail=t("dx.cert.selfsigned")
         )
     try:
         ctx = ssl.create_default_context()
@@ -190,22 +193,15 @@ def check_public_certificate(config: ServerConfig) -> CheckResult:
             name=name,
             status=Status.FAIL,
             detail=f"{config.endpoint}:{config.port} — {exc.verify_message or exc}",
-            remediation=(
-                "Caddy could not obtain a certificate. Check that the domain's DNS "
-                f"points here and that port {config.port}/tcp is reachable from the "
-                "internet, then: journalctl -u caddy -e"
-            ),
+            remediation=t("dx.cert.untrusted_fix", port=config.port),
             remediation_command="journalctl -u caddy -e",
         )
     except OSError as exc:
         return CheckResult(
             name=name,
             status=Status.WARN,
-            detail=f"Could not reach {config.endpoint}:{config.port} — {exc}",
-            remediation=(
-                "The certificate could not be checked because the endpoint was "
-                "unreachable from the server itself; this is often just hairpin NAT."
-            ),
+            detail=t("dx.cert.unreachable", endpoint=config.endpoint, port=config.port, error=exc),
+            remediation=t("dx.cert.unreachable_fix"),
         )
     return CheckResult(
         name=name, status=Status.PASS, detail=f"{config.endpoint}:{config.port}"
@@ -218,15 +214,15 @@ def check_egress(config: ServerConfig) -> CheckResult:
             pass
     except OSError as exc:
         return CheckResult(
-            name="Outbound internet (TCP/443)",
+            name=t("dx.egress.name"),
             status=Status.FAIL,
-            detail=f"Cannot reach 1.1.1.1:443 — {exc}",
-            remediation="The server itself can't reach the internet — fix that first.",
+            detail=t("dx.egress.fail", error=exc),
+            remediation=t("dx.egress.fix"),
         )
     return CheckResult(
-        name="Outbound internet (TCP/443)",
+        name=t("dx.egress.name"),
         status=Status.PASS,
-        detail="1.1.1.1:443 reachable in <3 s",
+        detail=t("dx.egress.ok"),
     )
 
 
@@ -240,12 +236,12 @@ def check_win_admin(config: ServerConfig) -> CheckResult:
         is_admin = False
     if not is_admin:
         return CheckResult(
-            name="Running as Administrator",
+            name=t("dx.win.admin_name"),
             status=Status.FAIL,
-            detail="Many checks need an elevated shell to read real state.",
-            remediation="Open an elevated PowerShell and re-run `outwarp-server doctor`.",
+            detail=t("dx.win.admin_detail"),
+            remediation=t("dx.win.admin_fix"),
         )
-    return CheckResult(name="Running as Administrator", status=Status.PASS)
+    return CheckResult(name=t("dx.win.admin_name"), status=Status.PASS)
 
 
 def check_win_ip_forwarding(config: ServerConfig) -> CheckResult:
@@ -258,24 +254,25 @@ def check_win_ip_forwarding(config: ServerConfig) -> CheckResult:
             value, _ = winreg.QueryValueEx(key, "IPEnableRouter")
     except OSError as exc:
         return CheckResult(
-            name="IP forwarding (IPEnableRouter)",
+            name=t("dx.win.ipfwd_name"),
             status=Status.FAIL,
-            detail=f"Cannot read registry: {exc}",
+            detail=t("dx.win.registry", error=exc),
         )
     if int(value) == 1:
         return CheckResult(
-            name="IP forwarding (IPEnableRouter)",
+            name=t("dx.win.ipfwd_name"),
             status=Status.PASS,
             detail="IPEnableRouter = 1",
         )
     return CheckResult(
-        name="IP forwarding (IPEnableRouter)",
+        name=t("dx.win.ipfwd_name"),
         status=Status.FAIL,
         detail=f"IPEnableRouter = {value}",
-        remediation=(
-            "As admin: `Set-ItemProperty -Path "
+        remediation=t(
+            "dx.win.ipfwd_fix",
+            cmd="Set-ItemProperty -Path "
             "'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters' "
-            "-Name IPEnableRouter -Value 1` and reboot."
+            "-Name IPEnableRouter -Value 1",
         ),
         remediation_command=(
             "Set-ItemProperty -Path "
@@ -293,25 +290,25 @@ def check_win_forwarding_on_wg_iface(config: ServerConfig) -> CheckResult:
     stdout = result.stdout.strip()
     if not stdout:
         return CheckResult(
-            name=f"Forwarding on '{_WIN_WG_INTERFACE}'",
+            name=t("dx.win.ifacefwd_name", iface=_WIN_WG_INTERFACE),
             status=Status.FAIL,
-            detail="Interface not present.",
-            remediation="WireGuard interface isn't installed. Run `outwarp-server restart`.",
+            detail=t("dx.win.iface_absent"),
+            remediation=t("dx.win.iface_fix"),
             remediation_command="outwarp-server restart",
         )
     if "Enabled" in stdout:
         return CheckResult(
-            name=f"Forwarding on '{_WIN_WG_INTERFACE}'",
+            name=t("dx.win.ifacefwd_name", iface=_WIN_WG_INTERFACE),
             status=Status.PASS,
-            detail="Enabled",
+            detail=t("dx.win.enabled"),
         )
     return CheckResult(
-        name=f"Forwarding on '{_WIN_WG_INTERFACE}'",
+        name=t("dx.win.ifacefwd_name", iface=_WIN_WG_INTERFACE),
         status=Status.FAIL,
         detail=stdout,
-        remediation=(
-            f"As admin: `Set-NetIPInterface -InterfaceAlias '{_WIN_WG_INTERFACE}' "
-            f"-Forwarding Enabled`."
+        remediation=t(
+            "dx.win.ifacefwd_fix",
+            cmd=f"Set-NetIPInterface -InterfaceAlias '{_WIN_WG_INTERFACE}' -Forwarding Enabled",
         ),
         remediation_command=(
             f"Set-NetIPInterface -InterfaceAlias '{_WIN_WG_INTERFACE}' -Forwarding Enabled"
@@ -333,20 +330,12 @@ def check_win_netnat_provider(config: ServerConfig) -> CheckResult:
         "-ErrorAction SilentlyContinue | Select-Object -ExpandProperty CimClassName"
     )
     if "MSFT_NetNat" in result.stdout:
-        return CheckResult(name="NetNat provider (WMI class)", status=Status.PASS)
+        return CheckResult(name=t("dx.win.provider_name"), status=Status.PASS)
     return CheckResult(
-        name="NetNat provider (WMI class)",
+        name=t("dx.win.provider_name"),
         status=Status.FAIL,
-        detail=(
-            "MSFT_NetNat is not registered — NAT cmdlets will fail with "
-            "'Invalid class' / 'Clase no válida'."
-        ),
-        remediation=(
-            "The Windows NAT infrastructure is not installed. Enable the "
-            "'Containers' feature and reboot. On Windows Home (where Containers "
-            "may be unavailable) enable Hyper-V instead — note Home only "
-            "supports Hyper-V with unofficial workarounds."
-        ),
+        detail=t("dx.win.provider_detail"),
+        remediation=t("dx.win.provider_fix"),
         remediation_command=(
             "Enable-WindowsOptionalFeature -Online -FeatureName Containers -All"
         ),
@@ -366,27 +355,23 @@ def check_win_netnat(config: ServerConfig) -> CheckResult:
     # caught it, but this is the safety net for older deployments.
     if "invalid class" in err or "clase no v" in err:
         return CheckResult(
-            name="WinNAT rule for WG subnet",
+            name=t("dx.win.netnat_name"),
             status=Status.FAIL,
-            detail="Cannot query NetNat — WMI provider not registered.",
-            remediation=(
-                "Enable the 'Containers' Windows feature and reboot — that "
-                "installs the NetNat WMI provider."
-            ),
+            detail=t("dx.win.netnat_noprov"),
+            remediation=t("dx.win.netnat_noprov_fix"),
             remediation_command=(
                 "Enable-WindowsOptionalFeature -Online -FeatureName Containers -All"
             ),
         )
     if not raw:
         return CheckResult(
-            name="WinNAT rule for WG subnet",
+            name=t("dx.win.netnat_name"),
             status=Status.FAIL,
-            detail="No NetNat instances exist at all.",
-            remediation=(
-                f"As admin: `New-NetNat -Name '{_WIN_NAT_NAME}' "
-                f"-InternalIPInterfaceAddressPrefix '{config.subnet}'`. "
-                "If this fails with 'Invalid class', the NAT provider is "
-                "missing — enable the Containers Windows feature and reboot."
+            detail=t("dx.win.netnat_none"),
+            remediation=t(
+                "dx.win.netnat_none_fix",
+                cmd=f"New-NetNat -Name '{_WIN_NAT_NAME}' "
+                f"-InternalIPInterfaceAddressPrefix '{config.subnet}'",
             ),
             remediation_command=(
                 f"New-NetNat -Name '{_WIN_NAT_NAME}' "
@@ -397,9 +382,9 @@ def check_win_netnat(config: ServerConfig) -> CheckResult:
         data = json.loads(raw)
     except json.JSONDecodeError:
         return CheckResult(
-            name="WinNAT rule for WG subnet",
+            name=t("dx.win.netnat_name"),
             status=Status.WARN,
-            detail=f"Unparseable Get-NetNat output: {raw[:200]}",
+            detail=t("dx.win.netnat_unparseable", raw=raw[:200]),
         )
     nats = data if isinstance(data, list) else [data]
     matching = [n for n in nats if n.get("InternalIPInterfaceAddressPrefix") == config.subnet]
@@ -415,15 +400,10 @@ def check_win_netnat(config: ServerConfig) -> CheckResult:
         )
         conflict_name = nats[0].get("Name") if nats else "<name>"
         return CheckResult(
-            name="WinNAT rule for WG subnet",
+            name=t("dx.win.netnat_name"),
             status=Status.FAIL,
-            detail=f"No NetNat covers {config.subnet}. Existing: {listing}",
-            remediation=(
-                "Windows allows only ONE active NetNat. Remove the conflicting one — "
-                "e.g. `Remove-NetNat -Name <name> -Confirm:$false` (typical culprits: "
-                "'WSL', 'Hyper-V', 'ICS', a Mobile Hotspot rule) — then run "
-                "`outwarp-server restart`."
-            ),
+            detail=t("dx.win.netnat_nomatch", subnet=config.subnet, listing=listing),
+            remediation=t("dx.win.netnat_conflict_fix"),
             remediation_command=(
                 f"Remove-NetNat -Name '{conflict_name}' -Confirm:$false; "
                 f"New-NetNat -Name '{_WIN_NAT_NAME}' "
@@ -435,10 +415,10 @@ def check_win_netnat(config: ServerConfig) -> CheckResult:
     active = found.get("Active")
     if active is False or str(active).lower() == "false":
         return CheckResult(
-            name="WinNAT rule for WG subnet",
+            name=t("dx.win.netnat_name"),
             status=Status.FAIL,
-            detail=f"NAT '{found.get('Name')}' exists but Active=False.",
-            remediation="Restart the WinNAT service: `Restart-Service WinNat`.",
+            detail=t("dx.win.netnat_inactive", name=found.get("Name")),
+            remediation=t("dx.win.netnat_inactive_fix"),
             remediation_command="Restart-Service WinNat",
         )
     if others:
@@ -446,40 +426,32 @@ def check_win_netnat(config: ServerConfig) -> CheckResult:
             f"{n.get('Name')}({n.get('InternalIPInterfaceAddressPrefix')})" for n in others
         )
         return CheckResult(
-            name="WinNAT rule for WG subnet",
+            name=t("dx.win.netnat_name"),
             status=Status.WARN,
-            detail=(
-                f"OK for {config.subnet}, but additional NetNats exist: {listing}. "
-                "Windows ignores all but one — return traffic may break unpredictably."
-            ),
-            remediation="Remove the extra NetNats unless you genuinely need them.",
+            detail=t("dx.win.netnat_extra", subnet=config.subnet, listing=listing),
+            remediation=t("dx.win.netnat_extra_fix"),
         )
     return CheckResult(
-        name="WinNAT rule for WG subnet",
+        name=t("dx.win.netnat_name"),
         status=Status.PASS,
-        detail=f"{found.get('Name')} → {config.subnet} (Active)",
+        detail=t("dx.win.netnat_ok", name=found.get("Name"), subnet=config.subnet),
     )
 
 
 def check_win_winnat_service(config: ServerConfig) -> CheckResult:
     out = _sc("query", "WinNat").stdout
     if "RUNNING" in out:
-        return CheckResult(name="WinNat service", status=Status.PASS, detail="RUNNING")
+        return CheckResult(name=t("dx.win.winnat_name"), status=Status.PASS, detail="RUNNING")
     if "STOPPED" in out:
         # NetNat creation triggers WinNat on demand, but only if startup is not
         # disabled. If `Start-Service` fails here, the underlying driver is
         # missing — almost always because Hyper-V / Containers features aren't
         # enabled. Suggest both the easy path and the diagnostic.
         return CheckResult(
-            name="WinNat service",
+            name=t("dx.win.winnat_name"),
             status=Status.FAIL,
-            detail="Stopped — NetNat rules will NOT translate traffic.",
-            remediation=(
-                "As admin: `Set-Service WinNat -StartupType Automatic; Start-Service WinNat`. "
-                "If start fails with 'service did not respond', the underlying NAT driver "
-                "is missing — enable the 'Containers' or 'Hyper-V' Windows feature: "
-                "`Enable-WindowsOptionalFeature -Online -FeatureName Containers -All` and reboot."
-            ),
+            detail=t("dx.win.winnat_stopped"),
+            remediation=t("dx.win.winnat_stopped_fix"),
             remediation_command=(
                 "Set-Service WinNat -StartupType Automatic; Start-Service WinNat"
             ),
@@ -488,21 +460,18 @@ def check_win_winnat_service(config: ServerConfig) -> CheckResult:
         # `sc query` returns "[SC] EnumQueryServicesStatus:OpenService FAILED 1060"
         # when the service literally doesn't exist on the machine.
         return CheckResult(
-            name="WinNat service",
+            name=t("dx.win.winnat_name"),
             status=Status.FAIL,
-            detail="WinNat service not registered on this Windows install.",
-            remediation=(
-                "The NAT driver isn't installed. Enable the 'Containers' Windows feature: "
-                "`Enable-WindowsOptionalFeature -Online -FeatureName Containers -All` and reboot."
-            ),
+            detail=t("dx.win.winnat_missing"),
+            remediation=t("dx.win.winnat_missing_fix"),
             remediation_command=(
                 "Enable-WindowsOptionalFeature -Online -FeatureName Containers -All"
             ),
         )
     return CheckResult(
-        name="WinNat service",
+        name=t("dx.win.winnat_name"),
         status=Status.WARN,
-        detail=f"Unknown state: {out.strip()[:200]}",
+        detail=t("dx.win.winnat_unknown", state=out.strip()[:200]),
     )
 
 
@@ -510,15 +479,15 @@ def check_win_wg_service(config: ServerConfig) -> CheckResult:
     out = _sc("query", f"WireGuardTunnel${_WIN_WG_INTERFACE}").stdout
     if "RUNNING" in out:
         return CheckResult(
-            name="WireGuard tunnel service",
+            name=t("dx.win.wgsvc_name"),
             status=Status.PASS,
             detail=f"WireGuardTunnel${_WIN_WG_INTERFACE}: RUNNING",
         )
     return CheckResult(
-        name="WireGuard tunnel service",
+        name=t("dx.win.wgsvc_name"),
         status=Status.FAIL,
-        detail=f"Not running: {out.strip()[:200]}",
-        remediation="As admin: `outwarp-server restart`.",
+        detail=t("dx.win.wgsvc_down", state=out.strip()[:200]),
+        remediation=t("dx.win.restart_fix"),
         remediation_command="outwarp-server restart",
     )
 
@@ -532,12 +501,14 @@ def check_win_wstunnel_running(config: ServerConfig) -> CheckResult:
         creationflags=_NO_WINDOW,
     )
     if "wstunnel" in result.stdout.lower():
-        return CheckResult(name="wstunnel process", status=Status.PASS, detail="running")
+        return CheckResult(
+            name=t("dx.win.wstunnel_name"), status=Status.PASS, detail=t("dx.win.running")
+        )
     return CheckResult(
-        name="wstunnel process",
+        name=t("dx.win.wstunnel_name"),
         status=Status.FAIL,
-        detail="No wstunnel.exe found.",
-        remediation="Start the OutWarp server (GUI or service) so it spawns wstunnel.",
+        detail=t("dx.win.wstunnel_none"),
+        remediation=t("dx.win.wstunnel_fix"),
     )
 
 
@@ -549,21 +520,21 @@ def check_win_listening_port(config: ServerConfig) -> CheckResult:
     pid_str = result.stdout.strip()
     if not pid_str:
         return CheckResult(
-            name=f"Listening on TCP/{config.port}",
+            name=t("dx.listen_name", port=config.port),
             status=Status.FAIL,
-            detail="No process bound to the WSS port.",
-            remediation="Check the server logs — wstunnel probably failed to start.",
+            detail=t("dx.win.listen_none"),
+            remediation=t("dx.win.listen_fix"),
         )
     return CheckResult(
-        name=f"Listening on TCP/{config.port}",
+        name=t("dx.listen_name", port=config.port),
         status=Status.PASS,
-        detail=f"PID {pid_str}",
+        detail=t("dx.win.pid", pid=pid_str),
     )
 
 
 def check_win_enroll_listener(config: ServerConfig) -> CheckResult:
     """Same contract as check_linux_enroll_listener: up, loopback only."""
-    name = f"Enrolment listener TCP/{config.enroll_port}"
+    name = t("dx.enroll_name", port=config.enroll_port)
     result = _ps(
         f"Get-NetTCPConnection -State Listen -LocalPort {config.enroll_port} "
         "-ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty LocalAddress"
@@ -573,19 +544,15 @@ def check_win_enroll_listener(config: ServerConfig) -> CheckResult:
         return CheckResult(
             name=name,
             status=Status.FAIL,
-            detail="No process bound to the enrolment port — enrolment profiles "
-                   "cannot be redeemed.",
-            remediation=(
-                "The listener runs inside the OutWarp server process; check its logs "
-                "for 'Could not start the enrolment listener' (port already in use?)."
-            ),
+            detail=t("dx.win.enroll_none"),
+            remediation=t("dx.win.enroll_none_fix"),
         )
     if addr not in ("127.0.0.1", "::1"):
         return CheckResult(
             name=name,
             status=Status.WARN,
-            detail=f"Bound on {addr}, not loopback — leftover from a pre-0.13 install.",
-            remediation="Restart the OutWarp server so the listener rebinds on 127.0.0.1.",
+            detail=t("dx.win.enroll_public", addr=addr),
+            remediation=t("dx.win.enroll_public_fix"),
         )
     return CheckResult(name=name, status=Status.PASS, detail=f"{addr}:{config.enroll_port}")
 
@@ -601,23 +568,26 @@ def check_win_firewall(config: ServerConfig) -> CheckResult:
             data = json.loads(raw)
         except json.JSONDecodeError:
             return CheckResult(
-                name="Firewall inbound rule",
+                name=t("dx.win.fw_name"),
                 status=Status.WARN,
-                detail=f"Unparseable: {raw[:200]}",
+                detail=t("dx.win.fw_unparseable", raw=raw[:200]),
             )
         entries = data if isinstance(data, list) else [data]
         enabled_values = {str(e.get("Enabled")).lower() for e in entries}
         if "true" in enabled_values or "1" in enabled_values:
             return CheckResult(
-                name="Firewall inbound rule",
+                name=t("dx.win.fw_name"),
                 status=Status.PASS,
-                detail="OutWarp-wstunnel enabled",
+                detail=t("dx.win.fw_enabled"),
             )
         return CheckResult(
-            name="Firewall inbound rule",
+            name=t("dx.win.fw_name"),
             status=Status.FAIL,
-            detail=f"Rule exists but disabled: {raw}",
-            remediation="As admin: `Enable-NetFirewallRule -DisplayName 'OutWarp-wstunnel'`.",
+            detail=t("dx.win.fw_disabled", raw=raw),
+            remediation=t(
+                "dx.win.fw_disabled_fix",
+                cmd="Enable-NetFirewallRule -DisplayName 'OutWarp-wstunnel'",
+            ),
             remediation_command="Enable-NetFirewallRule -DisplayName 'OutWarp-wstunnel'",
         )
     # Legacy fallback for rules created via netsh.
@@ -630,17 +600,18 @@ def check_win_firewall(config: ServerConfig) -> CheckResult:
     )
     if "OutWarp-wstunnel" in legacy.stdout:
         return CheckResult(
-            name="Firewall inbound rule",
+            name=t("dx.win.fw_name"),
             status=Status.PASS,
-            detail="OutWarp-wstunnel rule present (netsh).",
+            detail=t("dx.win.fw_netsh"),
         )
     return CheckResult(
-        name="Firewall inbound rule",
+        name=t("dx.win.fw_name"),
         status=Status.WARN,
-        detail="No 'OutWarp-wstunnel' rule found.",
-        remediation=(
-            f"As admin: `netsh advfirewall firewall add rule "
-            f"name=OutWarp-wstunnel dir=in action=allow localport={config.port} protocol=TCP`."
+        detail=t("dx.win.fw_none"),
+        remediation=t(
+            "dx.win.fw_none_fix",
+            cmd="netsh advfirewall firewall add rule name=OutWarp-wstunnel "
+            f"dir=in action=allow localport={config.port} protocol=TCP",
         ),
         remediation_command=(
             f"netsh advfirewall firewall add rule name=OutWarp-wstunnel "
@@ -653,6 +624,10 @@ def check_win_firewall(config: ServerConfig) -> CheckResult:
 
 _LINUX_WG_INTERFACE = "wg0"
 _LINUX_SYSCTL_DROP_IN = "/etc/sysctl.d/99-outwarp.conf"
+_IP_FORWARD_CMD = (
+    f"echo 'net.ipv4.ip_forward=1' > {_LINUX_SYSCTL_DROP_IN} && "
+    f"sysctl -p {_LINUX_SYSCTL_DROP_IN}"
+)
 
 
 def _run_linux(cmd: list[str], timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
@@ -697,37 +672,34 @@ def check_linux_binaries(config: ServerConfig) -> CheckResult:
     wg = shutil.which("wg")
     if not wstunnel and not wg:
         return CheckResult(
-            name="wstunnel + wg binaries",
+            name=t("dx.linux.bins_name"),
             status=Status.FAIL,
-            detail="Neither 'wstunnel' nor 'wg' is on PATH.",
-            remediation=(
-                "Install the WireGuard tools and reinstall the OutWarp server "
-                "bundle that ships wstunnel."
-            ),
+            detail=t("dx.linux.bins_none"),
+            remediation=t("dx.linux.bins_none_fix"),
             remediation_command=_wg_tools_install_cmd(),
             fix_kind="interactive",
         )
     if not wstunnel:
         return CheckResult(
-            name="wstunnel + wg binaries",
+            name=t("dx.linux.bins_name"),
             status=Status.FAIL,
-            detail="'wstunnel' not on PATH (wg is).",
-            remediation="Reinstall the OutWarp server bundle.",
+            detail=t("dx.linux.bins_nowstunnel"),
+            remediation=t("dx.linux.bins_nowstunnel_fix"),
             remediation_command="bash <(curl -fsSL https://outwarp.dev/install.sh) server",
             fix_kind="manual",
         )
     if not wg:
         return CheckResult(
-            name="wstunnel + wg binaries",
+            name=t("dx.linux.bins_name"),
             status=Status.FAIL,
-            detail="'wg' not on PATH (wstunnel is).",
-            remediation="Install wireguard-tools.",
+            detail=t("dx.linux.bins_nowg"),
+            remediation=t("dx.linux.bins_nowg_fix"),
             remediation_command=_wg_tools_install_cmd(),
             fix_kind="interactive",
         )
     version = _run_linux([wg, "--version"]).stdout.strip()
     return CheckResult(
-        name="wstunnel + wg binaries",
+        name=t("dx.linux.bins_name"),
         status=Status.PASS,
         detail=f"{wstunnel}, {version or wg}",
     )
@@ -754,18 +726,15 @@ def check_linux_kmod(config: ServerConfig) -> CheckResult:
                 "loaded",
             )
             return CheckResult(
-                name="WireGuard kernel module",
+                name=t("dx.linux.kmod_name"),
                 status=Status.PASS,
                 detail=first,
             )
         return CheckResult(
-            name="WireGuard kernel module",
+            name=t("dx.linux.kmod_name"),
             status=Status.FAIL,
-            detail="modinfo wireguard failed — kernel module not present.",
-            remediation=(
-                "Install kernel headers and the wireguard kernel module: "
-                "apt install wireguard."
-            ),
+            detail=t("dx.linux.kmod_missing"),
+            remediation=t("dx.linux.kmod_missing_fix"),
             remediation_command="apt install wireguard",
             fix_kind="interactive",
         )
@@ -774,18 +743,15 @@ def check_linux_kmod(config: ServerConfig) -> CheckResult:
     if proc.returncode == 0 and proc.stdout.strip():
         iface = proc.stdout.split(":", 2)[1].strip() if ":" in proc.stdout else "wireguard"
         return CheckResult(
-            name="WireGuard kernel module",
+            name=t("dx.linux.kmod_name"),
             status=Status.PASS,
-            detail=f"no modinfo here (container) — {iface} is up, kernel module is loaded",
+            detail=t("dx.linux.kmod_container", iface=iface),
         )
     return CheckResult(
-        name="WireGuard kernel module",
+        name=t("dx.linux.kmod_name"),
         status=Status.FAIL,
-        detail="No WireGuard interface up and modinfo isn't available to check further.",
-        remediation=(
-            "Load the wireguard kernel module on the node (modprobe wireguard) "
-            "and re-run outwarp-server init."
-        ),
+        detail=t("dx.linux.kmod_unknown"),
+        remediation=t("dx.linux.kmod_unknown_fix"),
         remediation_command="modprobe wireguard",
         fix_kind="manual",
     )
@@ -808,10 +774,9 @@ def check_linux_systemd(config: ServerConfig) -> CheckResult:
     """
     if not _has_systemd():
         return CheckResult(
-            name="systemd services active",
+            name=t("dx.linux.systemd_name"),
             status=Status.SKIP,
-            detail="No systemd here (container) — wstunnel/WireGuard are supervised "
-                   "directly, not via systemd units. See the listening-port checks instead.",
+            detail=t("dx.linux.systemd_none"),
         )
     services = [
         "wstunnel-outwarp.service",
@@ -829,7 +794,7 @@ def check_linux_systemd(config: ServerConfig) -> CheckResult:
 
     if not inactive:
         return CheckResult(
-            name="systemd services active",
+            name=t("dx.linux.systemd_name"),
             status=Status.PASS,
             detail=", ".join(f"{k}={v}" for k, v in states.items()),
         )
@@ -839,13 +804,10 @@ def check_linux_systemd(config: ServerConfig) -> CheckResult:
         # (re)writes every unit from the current code, a plain systemctl
         # restart of a unit that does not exist cannot.
         return CheckResult(
-            name="systemd services active",
+            name=t("dx.linux.systemd_name"),
             status=Status.FAIL,
             detail=", ".join(f"{k}={v}" for k, v in states.items()),
-            remediation=(
-                "outwarp-enroll.service is not installed, so enrolment profiles "
-                "cannot be redeemed. Run `outwarp-server restart` to install it."
-            ),
+            remediation=t("dx.linux.systemd_noenroll_fix"),
             remediation_command="outwarp-server restart",
             fix_kind="manual",
         )
@@ -858,10 +820,10 @@ def check_linux_systemd(config: ServerConfig) -> CheckResult:
 
     cmd = " && ".join(f"systemctl restart {svc}" for svc in inactive)
     return CheckResult(
-        name="systemd services active",
+        name=t("dx.linux.systemd_name"),
         status=Status.FAIL,
         detail=", ".join(f"{k}={v}" for k, v in states.items()),
-        remediation=f"Restart the inactive service(s): {cmd}.",
+        remediation=t("dx.linux.systemd_fix", cmd=cmd),
         remediation_command=cmd,
         fix_kind="auto",
         fix_callable=_fix_restart,
@@ -896,32 +858,25 @@ def check_linux_listen_443(config: ServerConfig) -> CheckResult:
     listening = any(f":{config.port}" in line for line in out.splitlines()[1:])
     if listening:
         return CheckResult(
-            name=f"Listening on TCP/{config.port}",
+            name=t("dx.listen_name", port=config.port),
             status=Status.PASS,
-            detail=out.splitlines()[1] if len(out.splitlines()) > 1 else "listening",
+            detail=out.splitlines()[1] if len(out.splitlines()) > 1 else t("dx.linux.listening"),
         )
     if not _has_systemd():
         return CheckResult(
-            name=f"Listening on TCP/{config.port}",
+            name=t("dx.listen_name", port=config.port),
             status=Status.FAIL,
-            detail=f"Nothing bound to TCP/{config.port}.",
-            remediation=(
-                "No systemd here (container) — wstunnel is a subprocess of the "
-                "outwarp-server process itself. Restart the pod/container "
-                "(e.g. `kubectl rollout restart deployment/outwarp-server`)."
-            ),
+            detail=t("dx.linux.listen_none", port=config.port),
+            remediation=t("dx.linux.listen_none_container_fix"),
             remediation_command="kubectl rollout restart deployment/outwarp-server",
             fix_kind="manual",
         )
     service = "caddy" if config.behind_reverse_proxy else "wstunnel-outwarp.service"
     return CheckResult(
-        name=f"Listening on TCP/{config.port}",
+        name=t("dx.listen_name", port=config.port),
         status=Status.FAIL,
-        detail=f"Nothing bound to TCP/{config.port}.",
-        remediation=(
-            f"Start the service that owns the public port: systemctl start {service}. "
-            f"Also confirm no other service already claims port {config.port}."
-        ),
+        detail=t("dx.linux.listen_none", port=config.port),
+        remediation=t("dx.linux.listen_none_fix", service=service, port=config.port),
         remediation_command=f"systemctl start {service}",
         fix_kind="auto",
         fix_callable=lambda _c: subprocess.run(
@@ -933,10 +888,10 @@ def check_linux_listen_443(config: ServerConfig) -> CheckResult:
 
 def check_linux_listen_internal_ws(config: ServerConfig) -> CheckResult:
     """In the domain branch wstunnel moves to a loopback plain-WS listener."""
-    name = "wstunnel on loopback"
+    name = t("dx.linux.loopback_name")
     if not config.behind_reverse_proxy:
         return CheckResult(
-            name=name, status=Status.SKIP, detail="wstunnel holds the public port directly"
+            name=name, status=Status.SKIP, detail=t("dx.linux.loopback_direct")
         )
     port = config.internal_ws_port
     proc = _run_linux(["ss", "-tlnp", f"sport = :{port}"])
@@ -949,19 +904,16 @@ def check_linux_listen_internal_ws(config: ServerConfig) -> CheckResult:
             return CheckResult(
                 name=name,
                 status=Status.WARN,
-                detail=f"TCP/{port} is bound on all interfaces, not just loopback",
-                remediation=(
-                    "The plain-WebSocket listener should only be reachable from Caddy. "
-                    "Re-run `outwarp-server restart` to rewrite the unit."
-                ),
+                detail=t("dx.linux.loopback_exposed", port=port),
+                remediation=t("dx.linux.loopback_exposed_fix"),
                 remediation_command="outwarp-server restart",
             )
         return CheckResult(name=name, status=Status.PASS, detail=f"127.0.0.1:{port}")
     return CheckResult(
         name=name,
         status=Status.FAIL,
-        detail=f"Nothing bound to TCP/{port} — Caddy has nothing to proxy to.",
-        remediation="systemctl start wstunnel-outwarp.service",
+        detail=t("dx.linux.loopback_none", port=port),
+        remediation=t("dx.linux.loopback_none_fix"),
         remediation_command="systemctl start wstunnel-outwarp.service",
         fix_kind="auto",
         fix_callable=lambda _c: subprocess.run(
@@ -981,7 +933,7 @@ def check_linux_enroll_listener(config: ServerConfig) -> CheckResult:
     from before 0.13 is still exposing it with its own TLS on a port nobody
     needs open any more.
     """
-    name = f"Enrolment listener TCP/{config.enroll_port}"
+    name = t("dx.enroll_name", port=config.enroll_port)
     proc = _run_linux(["ss", "-tlnp", f"sport = :{config.enroll_port}"])
     lines = [ln for ln in proc.stdout.splitlines()[1:] if ln.strip()]
     if lines:
@@ -989,12 +941,8 @@ def check_linux_enroll_listener(config: ServerConfig) -> CheckResult:
             return CheckResult(
                 name=name,
                 status=Status.WARN,
-                detail=f"TCP/{config.enroll_port} is bound on all interfaces, not just loopback",
-                remediation=(
-                    "Clients enrol through the tunnel port now; the public listener is "
-                    "a leftover. Run `outwarp-server restart` (or restart the "
-                    "container) so it rebinds on 127.0.0.1."
-                ),
+                detail=t("dx.linux.loopback_exposed", port=config.enroll_port),
+                remediation=t("dx.linux.enroll_public_fix"),
                 remediation_command="outwarp-server restart",
             )
         return CheckResult(name=name, status=Status.PASS, detail=f"127.0.0.1:{config.enroll_port}")
@@ -1002,26 +950,16 @@ def check_linux_enroll_listener(config: ServerConfig) -> CheckResult:
         return CheckResult(
             name=name,
             status=Status.FAIL,
-            detail=f"Nothing bound to TCP/{config.enroll_port} — enrolment profiles "
-                   "cannot be redeemed.",
-            remediation=(
-                "No systemd here (container) — the listener runs inside the "
-                "`outwarp-server serve` process. Check its logs for 'Could not start "
-                "the enrolment listener' (port already in use?) and restart the "
-                "pod/container."
-            ),
+            detail=t("dx.linux.enroll_none", port=config.enroll_port),
+            remediation=t("dx.linux.enroll_none_container_fix"),
             remediation_command="kubectl rollout restart deployment/outwarp-server",
             fix_kind="manual",
         )
     return CheckResult(
         name=name,
         status=Status.FAIL,
-        detail=f"Nothing bound to TCP/{config.enroll_port} — enrolment profiles "
-               "cannot be redeemed.",
-        remediation=(
-            "Start the listener: systemctl start outwarp-enroll.service. If the unit "
-            "does not exist (install older than 0.13), `outwarp-server restart` writes it."
-        ),
+        detail=t("dx.linux.enroll_none", port=config.enroll_port),
+        remediation=t("dx.linux.enroll_none_fix"),
         remediation_command="systemctl start outwarp-enroll.service",
         fix_kind="auto",
         fix_callable=lambda _c: subprocess.run(
@@ -1049,45 +987,31 @@ def check_linux_listen_wg(config: ServerConfig) -> CheckResult:
     lines = [ln for ln in proc.stdout.splitlines()[1:] if ln.strip()]
     if not lines:
         return CheckResult(
-            name=f"WG forwarder UDP/{config.wg_listen_port}",
+            name=t("dx.linux.wgfwd_name", port=config.wg_listen_port),
             status=Status.WARN,
-            detail="No UDP listener on the local WG forwarder port.",
-            remediation=(
-                "The wstunnel server hasn't yet opened its local WG socket — "
-                "this is normal until the first client connects."
-            ),
+            detail=t("dx.linux.wgfwd_none"),
+            remediation=t("dx.linux.wgfwd_none_fix"),
         )
     public = [ln for ln in lines if _bound_publicly(ln)]
     if public:
         if not _has_systemd():
             return CheckResult(
-                name=f"WG forwarder UDP/{config.wg_listen_port}",
+                name=t("dx.linux.wgfwd_name", port=config.wg_listen_port),
                 status=Status.WARN,
-                detail=f"Listener bound to a public address: {public[0]} "
-                       "(expected for kernel WireGuard managed directly — no systemd here).",
-                remediation=(
-                    "This is normal for a container/K8s deploy: WireGuard's kernel "
-                    "listen-port always binds every interface, `outwarp-server restart` "
-                    "won't change it. If you want this port unreachable from outside "
-                    "and only wg.<domain>:443 usable, block external access to "
-                    f"UDP/{config.wg_listen_port} at your router/host firewall — "
-                    "WireGuard's own crypto still protects it either way."
-                ),
+                detail=t("dx.linux.wgfwd_public_container", addr=public[0]),
+                remediation=t("dx.linux.wgfwd_public_container_fix", port=config.wg_listen_port),
                 fix_kind="manual",
             )
         return CheckResult(
-            name=f"WG forwarder UDP/{config.wg_listen_port}",
+            name=t("dx.linux.wgfwd_name", port=config.wg_listen_port),
             status=Status.FAIL,
-            detail=f"Listener bound to a public address: {public[0]}",
-            remediation=(
-                "wstunnel should forward to 127.0.0.1 only. Run `outwarp-server "
-                "restart` to regenerate the unit."
-            ),
+            detail=t("dx.linux.wgfwd_public", addr=public[0]),
+            remediation=t("dx.linux.wgfwd_public_fix"),
             remediation_command="outwarp-server restart",
             fix_kind="manual",
         )
     return CheckResult(
-        name=f"WG forwarder UDP/{config.wg_listen_port}",
+        name=t("dx.linux.wgfwd_name", port=config.wg_listen_port),
         status=Status.PASS,
         detail=lines[0],
     )
@@ -1124,38 +1048,26 @@ def check_linux_ip_forward(config: ServerConfig) -> CheckResult:
 
     if enabled and persistent:
         return CheckResult(
-            name="IP forwarding (net.ipv4.ip_forward)",
+            name=t("dx.linux.ipfwd_name"),
             status=Status.PASS,
-            detail="runtime=1, persisted in /etc/sysctl.d",
+            detail=t("dx.linux.ipfwd_ok"),
         )
     if enabled and not persistent:
         return CheckResult(
-            name="IP forwarding (net.ipv4.ip_forward)",
+            name=t("dx.linux.ipfwd_name"),
             status=Status.WARN,
-            detail="runtime=1 but no /etc/sysctl.d/*.conf sets it — reverts on reboot.",
-            remediation=(
-                f"Persist with: echo 'net.ipv4.ip_forward=1' > {_LINUX_SYSCTL_DROP_IN} "
-                f"&& sysctl -p {_LINUX_SYSCTL_DROP_IN}."
-            ),
-            remediation_command=(
-                f"echo 'net.ipv4.ip_forward=1' > {_LINUX_SYSCTL_DROP_IN} && "
-                f"sysctl -p {_LINUX_SYSCTL_DROP_IN}"
-            ),
+            detail=t("dx.linux.ipfwd_volatile"),
+            remediation=t("dx.linux.ipfwd_volatile_fix", cmd=_IP_FORWARD_CMD),
+            remediation_command=_IP_FORWARD_CMD,
             fix_kind="auto",
             fix_callable=_ip_forward_fix,
         )
     return CheckResult(
-        name="IP forwarding (net.ipv4.ip_forward)",
+        name=t("dx.linux.ipfwd_name"),
         status=Status.FAIL,
         detail=f"runtime={runtime.stdout.strip() or '?'}, persistent={persistent}",
-        remediation=(
-            f"Enable and persist with: echo 'net.ipv4.ip_forward=1' > {_LINUX_SYSCTL_DROP_IN} "
-            f"&& sysctl -p {_LINUX_SYSCTL_DROP_IN}."
-        ),
-        remediation_command=(
-            f"echo 'net.ipv4.ip_forward=1' > {_LINUX_SYSCTL_DROP_IN} && "
-            f"sysctl -p {_LINUX_SYSCTL_DROP_IN}"
-        ),
+        remediation=t("dx.linux.ipfwd_off_fix", cmd=_IP_FORWARD_CMD),
+        remediation_command=_IP_FORWARD_CMD,
         fix_kind="auto",
         fix_callable=_ip_forward_fix,
     )
@@ -1172,10 +1084,10 @@ def check_linux_nat_masquerade(config: ServerConfig) -> CheckResult:
     proc = _run_linux(["iptables", "-t", "nat", "-S", "POSTROUTING"])
     if proc.returncode != 0:
         return CheckResult(
-            name="NAT MASQUERADE for WG subnet",
+            name=t("dx.linux.masq_name"),
             status=Status.FAIL,
-            detail=f"iptables query failed: {(proc.stderr or '').strip() or proc.returncode}",
-            remediation="Install iptables (apt install iptables) and re-run.",
+            detail=t("dx.linux.masq_query", error=(proc.stderr or "").strip() or proc.returncode),
+            remediation=t("dx.linux.masq_query_fix"),
             remediation_command="apt install iptables",
             fix_kind="interactive",
         )
@@ -1189,17 +1101,15 @@ def check_linux_nat_masquerade(config: ServerConfig) -> CheckResult:
     )
     if rule:
         return CheckResult(
-            name="NAT MASQUERADE for WG subnet",
+            name=t("dx.linux.masq_name"),
             status=Status.PASS,
             detail=rule.strip(),
         )
     return CheckResult(
-        name="NAT MASQUERADE for WG subnet",
+        name=t("dx.linux.masq_name"),
         status=Status.FAIL,
-        detail=f"No MASQUERADE rule covers {config.subnet}.",
-        remediation=(
-            "Re-apply the WG config (its PostUp adds the rule): outwarp-server restart."
-        ),
+        detail=t("dx.linux.masq_none", subnet=config.subnet),
+        remediation=t("dx.linux.masq_none_fix"),
         remediation_command="outwarp-server restart",
         fix_kind="auto",
         fix_callable=_masquerade_fix,
@@ -1210,17 +1120,15 @@ def check_linux_fail2ban(config: ServerConfig) -> CheckResult:
     """Optional hardening — fail2ban shields the public WSS port from brute force."""
     if shutil.which("fail2ban-client"):
         return CheckResult(
-            name="fail2ban present",
+            name=t("dx.linux.f2b_name"),
             status=Status.PASS,
-            detail="fail2ban-client on PATH",
+            detail=t("dx.linux.f2b_ok"),
         )
     return CheckResult(
-        name="fail2ban present",
+        name=t("dx.linux.f2b_name"),
         status=Status.WARN,
-        detail="fail2ban not installed.",
-        remediation=(
-            "Optional but recommended for public servers: apt install fail2ban."
-        ),
+        detail=t("dx.linux.f2b_none"),
+        remediation=t("dx.linux.f2b_fix"),
         remediation_command="apt install fail2ban",
         fix_kind="interactive",
     )
@@ -1240,38 +1148,38 @@ def check_linux_reverse_dns(config: ServerConfig) -> CheckResult:
         is_ip = False
     if is_ip:
         return CheckResult(
-            name="Reverse DNS",
+            name=t("dx.linux.rdns_name"),
             status=Status.SKIP,
-            detail=f"endpoint is an IP literal ({endpoint}) — rDNS check N/A.",
+            detail=t("dx.linux.rdns_ip", endpoint=endpoint),
         )
     try:
         public_ip = socket.gethostbyname(endpoint)
     except socket.gaierror as exc:
         return CheckResult(
-            name="Reverse DNS",
+            name=t("dx.linux.rdns_name"),
             status=Status.FAIL,
-            detail=f"Forward lookup of {endpoint} failed: {exc}",
+            detail=t("dx.linux.rdns_forward", endpoint=endpoint, error=exc),
         )
     try:
         rdns_name, _, _ = socket.gethostbyaddr(public_ip)
     except socket.herror as exc:
         return CheckResult(
-            name="Reverse DNS",
+            name=t("dx.linux.rdns_name"),
             status=Status.WARN,
-            detail=f"rDNS for {public_ip} not configured: {exc}",
-            remediation="Ask your hosting provider to set a PTR record. Not fatal.",
+            detail=t("dx.linux.rdns_none", ip=public_ip, error=exc),
+            remediation=t("dx.linux.rdns_none_fix"),
         )
     if endpoint.lower() == rdns_name.lower():
         return CheckResult(
-            name="Reverse DNS",
+            name=t("dx.linux.rdns_name"),
             status=Status.PASS,
             detail=f"{public_ip} → {rdns_name}",
         )
     return CheckResult(
-        name="Reverse DNS",
+        name=t("dx.linux.rdns_name"),
         status=Status.WARN,
         detail=f"{public_ip} → {rdns_name} ≠ {endpoint}",
-        remediation="Endpoint hostname does not match PTR record. Cosmetic only.",
+        remediation=t("dx.linux.rdns_mismatch_fix"),
     )
 
 
@@ -1328,7 +1236,7 @@ def run_all(config: ServerConfig) -> list[CheckResult]:
                 CheckResult(
                     name=check.key,
                     status=Status.FAIL,
-                    detail=f"Check crashed: {exc}",
+                    detail=t("dx.check_crashed", error=exc),
                 )
             )
     return results
