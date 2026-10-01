@@ -5,6 +5,7 @@ import contextlib
 import time
 from pathlib import Path
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
@@ -16,15 +17,17 @@ from outwarp.logs import default_log_path, tail_follow
 from outwarp.tui.tokens import BAD, DIM, WARN
 
 
-def _style_line(line: str) -> str:
+def _style_line(line: str) -> Text:
+    # A Text, not markup: log lines carry brackets ("[INFO]", "[/tmp/x]") that
+    # Rich would read as tags and either drop or raise MarkupError on.
     upper = line[:60].upper()
     if "[ERROR]" in upper or "ERROR " in upper or "[CRITICAL]" in upper:
-        return f"[{BAD}]{line}[/]"
+        return Text(line, style=BAD)
     if "[WARN" in upper or "WARN " in upper:
-        return f"[{WARN}]{line}[/]"
+        return Text(line, style=WARN)
     if "[INFO]" in upper:
-        return f"[#f4f5f7]{line}[/]"
-    return f"[{DIM}]{line}[/]"
+        return Text(line, style="#f4f5f7")
+    return Text(line, style=DIM)
 
 
 def _passes_level(line: str, level: str | None) -> bool:
@@ -180,7 +183,12 @@ class LogsScreen(Screen):
         if not lines:
             self.notify(tr("tui.logs.nothing_to_export"), severity="warning")
             return
-        path = Path.cwd() / f"outwarp-logs-{time.strftime('%Y%m%d-%H%M%S')}.txt"
+        stamp = time.strftime('%Y%m%d-%H%M%S')
+        path = Path.cwd() / f"outwarp-logs-{stamp}.txt"
+        n = 2
+        while path.exists():
+            path = Path.cwd() / f"outwarp-logs-{stamp}-{n}.txt"
+            n += 1
         try:
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         except OSError as exc:

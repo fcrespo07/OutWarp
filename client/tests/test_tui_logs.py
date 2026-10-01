@@ -44,3 +44,29 @@ async def test_export_saves_the_filtered_lines_and_clear_empties_the_view(
         app.screen.action_clear_view()
         await pilot.pause()
         assert app.screen._all_lines == []
+
+
+async def _bracket_tail(path, poll_interval=0.3):
+    for line in ("2026-10-01 10:00:00 [INFO] args=[/]", "2026-10-01 10:00:01 [ERROR] open [/tmp/sock] failed"):
+        yield line
+
+
+@pytest.mark.asyncio
+async def test_lines_with_brackets_survive_a_redraw_and_two_exports_keep_both(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setattr("outwarp.tui.screens.logs.tail_follow", _bracket_tail)
+    monkeypatch.chdir(tmp_path)
+    app = _Host()
+    async with app.run_test(size=(120, 30)) as pilot:
+        for _ in range(50):
+            await pilot.pause(0.1)
+            if len(app.screen._all_lines) == 2:
+                break
+        assert len(app.screen._all_lines) == 2
+        app.screen.action_toggle_errors()
+        await pilot.pause()
+        app.screen.action_export()
+        app.screen.action_export()
+        await pilot.pause()
+    assert len(list(tmp_path.glob("outwarp-logs-*.txt"))) == 2
