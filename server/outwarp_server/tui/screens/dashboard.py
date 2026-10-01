@@ -40,6 +40,7 @@ class DashboardScreen(Screen):
         ("d", "open_doctor", tr("tui.key.doctor")),
         ("l", "open_logs", tr("tui.key.logs")),
         ("r", "restart", tr("tui.dash.key_restart")),
+        ("p", "probe_port", tr("tui.dash.key_probe")),
         ("s", "settings", tr("tui.key.settings")),
         ("q", "quit", tr("tui.key.quit")),
         ("question_mark", "help", tr("tui.key.help")),
@@ -50,6 +51,26 @@ class DashboardScreen(Screen):
 
     def action_open_doctor(self) -> None:
         self.app.push_screen("doctor")
+
+    def action_probe_port(self) -> None:
+        cfg = self.app.config
+        self.notify(tr("tui.dash.probing", host=cfg.endpoint, port=cfg.port))
+        self.run_worker(self._probe_port, thread=True, exclusive=True, group="probe")
+
+    def _probe_port(self) -> None:
+        from outwarp_server import operations
+
+        res = operations.probe_external_port(self.app.config)
+        host, port = res["host"], res["port"]
+        if not res["ok"]:
+            msg = tr("tui.dash.probe_failed", error=res["detail"])
+            self.app.call_from_thread(self.notify, msg, severity="error")
+        elif res["reachable"]:
+            msg = tr("tui.dash.probe_open", host=host, port=port)
+            self.app.call_from_thread(self.notify, msg, severity="information")
+        else:
+            msg = tr("tui.dash.probe_closed", host=host, port=port)
+            self.app.call_from_thread(self.notify, msg, severity="warning")
 
     def action_settings(self) -> None:
         from outwarp_server.tui.modals.settings import SettingsModal

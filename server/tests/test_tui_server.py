@@ -156,3 +156,20 @@ async def test_settings_modal_saves_language(tmp_path: Path, monkeypatch) -> Non
         app.screen.query_one("#select-language", Select).value = "es"
         await pilot.pause()
     assert saved["language"] == "es"
+
+
+@pytest.mark.asyncio
+async def test_probe_port_reports_closed(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "outwarp_server.operations.probe_external_port",
+        lambda cfg: {"ok": True, "reachable": False, "detail": "", "host": "203.0.113.42",
+                     "port": 443},
+    )
+    app = OutWarpServerTUI(_write_config(tmp_path))
+    notes: list[str] = []
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        app.notify = lambda msg, **kw: notes.append(msg)  # type: ignore[method-assign]
+        await pilot.press("p")
+        await pilot.pause(0.5)
+    assert any("203.0.113.42:443" in n and "closed" in n for n in notes)

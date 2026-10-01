@@ -1371,24 +1371,10 @@ class Api:
         """
         if self._manager is None:
             return {"ok": False, "reachable": False, "detail": "server not configured"}
-        cfg = self._manager.config
-        port = cfg.port
-        host = cfg.endpoint
-        try:
-            req = urllib.request.Request(
-                f"https://ifconfig.co/port/{port}",
-                headers={"Accept": "application/json", "User-Agent": "outwarp-server"},
-            )
-            with urllib.request.urlopen(req, timeout=8) as r:
-                body = json.loads(r.read().decode("utf-8", "replace"))
-            reachable = bool(body.get("reachable"))
-            return {
-                "ok": True,
-                "reachable": reachable,
-                "detail": f"{host}:{port} → {'reachable' if reachable else 'closed/blocked'}",
-            }
-        except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError) as exc:
-            return {"ok": False, "reachable": False, "detail": str(exc)}
+        from outwarp_server import operations
+
+        res = operations.probe_external_port(self._manager.config)
+        return {k: res[k] for k in ("ok", "reachable", "detail")}
 
     # ── logs ─────────────────────────────────────────────────────────────────
 

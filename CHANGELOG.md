@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   setting and the server TUI did not (only `OUTWARP_LANG`). `s` opens Settings
   with the same choice (automatic, English, Español), saved to the setting the
   other interfaces share.
+- **Server TUI: test the port from the internet.** `p` on the dashboard asks a
+  third-party host to connect back to the WSS port and says whether it is
+  reachable (the GUI and the panel already could). The check lives in
+  `operations.probe_external_port`, which the GUI now calls too.
 
 ## [0.19.0] — 2026-09-30
 

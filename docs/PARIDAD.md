@@ -37,7 +37,7 @@ congela en 1.0**: esos huecos necesitan decisión del autor.
 | Doctor y arreglos automáticos | sí | sí | sí | `doctor` (sin arreglos) |
 | Historial de tráfico | sí | sí | resumen 24 h | no |
 | Renovar el certificado TLS | sí | sí | **no** | `renew-cert` |
-| Probar el puerto desde fuera | sí | sí | **no** | **no** |
+| Probar el puerto desde fuera | sí | sí | sí (`p`) | no |
 | Editar la configuración del servidor | sí | sí | no | no (solo `setup`) |
 | Idioma | sí | sí | sí (`s`, PR del TUI servidor) | `OUTWARP_LANG` |
 | Token de admin | n/a | n/a | n/a | `admin-token` |
@@ -46,13 +46,13 @@ congela en 1.0**: esos huecos necesitan decisión del autor.
 
 - Textos fijos en inglés de la CLI, el wizard, el doctor y las dos TUIs: ya van por i18n.
 - TUI del cliente: ruta, servidor, WG y kill switch en el estado, selector de idioma.
-- TUI del servidor: selector de idioma (`s`), etiquetas traducidas y alineadas.
+- TUI del servidor: selector de idioma (`s`), probar el puerto (`p`), etiquetas traducidas y alineadas.
 
 ## Huecos abiertos (decisión del autor)
 
 Tocan la CLI congelada o son pantallas nuevas; ninguno bloquea 1.0.
 
-1. **CLI sin ajustes** (`outwarp settings get|set`, idioma y kill switch): ensancha la CLI. Hoy el idioma solo cambia desde GUI/TUI o con `OUTWARP_LANG`.
-2. **Servidor sin parar/arrancar en CLI y TUI**, y **sin probar el puerto en TUI**: lo segundo se puede hacer sin tocar la CLI; lo primero no.
+1. **CLI sin ajustes** (`outwarp settings get|set`, idioma y kill switch): ensancha la CLI. Descartado el 2026-10-01, queda para 1.x; hoy el idioma solo cambia desde GUI/TUI o con `OUTWARP_LANG`.
+2. **Servidor sin parar/arrancar en CLI y TUI**: toca la CLI congelada. Descartado el 2026-10-01 (decisión del autor: sin ampliar la CLI antes de 1.0); queda para 1.x.
 3. **Doctor en la GUI del cliente** y **actualizar desde la TUI del cliente**: pantallas nuevas, sin congelar nada.
 4. **Exportar y vaciar el registro en la TUI**: pequeño, sin congelar nada.

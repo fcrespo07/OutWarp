@@ -504,4 +504,10 @@ STRINGS: dict[str, str] = {
     "tui.set.language_hint": "Used by this terminal interface, the admin window and the command line. Takes effect the next time you open it.",
     "tui.set.language_auto": "Automatic (system language)",
     "tui.set.language_saved": "Language saved. It applies the next time you open the interface.",
+    "tui.dash.key_probe": "Test port",
+    "tui.help.probe": "Test the port from the internet",
+    "tui.dash.probing": "Checking {host}:{port} from the internet...",
+    "tui.dash.probe_open": "{host}:{port} is reachable from the internet.",
+    "tui.dash.probe_closed": "{host}:{port} is closed or blocked. Open it in the firewall (or the router) and try again.",
+    "tui.dash.probe_failed": "Could not run the check: {error}",
 }
