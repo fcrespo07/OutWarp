@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import contextlib
 
+from rich.markup import escape
 from textual.containers import Container
 from textual.widgets import Static
 
 from outwarp.config import ClientConfig
 from outwarp.i18n import t as tr
+from outwarp.tui.widgets.rows import kv, label_width
 
 
 def _truncate(s: str, max_len: int = 24) -> str:
@@ -14,6 +16,12 @@ def _truncate(s: str, max_len: int = 24) -> str:
         return s
     half = (max_len - 1) // 2
     return f"{s[:half]}…{s[-half:]}"
+
+
+_LABELS = (
+    "tui.tunnel.iface", "tui.tunnel.peer", "tui.tunnel.remote", "tui.tunnel.mtu",
+    "tui.tunnel.dns",
+)
 
 
 class TunnelCard(Container):
@@ -31,32 +39,30 @@ class TunnelCard(Container):
         self._config = config
 
     def compose(self):
-        wg = self._config.wireguard
-        tn = self._config.tunnel
         yield Static(tr("tui.card.tunnel"), classes="card-title")
-        yield Static(f"iface   {wg.tunnel_name}", id="tc-iface", classes="value")
-        yield Static(f"peer    {_truncate(wg.server_public_key)}", id="tc-peer", classes="value")
-        yield Static(f"remote  {tn.remote_host}:{tn.remote_port}", id="tc-remote", classes="value")
-        yield Static(f"mtu     {wg.mtu}", id="tc-mtu", classes="value")
-        yield Static(f"dns     {', '.join(wg.dns)}", id="tc-dns", classes="value")
+        for widget_id, key, value in self._rows(self._config):
+            yield Static(self._row(key, value), id=widget_id)
+
+    @staticmethod
+    def _rows(config: ClientConfig) -> list[tuple[str, str, str]]:
+        wg, tn = config.wireguard, config.tunnel
+        return [
+            ("tc-iface", "tui.tunnel.iface", wg.tunnel_name),
+            ("tc-peer", "tui.tunnel.peer", _truncate(wg.server_public_key)),
+            ("tc-remote", "tui.tunnel.remote", f"{tn.remote_host}:{tn.remote_port}"),
+            ("tc-mtu", "tui.tunnel.mtu", str(wg.mtu)),
+            ("tc-dns", "tui.tunnel.dns", ", ".join(wg.dns)),
+        ]
+
+    @staticmethod
+    def _row(key: str, value: str) -> str:
+        labels = [tr(k) for k in _LABELS]
+        return kv(tr(key), f"[bold]{escape(value)}[/]", label_width(labels))
 
     def update_config(self, config: ClientConfig) -> None:
-        """Repaint the card's values from a (possibly edited) config.
-
-        Called by DashboardScreen.on_screen_resume after the profile editor
-        saves and start_manager() re-routes back to the dashboard — without
-        this, the cached Static widgets keep the values from initial compose.
-        """
+        """Repaint after a profile edit: the dashboard screen is composed once
+        and reused, so the cards would otherwise keep the first values."""
         self._config = config
-        wg = config.wireguard
-        tn = config.tunnel
-        # Card may not be mounted yet — in that case compose() will pick up
-        # the fresh _config on first mount, so silently skipping is correct.
-        with contextlib.suppress(Exception):
-            self.query_one("#tc-iface", Static).update(f"iface   {wg.tunnel_name}")
-            peer = _truncate(wg.server_public_key)
-            self.query_one("#tc-peer", Static).update(f"peer    {peer}")
-            remote = f"{tn.remote_host}:{tn.remote_port}"
-            self.query_one("#tc-remote", Static).update(f"remote  {remote}")
-            self.query_one("#tc-mtu", Static).update(f"mtu     {wg.mtu}")
-            self.query_one("#tc-dns", Static).update(f"dns     {', '.join(wg.dns)}")
+        for widget_id, key, value in self._rows(config):
+            with contextlib.suppress(Exception):
+                self.query_one(f"#{widget_id}", Static).update(self._row(key, value))

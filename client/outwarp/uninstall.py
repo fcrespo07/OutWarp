@@ -27,33 +27,35 @@ import shutil
 import sys
 from pathlib import Path
 
+from outwarp.i18n import t
+
 
 def _require_admin() -> None:
     if sys.platform == "win32":
         import ctypes
         if not ctypes.windll.shell32.IsUserAnAdmin():
-            print("Error: run this command from an elevated (Administrator) prompt.")
-            print("  Right-click PowerShell → 'Run as administrator', then:")
+            print(t("uninst.need_admin"))
+            print(t("uninst.need_admin_how"))
             print("  outwarp uninstall")
             raise SystemExit(1)
     else:
         if os.geteuid() != 0:
-            print("Error: run with sudo.")
+            print(t("uninst.need_sudo"))
             print("  sudo outwarp uninstall")
             raise SystemExit(1)
 
 
 def _confirm(yes: bool) -> None:
     print()
-    print("This will permanently remove:")
+    print(t("uninst.will_remove"))
     for line in _what_gets_removed():
         print(f"  • {line}")
     print()
     if yes:
         return
-    answer = input("Type 'yes' to confirm: ").strip().lower()
+    answer = input(t("uninst.confirm")).strip().lower()
     if answer != "yes":
-        print("Aborted.")
+        print(t("uninst.aborted"))
         raise SystemExit(0)
     print()
 
@@ -61,22 +63,22 @@ def _confirm(yes: bool) -> None:
 def _what_gets_removed() -> list[str]:
     items: list[str] = []
     for prefix in _client_prefixes():
-        items.append(f"Install directory: {prefix}")
+        items.append(t("uninst.item.prefix", path=prefix))
     for shim in _client_shims():
-        items.append(f"Binary: {shim}")
+        items.append(t("uninst.item.binary", path=shim))
     for path in _extra_artifacts():
-        items.append(f"File: {path}")
+        items.append(t("uninst.item.file", path=path))
     config = _config_dir()
     startup = _startup_shortcut()
     desktop = _desktop_shortcut()
     if config and config.exists():
-        items.append(f"Config and logs: {config}")
+        items.append(t("uninst.item.config", path=config))
     if startup and startup.exists():
-        items.append(f"Startup shortcut: {startup}")
+        items.append(t("uninst.item.startup", path=startup))
     if desktop and desktop.exists():
-        items.append(f"Desktop shortcut: {desktop}")
+        items.append(t("uninst.item.desktop", path=desktop))
     if not items:
-        items.append("(nothing detected — already uninstalled?)")
+        items.append(t("uninst.item.nothing"))
     return items
 
 
@@ -295,10 +297,10 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="outwarp uninstall",
-        description="Remove all OutWarp client files installed by the official installer.",
+        description=t("uninst.help.description"),
     )
     parser.add_argument(
-        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+        "--yes", "-y", action="store_true", help=t("uninst.help.yes")
     )
     args = parser.parse_args(argv)
 
@@ -311,9 +313,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {label}...", end=" ", flush=True)
         try:
             fn()
-            print("done")
+            print(t("uninst.done"))
         except Exception as exc:
-            print(f"warning: {exc}")
+            print(t("uninst.warning", error=exc))
             warnings.append(f"{label}: {exc}")
 
     # Release the kill switch and tear down the WireGuard tunnel *before*
@@ -325,11 +327,11 @@ def main(argv: list[str] | None = None) -> int:
     # way back (FIX-06b).
     from outwarp.platforms import get_platform
     plat = get_platform()
-    step("Releasing kill switch", plat.release_kill_switch)
+    step(t("uninst.step.kill_switch"), plat.release_kill_switch)
     tunnel_name = _tunnel_name_from_config()
     if tunnel_name:
         step(
-            f"Tearing down WireGuard tunnel '{tunnel_name}'",
+            t("uninst.step.tunnel", name=tunnel_name),
             lambda: plat.uninstall_wg_tunnel(tunnel_name),
         )
 
@@ -343,16 +345,16 @@ def main(argv: list[str] | None = None) -> int:
     extras = _extra_artifacts()
 
     if config and config.exists():
-        step(f"Removing config/logs ({config})", lambda: shutil.rmtree(config))
+        step(t("uninst.step.config", path=config), lambda: shutil.rmtree(config))
 
     if startup and startup.exists():
-        step("Removing startup shortcut", startup.unlink)
+        step(t("uninst.step.startup"), startup.unlink)
 
     if desktop and desktop.exists():
-        step("Removing desktop shortcut", desktop.unlink)
+        step(t("uninst.step.desktop"), desktop.unlink)
 
     for extra in extras:
-        step(f"Removing {extra}", extra.unlink)
+        step(t("uninst.step.extra", path=extra), extra.unlink)
 
     # The venv prefixes and shims live in the tree we're running from, so they
     # have to wait until this process exits — a detached script does the work.
@@ -363,23 +365,20 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 _spawn_deferred_cleanup_posix(prefixes, shims)
             removed = ", ".join(str(p) for p in prefixes + shims)
-            print(f"  Scheduled removal of {removed} after exit... done")
+            print(t("uninst.scheduled", paths=removed))
         except Exception as exc:
-            warnings.append(f"deferred cleanup: {exc}")
-            print(f"  Scheduling deferred cleanup... warning: {exc}")
+            warnings.append(f"{t('uninst.deferred_label')}: {exc}")
+            print(t("uninst.scheduling_failed", error=exc))
     else:
         for shim in shims:
-            step(f"Removing binary ({shim})", shim.unlink)
+            step(t("uninst.step.binary", path=shim), shim.unlink)
 
     print()
     if warnings:
-        print(f"Uninstall completed with {len(warnings)} warning(s) — see above.")
+        print(t("uninst.finished_warnings", count=len(warnings)))
         return 1
 
-    print("OutWarp client uninstalled successfully.")
+    print(t("uninst.success"))
     if sys.platform == "win32":
-        print(
-            "You can also remove WireGuard for Windows from Add/Remove Programs "
-            "if no longer needed.",
-        )
+        print(t("uninst.wireguard_note"))
     return 0

@@ -24,6 +24,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
+from outwarp.i18n import t
 from outwarp.settings import load_settings, save_settings
 
 log = logging.getLogger(__name__)
@@ -198,27 +199,26 @@ def install_gui(
     self-explanatory.
     """
     if sys.platform != "linux":
-        echo("The GUI is always bundled on this platform.")
+        echo(t("guiinst.always"))
         return 0
     if not venv_writable():
-        echo(f"This venv ({sys.prefix}) is not writable — run: {INSTALL_HINT}")
+        echo(t("guiinst.not_writable", prefix=sys.prefix, hint=INSTALL_HINT))
         return 2
     sys_cmd = system_gui_install_command()
     if sys_cmd is None:
-        echo("Unsupported package manager: install GTK3 + WebKit2GTK GObject "
-             "bindings and an AppIndicator library by hand, then re-run.")
+        echo(t("guiinst.unsupported_pm"))
         return 2
-    echo("Installing system packages: " + " ".join(sys_cmd))
+    echo(t("guiinst.system_pkgs", cmd=" ".join(sys_cmd)))
     if run(sys_cmd, check=False).returncode != 0:
-        echo("System package install failed — see the package manager output above.")
+        echo(t("guiinst.system_failed"))
         return 1
     if enable_system_site_packages():
-        echo(f"Enabled system site-packages in {sys.prefix} (for the GObject bindings).")
+        echo(t("guiinst.site_packages", prefix=sys.prefix))
     pip_cmd = [sys.executable, "-m", "pip", "install", "--quiet",
                "--disable-pip-version-check", *gui_extra_requirements()]
-    echo("Installing into the venv: " + " ".join(pip_cmd[4:]))
+    echo(t("guiinst.pip", cmd=" ".join(pip_cmd[4:])))
     if run(pip_cmd, check=False).returncode != 0:
-        echo("pip install failed.")
+        echo(t("guiinst.pip_failed"))
         return 1
     # This interpreter already resolved its sys.path; re-check in a child so
     # the freshly enabled system site-packages are visible.
@@ -229,9 +229,9 @@ def install_gui(
         check=False,
     )
     if getattr(probe, "returncode", 1) != 0:
-        echo("Installed, but the GUI still cannot start — run `outwarp doctor` for details.")
+        echo(t("guiinst.still_broken"))
         return 1
-    echo("GUI ready. Open it with `outwarp gui`; `outwarp ui gui` makes it the default.")
+    echo(t("guiinst.ready"))
     return 0
 
 

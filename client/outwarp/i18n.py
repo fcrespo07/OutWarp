@@ -17,6 +17,8 @@ import sys
 import unicodedata
 
 LANGS = ("en", "es")
+# Each language in its own words, for pickers.
+LANG_NAMES = {"en": "English", "es": "Español"}
 FALLBACK_LANG = "en"
 
 _ui_lang: str | None = None
