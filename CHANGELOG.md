@@ -8,11 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Client TUI logs: export and clear the view.** `x` saves the lines the
+  filters show to `outwarp-logs-<date>.txt` in the current directory and `c`
+  empties the screen, like the GUI's export and clear (the log file itself is
+  never touched).
+
 ### Fixed
 - **Server enrolment: a rate-limited or oversized request got "connection
   aborted" instead of the answer** (B-049). The listener replied before reading
   the request body; it now reads and discards it first, so the client sees the
   429 or 400.
+- **Client TUI: the logs screen showed nothing with recent Textual versions.**
+  It passed `markup=` to `RichLog.write()`, which newer Textual no longer
+  accepts (markup is a property of the widget, already on), so every line
+  raised and was dropped. It also broke the filters.
 
 ### Changed
 - **Client TUI: the dashboard says what the GUI says.** The connection card
