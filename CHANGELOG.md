@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raised and was dropped. It also broke the filters.
 
 ### Changed
+- **Client: Settings regrouped.** Appearance (language, theme), Connection
+  (connect on launch, reconnect if it drops), Security (kill switch, allow
+  TLS-intercepting networks), Startup and window, Updates, and Advanced
+  (advanced mode, terminal UI and background service on Linux). Updates moved
+  down, "advanced mode" moved out of Appearance, the technical subtitle became
+  "Changes apply right away.", and a few labels were reworded (es/en). No
+  setting or `settings.json` key changed.
 - **Client TUI: the dashboard says what the GUI says.** The connection card
   now shows the profile, the route the connection took (direct, public DNS,
   proxy, alternate port: the same wording as the window) and whether the kill

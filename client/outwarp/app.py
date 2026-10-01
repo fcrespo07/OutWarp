@@ -245,7 +245,7 @@ def main() -> int:
                 "minimize_to_tray=on — starting with the window hidden. "
                 "Look for the OutWarp icon in the system tray (it may be in "
                 "the hidden-icons flyout) and click it to open the window. "
-                "Turn this off in Settings → System → Minimize to system tray."
+                "Turn this off in Settings → Startup and window → Start in the tray."
             )
 
         window = webview.create_window(
