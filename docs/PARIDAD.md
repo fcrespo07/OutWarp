@@ -21,9 +21,9 @@ congela en 1.0**: esos huecos necesitan decisión del autor.
 | Ruta usada, servidor, WG, kill switch en el estado | sí | sí (PR del TUI cliente) | no (`status` no ve el túnel de otro proceso) |
 | Ajustes (kill switch, idioma, servicio, UI) | sí | sí (`s`) | **no** |
 | Registro: ver, filtrar | sí | sí | `logs` |
-| Registro: exportar y vaciar | sí | no | no |
-| Doctor | **no** | sí | `doctor` |
-| Buscar e instalar actualización | sí | **no** | `update` |
+| Registro: exportar y vaciar | sí | sí (`x`, `c`) | no |
+| Doctor | sí (Acerca de) | sí | `doctor` |
+| Buscar e instalar actualización | sí | busca (`u`) | `update` |
 | Servicio en segundo plano | sí | sí (ajustes) | `service` |
 
 ## Servidor
@@ -54,5 +54,5 @@ Tocan la CLI congelada o son pantallas nuevas; ninguno bloquea 1.0.
 
 1. **CLI sin ajustes** (`outwarp settings get|set`, idioma y kill switch): ensancha la CLI. Descartado el 2026-10-01, queda para 1.x; hoy el idioma solo cambia desde GUI/TUI o con `OUTWARP_LANG`.
 2. **Servidor sin parar/arrancar en CLI y TUI**: toca la CLI congelada. Descartado el 2026-10-01 (decisión del autor: sin ampliar la CLI antes de 1.0); queda para 1.x.
-3. **Doctor en la GUI del cliente** y **actualizar desde la TUI del cliente**: pantallas nuevas, sin congelar nada.
-4. **Exportar y vaciar el registro en la TUI**: pequeño, sin congelar nada.
+
+Los huecos 3 y 4 de la lista anterior (doctor en la GUI del cliente, actualizar y exportar el registro desde la TUI) se cerraron el 2026-10-01.

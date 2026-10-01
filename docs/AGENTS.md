@@ -49,7 +49,7 @@ Complemento de `CLAUDE.md`. `CLAUDE.md` dice **qué** es OutWarp y qué decision
 
    *Hecho 2026-10-01 (rama por bloque, PR #10–#14 y el de la matriz): textos de la CLI, wizard y doctor en i18n; las dos TUIs sin inglés suelto, con selector de idioma y la TUI del cliente con ruta/kill switch. La matriz de paridad y sus huecos abiertos están en `docs/PARIDAD.md`; los que ensanchan la CLI esperan decisión del autor.*
 
-   **Textos congelados el 2026-10-01** (decisión del autor, sin ampliar la CLI): no reescribir textos existentes sin consultar; añadir nuevos con clave en en/es es libre. Huecos pendientes de `docs/PARIDAD.md` que no tocan la CLI: registro exportar/vaciar en la TUI del cliente, doctor en la GUI del cliente y actualizar desde la TUI del cliente.
+   **Textos congelados el 2026-10-01** (decisión del autor, sin ampliar la CLI): no reescribir textos existentes sin consultar; añadir nuevos con clave en en/es es libre. Los huecos de `docs/PARIDAD.md` que no tocan la CLI están cerrados (PR #15 a #17).
 
    Terminaba con la **congelación de textos**, que es condición para empezar las traducciones.
 4. **Pruebas que hace el autor (👤), sin cerrar aún**:
