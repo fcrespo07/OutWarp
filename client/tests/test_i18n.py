@@ -34,7 +34,10 @@ def test_every_key_the_code_uses_exists() -> None:
         used |= set(re.findall(r"""\b(?:tr|t)\(\s*["']([a-z_]+\.[a-z0-9_.]+)["']""",
                                path.read_text(encoding="utf-8")))
         # Keys kept in tables and passed to tr() later.
-        used |= set(re.findall(r'"(tui\.[a-z_]+\.[a-z0-9_]+)"', path.read_text(encoding="utf-8")))
+        used |= set(re.findall(
+            r'"((?:tui|cli|svc|guiinst|uninst|dx)\.[a-z_]+\.[a-z0-9_]+|cli\.[a-z0-9_]+)"',
+            path.read_text(encoding="utf-8"),
+        ))
     missing = sorted(k for k in used if k not in i18n.CATALOG["en"])
     assert not missing
 

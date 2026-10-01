@@ -302,16 +302,16 @@ def service_supported() -> tuple[bool, str]:
     after the unit file had already been written.
     """
     if sys.platform != "linux":
-        return False, "Background service is only supported on Linux (systemd)."
+        return False, t("svc.only_linux")
     if shutil.which("systemctl") is None:
-        return False, "systemctl not found — only systemd-based distros are supported."
+        return False, t("svc.no_systemctl_distro")
     if hasattr(os, "geteuid") and os.geteuid() == 0:
-        return False, "Run this as your desktop user, not root: the service is a user unit."
+        return False, t("svc.not_root")
     res = _systemctl("is-system-running")
     if res.returncode != 0 and "offline" in (res.stdout + res.stderr):
-        return False, "No systemd user session (no user bus) — log in to a session first."
+        return False, t("svc.no_user_session")
     if res.returncode != 0 and "Failed to connect" in (res.stdout + res.stderr):
-        return False, "No systemd user session (no user bus) — log in to a session first."
+        return False, t("svc.no_user_session")
     return True, ""
 
 
@@ -332,8 +332,7 @@ def install_service(*, echo: Callable[[str], None] = print) -> int:
         echo(why)
         return 2
     if not default_config_path().exists():
-        echo("No profile imported — import a .owcfg first, or the service will "
-             "have nothing to start.")
+        echo(t("svc.no_profile"))
         return 2
 
     unit_dir = _user_unit_dir()
@@ -342,24 +341,23 @@ def install_service(*, echo: Callable[[str], None] = print) -> int:
 
     exe_path = _resolve_daemon_executable()
     unit_path.write_text(_unit_content(exe_path), encoding="utf-8")
-    echo(f"Wrote {unit_path}")
+    echo(t("svc.wrote", path=unit_path))
     echo(f"  ExecStart={exe_path.as_posix()} daemon")
 
     for step in (("daemon-reload",), ("enable", "--now", SERVICE_NAME)):
         res = _systemctl(*step)
         if res.returncode != 0:
             detail = ((res.stderr.strip() or res.stdout.strip()).splitlines() or [""])[-1]
-            echo(f"systemctl --user {' '.join(step)} failed: {detail}")
+            echo(t("svc.step_failed", step=" ".join(step), detail=detail))
             return res.returncode or 1
 
-    echo(f"Service enabled. Check status with: systemctl --user status {SERVICE_NAME}")
+    echo(t("svc.enabled", name=SERVICE_NAME))
 
     ok, hint = set_linger(True)
     if ok:
-        echo("Linger enabled — service will start at boot before login.")
+        echo(t("svc.linger_on"))
     else:
-        echo("To start before login, run once as root: "
-             f"sudo loginctl enable-linger {_current_user()}")
+        echo(t("svc.linger_hint", user=_current_user()))
     return 0
 
 
@@ -367,10 +365,10 @@ def uninstall_service(*, echo: Callable[[str], None] = print) -> int:
     """Stop + disable + remove the unit. Best-effort: continues past
     failures so a half-installed state can still be cleaned."""
     if sys.platform != "linux":
-        echo("Service uninstall is only supported on Linux.")
+        echo(t("svc.uninstall_only_linux"))
         return 2
     if shutil.which("systemctl") is None:
-        echo("systemctl not found — nothing to uninstall.")
+        echo(t("svc.uninstall_no_systemctl"))
         return 0
 
     # Tolerate "unit not found" exits — we still want to delete the file.
@@ -379,13 +377,13 @@ def uninstall_service(*, echo: Callable[[str], None] = print) -> int:
     unit_path = _user_unit_dir() / SERVICE_NAME
     if unit_path.exists():
         unit_path.unlink()
-        echo(f"Removed {unit_path}")
+        echo(t("svc.removed", path=unit_path))
     else:
-        echo(f"No unit file at {unit_path}")
+        echo(t("svc.no_unit", path=unit_path))
 
     _systemctl("daemon-reload")
     _systemctl("reset-failed", SERVICE_NAME)
-    echo("Service uninstalled.")
+    echo(t("svc.uninstalled"))
     return 0
 
 
@@ -393,18 +391,15 @@ def service_status() -> int:
     """Pass through ``systemctl --user status``. Returns systemctl's own
     exit code so the caller's shell sees the canonical 0/3/4 codes."""
     if sys.platform != "linux":
-        print("Service status is only supported on Linux.", file=sys.stderr)
+        print(t("svc.status_only_linux"), file=sys.stderr)
         return 2
     if shutil.which("systemctl") is None:
-        print("systemctl not found.", file=sys.stderr)
+        print(t("svc.status_no_systemctl"), file=sys.stderr)
         return 2
 
     if unit_uses_legacy_name():
-        print(
-            f"note: {SERVICE_NAME} still runs the deprecated `{LEGACY_CLI_NAME}`; "
-            "run `outwarp service install` to migrate it.",
-            file=sys.stderr,
-        )
+        print(t("svc.legacy_note", name=SERVICE_NAME, legacy=LEGACY_CLI_NAME),
+              file=sys.stderr)
     # Use call (not run) so the output streams to the terminal in real
     # time — matches the UX of a direct ``systemctl --user status`` call.
     return subprocess.call(

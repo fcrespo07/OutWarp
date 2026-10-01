@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Client TUI: the dashboard says what the GUI says.** The connection card
+  now shows the profile, the route the connection took (direct, public DNS,
+  proxy, alternate port: the same wording as the window) and whether the kill
+  switch is on, and it fits a 24-row terminal better: one line per fact instead
+  of a title plus a value. The header shows the version. The command palette
+  (`^p`, English-only and unused) is gone from the footer. Settings gains a
+  language picker (it was only reachable from the window), and its status line
+  and the "Connecting…" / "attempt N" texts, which were still English, follow
+  the language.
+- **Client CLI: every message follows the interface language.** `outwarp`'s
+  output (`import`, `connect`, `status`, `profile`, `logs`, `update`, `ui`,
+  `service`, `uninstall`, `gui --install`), its `--help` texts and the whole
+  of `outwarp doctor` (check names, details and remediation hints) were fixed
+  English; they now go through the same tables as the tray and the TUI
+  (English and Spanish, `OUTWARP_LANG` or the `language` setting decide).
+  Commands to copy and paste stay literal. argparse's own words (`usage:`,
+  `options:`, `-h`) are still the standard library's.
 - **Server CLI and `setup` wizard: every message follows the interface
   language.** `outwarp-server`'s output (`add-client`, `list-clients`,
   `rotate-client`, `renew-cert`, `restart`, `status`, `uninstall`, `update`,
