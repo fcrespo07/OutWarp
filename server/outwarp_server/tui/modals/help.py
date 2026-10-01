@@ -20,6 +20,8 @@ _SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("d", "tui.key.doctor"),
         ("l", "tui.key.logs"),
         ("r", "tui.help.restart"),
+        ("p", "tui.help.probe"),
+        ("s", "tui.help.settings"),
     ]),
     ("tui.help.clients", [
         ("/", "tui.key.search"),

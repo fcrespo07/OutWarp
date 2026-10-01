@@ -123,3 +123,69 @@ async def test_doctor_fix_kind_applied(tmp_path: Path) -> None:
         assert isinstance(screen, DoctorScreen)
         # Sanity: doctor populated SOME results (the common 4 should always show).
         assert len(screen._results) >= 1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_cards_follow_language(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OUTWARP_LANG", "es")
+    app = OutWarpServerTUI(_write_config(tmp_path))
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        texts = " ".join(str(w.render()) for w in app.screen.query("Static"))
+    assert "huella" in texts
+    assert "subred wg" in texts
+    assert "fingerprint" not in texts
+    assert app.ENABLE_COMMAND_PALETTE is False
+
+
+@pytest.mark.asyncio
+async def test_settings_modal_saves_language(tmp_path: Path, monkeypatch) -> None:
+    from textual.widgets import Select
+
+    from outwarp_server.tui.modals.settings import SettingsModal
+
+    saved: dict = {}
+    monkeypatch.setattr("outwarp_server.api._load_settings", lambda: {"language": "auto"})
+    monkeypatch.setattr("outwarp_server.api._save_settings", lambda s: saved.update(s))
+    app = OutWarpServerTUI(_write_config(tmp_path))
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert isinstance(app.screen, SettingsModal)
+        app.screen.query_one("#select-language", Select).value = "es"
+        await pilot.pause()
+    assert saved["language"] == "es"
+
+
+@pytest.mark.asyncio
+async def test_settings_modal_opens_with_an_unknown_language(tmp_path: Path, monkeypatch) -> None:
+    from textual.widgets import Select
+
+    from outwarp_server.tui.modals.settings import SettingsModal
+
+    monkeypatch.setattr("outwarp_server.api._load_settings", lambda: {"language": "fr"})
+    app = OutWarpServerTUI(_write_config(tmp_path))
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert isinstance(app.screen, SettingsModal)
+        assert app.screen.query_one("#select-language", Select).value == "auto"
+
+
+@pytest.mark.asyncio
+async def test_probe_port_reports_closed(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "outwarp_server.operations.probe_external_port",
+        lambda cfg: {"ok": True, "reachable": False, "detail": "", "host": "203.0.113.42",
+                     "port": 443},
+    )
+    app = OutWarpServerTUI(_write_config(tmp_path))
+    notes: list[str] = []
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        app.notify = lambda msg, **kw: notes.append(msg)  # type: ignore[method-assign]
+        await pilot.press("p")
+        await pilot.pause(0.5)
+    assert any("203.0.113.42:443" in n and "closed" in n for n in notes)

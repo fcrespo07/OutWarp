@@ -6,6 +6,8 @@ from textual.containers import Container
 from textual.widgets import Static
 
 from outwarp_server.config import ServerConfig
+from outwarp_server.i18n import cell_width, pad
+from outwarp_server.i18n import t as tr
 
 
 def _short_fp(fp: str) -> str:
@@ -38,6 +40,8 @@ class TlsCard(Container):
     def compose(self):
         c = self._config
         yield Static("TLS", classes="card-title")
-        yield Static(f"fingerprint  {_short_fp(c.cert_fingerprint_sha256)}", classes="value")
-        expiry = _cert_expiry(c.cert_path) or "unknown"
-        yield Static(f"expires      {expiry}", classes="value")
+        labels = [tr("tui.tls.fingerprint"), tr("tui.tls.expires")]
+        w = max(cell_width(x) for x in labels) + 2
+        yield Static(f"{pad(labels[0], w)}{_short_fp(c.cert_fingerprint_sha256)}", classes="value")
+        expiry = _cert_expiry(c.cert_path) or tr("tui.tls.unknown")
+        yield Static(f"{pad(labels[1], w)}{expiry}", classes="value")

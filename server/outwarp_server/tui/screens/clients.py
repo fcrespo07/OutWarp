@@ -55,7 +55,7 @@ class ClientsScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with Container(id="clients-shell"):
-            yield Input(placeholder="search...", id="search")
+            yield Input(placeholder=tr("tui.clients.search_ph"), id="search")
             yield DataTable(id="table", cursor_type="row")
         yield Footer()
 

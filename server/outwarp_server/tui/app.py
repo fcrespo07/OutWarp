@@ -8,6 +8,7 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
+from outwarp_server import __version__
 from outwarp_server.config import ConfigError, ServerConfig
 from outwarp_server.i18n import t as tr
 from outwarp_server.traffic_history import TrafficHistory
@@ -44,6 +45,10 @@ class _NoConfigScreen(Screen):
 class OutWarpServerTUI(App):
     CSS_PATH = "styles.tcss"
     TITLE = "OutWarp · server"
+    SUB_TITLE = f"v{__version__}"
+    # The palette's own chrome ("^p palette") is English-only and every action
+    # has a visible key.
+    ENABLE_COMMAND_PALETTE = False
     SCREENS = {
         "dashboard": DashboardScreen,
         "clients": ClientsScreen,

@@ -30,7 +30,7 @@ def test_every_key_the_code_uses_exists() -> None:
             continue
         text = path.read_text(encoding="utf-8")
         used |= set(re.findall(r"""\b(?:tr|t)\(\s*["']([a-z_]+\.[a-z0-9_.]+)["']""", text))
-        used |= set(re.findall(r'"((?:tui|tray)\.[a-z_]+\.?[a-z0-9_]*)"', text))
+        used |= set(re.findall(r'"((?:tui|tray|sv|wz|dx)\.[a-z_]+\.?[a-z0-9_]*)"', text))
     assert used
     assert sorted(k for k in used if k not in i18n.CATALOG["en"]) == []
 

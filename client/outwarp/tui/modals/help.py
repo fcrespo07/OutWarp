@@ -31,6 +31,8 @@ _SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("e", "tui.help.errors"),
         ("w", "tui.help.warnings"),
         ("p", "tui.help.pause"),
+        ("x", "tui.help.export"),
+        ("c", "tui.help.clear_view"),
         ("g", "tui.help.top"),
         ("G", "tui.help.bottom"),
     ]),
