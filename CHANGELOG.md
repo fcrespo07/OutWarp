@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Server CLI and `setup` wizard: every message follows the interface
+  language.** `outwarp-server`'s output (`add-client`, `list-clients`,
+  `rotate-client`, `renew-cert`, `restart`, `status`, `uninstall`, `update`,
+  `admin-token`, `web`, …), its `--help` texts and the whole of the interactive
+  `setup` wizard (the transport explanation, every prompt and the final
+  summary) were fixed English; they now go through the same tables as the
+  tray and the TUI (English and Spanish; `OUTWARP_LANG` or the `language`
+  setting decide). Logs stay in English. Error text raised from inside the
+  library (a malformed config file, say) still arrives as written.
+
 ## [0.19.0] — 2026-09-30
 
 ### Fixed
