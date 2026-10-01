@@ -72,7 +72,7 @@ _RESIZE_HT = {
 
 _SERVICE_MANAGED_MSG = (
     "The tunnel is run by the background service (outwarp-client.service). "
-    "Turn it off in Settings → System to control the tunnel from here."
+    "Turn it off in Settings → Advanced to control the tunnel from here."
 )
 _SERVICE_MANAGED_AUTOSTART_MSG = (
     "The background service already starts the tunnel at login; "
