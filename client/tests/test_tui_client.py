@@ -619,6 +619,27 @@ async def test_language_picker_persists_and_spanish_labels_follow(
         assert app._settings["language"] == "es"
 
 
+@pytest.mark.asyncio
+async def test_settings_opens_with_an_unknown_saved_language(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    for var in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+        monkeypatch.setenv(var, str(tmp_path))
+
+    from textual.widgets import Select
+
+    from outwarp.settings import save_settings
+
+    save_settings({"language": "fr"})
+    app = OutWarpClientTUI()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        await pilot.press("s")
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, SettingsModal)
+        assert app.screen.query_one("#select-language", Select).value == "auto"
+
+
 def test_status_card_rows_carry_profile_route_and_kill_switch(tmp_path: Path) -> None:
     from outwarp.config import ClientConfig
     from outwarp.tui.widgets.status_card import StatusCard
