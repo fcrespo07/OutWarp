@@ -402,7 +402,7 @@ def test_run_diagnostics_serializes_results():
     assert r["ok"] is False  # one FAIL -> ok is False
     assert r["summary"] == {"pass": 1, "warn": 1, "fail": 1, "skip": 0}
     assert r["checks"][0] == {
-        "name": "Check OK", "status": "pass", "detail": "all good",
+        "key": "", "name": "Check OK", "status": "pass", "detail": "all good",
         "remediation": None, "remediation_command": None, "fix_kind": None,
     }
     assert r["checks"][1]["remediation"] == "Run: do-the-thing"
@@ -438,6 +438,23 @@ def test_apply_remediation_runs_only_auto_fix_callable():
         # unknown check name → refused
         missing = api.apply_remediation("does-not-exist")
         assert missing["ok"] is False
+
+
+def test_apply_remediation_matches_the_stable_key():
+    """The UI sends the check key; the translated name may have changed since."""
+    from outwarp_server.diagnostics import CheckResult, Status
+
+    mgr = _make_mgr()
+    api, _ = _make_api(mgr)
+    called = []
+    auto = CheckResult(
+        name="reenvío IP", status=Status.WARN, detail="off",
+        fix_kind="auto", fix_callable=lambda cfg: called.append(cfg),
+        key="ip_forward",
+    )
+    with patch("outwarp_server.diagnostics.run_all", return_value=[auto]):
+        assert api.apply_remediation("ip_forward")["ok"] is True
+    assert len(called) == 1
 
 
 def test_apply_remediation_without_manager():
