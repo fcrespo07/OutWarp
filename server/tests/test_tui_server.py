@@ -136,3 +136,23 @@ async def test_dashboard_cards_follow_language(tmp_path: Path, monkeypatch) -> N
     assert "subred wg" in texts
     assert "fingerprint" not in texts
     assert app.ENABLE_COMMAND_PALETTE is False
+
+
+@pytest.mark.asyncio
+async def test_settings_modal_saves_language(tmp_path: Path, monkeypatch) -> None:
+    from textual.widgets import Select
+
+    from outwarp_server.tui.modals.settings import SettingsModal
+
+    saved: dict = {}
+    monkeypatch.setattr("outwarp_server.api._load_settings", lambda: {"language": "auto"})
+    monkeypatch.setattr("outwarp_server.api._save_settings", lambda s: saved.update(s))
+    app = OutWarpServerTUI(_write_config(tmp_path))
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert isinstance(app.screen, SettingsModal)
+        app.screen.query_one("#select-language", Select).value = "es"
+        await pilot.pause()
+    assert saved["language"] == "es"

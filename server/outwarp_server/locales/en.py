@@ -498,4 +498,10 @@ STRINGS: dict[str, str] = {
     "tui.net.listen": "wg listen",
     "tui.traffic.title": "24H TRAFFIC",
     "tui.traffic.total": "24h",
+    "tui.key.settings": "Settings",
+    "tui.help.settings": "Settings (language)",
+    "tui.set.language": "Language",
+    "tui.set.language_hint": "Used by this terminal interface, the admin window and the command line. Takes effect the next time you open it.",
+    "tui.set.language_auto": "Automatic (system language)",
+    "tui.set.language_saved": "Language saved. It applies the next time you open the interface.",
 }

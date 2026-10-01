@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   labels line up whatever the language. The command palette (`^p`, whose own
   text is English-only and which nothing relied on) is off and the header shows
   the version.
+- **Server TUI: language picker.** The GUI and the panel had a language
+  setting and the server TUI did not (only `OUTWARP_LANG`). `s` opens Settings
+  with the same choice (automatic, English, Español), saved to the setting the
+  other interfaces share.
 
 ## [0.19.0] — 2026-09-30
 

@@ -40,6 +40,7 @@ class DashboardScreen(Screen):
         ("d", "open_doctor", tr("tui.key.doctor")),
         ("l", "open_logs", tr("tui.key.logs")),
         ("r", "restart", tr("tui.dash.key_restart")),
+        ("s", "settings", tr("tui.key.settings")),
         ("q", "quit", tr("tui.key.quit")),
         ("question_mark", "help", tr("tui.key.help")),
     ]
@@ -49,6 +50,10 @@ class DashboardScreen(Screen):
 
     def action_open_doctor(self) -> None:
         self.app.push_screen("doctor")
+
+    def action_settings(self) -> None:
+        from outwarp_server.tui.modals.settings import SettingsModal
+        self.app.push_screen(SettingsModal())
 
     def action_open_logs(self) -> None:
         self.app.push_screen("logs")

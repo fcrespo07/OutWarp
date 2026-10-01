@@ -88,7 +88,8 @@ ModalScreen {
 #confirm-modal,
 #revoke-modal,
 #qr-modal,
-#help-modal {
+#help-modal,
+#settings-modal {
     width: 80;
     height: auto;
     background: $bg2;
@@ -108,3 +109,11 @@ ModalScreen {
 .success { color: $ok; }
 .fail { color: $bad; }
 .info { color: $dim; }
+
+#settings-modal Select {
+    margin: 1 0;
+}
+
+#settings-modal #settings-status {
+    margin-top: 1;
+}
