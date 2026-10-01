@@ -47,7 +47,10 @@ async def test_export_saves_the_filtered_lines_and_clear_empties_the_view(
 
 
 async def _bracket_tail(path, poll_interval=0.3):
-    for line in ("2026-10-01 10:00:00 [INFO] args=[/]", "2026-10-01 10:00:01 [ERROR] open [/tmp/sock] failed"):
+    for line in (
+        "2026-10-01 10:00:00 [INFO] args=[/]",
+        "2026-10-01 10:00:01 [ERROR] open [/tmp/sock] failed",
+    ):
         yield line
 
 
