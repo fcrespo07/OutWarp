@@ -46,8 +46,12 @@ Complemento de `CLAUDE.md`. `CLAUDE.md` dice **qué** es OutWarp y qué decision
    - TUIs (cliente y servidor);
    - mensajes de la CLI y textos del wizard `setup` (siguen en inglés fijo y tienen que pasar a i18n);
    - paridad de funciones entre GUI, panel, TUI y CLI.
-   
-   Termina con la **congelación de textos**, que es condición para empezar las traducciones.
+
+   *Hecho 2026-10-01 (rama por bloque, PR #10–#14 y el de la matriz): textos de la CLI, wizard y doctor en i18n; las dos TUIs sin inglés suelto, con selector de idioma y la TUI del cliente con ruta/kill switch. La matriz de paridad y sus huecos abiertos están en `docs/PARIDAD.md`; los que ensanchan la CLI esperan decisión del autor.*
+
+   **Textos congelados el 2026-10-01** (decisión del autor, sin ampliar la CLI): no reescribir textos existentes sin consultar; añadir nuevos con clave en en/es es libre. Los huecos de `docs/PARIDAD.md` que no tocan la CLI están cerrados (PR #15 a #17).
+
+   Terminaba con la **congelación de textos**, que es condición para empezar las traducciones.
 4. **Pruebas que hace el autor (👤), sin cerrar aún**:
    - Windows real:
      - actualizar desde 0.19.0 a la siguiente (B-045 solo se ve desde 0.19.0 en adelante, porque la 0.18.0 llevaba el helper viejo);

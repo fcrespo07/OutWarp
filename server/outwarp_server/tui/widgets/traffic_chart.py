@@ -13,7 +13,7 @@ class TrafficChart(Container):
     DEFAULT_CSS = "TrafficChart { layout: vertical; height: auto; }"
 
     def compose(self):
-        yield Static("24H TRAFFIC", classes="card-title")
+        yield Static(tr("tui.traffic.title"), classes="card-title")
         yield Sparkline([0.0], summary_function=max, id="rx_spark")
         yield Static("rx", classes="info")
         yield Sparkline([0.0], summary_function=max, id="tx_spark")
@@ -33,7 +33,8 @@ class TrafficChart(Container):
             total_rx = sum(b[1] for b in buckets)
             total_tx = sum(b[2] for b in buckets)
             self.query_one("#totals", Static).update(
-                f"24h  rx [{OK}]{_fmt(total_rx)}[/]  tx [{OK}]{_fmt(total_tx)}[/]"
+                f"{tr('tui.traffic.total')}  rx [{OK}]{_fmt(total_rx)}[/]"
+                f"  tx [{OK}]{_fmt(total_tx)}[/]"
             )
         except Exception:
             pass

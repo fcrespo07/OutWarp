@@ -11,8 +11,11 @@ from __future__ import annotations
 import base64
 import datetime
 import hashlib
+import json
 import logging
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -645,3 +648,30 @@ def restart_services(config: ServerConfig, *, config_path: Path | None = None) -
         wg_conf_written, wg_restarted, wstunnel_restarted, errors,
         enroll_restarted=enroll_restarted,
     )
+
+
+def probe_external_port(config: ServerConfig) -> dict[str, object]:
+    """Ask a third-party host to connect back to the configured WSS port.
+
+    Uses ifconfig.co's /port/<n> endpoint. Returns reachable=False with the
+    reason on any failure; a transient false negative shouldn't be alarming.
+    """
+    port = config.port
+    host = config.endpoint
+    try:
+        req = urllib.request.Request(
+            f"https://ifconfig.co/port/{port}",
+            headers={"Accept": "application/json", "User-Agent": "outwarp-server"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as r:
+            body = json.loads(r.read().decode("utf-8", "replace"))
+    except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError) as exc:
+        return {"ok": False, "reachable": False, "detail": str(exc), "host": host, "port": port}
+    reachable = bool(body.get("reachable"))
+    return {
+        "ok": True,
+        "reachable": reachable,
+        "detail": f"{host}:{port} → {'reachable' if reachable else 'closed/blocked'}",
+        "host": host,
+        "port": port,
+    }

@@ -260,6 +260,12 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 **Pendiente:** confirmarlo en Windows real. Si vuelve a fallar, `outwarp-update.log` y el `Setup Log` dicen dónde se rompió.
 **Prevención:** un arranque que espera el usuario (tras instalar o actualizar) nunca depende de la preferencia de arrancar oculto.
 
+### ✅ B-049 — Enrolamiento: un 429 o un cuerpo demasiado grande llegaba como «conexión abortada» en Windows
+**Síntomas:** en el CI de Windows, `test_enroll_server.py` fallaba de vez en cuando (`test_repeated_failures_are_rate_limited`, `test_oversized_body_is_rejected`) con `ConnectionAbortedError [WinError 10053]` en vez del 429 o el 400 esperados (visto dos veces el 2026-10-01).
+**Causa raíz:** `do_POST` respondía antes de leer el cuerpo (rate limit, cuerpo fuera de rango, ruta desconocida) y cerraba la conexión con bytes sin leer; el sistema manda entonces un reset y el cliente pierde la respuesta. Es el mismo patrón que el `do_POST` del panel en B-039.
+**Fix (2026-10-01):** el cuerpo se lee y se descarta antes de esas respuestas (hasta 64 KiB; por encima se cierra la conexión).
+**Prevención:** un servidor HTTP propio lee siempre el cuerpo antes de responder, también en las respuestas de error.
+
 ### ✅ B-047 — Cliente: el «aura» del botón de conectar se cortaba en un cuadrado
 **Síntomas:** Reportado por el autor (2026-09-30, captura de 0.18.0): el brillo alrededor del botón conectado termina en un borde recto, como si su caja fuese pequeña.
 **Causa raíz:** el brillo que añadió B-043 (círculo de radio 92, trazo de 8 y desenfoque) sobrepasa la caja de 200 px del SVG del botón, y un SVG recorta lo que sale de ella.
