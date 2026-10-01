@@ -13,6 +13,8 @@ Nace como reescritura de un script PowerShell portable del autor que funcionaba 
 
 > **El repo es público.** Nada personal del autor (rutas locales, dominios, IPs, secretos, detalles de su infraestructura) va a ficheros versionados. Ese contexto vive en `CLAUDE.local.md`, que está en `.gitignore` y solo existe en la máquina del autor.
 
+> **Agente nuevo: lee también [`docs/AGENTS.md`](docs/AGENTS.md)** antes de empezar. Ahí están cómo se trabaja (ramas, CI, releases), las particularidades del entorno, las herramientas de capturas de la UI y **dónde se quedó el trabajo** (pendientes por orden).
+
 ## Alcance
 
 OutWarp es una herramienta **genérica**: cualquier persona con un servidor propio debe poder usarla. No está atada a ninguna infraestructura concreta.
@@ -314,7 +316,7 @@ Legado (hecho):
   1. Activar y desactivar clientes, con un caso en el e2e.
   2. Infraestructura de i18n solo en/es: extraer los textos fijos, detección del idioma más selector, fallback a inglés, fuente CJK, anchura doble en las TUIs. *(Hecho 2026-09-28: `ui-shared/i18n.jsx` en las dos web UIs; `outwarp/i18n.py` y `outwarp_server/i18n.py` con `locales/{en,es}.py` para bandeja, notificaciones, mensajes de la API y las TUIs; tests de paridad. Pendiente para la fase 3: los mensajes de la CLI y los textos del wizard `setup`, que siguen en inglés.)*
   3. Varios perfiles, con migración idempotente; revisar el kill switch, el sticky store, `dnscache` y `known_servers.json` por perfil. *(Hecho 2026-09-28: kill switch y `dnscache`/`known_servers.json` siguen globales (van por servidor); el sticky store pasa a ir por servidor + red.)*
-- **Fase 2 — Producto → 0.17.0/0.18.0.** *(0.17.0 publicada 2026-09-29: Tráfico con datos reales, primera pasada de pulido, servidor Windows vía Docker, README honesto. 0.18.0 en código 2026-09-30: pantalla principal del cliente rediseñada y logo del `.ico`. Quedan el resto del rediseño de la GUI del cliente, la segunda pasada de pulido con los textos congelados y las pruebas 👤.)*
+- **Fase 2 — Producto → 0.17.0–0.19.0 (y la siguiente si hace falta).** *(0.17.0 publicada 2026-09-29: Tráfico con datos reales, primera pasada de pulido, servidor Windows vía Docker, README honesto. 0.18.0 publicada 2026-09-30: pantalla principal del cliente rediseñada y logo del `.ico`. 0.19.0 publicada 2026-10-01: resto de la auditoría de la GUI del cliente, gráfica del panel sin saltos, relanzamiento tras actualizar (B-045). Quedan Ajustes del cliente, B-048 (la X en Windows), la segunda pasada de pulido con los textos congelados y las pruebas 👤.)*
   - Pulido de UI/UX, que termina con los **textos congelados**. *(Primera pasada 2026-09-29, panel y GUI del cliente: fuera lo que no era verdad (QR decorativo, sparkline de subida falsa, «top talkers» con contadores de por vida, «todos los servicios sanos» fijo, systemd/journalctl/MASQUERADE/TLS 1.3 fijos), estados vacíos que explican, errores visibles, foco y ARIA (B-042). Falta: TUIs, textos de la CLI y del wizard, y congelar los textos.)*
   - **Auditoría y rediseño de la GUI del cliente. Requisito de la próxima versión** (decisión del autor, 2026-09-29: «le falta algo, está pobre»). Hallazgos de la auditoría del 2026-09-29 (capturas de todas las pantallas y estados):
     1. **Anillo del botón de conectar (B-043):** conectado dibuja un arco fijo del 78 % (`Dial`, `0.78` en `app.jsx`), herencia del mock de diseño; no representa nada y parece un fallo. Conectado = anillo completo (o que signifique algo real, p. ej. la estabilidad de la sesión).
@@ -333,7 +335,7 @@ Legado (hecho):
   - **Pantalla «Tráfico» del panel (historial 1 h / 24 h / 7 d) con datos reales. Requisito indispensable de la próxima versión** (decisión del autor, 2026-09-29). *(Hecho 2026-09-29, B-041: `<config dir>/traffic.sqlite` compartida por `serve`, panel y TUI, copia única de la base vieja; gráfica por tiempo con eje y tooltip, pico real, media sobre el tiempo con datos, «aún no hay datos». Falta 👤 verlo en el pod.)*
   - README y wizard honestos con el anti-DPI. El banner "not yet ready" se quita en la RC. *(Hecho 2026-09-29: tabla «What it gets through», plataformas soportadas y limitaciones conocidas en el README; el wizard dice que ninguna rama pasa DPI. El banner sigue hasta la RC.)*
   - 👤 Pruebas reales de la GUI de Linux (X11/Wayland), que cierran el `[~]` de la GUI de Linux. *(La prueba en una Omarchy limpia se descartó el 2026-09-28.)*
-- **Fase 3 — Idiomas → 0.19.0.**
+- **Fase 3 — Idiomas → la primera versión tras cerrar la fase 2 (0.20.0 o posterior).** *(La fase 2 ocupó 0.17.0–0.19.0, así que la numeración prevista se desplazó.)*
   - zh-Hans, fr y pt.
   - *(añadido)* Test que falla si a un idioma le falta una clave.
   - *(añadido)* Capturas con Playwright usando los textos más largos.
@@ -365,7 +367,7 @@ Legado (hecho):
 
 ## Estado actual
 
-**Versión actual: `0.19.0`** (en código; pendiente de borrador, firma y publicación; la anterior es la 0.18.0). El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
+**Versión actual: `0.19.0`** (publicada y firmada el 2026-10-01; la siguiente sale de `[Unreleased]` en `CHANGELOG.md`). Pendientes por orden: `docs/AGENTS.md` → "Pendiente". El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
 
 - **Cliente**: Windows (instalador `.exe`, GUI pywebview + tray) y Linux (`install.sh`, GUI por defecto con escritorio, TUI y `outwarp` headless) completos.
 - **Servidor**: Linux/systemd, Windows (SCM) y Docker/Kubernetes (`platforms/kubernetes.py`, `deploy/`).
@@ -475,5 +477,5 @@ Eventos:
 ## Notas para futuras sesiones
 
 - **El repo es público.** Antes de commitear, que no entre nada personal del autor (rutas, dominios, IPs, secretos, su infraestructura); los datos de ejemplo usan `203.0.113.x` / `vpn.example.com`. Lo personal va en `CLAUDE.local.md` (ignorado por git).
-- El autor prefiere iterar: no diseñar todo de golpe.
+- El autor prefiere iterar: no diseñar todo de golpe. Respuestas en español; sin un plan por cada petición; capturas antes y después de cambios visuales.
 - Trabajo en ramas de vida corta: se borran al mezclarse.

@@ -351,6 +351,11 @@ Cubrirlo con un test en `client/tests/test_platforms.py`, con la misma estructur
 
 ## Abiertos
 
+### 🟡 B-048 — Windows: la X sigue cerrando el cliente en vez de dejarlo en la bandeja (pendiente de diagnóstico)
+**Síntomas:** El autor dice (después de B-038, con 0.18.x) que cerrar la ventana con la X sigue saliendo de OutWarp en su Windows.
+**Hipótesis:** `Api.hide_on_close()` solo oculta si se cumplen dos condiciones: el ajuste `close_to_tray` activo y un icono de bandeja vivo (`tray_available()`). Si falta el icono, cierra de verdad a propósito, para no esconder una app a la que no se puede volver. Lo probable es que en su máquina falle una de las dos (por ejemplo, que pystray no llegue a registrar el icono), no que se ignore el evento `closing`.
+**Diagnóstico pendiente (👤):** cada cierre deja en `%LOCALAPPDATA%\OutWarp\OutWarp\Logs\outwarp.log` la línea `window close: close_to_tray=<bool> tray_icon=<bool> -> hide|quit`. Hay que pedirle al autor esas líneas antes de tocar código. Si no aparece ninguna, el evento `closing` no está llegando (pywebview/EdgeChromium), y eso es otra causa.
+
 ### 🟡 B-024 — Windows: dos iconos en la bandeja tras una cuarentena de `wstunnel.exe` (mitigado, sin reproducir)
 **Síntomas:** Reportado por el autor (2026-09-26): Microsoft Defender / Smart App Control quitó `wstunnel.exe` de repente; al volver a abrir OutWarp aparecieron dos iconos de OutWarp en la bandeja.
 **Hipótesis (sin reproducir, varias causas posibles):**
