@@ -59,7 +59,7 @@ class ConnectingScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="empty-shell"):
-            yield Static("[bold]Connecting...[/bold]", id="connect-title")
+            yield Static(f"[bold]{tr('tui.state.connecting')}[/bold]", id="connect-title")
             self._rows: list[PhaseRow] = []
             for key, label in PHASE_LABELS:
                 row = PhaseRow(label)
@@ -91,7 +91,7 @@ class ConnectingScreen(Screen):
                 row.state = "pending"
         attempt = getattr(mgr, "attempt", 0)
         if attempt:
-            self.query_one("#attempt", Static).update(f"attempt {attempt}")
+            self.query_one("#attempt", Static).update(tr("tui.connecting.attempt", n=attempt))
         else:
             self.query_one("#attempt", Static).update("")
         err = getattr(mgr, "last_error", None)

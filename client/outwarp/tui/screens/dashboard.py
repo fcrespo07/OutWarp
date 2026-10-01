@@ -17,6 +17,7 @@ from outwarp.tui.widgets.live_log import LiveLog
 from outwarp.tui.widgets.status_card import StatusCard
 from outwarp.tui.widgets.traffic_card import TrafficCard
 from outwarp.tui.widgets.tunnel_card import TunnelCard
+from outwarp.tunnel import TunnelState
 from outwarp.tunnel_stats import StatsSampler
 
 log = logging.getLogger(__name__)
@@ -105,6 +106,9 @@ class DashboardScreen(Screen):
                 card.set_managed_by_service(self._sampler.interface_up())
             else:
                 card.set_state(mgr.state if mgr is not None else None)
+            connected = mgr is not None and mgr.state is TunnelState.CONNECTED
+            card.set_route(getattr(mgr, "active_route", None) if connected else None)
+            card.set_kill_switch(bool(self.app._settings.get("kill_switch", False)))
         # StatsSampler.sample() shells out to `wg` and `ping` (blocking up to a
         # few seconds). Run it off the event loop so the TUI stays responsive.
         if self._sampling:

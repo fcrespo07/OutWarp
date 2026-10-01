@@ -58,7 +58,7 @@ class FailedScreen(Screen):
             err = (
                 getattr(self.app, "_startup_error", None)
                 or (self.app.manager and self.app.manager.last_error)
-                or "unknown error"
+                or tr("cli.unknown_error")
             )
             yield Static(f"[{BAD}]{err}[/]")
             yield Static(f"[{DIM}]{_error_hint(err)}[/]")
