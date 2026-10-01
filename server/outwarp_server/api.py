@@ -626,6 +626,7 @@ class Api:
         results = run_all(self._manager.config)
         checks = [
             {
+                "key": r.key,
                 "name": r.name,
                 "status": r.status.value,
                 "detail": r.detail,
@@ -662,7 +663,12 @@ class Api:
 
         from outwarp_server.diagnostics import run_all
 
-        match = next((r for r in run_all(self._manager.config) if r.name == check_name), None)
+        # Match the stable check key first: names are translated and can
+        # differ from what the UI showed if the language changed in between.
+        results = run_all(self._manager.config)
+        match = next((r for r in results if r.key == check_name), None) or next(
+            (r for r in results if r.name == check_name), None
+        )
         if match is None:
             return {"ok": False, "error": f"unknown check: {check_name}"}
         if match.fix_kind != "auto" or match.fix_callable is None:
