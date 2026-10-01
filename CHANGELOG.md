@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Client TUI: check for updates (`u`).** It looks for a newer release and
+  tells you to run `sudo outwarp update` (installing needs root, so, like the
+  GUI on Linux, it does not do it for you).
 - **Client TUI logs: export and clear the view.** `x` saves the lines the
   filters show to `outwarp-logs-<date>.txt` in the current directory and `c`
   empties the screen, like the GUI's export and clear (the log file itself is

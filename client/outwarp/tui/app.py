@@ -55,6 +55,7 @@ class OutWarpClientTUI(App):
         ("s", "settings", tr("tui.key.settings")),
         ("d", "doctor", tr("tui.key.doctor")),
         ("P", "profiles", tr("tui.profiles.key")),
+        ("u", "check_update", tr("tui.key.update")),
     ]
 
     def __init__(self) -> None:
@@ -293,6 +294,28 @@ class OutWarpClientTUI(App):
 
     def action_doctor(self) -> None:
         self.push_screen("doctor")
+
+    def action_check_update(self) -> None:
+        """Look for a newer release. Applying it needs root, so like the GUI on
+        Linux this only says what to run."""
+        self.notify(tr("tui.update.checking", current=__version__))
+        self.run_worker(self._check_update, thread=True, exclusive=True, group="update")
+
+    def _check_update(self) -> None:
+        from outwarp.updater import _is_newer, check_for_linux_update
+
+        info = check_for_linux_update(__version__, "client")
+        latest = info.get("latest") or __version__
+        if info.get("error"):
+            msg, sev = tr("tui.update.failed", error=info["error"]), "error"
+        elif info.get("available"):
+            msg, sev = tr("tui.update.available", latest=latest), "warning"
+        elif _is_newer(latest, __version__):
+            msg = tr("tui.update.no_wheel", latest=latest, url=info.get("html_url", ""))
+            sev = "warning"
+        else:
+            msg, sev = tr("tui.update.current", latest=latest), "information"
+        self.call_from_thread(self.notify, msg, severity=sev)
 
     async def action_quit(self) -> None:
         # manager.stop() joins the watchdog thread (up to ~10s); run it off the

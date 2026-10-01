@@ -650,3 +650,21 @@ def test_status_card_rows_carry_profile_route_and_kill_switch(tmp_path: Path) ->
     assert "Kill switch" in card._row("tui.card.kill_switch", card._kill_text())
     card._kill_switch = True
     assert card._kill_text() == "on"
+
+
+@pytest.mark.asyncio
+async def test_update_key_reports_a_newer_version(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr(
+        "outwarp.updater.check_for_linux_update",
+        lambda current, package: {"available": True, "latest": "9.9.9", "current": current},
+    )
+    app = OutWarpClientTUI()
+    notes: list[str] = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.notify = lambda msg, **kw: notes.append(msg)  # type: ignore[method-assign]
+        app.action_check_update()
+        await pilot.pause(0.5)
+    assert any("9.9.9" in n and "sudo outwarp update" in n for n in notes)

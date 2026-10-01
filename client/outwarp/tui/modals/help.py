@@ -13,6 +13,7 @@ _SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("q", "tui.key.quit"),
         ("s", "tui.help.settings"),
         ("P", "tui.help.profiles"),
+        ("u", "tui.help.update"),
         ("?", "tui.key.help"),
         ("Esc", "tui.help.back"),
     ]),
