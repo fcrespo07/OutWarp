@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Server enrolment: a rate-limited or oversized request got "connection
+  aborted" instead of the answer** (B-049). The listener replied before reading
+  the request body; it now reads and discards it first, so the client sees the
+  429 or 400.
+
 ### Changed
 - **Client TUI: the dashboard says what the GUI says.** The connection card
   now shows the profile, the route the connection took (direct, public DNS,

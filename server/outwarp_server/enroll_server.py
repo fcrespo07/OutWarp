@@ -41,6 +41,10 @@ log = logging.getLogger(__name__)
 # A WireGuard public key is 32 bytes of base64: 43 chars plus '='.
 _WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$")
 _MAX_BODY = 4096
+# How much of a body we read and discard before an early reply (429, a body
+# over _MAX_BODY). Closing with unread request bytes makes the OS send a
+# reset, and the client gets "connection aborted" instead of our answer.
+_MAX_DRAIN = 64 * 1024
 
 
 def _token_bucket(token: str) -> str:
@@ -117,25 +121,42 @@ class _EnrollHandler(BaseHTTPRequestHandler):
         # any other 404 on the host.
         self.send_error(HTTPStatus.NOT_FOUND)
 
+    def _content_length(self) -> int:
+        try:
+            return int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return 0
+
+    def _discard_body(self, length: int) -> None:
+        if length <= 0:
+            return
+        if length > _MAX_DRAIN:
+            self.close_connection = True
+            return
+        try:
+            self.rfile.read(length)
+        except OSError:
+            self.close_connection = True
+
     def do_POST(self) -> None:  # noqa: N802
         if self.path.split("?", 1)[0].rstrip("/") not in ("/enroll", ""):
+            self._discard_body(self._content_length())
             self.send_error(HTTPStatus.NOT_FOUND)
             return
 
+        length = self._content_length()
         ip = self._client_ip()
         wait = self.ctx.rate_limiter.retry_after(ip)
         if wait > 0:
+            self._discard_body(length)
             self.send_response(HTTPStatus.TOO_MANY_REQUESTS)
             self.send_header("Retry-After", str(int(wait) + 1))
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
 
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
         if length <= 0 or length > _MAX_BODY:
+            self._discard_body(length)
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid request body"})
             return
         try:
