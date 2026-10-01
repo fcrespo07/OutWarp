@@ -15,6 +15,7 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 
 from outwarp_server.config import ServerConfig
 from outwarp_server.crypto import generate_tls_cert, generate_upgrade_path, generate_wg_keypair
+from outwarp_server.i18n import t
 from outwarp_server.platforms import get_server_platform
 from outwarp_server.platforms.base import PrerequisiteStatus
 from outwarp_server.service_install import install_services
@@ -59,51 +60,40 @@ def run_setup(config_dir: Path) -> int:
     """Interactive setup wizard. Returns exit code."""
     console.print(
         Panel.fit(
-            "[bold cyan]OutWarp Server — Setup Wizard[/bold cyan]\n\n"
-            "This wizard will configure wstunnel + WireGuard as system services.",
+            t("wz.title"),
             border_style="cyan",
         )
     )
 
     if not _check_root():
-        console.print(
-            "[red]Error:[/red] This wizard must be run as root (or Administrator on Windows).\n"
-            "  On Linux: [bold]sudo outwarp-server setup[/bold]"
-        )
+        console.print(t("wz.need_root"))
         return 1
 
     config_path = config_dir / "server_config.json"
     if config_path.exists():
-        console.print(f"\n[yellow]Warning:[/yellow] Config already exists at {config_path}.")
-        if not Confirm.ask("Overwrite existing configuration?", default=False):
-            console.print("Aborted.")
+        console.print("\n" + t("wz.config_exists", path=config_path))
+        if not Confirm.ask(t("wz.overwrite"), default=False):
+            console.print(t("sv.aborted"))
             return 0
 
     # Check binaries
-    console.print("\n[bold]Checking dependencies...[/bold]")
+    console.print("\n" + t("wz.checking_deps"))
     wstunnel_bin = _find_wstunnel()
     if wstunnel_bin is None:
-        console.print(
-            "[red]Error:[/red] wstunnel binary not found in PATH.\n"
-            "  Install from: https://github.com/erebe/wstunnel/releases"
-        )
+        console.print(t("wz.no_wstunnel"))
         return 1
-    console.print(f"  [green]✓[/green] wstunnel: {wstunnel_bin}")
+    console.print(t("wz.found_wstunnel", path=wstunnel_bin))
 
     wg_bin = _find_wg()
     if wg_bin is None:
-        console.print(
-            "[red]Error:[/red] WireGuard tools (wg) not found.\n"
-            "  Install: [bold]apt install wireguard-tools[/bold] "
-            "(Debian/Ubuntu) or equivalent."
-        )
+        console.print(t("wz.no_wg"))
         return 1
-    console.print(f"  [green]✓[/green] wg: {wg_bin}")
+    console.print(t("wz.found_wg", path=wg_bin))
 
     # OS-level prereqs: NetNat WMI provider on Windows (no-op on Linux).
     # If we proceed without this, the server starts, wstunnel listens, but
     # client traffic gets no return path (NAT silently absent). Bail loudly.
-    console.print("\n[bold]Checking OS prerequisites...[/bold]")
+    console.print("\n" + t("wz.checking_os"))
     prereq = get_server_platform().check_prerequisites()
     if prereq.status is PrerequisiteStatus.REBOOT_REQUIRED:
         console.print(f"  [yellow]⚠[/yellow]  {prereq.detail}")
@@ -113,92 +103,69 @@ def run_setup(config_dir: Path) -> int:
         console.print(f"  [red]✗[/red] {prereq.detail}")
         console.print(f"\n{prereq.remediation}")
         return 1
-    console.print("  [green]✓[/green] NAT prerequisites available")
+    console.print(t("wz.nat_ok"))
 
     # Transport branch. This is the decision that determines whether the server
     # survives a network that inspects TLS, so it comes before anything else.
     console.print(
         Panel(
-            "[bold]How should the server present itself on the public port?[/bold]\n\n"
-            "[cyan]1. I have a domain[/cyan] (recommended)\n"
-            "   Caddy holds port 443 with a real Let's Encrypt certificate and serves an\n"
-            "   ordinary web page; the tunnel lives on a secret path behind it. Clients\n"
-            "   validate the certificate normally. This is the option that also gets\n"
-            "   through networks that check certificates and block unknown ones.\n\n"
-            "[cyan]2. No domain[/cyan] (only against blocked UDP)\n"
-            "   wstunnel holds the port with a self-signed certificate and clients pin it.\n"
-            "   Nothing to buy or configure, and it is enough where the only obstacle is\n"
-            "   blocked UDP or a port filter — but the certificate is recognisably not a\n"
-            "   real one, so a network that inspects TLS can single it out.\n\n"
-            "[dim]Neither option gets through deep packet inspection: a network that\n"
-            "fingerprints TLS clients (JA3/JA4) or inspects WebSocket upgrades will\n"
-            "block the tunnel either way.[/dim]",
+            t("wz.transport.body"),
             border_style="cyan",
-            title="Transport",
+            title=t("wz.transport.title"),
         )
     )
     if sys.platform == "linux":
-        use_domain = Confirm.ask(
-            "Do you have a domain pointing at this server?", default=False
-        )
+        use_domain = Confirm.ask(t("wz.have_domain"), default=False)
     else:
         # Everything the Caddy front touches — /etc/caddy, systemd, the decoy
         # site — is POSIX-only. Offering the choice here would write a
         # configuration nothing on this host would ever read.
-        console.print(
-            "\n[yellow]The domain branch needs Caddy under systemd, so it is "
-            "Linux-only for now.[/yellow] Continuing with the self-signed "
-            "transport."
-        )
+        console.print("\n" + t("wz.domain_linux_only"))
         use_domain = False
     tls_mode = "acme" if use_domain else "self-signed"
 
     if use_domain:
-        endpoint = Prompt.ask("Domain name (e.g. vpn.example.com)")
+        endpoint = Prompt.ask(t("wz.domain_prompt"))
         while not endpoint.strip() or "/" in endpoint:
-            console.print("[red]Enter a bare hostname, without scheme or path[/red]")
-            endpoint = Prompt.ask("Domain name (e.g. vpn.example.com)")
+            console.print(t("wz.domain_invalid"))
+            endpoint = Prompt.ask(t("wz.domain_prompt"))
         endpoint = endpoint.strip()
-        acme_email = Prompt.ask(
-            "Email for Let's Encrypt expiry notices (optional)", default=""
-        ).strip()
+        acme_email = Prompt.ask(t("wz.acme_email"), default="").strip()
     else:
-        console.print("\n[bold]Detecting public IP...[/bold]")
+        console.print("\n" + t("wz.detecting_ip"))
         detected_ip = _detect_public_ip()
         if detected_ip:
-            console.print(f"  Detected: [cyan]{detected_ip}[/cyan]")
-            endpoint = Prompt.ask("Server endpoint (IP or domain)", default=detected_ip)
+            console.print(t("wz.detected", ip=detected_ip))
+            endpoint = Prompt.ask(t("wz.endpoint_prompt"), default=detected_ip)
         else:
-            console.print("  [yellow]Could not auto-detect[/yellow]")
-            endpoint = Prompt.ask("Server endpoint (IP or domain)")
+            console.print(t("wz.detect_failed"))
+            endpoint = Prompt.ask(t("wz.endpoint_prompt"))
         acme_email = ""
 
     # Ports
-    console.print("\n[bold]Network configuration[/bold]")
-    port_label = "Public HTTPS port (Caddy)" if use_domain else "wstunnel WSS port"
+    console.print("\n" + t("wz.network"))
+    port_label = t("wz.port_caddy") if use_domain else t("wz.port_wstunnel")
     port = IntPrompt.ask(port_label, default=443)
     while not (1 <= port <= 65535):
-        console.print("[red]Invalid port[/red]")
+        console.print(t("wz.invalid_port"))
         port = IntPrompt.ask(port_label, default=443)
 
     internal_ws_port = 8080
     if use_domain:
-        internal_ws_port = IntPrompt.ask(
-            "Loopback port for wstunnel behind Caddy", default=8080
-        )
+        internal_ws_port = IntPrompt.ask(t("wz.internal_port"), default=8080)
 
-    wg_listen_port = IntPrompt.ask("WireGuard listen port (loopback only)", default=51820)
+    wg_listen_port = IntPrompt.ask(t("wz.wg_port"), default=51820)
 
     # Subnet
-    subnet = Prompt.ask("WireGuard subnet (CIDR)", default="10.0.0.0/24")
+    subnet = Prompt.ask(t("wz.subnet"), default="10.0.0.0/24")
     server_address = Prompt.ask(
-        "Server's WireGuard address", default=f"{subnet.split('/')[0].rsplit('.', 1)[0]}.1/24"
+        t("wz.server_address"), default=f"{subnet.split('/')[0].rsplit('.', 1)[0]}.1/24"
     )
 
     # Generate secrets
-    console.print("\n[bold]Generating cryptographic material...[/bold]")
+    console.print("\n" + t("wz.generating"))
     upgrade_path = generate_upgrade_path()
-    console.print("  [green]✓[/green] HTTP upgrade path prefix")
+    console.print(t("wz.gen.path"))
 
     # Generated in both branches: the web admin panel serves HTTPS from this
     # certificate regardless of who holds the public port, and it is what a
@@ -206,12 +173,12 @@ def run_setup(config_dir: Path) -> int:
     cert_dir = config_dir / "tls"
     cert_path, key_path, fingerprint, spki = generate_tls_cert(endpoint, cert_dir)
     if use_domain:
-        console.print("  [green]✓[/green] TLS cert (internal use — Caddy serves the public one)")
+        console.print(t("wz.gen.cert_internal"))
     else:
-        console.print(f"  [green]✓[/green] TLS cert ({fingerprint[:23]}...)")
+        console.print(t("wz.gen.cert", fingerprint=fingerprint[:23]))
 
     wg_priv, wg_pub = generate_wg_keypair(wg_bin)
-    console.print("  [green]✓[/green] WireGuard server keypair")
+    console.print(t("wz.gen.keypair"))
 
     # Build and save server config
     config = ServerConfig(
@@ -234,14 +201,14 @@ def run_setup(config_dir: Path) -> int:
         clients=[],
     )
     config.save(config_path)
-    console.print(f"  [green]✓[/green] Server config saved to {config_path}")
+    console.print(t("wz.config_saved", path=config_path))
 
-    console.print("\n[bold]Installing services...[/bold]")
+    console.print("\n" + t("wz.installing"))
     labels = {
-        "wireguard": ("WireGuard interface up", "WireGuard"),
-        "ufw": ("ufw configured (port opened, forwarding allowed)", "ufw"),
-        "wstunnel": ("wstunnel service enabled", "wstunnel"),
-        "enroll": ("enrolment listener enabled", "enrolment listener"),
+        "wireguard": (t("wz.svc.wg_done"), "WireGuard"),
+        "ufw": (t("wz.svc.ufw_done"), "ufw"),
+        "wstunnel": (t("wz.svc.wstunnel_done"), "wstunnel"),
+        "enroll": (t("wz.svc.enroll_done"), t("wz.svc.enroll_name")),
     }
 
     def _report(step: str, ok: bool, detail: str) -> None:
@@ -261,40 +228,30 @@ def run_setup(config_dir: Path) -> int:
 
     # Connectivity probe (localhost only). In the domain branch wstunnel is on
     # loopback and Caddy owns the public port, so probe the one wstunnel holds.
-    console.print("\n[bold]Running connectivity probe...[/bold]")
+    console.print("\n" + t("wz.probe"))
     probe_port = internal_ws_port if use_domain else port
     probe_ok = _probe_localhost(probe_port)
     if probe_ok:
-        console.print("  [green]✓[/green] wstunnel is listening on the configured port")
+        console.print(t("wz.probe_ok"))
     else:
-        console.print(
-            "  [yellow]⚠[/yellow]  Could not connect locally — check service logs:\n"
-            "     journalctl -u wstunnel-outwarp -e"
-        )
+        console.print(t("wz.probe_failed"))
 
     # Final summary
     transport = (
-        f"Transport: [cyan]Caddy on {port} → wstunnel on 127.0.0.1:{internal_ws_port}[/cyan]\n"
+        t("wz.done.transport_caddy", port=port, internal=internal_ws_port)
         if use_domain
-        else f"Transport: [cyan]wstunnel on {port} (self-signed, pinned)[/cyan]\n"
+        else t("wz.done.transport_self", port=port)
     )
     dns_step = (
-        f"  1. Point {endpoint} at this server's public IP and make sure "
-        f"port {port}/tcp is reachable — Caddy needs it to obtain the certificate.\n"
+        t("wz.done.step_domain", endpoint=endpoint, port=port)
         if use_domain
-        else f"  1. Make sure port {port}/tcp is open in your firewall and router.\n"
+        else t("wz.done.step_port", port=port)
     )
     console.print(
         Panel.fit(
-            f"[bold green]Setup complete![/bold green]\n\n"
-            f"Endpoint:  [cyan]{endpoint}:{port}[/cyan]\n"
-            f"{transport}"
-            f"WireGuard: [cyan]{server_address} (port {wg_listen_port})[/cyan]\n"
-            f"Subnet:    [cyan]{subnet}[/cyan]\n\n"
-            f"[bold]Next steps:[/bold]\n"
-            f"{dns_step}"
-            f"  2. Run [bold]outwarp-server add-client <name>[/bold] to register clients.\n"
-            f"  3. Send the generated .owcfg files to each client.",
+            t("wz.done.body", endpoint=f"{endpoint}:{port}", transport=transport,
+              wg=f"{server_address} (port {wg_listen_port})", subnet=subnet,
+              dns_step=dns_step),
             border_style="green",
         )
     )
@@ -305,13 +262,9 @@ def _configure_caddy(config: ServerConfig) -> None:
     """Write the Caddy front for the domain branch and reload it."""
     from outwarp_server import caddy
 
-    console.print("\n[bold]Configuring the Caddy front...[/bold]")
+    console.print("\n" + t("wz.caddy.configuring"))
     if caddy.find_caddy() is None:
-        console.print(
-            "  [yellow]⚠[/yellow]  caddy is not installed. Writing the configuration "
-            "anyway; install Caddy and reload it to finish:\n"
-            f"     {caddy.install_hint()}"
-        )
+        console.print(t("wz.caddy.not_installed", hint=caddy.install_hint()))
     try:
         warnings = caddy.apply(
             config.endpoint,
@@ -320,14 +273,14 @@ def _configure_caddy(config: ServerConfig) -> None:
             acme_email=config.acme_email,
         )
     except caddy.CaddyError as exc:
-        console.print(f"  [red]✗[/red] Caddy: {exc}")
+        console.print(t("wz.caddy.failed", error=exc))
         return
-    console.print(f"  [green]✓[/green] Decoy site at {caddy.DEFAULT_DECOY_DIR}")
-    console.print(f"  [green]✓[/green] Site config at {caddy.CADDY_SITE_FILE}")
+    console.print(t("wz.caddy.decoy", path=caddy.DEFAULT_DECOY_DIR))
+    console.print(t("wz.caddy.site", path=caddy.CADDY_SITE_FILE))
     for w in warnings:
         console.print(f"  [yellow]⚠[/yellow]  {w}")
     if not warnings:
-        console.print("  [green]✓[/green] Caddy reloaded")
+        console.print(t("wz.caddy.reloaded"))
 
 
 def _probe_localhost(port: int) -> bool:
