@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commands to copy and paste are not. Logs stay in English. Error text raised
   from inside the library (a malformed config file, say) still arrives as
   written.
+- **Server TUI: the leftovers are translated.** The QR window, the doctor
+  screen's messages, the clients search box and the TLS, network and traffic
+  cards still had fixed English; they follow the language now, and the card
+  labels line up whatever the language. The command palette (`^p`, whose own
+  text is English-only and which nothing relied on) is off and the header shows
+  the version.
 
 ## [0.19.0] — 2026-09-30
 

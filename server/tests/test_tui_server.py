@@ -123,3 +123,16 @@ async def test_doctor_fix_kind_applied(tmp_path: Path) -> None:
         assert isinstance(screen, DoctorScreen)
         # Sanity: doctor populated SOME results (the common 4 should always show).
         assert len(screen._results) >= 1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_cards_follow_language(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OUTWARP_LANG", "es")
+    app = OutWarpServerTUI(_write_config(tmp_path))
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        texts = " ".join(str(w.render()) for w in app.screen.query("Static"))
+    assert "huella" in texts
+    assert "subred wg" in texts
+    assert "fingerprint" not in texts
+    assert app.ENABLE_COMMAND_PALETTE is False
