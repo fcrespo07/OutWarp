@@ -33,7 +33,7 @@ Footer {
 
 .status-col {
     width: 50%;
-    padding: 1 2;
+    padding: 0 1;
     /* Allow scrolling so all three cards remain reachable on short
        terminals (24-row windows can't fit StatusCard + TrafficCard +
        TunnelCard at once with chrome + content). */
@@ -41,9 +41,9 @@ Footer {
 }
 
 .status-col > Container {
-    margin-bottom: 1;
+    margin-bottom: 0;
     border: tall $dim2;
-    padding: 1 2;
+    padding: 0 1;
     height: auto;
 }
 

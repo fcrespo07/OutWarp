@@ -38,14 +38,14 @@ class DoctorScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         yield DataTable(id="table", cursor_type="row")
-        yield Static("Running checks...", id="detail")
+        yield Static(tr("tui.doctor.running"), id="detail")
         yield Footer()
 
     def on_mount(self) -> None:
         t = self.query_one(DataTable)
         t.add_columns(" ", tr("tui.doctor.col_check"), tr("tui.doctor.col_detail"))
         t.focus()
-        self.query_one("#detail", Static).update(f"[{DIM}]Running checks...[/]")
+        self.query_one("#detail", Static).update(f"[{DIM}]{tr('tui.doctor.running')}[/]")
         asyncio.create_task(self._run_async(), name="doctor-run")
 
     def action_rerun(self) -> None:
@@ -86,7 +86,7 @@ class DoctorScreen(Screen):
         if r.remediation_command:
             parts.append(f"[{BRAND}]$[/] {r.remediation_command}")
         if r.fix_kind:
-            parts.append(f"[{DIM}]fix:[/] {r.fix_kind}")
+            parts.append(f"[{DIM}]{tr('tui.doctor.fix_label')}[/] {r.fix_kind}")
         self.query_one("#detail", Static).update("\n".join(parts))
 
     def action_apply_fix(self) -> None:
@@ -97,7 +97,7 @@ class DoctorScreen(Screen):
         r = self._results[idx]
         if r.fix_kind != "auto" or r.fix_callable is None:
             self.notify(
-                tr("tui.doctor.manual_fix", kind=r.fix_kind or "unavailable"),
+                tr("tui.doctor.manual_fix", kind=r.fix_kind or tr("tui.doctor.fix_unavailable")),
                 severity="warning",
             )
             return
@@ -110,9 +110,9 @@ class DoctorScreen(Screen):
             try:
                 r.fix_callable(self.app.config)
             except Exception as exc:
-                self.notify(f"Fix failed: {exc}", severity="error")
+                self.notify(tr("tui.doctor.fix_failed", error=exc), severity="error")
                 return
-            self.notify("Fix applied. Re-running checks...", severity="information")
+            self.notify(tr("tui.doctor.fix_applied"), severity="information")
             self.action_rerun()
 
         self.app.push_screen(

@@ -19,6 +19,7 @@ from outwarp_server.config import (
     default_config_dir,
     default_config_path,
 )
+from outwarp_server.i18n import t
 from outwarp_server.wireguard import get_live_peers
 
 log = logging.getLogger(__name__)
@@ -52,18 +53,12 @@ def _require_root(command: str) -> None:
                 return
         except Exception:
             return
-        console.print(
-            "[red]Error:[/red] This command must be run as Administrator.\n"
-            f"  Open an elevated PowerShell and run: [bold]outwarp-server {command}[/bold]"
-        )
+        console.print(t("sv.need_admin", command=command))
         raise SystemExit(1)
 
     if os.geteuid() == 0:
         return
-    console.print(
-        f"[red]Error:[/red] This command must be run as root.\n"
-        f"  Try: [bold]sudo outwarp-server {command}[/bold]"
-    )
+    console.print(t("sv.need_root", command=command))
     raise SystemExit(1)
 
 
@@ -78,10 +73,8 @@ def _load_config(args: argparse.Namespace) -> ServerConfig:
     try:
         return ServerConfig.load(path)
     except ConfigError as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        console.print(
-            "Run [bold]outwarp-server setup[/bold] first to configure the server."
-        )
+        console.print(t("sv.error", error=exc))
+        console.print(t("sv.run_setup_first"))
         raise SystemExit(1) from exc
 
 
@@ -206,7 +199,7 @@ def _expiry_from_days(days: int | None) -> str:
     import datetime
 
     if days < 1:
-        raise ValueError("--days must be a positive number of days")
+        raise ValueError(t("sv.days_positive"))
     return (
         datetime.datetime.now(datetime.UTC).date()
         + datetime.timedelta(days=days)
@@ -236,45 +229,32 @@ def _cmd_add_client(args: argparse.Namespace) -> int:
             enroll_ttl_seconds=max(1, args.enroll_ttl) * 60 if enroll else 0,
         )
     except ValueError as exc:
-        console.print(f"[red]Error:[/red] {exc}")
+        console.print(t("sv.error", error=exc))
         return 1
     except Exception as exc:
-        console.print(f"[red]Error registering client:[/red] {exc}")
+        console.print(t("sv.add.failed", error=exc))
         return 1
 
-    console.print(f"\n[green]Client '{name}' added successfully.[/green]")
-    console.print(f"  IP: {result.client.address}")
+    console.print("\n" + t("sv.add.ok", name=name))
+    console.print(t("sv.add.ip", ip=result.client.address))
     if result.client.psk:
-        console.print("  Preshared key: [green]yes[/green]")
+        console.print(t("sv.add.psk"))
     if expires_at:
-        console.print(f"  Expires: [yellow]{expires_at}[/yellow]")
-    console.print(f"  Config: [bold]{result.owcfg_path}[/bold]")
+        console.print(t("sv.add.expires", date=expires_at))
+    console.print(t("sv.add.config", path=result.owcfg_path))
 
     if enroll:
         import datetime as _dt
         deadline = _dt.datetime.fromtimestamp(
             result.enrollment_expires_at, _dt.UTC
         ).strftime("%H:%M UTC")
-        console.print(
-            f"\n[bold]This profile holds a one-time enrolment token, not a private "
-            f"key.[/bold] The client generates its own keypair on import and "
-            f"redeems the token through the tunnel port "
-            f"({result.config.endpoint}:{result.config.port}); the server never "
-            f"sees the private key and no other port needs to be open.\n"
-            f"  Valid until: [yellow]{deadline}[/yellow] "
-            f"({args.enroll_ttl} min from now)\n\n"
-            f"Send it now — after that window the client must ask for a new one. "
-            f"If the client reports 'already redeemed', the file was intercepted: "
-            f"revoke and re-issue. Clients older than 0.13 cannot read this "
-            f"profile; use [bold]--embed-key[/bold] for those."
-        )
+        console.print("\n" + t(
+            "sv.add.enroll_note",
+            server=f"{result.config.endpoint}:{result.config.port}",
+            deadline=deadline, minutes=args.enroll_ttl,
+        ))
     else:
-        console.print(
-            "\n[yellow]This profile embeds the client's private key[/yellow] "
-            "(--embed-key). Whoever holds the file is that client, permanently. "
-            "Send it over a channel you trust, and prefer the default enrolment "
-            "flow where you can."
-        )
+        console.print("\n" + t("sv.add.embed_note"))
     return 0
 
 
@@ -286,17 +266,17 @@ def _cmd_prune_expired(args: argparse.Namespace) -> int:
     expired = [c for c in config.clients if c.expires_at and c.expires_at < today]
 
     if not expired:
-        console.print("[green]No expired clients.[/green]")
+        console.print(t("sv.prune.none"))
         return 0
 
-    console.print("[bold]Expired clients:[/bold]")
+    console.print(t("sv.prune.header"))
     for c in expired:
-        console.print(f"  • {c.name} (expired {c.expires_at})")
+        console.print(t("sv.prune.item", name=c.name, date=c.expires_at))
 
     if not args.yes:
-        answer = console.input("\nRevoke all of them? Type [bold]yes[/bold] to confirm: ")
+        answer = console.input("\n" + t("sv.prune.confirm"))
         if answer.strip().lower() != "yes":
-            console.print("Aborted.")
+            console.print(t("sv.aborted"))
             return 1
 
     from outwarp_server import operations
@@ -307,7 +287,7 @@ def _cmd_prune_expired(args: argparse.Namespace) -> int:
         with contextlib.suppress(KeyError):
             operations.revoke_client(config, c.name, config_path=config_path)
 
-    console.print(f"\n[green]Revoked {len(expired)} expired client(s).[/green]")
+    console.print("\n" + t("sv.prune.done", count=len(expired)))
     return 0
 
 
@@ -325,12 +305,12 @@ def _format_bytes(n: int) -> str:
 
 def _format_seconds_ago(seconds: int) -> str:
     if seconds < 60:
-        return f"{seconds}s ago"
+        return t("sv.ago", value=f"{seconds}s")
     if seconds < 3600:
-        return f"{seconds // 60}m {seconds % 60}s ago"
+        return t("sv.ago", value=f"{seconds // 60}m {seconds % 60}s")
     if seconds < 86400:
-        return f"{seconds // 3600}h {(seconds % 3600) // 60}m ago"
-    return f"{seconds // 86400}d {(seconds % 86400) // 3600}h ago"
+        return t("sv.ago", value=f"{seconds // 3600}h {(seconds % 3600) // 60}m")
+    return t("sv.ago", value=f"{seconds // 86400}d {(seconds % 86400) // 3600}h")
 
 
 # A peer is considered "online" if its last handshake is within this window.
@@ -354,7 +334,7 @@ def _cmd_list_clients(args: argparse.Namespace) -> int:
     config = _load_config(args)
 
     if not config.clients:
-        console.print("No clients registered. Use [bold]add-client[/bold] to add one.")
+        console.print(t("sv.list.none"))
         return 0
 
     live_peers = get_live_peers()
@@ -362,24 +342,25 @@ def _cmd_list_clients(args: argparse.Namespace) -> int:
 
     today = datetime.datetime.now(datetime.UTC).date().isoformat()
 
-    table = Table(title="Registered Clients")
-    table.add_column("Name", style="bold")
-    table.add_column("Address")
-    table.add_column("Status")
-    table.add_column("Last handshake")
-    table.add_column("Endpoint")
-    table.add_column("RX / TX")
-    table.add_column("Expires")
+    table = Table(title=t("sv.list.title"))
+    table.add_column(t("sv.list.col.name"), style="bold")
+    table.add_column(t("sv.list.col.address"))
+    table.add_column(t("sv.list.col.status"))
+    table.add_column(t("sv.list.col.handshake"))
+    table.add_column(t("sv.list.col.endpoint"))
+    table.add_column(t("sv.list.col.transfer"))
+    table.add_column(t("sv.list.col.expires"))
+    never = t("sv.never")
 
     pending_names = {
-        t.client_name for t in _pending_enrollments(_resolve_config_path(args).parent)
+        p.client_name for p in _pending_enrollments(_resolve_config_path(args).parent)
     }
 
     for c in config.clients:
         if c.state == "disabled":
             table.add_row(
-                c.name, c.address, "[magenta]disabled[/magenta]", "[dim]—[/dim]",
-                "[dim]—[/dim]", "[dim]—[/dim]", c.expires_at or "[dim]never[/dim]",
+                c.name, c.address, t("sv.status.disabled"), "[dim]—[/dim]",
+                "[dim]—[/dim]", "[dim]—[/dim]", c.expires_at or never,
             )
             continue
         if not c.public_key:
@@ -387,40 +368,40 @@ def _cmd_list_clients(args: argparse.Namespace) -> int:
             # it as "unknown" would read as a broken peer rather than a normal
             # waiting state.
             state = (
-                "[cyan]awaiting enrolment[/cyan]" if c.name in pending_names
-                else "[red]enrolment expired[/red]"
+                t("sv.status.awaiting") if c.name in pending_names
+                else t("sv.status.enroll_expired")
             )
             table.add_row(
                 c.name, c.address, state, "[dim]—[/dim]", "[dim]—[/dim]", "[dim]—[/dim]",
-                c.expires_at or "[dim]never[/dim]",
+                c.expires_at or never,
             )
             continue
         live = live_peers.get(c.public_key)
         if live is None:
             # Peer not even known to running WG (interface down, or peer not synced)
-            status = "[dim]unknown[/dim]"
+            status = t("sv.status.unknown")
             handshake = "[dim]—[/dim]"
             endpoint = "[dim]—[/dim]"
             transfer = "[dim]—[/dim]"
         elif live.latest_handshake is None:
-            status = "[yellow]idle[/yellow]"
-            handshake = "[dim]never[/dim]"
+            status = t("sv.status.idle")
+            handshake = never
             endpoint = "[dim]—[/dim]"
             transfer = "0 B / 0 B"
         else:
             seconds_ago = now - live.latest_handshake
             if seconds_ago < _ONLINE_WINDOW_SECONDS:
-                status = "[green]online[/green]"
+                status = t("sv.status.online")
             else:
-                status = "[yellow]offline[/yellow]"
+                status = t("sv.status.offline")
             handshake = _format_seconds_ago(seconds_ago)
             endpoint = live.endpoint or "[dim]—[/dim]"
             transfer = f"{_format_bytes(live.transfer_rx)} / {_format_bytes(live.transfer_tx)}"
 
         if not c.expires_at:
-            expires = "[dim]never[/dim]"
+            expires = never
         elif c.expires_at < today:
-            expires = f"[red]{c.expires_at} (expired)[/red]"
+            expires = t("sv.list.expired", date=c.expires_at)
         else:
             expires = c.expires_at
 
@@ -441,10 +422,10 @@ def _cmd_revoke_client(args: argparse.Namespace) -> int:
             config, name, config_path=_resolve_config_path(args)
         )
     except KeyError as exc:
-        console.print(f"[red]Error:[/red] {exc.args[0] if exc.args else exc}")
+        console.print(t("sv.error", error=exc.args[0] if exc.args else exc))
         return 1
 
-    console.print(f"[green]Client '{name}' revoked.[/green]")
+    console.print(t("sv.revoke.ok", name=name))
     return 0
 
 
@@ -457,23 +438,17 @@ def _set_client_enabled(args: argparse.Namespace, enabled: bool) -> int:
             config, args.name, enabled, config_path=_resolve_config_path(args)
         )
     except KeyError as exc:
-        console.print(f"[red]Error:[/red] {exc.args[0] if exc.args else exc}")
+        console.print(t("sv.error", error=exc.args[0] if exc.args else exc))
         return 1
 
     if enabled:
-        console.print(f"[green]Client '{args.name}' enabled.[/green]")
+        console.print(t("sv.enable.ok", name=args.name))
     else:
-        console.print(
-            f"[green]Client '{args.name}' disabled.[/green] It keeps its IP and keys; "
-            f"[bold]outwarp-server enable-client {args.name}[/bold] brings it back."
-        )
+        console.print(t("sv.disable.ok", name=args.name))
     if not result.hot_applied:
-        console.print(
-            "[yellow]WireGuard is not running; the change applies when it starts.[/yellow]"
-        )
+        console.print(t("sv.wg_not_running"))
     if result.wg_persist_warning:
-        console.print(f"[yellow]Could not write the WireGuard config:[/yellow] "
-                      f"{result.wg_persist_warning}")
+        console.print(t("sv.wg_write_failed", warning=result.wg_persist_warning))
     return 0
 
 
@@ -503,26 +478,21 @@ def _cmd_rotate_client(args: argparse.Namespace) -> int:
             config_path=_resolve_config_path(args),
         )
     except ValueError as exc:
-        console.print(f"[red]Error:[/red] {exc}")
+        console.print(t("sv.error", error=exc))
         return 1
     except Exception as exc:
-        console.print(f"[red]Error rotating keys:[/red] {exc}")
+        console.print(t("sv.rotate.failed", error=exc))
         return 1
 
-    console.print(f"\n[green]Client '{args.name}' keys rotated.[/green]")
-    console.print(f"  New public key: {result.client.public_key[:24]}…")
-    console.print(f"  New .owcfg:     [bold]{result.owcfg_path}[/bold]")
-    console.print(f"  SHA-256:        {result.owcfg_sha256[:23]}…")
+    console.print("\n" + t("sv.rotate.ok", name=args.name))
+    console.print(t("sv.rotate.pubkey", value=f"{result.client.public_key[:24]}…"))
+    console.print(t("sv.rotate.owcfg", path=result.owcfg_path))
+    console.print(t("sv.rotate.sha", value=f"{result.owcfg_sha256[:23]}…"))
     if result.wg_persist_warning:
-        console.print(f"  [yellow]Warning:[/yellow] {result.wg_persist_warning}")
+        console.print(t("sv.rotate.warning", warning=result.wg_persist_warning))
     if not result.hot_rotated:
-        console.print(
-            "  [yellow]Note:[/yellow] WireGuard was not reachable — restart the server "
-            "with [bold]outwarp-server restart[/bold] to apply the new key."
-        )
-    console.print(
-        "\n[bold]Send the new .owcfg to the client — the previous one is now invalid.[/bold]"
-    )
+        console.print(t("sv.rotate.restart_note"))
+    console.print("\n" + t("sv.rotate.send"))
     return 0
 
 
@@ -549,35 +519,24 @@ def _cmd_renew_cert(args: argparse.Namespace) -> int:
         else:
             fingerprint, spki = renew_tls_cert(cert_path, key_path, config.endpoint)
     except (CryptoError, OSError) as exc:
-        console.print(f"[red]Error reissuing certificate:[/red] {exc}")
+        console.print(t("sv.cert.failed", error=exc))
         return 1
 
     updated = replace(config, cert_fingerprint_sha256=fingerprint, spki_sha256=spki)
     try:
         updated.save(_resolve_config_path(args))
     except OSError as exc:
-        console.print(f"[red]Error saving config:[/red] {exc}")
+        console.print(t("sv.cert.save_failed", error=exc))
         return 1
 
-    console.print("\n[green]TLS certificate reissued.[/green]")
-    console.print(f"  Fingerprint: {fingerprint[:23]}…")
-    console.print(f"  Key pin:     {spki[:23]}…")
+    console.print("\n" + t("sv.cert.ok"))
+    console.print(t("sv.cert.fingerprint", value=f"{fingerprint[:23]}…"))
+    console.print(t("sv.cert.keypin", value=f"{spki[:23]}…"))
     if args.new_key:
-        console.print(
-            "\n[yellow]The private key was replaced, so every .owcfg already "
-            "distributed is now invalid.[/yellow] Re-issue them with "
-            "[bold]outwarp-server rotate-client <name>[/bold]."
-        )
+        console.print("\n" + t("sv.cert.new_key_note"))
     else:
-        console.print(
-            "\nThe key was reused, so clients holding a profile with a key pin "
-            "keep working. Profiles issued before OutWarp 0.11 pin the "
-            "certificate instead and need re-issuing.",
-            style="dim",
-        )
-    console.print(
-        "\nRestart the transport to serve it: [bold]outwarp-server restart[/bold]"
-    )
+        console.print("\n" + t("sv.cert.reused_note"), style="dim")
+    console.print("\n" + t("sv.cert.restart"))
     return 0
 
 
@@ -591,52 +550,53 @@ def _cmd_restart(args: argparse.Namespace) -> int:
 
     config = _load_config(args)
 
-    console.print("[bold]Regenerating WireGuard config...[/bold]")
+    console.print(t("sv.restart.regenerating"))
     result = operations.restart_services(config, config_path=_resolve_config_path(args))
 
     if result.wg_conf_written:
-        console.print("  [green]✓[/green] wg0.conf written")
+        console.print(t("sv.restart.conf_written"))
     else:
         # The first error in restart_services always belongs to "WireGuard config".
-        msg = result.errors[0] if result.errors else "WireGuard config write failed"
+        msg = result.errors[0] if result.errors else t("sv.restart.conf_failed")
         console.print(f"  [red]✗[/red] {msg}")
         return 1
 
-    console.print("[bold]Restarting WireGuard interface (PostUp/PostDown will re-run)...[/bold]")
+    console.print(t("sv.restart.wg"))
     if result.wg_restarted:
-        console.print("  [green]✓[/green] wg-quick restarted")
+        console.print(t("sv.restart.wg_ok"))
     else:
-        msg = result.errors[0] if result.errors else "WireGuard restart failed"
+        msg = result.errors[0] if result.errors else t("sv.restart.wg_failed")
         console.print(f"  [red]✗[/red] {msg}")
         return 1
 
     if result.transport_note:
         console.print(f"  [yellow]![/yellow] {result.transport_note}")
-        console.print("\n[green]WireGuard restarted.[/green]")
+        console.print("\n" + t("sv.restart.wg_done"))
         return 0
 
-    console.print("[bold]Restarting wstunnel service...[/bold]")
+    console.print(t("sv.restart.wstunnel"))
     if result.wstunnel_restarted:
-        console.print("  [green]✓[/green] wstunnel restarted")
+        console.print(t("sv.restart.wstunnel_ok"))
     else:
         msg = next(
-            (e for e in result.errors if e.startswith("wstunnel")), "wstunnel restart failed",
+            (e for e in result.errors if e.startswith("wstunnel")),
+            t("sv.restart.wstunnel_failed"),
         )
         console.print(f"  [red]✗[/red] {msg}")
         return 1
 
-    console.print("[bold]Restarting enrolment listener...[/bold]")
+    console.print(t("sv.restart.enroll"))
     if result.enroll_restarted:
-        console.print("  [green]✓[/green] enrolment listener restarted")
+        console.print(t("sv.restart.enroll_ok"))
     else:
         msg = next(
             (e for e in result.errors if e.startswith("enrolment")),
-            "enrolment listener restart failed",
+            t("sv.restart.enroll_failed"),
         )
         console.print(f"  [red]✗[/red] {msg}")
         return 1
 
-    console.print("\n[green]Server restarted successfully.[/green]")
+    console.print("\n" + t("sv.restart.done"))
     return 0
 
 
@@ -711,22 +671,22 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     bin_link = platform.bin_link()
     legacy = _legacy_artifacts(install_prefix)
 
-    console.print("[bold red]WARNING:[/bold red] This will permanently remove OutWarp server:")
-    console.print("  • wstunnel and enrolment listener systemd services")
-    console.print("  • WireGuard interface, config and PostUp/PostDown rules")
-    console.print(f"  • Server config and TLS certificates: {config_dir}")
-    console.print("  • Persistent IP forwarding sysctl drop-in")
+    console.print(t("sv.un.warning"))
+    console.print(t("sv.un.services"))
+    console.print(t("sv.un.wireguard"))
+    console.print(t("sv.un.config", path=config_dir))
+    console.print(t("sv.un.sysctl"))
     if install_prefix is not None:
-        console.print(f"  • Install directory: {install_prefix}")
+        console.print(t("sv.un.prefix", path=install_prefix))
     if bin_link is not None:
-        console.print(f"  • CLI symlink: {bin_link}")
+        console.print(t("sv.un.symlink", path=bin_link))
     for path in legacy:
-        console.print(f"  • Stray artifact: {path}")
+        console.print(t("sv.un.stray", path=path))
 
     if not args.yes:
-        answer = console.input("\nType [bold]yes[/bold] to confirm: ")
+        answer = console.input("\n" + t("sv.un.confirm"))
         if answer.strip().lower() != "yes":
-            console.print("Aborted.")
+            console.print(t("sv.aborted"))
             return 1
 
     warnings: list[str] = []
@@ -735,15 +695,15 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
         console.print(f"  {label}...", end=" ")
         try:
             fn()
-            console.print("[green]done[/green]")
+            console.print(t("sv.un.done"))
         except (PlatformError, OSError) as exc:
-            console.print(f"[yellow]warning:[/yellow] {exc}")
+            console.print(t("sv.un.warn", error=exc))
             warnings.append(f"{label}: {exc}")
 
     console.print()
-    _step("Stopping & removing wstunnel service", platform.uninstall_wstunnel_service)
-    _step("Stopping & removing enrolment listener", platform.uninstall_enroll_service)
-    _step("Bringing down WireGuard + removing config", platform.uninstall_wg_config)
+    _step(t("sv.un.step.wstunnel"), platform.uninstall_wstunnel_service)
+    _step(t("sv.un.step.enroll"), platform.uninstall_enroll_service)
+    _step(t("sv.un.step.wg"), platform.uninstall_wg_config)
 
     def _rm_caddy_front() -> None:
         # Only OutWarp's own conf.d file. The main Caddyfile and any other site
@@ -759,14 +719,14 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
             # uninstall halfway through.
             raise PlatformError(str(exc)) from exc
 
-    _step("Removing Caddy front (if any)", _rm_caddy_front)
+    _step(t("sv.un.step.caddy"), _rm_caddy_front)
 
     def _rm_config_dir() -> None:
         import shutil
         if config_dir.exists():
             shutil.rmtree(config_dir)
 
-    _step(f"Removing config dir ({config_dir})", _rm_config_dir)
+    _step(t("sv.un.step.config", path=config_dir), _rm_config_dir)
 
     # Strays first — they can't be the running interpreter's tree (we filtered
     # install_prefix out of the candidates), so unlinking is safe right now.
@@ -777,32 +737,28 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
                 shutil.rmtree(p)
             else:
                 p.unlink()
-        _step(f"Removing stray artifact ({path})", _rm)
+        _step(t("sv.un.step.stray", path=path), _rm)
 
     # Defer venv + symlink removal until after we exit (we live inside install_prefix).
     if install_prefix is not None and install_prefix.exists():
         try:
             _spawn_deferred_cleanup(install_prefix, bin_link)
-            console.print(
-                f"  Scheduled removal of {install_prefix}"
-                + (f" and {bin_link}" if bin_link else "")
-                + " after exit... [green]done[/green]"
-            )
+            console.print(t(
+                "sv.un.scheduled",
+                paths=str(install_prefix) + (f" {t('sv.and')} {bin_link}" if bin_link else ""),
+            ))
         except OSError as exc:
-            console.print(f"  Scheduling cleanup... [yellow]warning:[/yellow] {exc}")
-            warnings.append(f"deferred cleanup: {exc}")
+            console.print(t("sv.un.schedule_failed", error=exc))
+            warnings.append(f"{t('sv.un.deferred')}: {exc}")
     elif bin_link is not None and bin_link.exists():
         # No install prefix to remove (e.g., dev install) — just unlink the binary.
-        _step(f"Removing CLI symlink ({bin_link})", lambda: bin_link.unlink())
+        _step(t("sv.un.step.symlink", path=bin_link), lambda: bin_link.unlink())
 
     if warnings:
-        console.print(
-            "\n[yellow]Uninstall completed with warnings.[/yellow] "
-            f"({len(warnings)} step(s) reported issues — see above.)"
-        )
+        console.print("\n" + t("sv.un.finished_warnings", count=len(warnings)))
         return 1
 
-    console.print("\n[green]OutWarp server uninstalled successfully.[/green]")
+    console.print("\n" + t("sv.un.success"))
     return 0
 
 
@@ -828,30 +784,30 @@ def _cmd_status(args: argparse.Namespace) -> int:
     else:
         wg_error = None
 
-    table = Table(title="OutWarp Server Status", show_header=False)
+    table = Table(title=t("sv.status.title"), show_header=False)
     table.add_column("Field", style="bold")
     table.add_column("Value")
-    table.add_row("Endpoint", f"{config.endpoint}:{config.port}")
-    table.add_row("WireGuard subnet", config.subnet)
-    table.add_row("Server WG address", config.server_address)
-    table.add_row("WG listen port", str(config.wg_listen_port))
-    table.add_row("Registered clients", str(len(config.clients)))
+    table.add_row(t("sv.status.endpoint"), f"{config.endpoint}:{config.port}")
+    table.add_row(t("sv.status.subnet"), config.subnet)
+    table.add_row(t("sv.status.wg_address"), config.server_address)
+    table.add_row(t("sv.status.wg_port"), str(config.wg_listen_port))
+    table.add_row(t("sv.status.clients"), str(len(config.clients)))
 
     def _status_cell(active: bool | None, error: str | None) -> str:
         if active is True:
-            return "[green]running[/green]"
+            return t("sv.status.running")
         if active is False:
-            return "[red]stopped[/red]"
-        return f"[yellow]unknown[/yellow] ({error})"
+            return t("sv.status.stopped")
+        return t("sv.status.unknown_error", error=error)
 
-    table.add_row("wstunnel service", _status_cell(wstunnel_active, wstunnel_error))
-    table.add_row("WireGuard interface", _status_cell(wg_active, wg_error))
+    table.add_row(t("sv.status.wstunnel"), _status_cell(wstunnel_active, wstunnel_error))
+    table.add_row(t("sv.status.wg_iface"), _status_cell(wg_active, wg_error))
     if platform.manages_enroll_service:
         # Only a native systemd install has a listener of its own to report;
         # everywhere else it lives inside the `serve`/GUI process.
         table.add_row(
-            "Enrolment listener",
-            "[green]running[/green]" if platform.is_enroll_running() else "[red]stopped[/red]",
+            t("sv.status.enroll"),
+            t("sv.status.running") if platform.is_enroll_running() else t("sv.status.stopped"),
         )
 
     console.print(table)
@@ -872,18 +828,17 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     console.print(
         Panel(
-            "[bold]Doctor[/bold]\n"
-            "Checks everything required for the tunnel to work end-to-end.",
+            t("sv.doctor.panel"),
             border_style="cyan",
         )
     )
 
     results = run_all(config)
 
-    table = Table(title="Results", show_lines=False)
+    table = Table(title=t("sv.doctor.results"), show_lines=False)
     table.add_column("", width=2)
-    table.add_column("Check", style="bold")
-    table.add_column("Detail")
+    table.add_column(t("sv.doctor.check"), style="bold")
+    table.add_column(t("sv.doctor.detail"))
 
     icons = {
         Status.PASS: "[green]✓[/green]",
@@ -897,7 +852,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     needs_action = [r for r in results if r.status in (Status.FAIL, Status.WARN) and r.remediation]
     if needs_action:
-        console.print("\n[bold]Suggested actions:[/bold]")
+        console.print("\n" + t("sv.doctor.actions"))
         for r in needs_action:
             style = "red" if r.status == Status.FAIL else "yellow"
             console.print(f"  [{style}]•[/{style}] [bold]{r.name}[/bold]: {r.remediation}")
@@ -905,18 +860,17 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     summary = {Status.PASS: 0, Status.WARN: 0, Status.FAIL: 0, Status.SKIP: 0}
     for r in results:
         summary[r.status] += 1
-    console.print(
-        f"\n[green]{summary[Status.PASS]} OK[/green] / "
-        f"[yellow]{summary[Status.WARN]} warn[/yellow] / "
-        f"[red]{summary[Status.FAIL]} fail[/red]"
-    )
+    console.print("\n" + t(
+        "sv.doctor.summary",
+        ok=summary[Status.PASS], warn=summary[Status.WARN], fail=summary[Status.FAIL],
+    ))
     return 1 if summary[Status.FAIL] > 0 else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="outwarp-server",
-        description="OutWarp server — WireGuard over WebSocket tunnel manager",
+        description=t("sv.help.description"),
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
@@ -925,151 +879,141 @@ def build_parser() -> argparse.ArgumentParser:
         "--config-dir",
         type=str,
         default=None,
-        help="Override the default config directory",
+        help=t("sv.help.config_dir"),
     )
 
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("setup", help="Run the interactive setup wizard")
+    sub.add_parser("setup", help=t("sv.help.setup"))
 
     sub.add_parser(
         "init",
-        help="Non-interactive init from env vars (Docker/Kubernetes) — "
-             "generates config + TLS cert + WG keys without prompts",
+        help=t("sv.help.init"),
     )
 
     sub.add_parser(
         "serve",
-        help="Run the server in foreground (Docker/Kubernetes entrypoint) — "
-             "starts wstunnel + WireGuard and blocks until SIGTERM",
+        help=t("sv.help.serve"),
     )
 
     sub.add_parser(
         "enroll-listener",
-        help="Run the enrolment listener in foreground (ExecStart of "
-             "outwarp-enroll.service on Linux; not needed where `serve` runs)",
+        help=t("sv.help.enroll_listener"),
     )
 
-    p_add = sub.add_parser("add-client", help="Register a new client")
-    p_add.add_argument("name", help="Client name (used as filename for .owcfg)")
+    p_add = sub.add_parser("add-client", help=t("sv.help.add_client"))
+    p_add.add_argument("name", help=t("sv.help.add_name"))
     p_add.add_argument(
         "--days", type=int, default=None,
-        help="Expire this client's config after N days (default: never)",
+        help=t("sv.help.add_days"),
     )
     p_add.add_argument(
         "--enroll-ttl", type=int, default=15, metavar="MIN",
-        help="Minutes the enrolment token stays redeemable (default: 15)",
+        help=t("sv.help.add_ttl"),
     )
     p_add.add_argument(
         "--embed-key", action="store_true",
-        help="Legacy mode: generate the client's WireGuard private key here and "
-             "embed it in the .owcfg. The file then works with any client "
-             "version, but it is a permanent credential in transit and the "
-             "server keeps a copy of the key.",
+        help=t("sv.help.add_embed"),
     )
 
-    sub.add_parser("list-clients", help="List registered clients")
+    sub.add_parser("list-clients", help=t("sv.help.list_clients"))
 
-    p_revoke = sub.add_parser("revoke-client", help="Revoke a client")
-    p_revoke.add_argument("name", help="Client name to revoke")
+    p_revoke = sub.add_parser("revoke-client", help=t("sv.help.revoke"))
+    p_revoke.add_argument("name", help=t("sv.help.revoke_name"))
 
     p_disable = sub.add_parser(
         "disable-client",
-        help="Take a client off the tunnel, reversibly (keeps its IP, keys and .owcfg)",
+        help=t("sv.help.disable"),
     )
-    p_disable.add_argument("name", help="Client name to disable")
+    p_disable.add_argument("name", help=t("sv.help.disable_name"))
 
-    p_enable = sub.add_parser("enable-client", help="Put a disabled client back on the tunnel")
-    p_enable.add_argument("name", help="Client name to enable")
+    p_enable = sub.add_parser("enable-client", help=t("sv.help.enable"))
+    p_enable.add_argument("name", help=t("sv.help.enable_name"))
 
     p_rotate = sub.add_parser(
         "rotate-client",
-        help="Generate a new WireGuard keypair + PSK for an existing client",
+        help=t("sv.help.rotate"),
     )
-    p_rotate.add_argument("name", help="Client name whose keys to rotate")
+    p_rotate.add_argument("name", help=t("sv.help.rotate_name"))
 
     p_prune = sub.add_parser(
-        "prune-expired", help="Revoke every client whose --days expiry has passed"
+        "prune-expired", help=t("sv.help.prune")
     )
     p_prune.add_argument(
-        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+        "--yes", "-y", action="store_true", help=t("sv.help.yes")
     )
 
     p_renew = sub.add_parser(
         "renew-cert",
-        help="Reissue the self-signed TLS certificate (reuses the key, so "
-             "clients keep validating)",
+        help=t("sv.help.renew"),
     )
     p_renew.add_argument(
         "--new-key", action="store_true",
-        help="Also replace the private key — invalidates every distributed .owcfg",
+        help=t("sv.help.renew_new_key"),
     )
 
-    sub.add_parser("status", help="Show server status")
+    sub.add_parser("status", help=t("sv.help.status"))
 
     sub.add_parser(
         "restart",
-        help="Regenerate wg0.conf and fully restart wg-quick + wstunnel "
-             "(use after upgrading or if PostUp rules changed)",
+        help=t("sv.help.restart"),
     )
 
-    p_uninstall = sub.add_parser("uninstall", help="Remove OutWarp server completely")
+    p_uninstall = sub.add_parser("uninstall", help=t("sv.help.uninstall"))
     p_uninstall.add_argument(
-        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+        "--yes", "-y", action="store_true", help=t("sv.help.yes")
     )
 
     sub.add_parser(
         "doctor",
-        help="Run the full diagnostics battery — "
-             "checks NAT, forwarding, services, firewall, etc.",
+        help=t("sv.help.doctor"),
     )
 
     sub.add_parser(
         "tui",
-        help="Launch the interactive admin TUI (Linux / headless)",
+        help=t("sv.help.tui"),
     )
 
     sub.add_parser(
         "gui",
-        help="Launch the admin GUI (was the 'outwarp-server-gui' binary in 0.4.x)",
+        help=t("sv.help.gui"),
     )
 
     p_web = sub.add_parser(
         "web",
-        help="Launch the remote web admin panel over HTTPS",
+        help=t("sv.help.web"),
     )
     p_web.add_argument(
         "--host", default="0.0.0.0",
-        help="Address to bind (default: 0.0.0.0 — all interfaces; use 127.0.0.1 "
-             "to require an SSH tunnel)",
+        help=t("sv.help.web_host"),
     )
     p_web.add_argument(
-        "--port", type=int, default=8443, help="TCP port for the panel (default: 8443)"
+        "--port", type=int, default=8443, help=t("sv.help.web_port")
     )
     p_web.add_argument(
-        "--cert", default=None, help="TLS cert (default: the server's cert)"
+        "--cert", default=None, help=t("sv.help.web_cert")
     )
     p_web.add_argument(
-        "--key", default=None, help="TLS private key (default: the server's key)"
+        "--key", default=None, help=t("sv.help.web_key")
     )
 
     p_token = sub.add_parser(
         "admin-token",
-        help="Print (first time) or rotate the web panel admin token",
+        help=t("sv.help.token"),
     )
     p_token.add_argument(
         "--rotate", action="store_true",
-        help="Replace the existing token with a fresh one",
+        help=t("sv.help.token_rotate"),
     )
 
     p_update = sub.add_parser(
         "update",
-        help="Check GitHub Releases for a newer outwarp-server wheel and install it",
+        help=t("sv.help.update"),
     )
     p_update.add_argument(
         "--check-only",
         action="store_true",
-        help="Just report whether a newer version is available - don't install",
+        help=t("sv.help.update_check"),
     )
 
     return parser
@@ -1079,11 +1023,7 @@ def _cmd_tui(args: argparse.Namespace) -> int:
     try:
         from outwarp_server.tui.app import OutWarpServerTUI
     except ImportError as exc:
-        console.print(
-            "[red]TUI not installed.[/red] Reinstall with: "
-            "[bold]pip install 'outwarp-server[tui]'[/bold]\n"
-            f"  Underlying error: {exc}"
-        )
+        console.print(t("sv.tui.missing", error=exc))
         return 1
     config_dir = Path(args.config_dir) if args.config_dir else default_config_dir()
     return OutWarpServerTUI(config_dir).run() or 0
@@ -1113,22 +1053,12 @@ def _cmd_admin_token(args: argparse.Namespace) -> int:
 
     config_dir = _config_dir_from_args(args)
     if token_is_set(config_dir) and not args.rotate:
-        console.print(
-            "An admin token is already set for the web panel.\n"
-            "It can't be shown again (only its hash is stored). To replace it, run:\n"
-            "  [bold]outwarp-server admin-token --rotate[/bold]"
-        )
+        console.print(t("sv.token.exists"))
         return 0
     token = generate_and_store_token(config_dir)
-    console.print(
-        "[bold green]Admin token generated.[/bold green] Store it now — "
-        "it will not be shown again:\n"
-    )
+    console.print(t("sv.token.generated") + "\n")
     console.print(f"  [bold]{token}[/bold]\n")
-    console.print(
-        "Use it to log in at the web panel. Treat it like a password.",
-        style="dim",
-    )
+    console.print(t("sv.token.use"), style="dim")
     return 0
 
 
@@ -1150,19 +1080,13 @@ def _cmd_web(args: argparse.Namespace) -> int:
     config_dir = _config_dir_from_args(args)
 
     if not token_is_set(config_dir):
-        console.print(
-            "[red]No admin token set.[/red] Create one before exposing the panel:\n"
-            "  [bold]sudo outwarp-server admin-token[/bold]"
-        )
+        console.print(t("sv.web.no_token"))
         return 1
 
     certfile = args.cert or config.cert_path
     keyfile = args.key or config.key_path
     if not (Path(certfile).exists() and Path(keyfile).exists()):
-        console.print(
-            f"[red]TLS cert/key not found[/red] ({certfile}, {keyfile}).\n"
-            "Run [bold]outwarp-server setup[/bold] first, or pass --cert/--key."
-        )
+        console.print(t("sv.web.no_cert", cert=certfile, key=keyfile))
         return 1
 
     memory_handler = setup_logging()
@@ -1186,23 +1110,17 @@ def _cmd_web(args: argparse.Namespace) -> int:
     )
 
     shown_host = "127.0.0.1" if args.host in ("127.0.0.1", "localhost") else config.endpoint
-    console.print(
-        f"[bold green]OutWarp web panel[/bold green] listening on "
-        f"https://{args.host}:{args.port}"
-    )
+    console.print(t("sv.web.listening", url=f"https://{args.host}:{args.port}"))
     if args.host not in ("127.0.0.1", "localhost"):
-        console.print(
-            "[yellow]Exposed on all interfaces.[/yellow] Make sure the port is "
-            "firewalled to trusted networks, or bind 127.0.0.1 and use an SSH tunnel.",
-        )
-    console.print(f"  Open: https://{shown_host}:{args.port}", style="dim")
+        console.print(t("sv.web.exposed"))
+    console.print(t("sv.web.open", url=f"https://{shown_host}:{args.port}"), style="dim")
 
     stop_event = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop_event.set())
     signal.signal(signal.SIGINT, lambda *_: stop_event.set())
     stop_event.wait()
 
-    console.print("Shutting down web panel...")
+    console.print(t("sv.web.shutdown"))
     with contextlib.suppress(Exception):
         httpd.shutdown()
     api.shutdown()
@@ -1215,11 +1133,11 @@ def _cmd_update(args: argparse.Namespace) -> int:
 
     from outwarp_server import updater as _upd
 
-    console.print(f"Checking for updates (current: v{__version__})...")
+    console.print(t("sv.update.checking", version=__version__))
     info = _upd.check_for_update(__version__)
 
     if info.get("error"):
-        console.print(f"[red]Update check failed:[/red] {info['error']}")
+        console.print(t("sv.update.check_failed", error=info["error"]))
         return 1
 
     if not info.get("available"):
@@ -1229,20 +1147,18 @@ def _cmd_update(args: argparse.Namespace) -> int:
         # claiming we're already on the latest version.
         from outwarp_server.updater import _is_newer as _newer
         if latest and _newer(latest, __version__) and not info.get("wheel_url"):
-            console.print(
-                f"[yellow]Latest release v{latest} has no Linux wheel attached.[/yellow]"
-            )
-            console.print(f"  See {info.get('html_url', '')}")
+            console.print(t("sv.update.no_wheel", latest=latest))
+            console.print(t("sv.update.see", url=info.get("html_url", "")))
         else:
-            console.print(f"[green]Already up to date[/green] (v{latest}).")
+            console.print(t("sv.update.up_to_date", latest=latest))
         return 0
 
     latest = info["latest"]
-    console.print(f"[bold]New version available:[/bold] v{latest}")
-    console.print(f"  Release: {info.get('html_url', '')}")
+    console.print(t("sv.update.available", latest=latest))
+    console.print(t("sv.update.release", url=info.get("html_url", "")))
 
     if args.check_only:
-        console.print("Run [bold]sudo outwarp-server update[/bold] to install.")
+        console.print(t("sv.update.run_hint"))
         return 0
 
     # Anything below this line writes to the venv (pip install --upgrade) or
@@ -1250,26 +1166,20 @@ def _cmd_update(args: argparse.Namespace) -> int:
     # dispatcher — so ``outwarp-server update --check-only`` above stays open
     # to unprivileged users.
     if sys.platform != "win32" and hasattr(os, "geteuid") and os.geteuid() != 0:
-        console.print(
-            "[red]Error:[/red] Installing the update needs root.\n"
-            "  Try: [bold]sudo outwarp-server update[/bold]"
-        )
+        console.print(t("sv.update.need_root"))
         return 1
 
     wheel_url = info.get("wheel_url", "")
     wheel_name = info.get("wheel_name") or Path(wheel_url).name
     if not wheel_url:
-        console.print(
-            f"[red]No Linux wheel found in release v{latest}[/red] - "
-            f"see {info.get('html_url', '')}"
-        )
+        console.print(t("sv.update.no_wheel_in", latest=latest, url=info.get("html_url", "")))
         return 1
 
     tmp_dir = Path(tempfile.mkdtemp())
     wheel_path = tmp_dir / wheel_name
 
     try:
-        console.print(f"Downloading [bold]{wheel_name}[/bold]...")
+        console.print(t("sv.update.downloading", name=wheel_name))
         last_milestone = [-1]
 
         def _progress(pct: int) -> None:
@@ -1281,7 +1191,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
         try:
             _upd.download_wheel(wheel_url, wheel_path, _progress)
         except Exception as exc:
-            console.print(f"[red]Download failed:[/red] {exc}")
+            console.print(t("sv.update.download_failed", error=exc))
             return 1
 
         ok, detail = _upd.verify_wheel(
@@ -1289,29 +1199,22 @@ def _cmd_update(args: argparse.Namespace) -> int:
             info.get("checksums_url", ""), info.get("signature_url", ""),
         )
         if not ok:
-            console.print(f"[red]Integrity check failed:[/red] {detail}")
+            console.print(t("sv.update.integrity_failed", detail=detail))
             return 1
         console.print(f"  {detail}")
 
-        console.print("Installing into venv (pip)...")
+        console.print(t("sv.update.installing"))
         try:
             _upd.apply_update(wheel_path, extras="tui")
         except subprocess.TimeoutExpired:
-            console.print(
-                "[red]pip install timed out[/red] (network stall while "
-                "resolving transitive deps?). Re-run when the connection is "
-                "stable."
-            )
+            console.print(t("sv.update.pip_timeout"))
             return 1
         except Exception as exc:
-            console.print(f"[red]pip install failed:[/red] {exc}")
+            console.print(t("sv.update.pip_failed", error=exc))
             return 1
 
-        console.print(f"\n[green]Updated to v{latest}.[/green]")
-        console.print(
-            "Restart the service to pick up the new code: "
-            "[bold]sudo outwarp-server restart[/bold]"
-        )
+        console.print("\n" + t("sv.update.updated", latest=latest))
+        console.print(t("sv.update.restart"))
         return 0
     finally:
         with contextlib.suppress(OSError):

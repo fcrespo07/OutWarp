@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Client TUI logs: export and clear the view.** `x` saves the lines the
+  filters show to `outwarp-logs-<date>.txt` in the current directory and `c`
+  empties the screen, like the GUI's export and clear (the log file itself is
+  never touched).
+
+### Fixed
+- **Server enrolment: a rate-limited or oversized request got "connection
+  aborted" instead of the answer** (B-049). The listener replied before reading
+  the request body; it now reads and discards it first, so the client sees the
+  429 or 400.
+- **Client TUI: the logs screen showed nothing with recent Textual versions.**
+  It passed `markup=` to `RichLog.write()`, which newer Textual no longer
+  accepts (markup is a property of the widget, already on), so every line
+  raised and was dropped. It also broke the filters.
+
 ### Changed
 - **Client: Settings regrouped.** Appearance (language, theme), Connection
   (connect on launch, reconnect if it drops), Security (kill switch, allow
@@ -16,6 +32,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   down, "advanced mode" moved out of Appearance, the technical subtitle became
   "Changes apply right away.", and a few labels were reworded (es/en). No
   setting or `settings.json` key changed.
+- **Client TUI: the dashboard says what the GUI says.** The connection card
+  now shows the profile, the route the connection took (direct, public DNS,
+  proxy, alternate port: the same wording as the window) and whether the kill
+  switch is on, and it fits a 24-row terminal better: one line per fact instead
+  of a title plus a value. The header shows the version. The command palette
+  (`^p`, English-only and unused) is gone from the footer. Settings gains a
+  language picker (it was only reachable from the window), and its status line
+  and the "Connecting…" / "attempt N" texts, which were still English, follow
+  the language.
+- **Client CLI: every message follows the interface language.** `outwarp`'s
+  output (`import`, `connect`, `status`, `profile`, `logs`, `update`, `ui`,
+  `service`, `uninstall`, `gui --install`), its `--help` texts and the whole
+  of `outwarp doctor` (check names, details and remediation hints) were fixed
+  English; they now go through the same tables as the tray and the TUI
+  (English and Spanish, `OUTWARP_LANG` or the `language` setting decide).
+  Commands to copy and paste stay literal. argparse's own words (`usage:`,
+  `options:`, `-h`) are still the standard library's.
+- **Server CLI and `setup` wizard: every message follows the interface
+  language.** `outwarp-server`'s output (`add-client`, `list-clients`,
+  `rotate-client`, `renew-cert`, `restart`, `status`, `uninstall`, `update`,
+  `admin-token`, `web`, …), its `--help` texts and the whole of the interactive
+  `setup` wizard (the transport explanation, every prompt and the final
+  summary) were fixed English; they now go through the same tables as the
+  tray and the TUI (English and Spanish; `OUTWARP_LANG` or the `language`
+  setting decide). `outwarp-server doctor` (and the TUI's doctor screen) now
+  does too: every check name, finding and suggested fix is translated; the
+  commands to copy and paste are not. Logs stay in English. Error text raised
+  from inside the library (a malformed config file, say) still arrives as
+  written.
+- **Server TUI: the leftovers are translated.** The QR window, the doctor
+  screen's messages, the clients search box and the TLS, network and traffic
+  cards still had fixed English; they follow the language now, and the card
+  labels line up whatever the language. The command palette (`^p`, whose own
+  text is English-only and which nothing relied on) is off and the header shows
+  the version.
+- **Server TUI: language picker.** The GUI and the panel had a language
+  setting and the server TUI did not (only `OUTWARP_LANG`). `s` opens Settings
+  with the same choice (automatic, English, Español), saved to the setting the
+  other interfaces share.
+- **Server TUI: test the port from the internet.** `p` on the dashboard asks a
+  third-party host to connect back to the WSS port and says whether it is
+  reachable (the GUI and the panel already could). The check lives in
+  `operations.probe_external_port`, which the GUI now calls too.
 
 ## [0.19.0] — 2026-09-30
 

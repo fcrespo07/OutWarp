@@ -30,6 +30,7 @@ from outwarp.config import (
     import_owcfg_with_verdict,
     original_config_path,
 )
+from outwarp.i18n import t
 from outwarp.logs import default_log_path, setup_logging
 from outwarp.platforms import PlatformError, get_platform
 from outwarp.tunnel import TunnelError, TunnelManager, TunnelState
@@ -37,13 +38,8 @@ from outwarp.tunnel import TunnelError, TunnelManager, TunnelState
 log = logging.getLogger(__name__)
 
 
-_STATE_LABELS: dict[TunnelState, str] = {
-    TunnelState.DISCONNECTED: "disconnected",
-    TunnelState.CONNECTING:   "connecting",
-    TunnelState.CONNECTED:    "connected",
-    TunnelState.RECONNECTING: "reconnecting",
-    TunnelState.FAILED:       "failed",
-}
+def _state_label(state: TunnelState) -> str:
+    return t(f"cli.state.{state.value}")
 
 
 def _print(msg: str = "") -> None:
@@ -64,8 +60,8 @@ def _load_config() -> ClientConfig | None:
     try:
         return ClientConfig.load(path)
     except ConfigError as exc:
-        _err(f"Error: {exc}")
-        _err("Run 'outwarp import <path-to-.owcfg>' first.")
+        _err(t("cli.error", error=exc))
+        _err(t("cli.run_import_first"))
         return None
 
 
@@ -75,29 +71,29 @@ def _load_config() -> ClientConfig | None:
 def _cmd_import(args: argparse.Namespace) -> int:
     src = Path(args.path).expanduser()
     if not src.exists():
-        _err(f"Error: file not found: {src}")
+        _err(t("cli.file_not_found", path=src))
         return 1
 
     try:
         config, trust_verdict = import_owcfg_with_verdict(src)
     except ConfigError as exc:
-        _err(f"Error: invalid .owcfg — {exc}")
+        _err(t("cli.invalid_owcfg", error=exc))
         return 1
 
     from outwarp import profiles
 
     profile_id = profiles.active_id() or ""
-    _print(f"Imported profile from {src}")
-    _print(f"  Profile:   {profile_id} (active)")
-    _print(f"  Saved to:  {profiles.config_path(profile_id)}")
-    _print(f"  Server:    {config.server.endpoint}:{config.server.port}")
+    _print(t("cli.imported", path=src))
+    _print(t("cli.import.profile", id=profile_id))
+    _print(t("cli.import.saved", path=profiles.config_path(profile_id)))
+    _print(t("cli.import.server", server=f"{config.server.endpoint}:{config.server.port}"))
     if config.name:
-        _print(f"  Name:      {config.name}")
-    _print(f"  WG iface:  {config.wireguard.tunnel_name}")
-    _print(f"  WG addr:   {config.wireguard.client_address}")
-    _print(f"  Signature: {trust_verdict.message}")
+        _print(t("cli.import.name", name=config.name))
+    _print(t("cli.import.iface", iface=config.wireguard.tunnel_name))
+    _print(t("cli.import.addr", addr=config.wireguard.client_address))
+    _print(t("cli.import.signature", verdict=trust_verdict.message))
     _print("")
-    _print("Start the tunnel with: outwarp connect")
+    _print(t("cli.import.next"))
     return 0
 
 
@@ -113,7 +109,7 @@ def _cmd_connect(args: argparse.Namespace) -> int:
 
     lock = TunnelOwnerLock()
     if not lock.acquire():
-        _err(f"The tunnel is already run by {describe_owner()}. {OWNED_ELSEWHERE_HINT}")
+        _err(t("cli.owned_elsewhere", owner=describe_owner(), hint=OWNED_ELSEWHERE_HINT))
         return 1
 
     # The toggles both UIs persist apply here too — a user who enabled the
@@ -139,12 +135,12 @@ def _cmd_connect(args: argparse.Namespace) -> int:
         if state == last_state[0]:
             return
         last_state[0] = state
-        label = _STATE_LABELS.get(state, state.value)
+        label = _state_label(state)
         if state == TunnelState.FAILED:
-            err = manager.last_error or "unknown error"
-            _err(f"[state] {label}: {err}")
+            err = manager.last_error or t("cli.unknown_error")
+            _err(t("cli.state.line_error", label=label, error=err))
         else:
-            _print(f"[state] {label}")
+            _print(t("cli.state.line", label=label))
 
     manager.add_listener(_on_state)
 
@@ -152,9 +148,9 @@ def _cmd_connect(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
 
-    _print(f"OutWarp client v{__version__} — connecting to "
-           f"{config.server.endpoint}:{config.server.port}")
-    _print("Send SIGTERM or press Ctrl+C to disconnect.")
+    _print(t("cli.connecting", version=__version__,
+             server=f"{config.server.endpoint}:{config.server.port}"))
+    _print(t("cli.connect.stop_hint"))
     manager.start()
 
     # Block until a stop signal arrives OR the manager hits FAILED. Polling
@@ -163,15 +159,15 @@ def _cmd_connect(args: argparse.Namespace) -> int:
     try:
         while not stop.is_set():
             if manager.state == TunnelState.FAILED:
-                _err("Tunnel failed; giving up.")
+                _err(t("cli.connect.gave_up"))
                 manager.stop()
                 return 1
             if stop.wait(0.5):
                 break
 
-        _print("Disconnecting...")
+        _print(t("cli.connect.disconnecting"))
         manager.stop()
-        _print("Done.")
+        _print(t("cli.done"))
         return 0
     finally:
         lock.release()
@@ -180,9 +176,9 @@ def _cmd_connect(args: argparse.Namespace) -> int:
 def _cmd_status(args: argparse.Namespace) -> int:
     path = default_config_path()
     if not path.exists():
-        _print("No profile imported.")
-        _print(f"  Expected config at: {path}")
-        _print("  Run: outwarp import <path-to-.owcfg>")
+        _print(t("cli.status.none"))
+        _print(t("cli.status.expected", path=path))
+        _print(t("cli.status.run_import"))
         return 0
 
     config = _load_config()
@@ -196,18 +192,18 @@ def _cmd_status(args: argparse.Namespace) -> int:
     else:
         active_err = None
 
-    _print(f"Profile:     {config.name or '(unnamed)'}")
-    _print(f"Server:      {config.server.endpoint}:{config.server.port}")
-    _print(f"WG iface:    {config.wireguard.tunnel_name}")
-    _print(f"WG address:  {config.wireguard.client_address}")
+    _print(t("cli.status.profile", name=config.name or t("cli.unnamed")))
+    _print(t("cli.status.server", server=f"{config.server.endpoint}:{config.server.port}"))
+    _print(t("cli.status.iface", iface=config.wireguard.tunnel_name))
+    _print(t("cli.status.addr", addr=config.wireguard.client_address))
     if active is True:
-        _print("WG status:   active")
+        _print(t("cli.status.wg_active"))
     elif active is False:
-        _print("WG status:   inactive")
+        _print(t("cli.status.wg_inactive"))
     else:
-        _print(f"WG status:   unknown ({active_err})")
-    _print(f"Config:      {path}")
-    _print(f"Log file:    {default_log_path()}")
+        _print(t("cli.status.wg_unknown", error=active_err))
+    _print(t("cli.status.config", path=path))
+    _print(t("cli.status.logfile", path=default_log_path()))
     return 0
 
 
@@ -227,17 +223,17 @@ def _profile_list() -> int:
 
     refs = profiles.list_profiles()
     if not refs:
-        _print("No profiles imported. Import one with: outwarp import <file.owcfg>")
+        _print(t("cli.profile.none"))
         return 0
     active = profiles.active_id()
     for ref in refs:
         try:
             cfg = ClientConfig.load(ref.path)
-            detail = f"{cfg.name or '(unnamed)'}  {cfg.server.endpoint}:{cfg.server.port}"
+            detail = f"{cfg.name or t('cli.unnamed')}  {cfg.server.endpoint}:{cfg.server.port}"
             if cfg.is_expired():
-                detail += f"  (expired {cfg.expires_at})"
+                detail += "  " + t("cli.profile.expired", date=cfg.expires_at)
         except ConfigError as exc:
-            detail = f"(unreadable: {exc})"
+            detail = t("cli.profile.unreadable", error=exc)
         _print(f"{'*' if ref.id == active else ' '} {ref.id:<24} {detail}")
     return 0
 
@@ -251,7 +247,7 @@ def _tunnel_in_use() -> str | None:
         from outwarp.service import service_is_active
 
         if service_is_active():
-            return "the background service (outwarp-client.service)"
+            return t("cli.profile.background_service")
     lock = TunnelOwnerLock()
     if lock.acquire():
         lock.release()
@@ -263,17 +259,17 @@ def _profile_use(profile_id: str) -> int:
     from outwarp import profiles
 
     if profile_id not in {p.id for p in profiles.list_profiles()}:
-        _err(f"No profile '{profile_id}'. See: outwarp profile list")
+        _err(t("cli.profile.unknown", id=profile_id))
         return 1
     if profile_id == profiles.active_id():
-        _print(f"'{profile_id}' is already the active profile.")
+        _print(t("cli.profile.already_active", id=profile_id))
         return 0
     owner = _tunnel_in_use()
     if owner:
-        _err(f"The tunnel is in use by {owner}. Disconnect it first, then switch profiles.")
+        _err(t("cli.profile.in_use", owner=owner))
         return 1
     profiles.set_active(profile_id)
-    _print(f"Active profile: {profile_id}. Connect with: outwarp connect")
+    _print(t("cli.profile.now_active", id=profile_id))
     return 0
 
 
@@ -281,22 +277,22 @@ def _profile_remove(profile_id: str, *, assume_yes: bool) -> int:
     from outwarp import profiles
 
     if profile_id not in {p.id for p in profiles.list_profiles()}:
-        _err(f"No profile '{profile_id}'. See: outwarp profile list")
+        _err(t("cli.profile.unknown", id=profile_id))
         return 1
     if profile_id == profiles.active_id():
         owner = _tunnel_in_use()
         if owner:
-            _err(f"'{profile_id}' is active and the tunnel is in use by {owner}. "
-                 "Disconnect it first.")
+            _err(t("cli.profile.active_in_use", id=profile_id, owner=owner))
             return 1
     if not assume_yes:
-        answer = input(f"Delete profile '{profile_id}' and its keys? Type 'yes': ")
+        answer = input(t("cli.profile.confirm_delete", id=profile_id))
         if answer.strip().lower() != "yes":
-            _print("Aborted.")
+            _print(t("cli.aborted"))
             return 1
     now_active = profiles.remove(profile_id)
-    _print(f"Removed '{profile_id}'."
-           + (f" Active profile: {now_active}." if now_active else " No profiles left."))
+    _print(t("cli.profile.removed", id=profile_id)
+           + (t("cli.profile.removed_active", id=now_active) if now_active
+              else t("cli.profile.removed_none_left")))
     return 0
 
 
@@ -304,29 +300,32 @@ def _profile_show() -> int:
     config = _load_config()
     if config is None:
         return 1
-    _print(f"Name:                 {config.name or '(unnamed)'}")
-    _print(f"Server endpoint:      {config.server.endpoint}:{config.server.port}")
+    _print(t("cli.show.name", value=config.name or t("cli.unnamed")))
+    _print(t("cli.show.endpoint", value=f"{config.server.endpoint}:{config.server.port}"))
     if config.tls.verify == "ca":
-        _print("TLS trust:            system CA store (server has a real certificate)")
+        _print(t("cli.show.tls_ca"))
     else:
-        label = "key pin" if config.tls.spki_sha256 else "cert pin"
-        _print(f"TLS {label}:         {config.tls.pin_value}")
-    _print(f"WG tunnel name:       {config.wireguard.tunnel_name}")
-    _print(f"WG client address:    {config.wireguard.client_address}")
-    _print(f"WG MTU:               {config.wireguard.mtu}")
-    _print(f"WG DNS:               {', '.join(config.wireguard.dns)}")
-    _print(f"Bypass IPs:           {', '.join(config.routing.bypass_ips) or '(none)'}")
-    _print(f"Local UDP port:       {config.tunnel.local_port}")
-    _print(f"Remote WG endpoint:   {config.tunnel.remote_host}:{config.tunnel.remote_port}")
-    _print(f"Reconnect attempts:   {config.reconnect.max_attempts}")
-    _print(f"Reconnect delays (s): {', '.join(str(d) for d in config.reconnect.delays_seconds)}")
+        key = "cli.show.tls_key_pin" if config.tls.spki_sha256 else "cli.show.tls_cert_pin"
+        _print(t(key, value=config.tls.pin_value))
+    _print(t("cli.show.wg_name", value=config.wireguard.tunnel_name))
+    _print(t("cli.show.wg_addr", value=config.wireguard.client_address))
+    _print(t("cli.show.wg_mtu", value=config.wireguard.mtu))
+    _print(t("cli.show.wg_dns", value=", ".join(config.wireguard.dns)))
+    _print(t("cli.show.bypass",
+             value=", ".join(config.routing.bypass_ips) or t("cli.none")))
+    _print(t("cli.show.local_port", value=config.tunnel.local_port))
+    _print(t("cli.show.remote",
+             value=f"{config.tunnel.remote_host}:{config.tunnel.remote_port}"))
+    _print(t("cli.show.attempts", value=config.reconnect.max_attempts))
+    _print(t("cli.show.delays",
+             value=", ".join(str(d) for d in config.reconnect.delays_seconds)))
     return 0
 
 
 def _cmd_logs(args: argparse.Namespace) -> int:
     path = default_log_path()
     if not path.exists():
-        _print(f"No log file yet at {path}")
+        _print(t("cli.logs.none", path=path))
         return 0
 
     if not args.follow:
@@ -334,7 +333,7 @@ def _cmd_logs(args: argparse.Namespace) -> int:
             sys.stdout.write(path.read_text(encoding="utf-8", errors="replace"))
             sys.stdout.flush()
         except OSError as exc:
-            _err(f"Error reading {path}: {exc}")
+            _err(t("cli.logs.read_error", path=path, error=exc))
             return 1
         return 0
 
@@ -343,7 +342,7 @@ def _cmd_logs(args: argparse.Namespace) -> int:
     try:
         f = path.open("r", encoding="utf-8", errors="replace")
     except OSError as exc:
-        _err(f"Error opening {path}: {exc}")
+        _err(t("cli.logs.open_error", path=path, error=exc))
         return 1
 
     stop = threading.Event()
@@ -386,18 +385,18 @@ def _cmd_forget_profile(args: argparse.Namespace) -> int:
     baseline = original_config_path(cfg)
 
     if not cfg.exists() and not baseline.exists():
-        _print("Nothing to remove — no profile imported.")
+        _print(t("cli.forget.nothing"))
         return 0
 
     if not args.yes:
-        _print("This will delete:")
+        _print(t("cli.forget.will_delete"))
         if cfg.exists():
             _print(f"  - {cfg}")
         if baseline.exists():
             _print(f"  - {baseline}")
-        answer = input("Type 'yes' to confirm: ").strip().lower()
+        answer = input(t("cli.forget.confirm")).strip().lower()
         if answer != "yes":
-            _print("Aborted.")
+            _print(t("cli.aborted"))
             return 1
 
     # Refuse to wipe the profile while a tunnel using it is still up. Otherwise
@@ -406,11 +405,7 @@ def _cmd_forget_profile(args: argparse.Namespace) -> int:
         try:
             config = ClientConfig.load(cfg)
             if get_platform().is_wg_tunnel_active(config.wireguard.tunnel_name):
-                _err(
-                    f"Refusing to remove profile while tunnel "
-                    f"'{config.wireguard.tunnel_name}' is active. "
-                    "Stop it first: kill the 'outwarp connect' process."
-                )
+                _err(t("cli.forget.tunnel_active", iface=config.wireguard.tunnel_name))
                 return 1
         except (ConfigError, PlatformError) as exc:
             # Couldn't check — log and continue. Better to let the user delete
@@ -424,16 +419,17 @@ def _cmd_forget_profile(args: argparse.Namespace) -> int:
         try:
             now_active = profiles.remove(cfg.parent.name)
         except (OSError, profiles.ProfileError) as exc:
-            _err(f"Could not remove {cfg.parent}: {exc}")
+            _err(t("cli.forget.remove_failed", path=cfg.parent, error=exc))
             return 1
-        _print("Profile removed." + (f" Active profile: {now_active}." if now_active else ""))
+        _print(t("cli.forget.removed")
+               + (t("cli.forget.removed_active", id=now_active) if now_active else ""))
         return 0
 
     for path in (cfg, baseline):
         try:
             path.unlink(missing_ok=True)
         except OSError as exc:
-            _err(f"Could not remove {path}: {exc}")
+            _err(t("cli.forget.remove_failed", path=path, error=exc))
             return 1
 
     parent = cfg.parent
@@ -445,7 +441,7 @@ def _cmd_forget_profile(args: argparse.Namespace) -> int:
         except OSError:
             pass
 
-    _print("Profile removed.")
+    _print(t("cli.forget.removed"))
     return 0
 
 
@@ -455,25 +451,24 @@ def _cmd_forget_profile(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="outwarp",
-        description="OutWarp client — WireGuard-over-WebSocket tunnel (console mode)",
+        description=t("cli.help.description"),
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}",
     )
     sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
-    p_import = sub.add_parser("import", help="Import a .owcfg profile")
-    p_import.add_argument("path", help="Path to the .owcfg file")
+    p_import = sub.add_parser("import", help=t("cli.help.import"))
+    p_import.add_argument("path", help=t("cli.help.import_path"))
 
     p_connect = sub.add_parser(
         "connect",
-        help="Bring up the tunnel in foreground (Ctrl+C / SIGTERM to disconnect)",
+        help=t("cli.help.connect"),
     )
     p_connect.add_argument(
         "--allow-tls-intercept",
         action="store_true",
-        help="Tolerate TLS fingerprint mismatch (corporate/school inspection "
-             "proxies). WireGuard stays end-to-end encrypted regardless.",
+        help=t("cli.help.allow_tls"),
     )
 
     # Headless background mode — the ExecStart= target for the systemd /
@@ -481,12 +476,12 @@ def build_parser() -> argparse.ArgumentParser:
     # the service journal stays readable.
     p_daemon = sub.add_parser(
         "daemon",
-        help="Run the tunnel in background mode for systemd/SCM (logs to file only)",
+        help=t("cli.help.daemon"),
     )
     p_daemon.add_argument(
         "--allow-tls-intercept",
         action="store_true",
-        help="Tolerate TLS fingerprint mismatch — same as on `connect`.",
+        help=t("cli.help.allow_tls_daemon"),
     )
 
     # `outwarp service install/uninstall/status` manages the systemd
@@ -494,48 +489,48 @@ def build_parser() -> argparse.ArgumentParser:
     # and tells the user to use the installer's SCM registration.
     p_service = sub.add_parser(
         "service",
-        help="Install/uninstall the user-level background service (systemd --user on Linux)",
+        help=t("cli.help.service"),
     )
     p_service.add_argument(
         "action",
         choices=("install", "uninstall", "status"),
-        help="What to do with the service unit",
+        help=t("cli.help.service_action"),
     )
 
-    sub.add_parser("status", help="Show profile summary and WireGuard state")
+    sub.add_parser("status", help=t("cli.help.status"))
     p_profile = sub.add_parser(
-        "profile", help="Show the active profile, or list / switch / remove profiles",
+        "profile", help=t("cli.help.profile"),
     )
     p_profile_sub = p_profile.add_subparsers(dest="profile_action", metavar="<action>")
-    p_profile_sub.add_parser("show", help="Print the active profile's details (the default)")
-    p_profile_sub.add_parser("list", help="List imported profiles; * marks the active one")
+    p_profile_sub.add_parser("show", help=t("cli.help.profile_show"))
+    p_profile_sub.add_parser("list", help=t("cli.help.profile_list"))
     p_use = p_profile_sub.add_parser(
-        "use", help="Make a profile the active one (disconnects the current tunnel)",
+        "use", help=t("cli.help.profile_use"),
     )
-    p_use.add_argument("id", help="Profile id, as `outwarp profile list` shows it")
-    p_rm = p_profile_sub.add_parser("remove", help="Delete a profile")
-    p_rm.add_argument("id", help="Profile id, as `outwarp profile list` shows it")
-    p_rm.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
+    p_use.add_argument("id", help=t("cli.help.profile_id"))
+    p_rm = p_profile_sub.add_parser("remove", help=t("cli.help.profile_remove"))
+    p_rm.add_argument("id", help=t("cli.help.profile_id"))
+    p_rm.add_argument("-y", "--yes", action="store_true", help=t("cli.help.yes"))
 
-    p_logs = sub.add_parser("logs", help="Show the OutWarp log file")
+    p_logs = sub.add_parser("logs", help=t("cli.help.logs"))
     p_logs.add_argument(
         "-f", "--follow", action="store_true",
-        help="Tail the log file (like 'tail -f'); Ctrl+C to stop",
+        help=t("cli.help.logs_follow"),
     )
 
     p_forget = sub.add_parser(
         "forget-profile",
-        help="Remove the active profile (see also `outwarp profile remove`)",
+        help=t("cli.help.forget"),
     )
-    p_forget.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
+    p_forget.add_argument("-y", "--yes", action="store_true", help=t("cli.help.yes"))
 
     p_un = sub.add_parser(
         "uninstall",
-        help="Purge OutWarp client entirely (venv, helper, sudoers, autostart)",
+        help=t("cli.help.uninstall"),
     )
-    p_un.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
+    p_un.add_argument("-y", "--yes", action="store_true", help=t("cli.help.yes"))
 
-    sub.add_parser("doctor", help="Run client health checks and show remediation hints")
+    sub.add_parser("doctor", help=t("cli.help.doctor"))
 
     # Internal: run by the installer's boot/logon scheduled task (Windows), not
     # part of the documented CLI: no help= keeps it out of the listing.
@@ -543,45 +538,41 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser(
         "tui",
-        help="Launch the interactive Textual UI (Linux / headless)",
+        help=t("cli.help.tui"),
     )
 
     p_gui = sub.add_parser(
         "gui",
-        help="Launch the tray/pywebview GUI (was the 'outwarp' binary in 0.4.x)",
+        help=t("cli.help.gui"),
     )
     p_gui.add_argument(
         "--install", action="store_true",
-        help="Linux: add the GUI stack (GTK/WebKit packages + pywebview) to this "
-             "install instead of launching. Needs root.",
+        help=t("cli.help.gui_install"),
     )
 
     p_ui = sub.add_parser(
         "ui",
-        help="Show or set which UI 'outwarp launch' and the app menu open (auto/gui/tui)",
+        help=t("cli.help.ui"),
     )
     p_ui.add_argument("choice", nargs="?", choices=["auto", "gui", "tui"])
     p_ui.add_argument(
         "--hyprland-rule", action="store_true",
-        help="Hyprland: install the window rule that floats and centres the OutWarp "
-             "window (~/.config/hypr/outwarp.lua or .conf, hooked from your config)",
+        help=t("cli.help.hyprland_rule"),
     )
 
     sub.add_parser(
         "launch",
-        help="Open the preferred UI: the GUI when installed and wanted, else the TUI "
-             "(in a terminal window when started from a launcher)",
+        help=t("cli.help.launch"),
     )
 
     p_update = sub.add_parser(
         "update",
-        help="Check GitHub Releases for a newer version and install it "
-             "(needs root to upgrade /opt/pipx/venvs/outwarp-client)",
+        help=t("cli.help.update"),
     )
     p_update.add_argument(
         "--check-only",
         action="store_true",
-        help="Just report whether a newer version is available - don't install",
+        help=t("cli.help.update_check"),
     )
 
     return parser
@@ -591,10 +582,7 @@ def _cmd_tui(args: argparse.Namespace) -> int:
     try:
         from outwarp.tui.app import OutWarpClientTUI
     except ImportError as exc:
-        _err(
-            "TUI not installed. Reinstall with: pip install 'outwarp-client[tui]'\n"
-            f"  Underlying error: {exc}"
-        )
+        _err(t("cli.tui.missing", error=exc))
         return 1
     return OutWarpClientTUI().run() or 0
 
@@ -622,14 +610,14 @@ def _cmd_gui(args: argparse.Namespace) -> int:
 
     if getattr(args, "install", False):
         if sys.platform == "linux" and os.geteuid() != 0:
-            _err(f"Root required to install packages into the venv. Run: {ui_choice.INSTALL_HINT}")
+            _err(t("cli.gui.need_root", hint=ui_choice.INSTALL_HINT))
             return 2
         return ui_choice.install_gui(echo=_print)
 
     if sys.platform == "linux":
         ok, why = ui_choice.gui_available()
         if not ok:
-            _err(f"GUI not available: {why}. Opening the TUI instead.")
+            _err(t("cli.gui.unavailable", why=why))
             return _cmd_tui(args)
     from outwarp.app import main as _gui_main
     return _gui_main() or 0
@@ -640,32 +628,34 @@ def _cmd_ui(args: argparse.Namespace) -> int:
 
     if args.choice:
         ui_choice.set_preferred_ui(args.choice)
-        _print(f"preferred_ui = {args.choice}")
+        _print(t("cli.ui.set", choice=args.choice))
     ok, why = ui_choice.gui_available()
     pref = ui_choice.preferred_ui()
-    _print(f"Preferred UI: {pref}")
-    _print(f"GUI stack:    {'available' if ok else 'not installed'} ({why})")
-    _print(f"`outwarp launch` opens: {ui_choice.resolve_ui(available=ok)}")
+    _print(t("cli.ui.preferred", value=pref))
+    _print(t("cli.ui.stack",
+             state=t("cli.ui.stack_available" if ok else "cli.ui.stack_missing"), why=why))
+    _print(t("cli.ui.launch_opens", value=ui_choice.resolve_ui(available=ok)))
     if not ok and sys.platform == "linux":
-        _print(f"Add the GUI with: {ui_choice.INSTALL_HINT}")
+        _print(t("cli.ui.add_gui", hint=ui_choice.INSTALL_HINT))
     if sys.platform == "linux":
         from outwarp import desktop_linux as dl
 
         tray_state, tray_detail = dl.tray_status()
         if tray_state != "skip":
-            _print(f"Tray:         {'ok' if tray_state == 'ok' else 'WARN'} ({tray_detail})")
+            _print(t("cli.ui.tray",
+                     state="ok" if tray_state == "ok" else t("cli.ui.tray_warn"),
+                     detail=tray_detail))
         if getattr(args, "hyprland_rule", False):
             try:
-                _print("Hyprland:     " + dl.install_hyprland_rule())
+                _print(t("cli.ui.hypr_installed_now", detail=dl.install_hyprland_rule()))
             except OSError as exc:
-                _err(f"Could not install the Hyprland rule: {exc}")
+                _err(t("cli.ui.hypr_rule_failed", error=exc))
                 return 1
         elif dl.is_hyprland():
             if dl.hyprland_rule_installed():
-                _print("Hyprland:     window rule installed")
+                _print(t("cli.ui.hypr_rule_present"))
             else:
-                _print("Hyprland:     no window rule (window opens tiled) — run "
-                       "`outwarp ui --hyprland-rule`")
+                _print(t("cli.ui.hypr_rule_absent"))
     return 0
 
 
@@ -684,8 +674,7 @@ def _cmd_launch(args: argparse.Namespace) -> int:
     tui_argv = [sys.argv[0], "tui"] if sys.argv else ["outwarp", "tui"]
     cmd = ui_choice.terminal_command(tui_argv)
     if cmd is None:
-        _err("No terminal emulator found to host the TUI; set $TERMINAL or run "
-             "`outwarp tui` from a terminal.")
+        _err(t("cli.launch.no_terminal"))
         return 1
     return subprocess.call(cmd)
 
@@ -721,11 +710,11 @@ def _cmd_update(args: argparse.Namespace) -> int:
         verify_download,
     )
 
-    _print(f"Checking for updates (current: v{__version__})...")
+    _print(t("cli.update.checking", version=__version__))
     info = check_for_linux_update(__version__, "client")
 
     if info.get("error"):
-        _err(f"Update check failed: {info['error']}")
+        _err(t("cli.update.check_failed", error=info["error"]))
         return 1
 
     if not info.get("available"):
@@ -735,24 +724,24 @@ def _cmd_update(args: argparse.Namespace) -> int:
         # claiming we're already on the latest version.
         from outwarp.updater import _is_newer as _newer
         if latest and _newer(latest, __version__) and not info.get("wheel_url"):
-            _print(f"Latest release v{latest} has no Linux wheel attached.")
-            _print(f"  See {info.get('html_url', '')}")
+            _print(t("cli.update.no_wheel", latest=latest))
+            _print(t("cli.update.see", url=info.get("html_url", "")))
         else:
-            _print(f"Already up to date (v{latest}).")
+            _print(t("cli.update.up_to_date", latest=latest))
         return 0
 
     latest = info["latest"]
-    _print(f"New version available: v{latest}")
-    _print(f"  Release: {info.get('html_url', '')}")
+    _print(t("cli.update.available", latest=latest))
+    _print(t("cli.update.release", url=info.get("html_url", "")))
 
     if args.check_only:
-        _print("Run 'sudo outwarp update' to install.")
+        _print(t("cli.update.run_hint"))
         return 0
 
     wheel_url = info.get("wheel_url", "")
     wheel_name = info.get("wheel_name") or Path(wheel_url).name
     if not wheel_url:
-        _err(f"No Linux wheel found in release v{latest} - see {info.get('html_url', '')}")
+        _err(t("cli.update.no_wheel_in", latest=latest, url=info.get("html_url", "")))
         return 1
 
     # ``geteuid`` is POSIX-only but the client is shipped only on Linux for
@@ -760,14 +749,14 @@ def _cmd_update(args: argparse.Namespace) -> int:
     # On Windows the installer ships the GUI wheel separately and there's no
     # ``outwarp update`` flow yet.
     if sys.platform == "linux" and os.geteuid() != 0:
-        _err("Root required to upgrade the venv. Run: sudo outwarp update")
+        _err(t("cli.update.need_root"))
         return 1
 
     tmp_dir = Path(tempfile.mkdtemp())
     wheel_path = tmp_dir / wheel_name
 
     try:
-        _print(f"Downloading {wheel_name}...")
+        _print(t("cli.update.downloading", name=wheel_name))
         last_milestone = [-1]
 
         def _progress(pct: int) -> None:
@@ -779,7 +768,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
         try:
             download_installer(wheel_url, wheel_path, _progress)
         except Exception as exc:
-            _err(f"Download failed: {exc}")
+            _err(t("cli.update.download_failed", error=exc))
             return 1
 
         ok, detail = verify_download(
@@ -787,25 +776,22 @@ def _cmd_update(args: argparse.Namespace) -> int:
             info.get("checksums_url", ""), info.get("signature_url", ""),
         )
         if not ok:
-            _err(f"Integrity check failed: {detail}")
+            _err(t("cli.update.integrity_failed", detail=detail))
             return 1
         _print(f"  {detail}")
 
-        _print("Installing into venv (pip)...")
+        _print(t("cli.update.installing"))
         try:
             apply_linux_update(wheel_path, extras="tui")
         except subprocess.TimeoutExpired:
-            _err(
-                "pip install timed out (network stall while resolving "
-                "transitive deps?). Re-run when the connection is stable."
-            )
+            _err(t("cli.update.pip_timeout"))
             return 1
         except Exception as exc:
-            _err(f"pip install failed: {exc}")
+            _err(t("cli.update.pip_failed", error=exc))
             return 1
 
-        _print(f"\nUpdated to v{latest}.")
-        _print("Restart 'outwarp connect' (or the tray app) for changes to take effect.")
+        _print("\n" + t("cli.update.updated", latest=latest))
+        _print(t("cli.update.restart"))
         return 0
     finally:
         with contextlib.suppress(OSError):
@@ -835,7 +821,7 @@ def _cmd_recover_tunnel(args: argparse.Namespace) -> int:
     removed = platform.remove_stale_tunnels()
     if removed:
         log.warning("recover-tunnel: removed stale tunnel(s): %s", ", ".join(removed))
-        _print("Removed stale tunnel(s): " + ", ".join(removed))
+        _print(t("cli.recover.removed", names=", ".join(removed)))
     return 0
 
 
@@ -875,9 +861,7 @@ def main_legacy_alias(argv: list[str] | None = None) -> int:
     a single stderr line so scripts and units still pointing at the old name
     keep working while their owners notice. Removed in 1.0.0.
     """
-    _err("outwarp-cli is deprecated and will be removed in 1.0.0 — use `outwarp` "
-         "(run `outwarp service install` / re-run install.sh to migrate units, "
-         "launchers and completions).")
+    _err(t("cli.deprecated_alias"))
     return main(argv)
 
 
@@ -916,8 +900,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return handler(args)
     except TunnelError as exc:
-        _err(f"Tunnel error: {exc}")
+        _err(t("cli.tunnel_error", error=exc))
         return 1
     except KeyboardInterrupt:
-        _err("Interrupted.")
+        _err(t("cli.interrupted"))
         return 130

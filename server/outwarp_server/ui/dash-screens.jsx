@@ -535,9 +535,9 @@ function ScreenDoctor({ C }) {
     : st === "warn" ? <span style={{ color: "var(--brand-warn)" }}>{Icons.warn(16)}</span>
     : st === "skip" ? <span style={{ color: "var(--text-3)" }}>{Icons.check(16)}</span>
     : <span style={{ color: "var(--brand-bad)" }}>{Icons.fail(16)}</span>;
-  const applyFix = async (name) => {
+  const applyFix = async (name, key) => {
     setApplying(name);
-    try { await C.call("apply_remediation", name); await run(); } finally { setApplying(""); }
+    try { await C.call("apply_remediation", key || name); await run(); } finally { setApplying(""); }
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: ui.gap }}>
@@ -566,7 +566,7 @@ function ScreenDoctor({ C }) {
                   </span>
                   {c.fix_kind === "auto" && (
                     <Btn size="sm" icon={Icons.bolt(13)} disabled={applying === c.name}
-                      onClick={() => C.confirm({ title: T.doctor_applyFix, body: c.remediation_command, danger: true }).then((ok) => ok && applyFix(c.name))}>
+                      onClick={() => C.confirm({ title: T.doctor_applyFix, body: c.remediation_command, danger: true }).then((ok) => ok && applyFix(c.name, c.key))}>
                       {applying === c.name ? "…" : T.doctor_applyFix}
                     </Btn>
                   )}

@@ -12,6 +12,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
+from outwarp.i18n import t
+
 log = logging.getLogger(__name__)
 
 
@@ -43,6 +45,7 @@ class Check:
     runner: Callable[[], CheckResult]
 
 
+_INSTALL_CMD = "bash <(curl -fsSL https://outwarp.dev/install.sh) client"
 _DEFAULT_HELPER = Path("/usr/local/libexec/outwarp-priv")
 _WSTUNNEL_VERSION_FILE = Path(__file__).parent.parent.parent / "installer" / "wstunnel-version.txt"
 
@@ -63,13 +66,11 @@ def check_wstunnel_binary() -> CheckResult:
             wstunnel = str(candidate)
     if not wstunnel:
         return CheckResult(
-            name="wstunnel binary",
+            name=t("dx.name.wstunnel"),
             status=Status.FAIL,
-            detail="wstunnel not found on PATH.",
-            remediation=(
-                "Reinstall OutWarp: bash <(curl -fsSL https://outwarp.dev/install.sh) client"
-            ),
-            remediation_command="bash <(curl -fsSL https://outwarp.dev/install.sh) client",
+            detail=t("dx.wstunnel.missing"),
+            remediation=t("dx.reinstall", cmd=_INSTALL_CMD),
+            remediation_command=_INSTALL_CMD,
             fix_kind="manual",
         )
     try:
@@ -77,12 +78,12 @@ def check_wstunnel_binary() -> CheckResult:
         version = (proc.stdout or proc.stderr or "").strip().split("\n")[0]
     except Exception as exc:
         return CheckResult(
-            name="wstunnel binary",
+            name=t("dx.name.wstunnel"),
             status=Status.WARN,
-            detail=f"Found at {wstunnel} but version check failed: {exc}",
+            detail=t("dx.wstunnel.version_failed", path=wstunnel, error=exc),
         )
     return CheckResult(
-        name="wstunnel binary",
+        name=t("dx.name.wstunnel"),
         status=Status.PASS,
         detail=f"{wstunnel} ({version})",
     )
@@ -92,9 +93,9 @@ def check_wstunnel_version_pin() -> CheckResult:
     """wstunnel version should match the pinned version in the installer."""
     if not sys.platform.startswith("linux"):
         return CheckResult(
-            name="wstunnel version pin",
+            name=t("dx.name.wstunnel_pin"),
             status=Status.SKIP,
-            detail="Version pin check is Linux-only.",
+            detail=t("dx.pin.linux_only"),
         )
     try:
         pin_path = _WSTUNNEL_VERSION_FILE
@@ -105,23 +106,23 @@ def check_wstunnel_version_pin() -> CheckResult:
             )
         if not pin_path.exists():
             return CheckResult(
-                name="wstunnel version pin",
+                name=t("dx.name.wstunnel_pin"),
                 status=Status.SKIP,
-                detail="wstunnel-version.txt not found — skipping pin check.",
+                detail=t("dx.pin.no_file"),
             )
         pinned = pin_path.read_text(encoding="utf-8").strip()
     except OSError:
         return CheckResult(
-            name="wstunnel version pin",
+            name=t("dx.name.wstunnel_pin"),
             status=Status.SKIP,
-            detail="Cannot read version pin file.",
+            detail=t("dx.pin.unreadable"),
         )
     wstunnel = shutil.which("wstunnel")
     if not wstunnel:
         return CheckResult(
-            name="wstunnel version pin",
+            name=t("dx.name.wstunnel_pin"),
             status=Status.FAIL,
-            detail=f"wstunnel not found; pinned version is {pinned}.",
+            detail=t("dx.pin.not_found", pinned=pinned),
         )
     try:
         proc = _run([wstunnel, "--version"])
@@ -132,17 +133,15 @@ def check_wstunnel_version_pin() -> CheckResult:
         version = "?"
     if version == pinned:
         return CheckResult(
-            name="wstunnel version pin",
+            name=t("dx.name.wstunnel_pin"),
             status=Status.PASS,
-            detail=f"{version} matches pin",
+            detail=t("dx.pin.matches", version=version),
         )
     return CheckResult(
-        name="wstunnel version pin",
+        name=t("dx.name.wstunnel_pin"),
         status=Status.WARN,
-        detail=f"installed={version}, pinned={pinned} — version mismatch may cause HTTP 400.",
-        remediation=(
-            f"Reinstall the exact version: download wstunnel {pinned} from GitHub and replace."
-        ),
+        detail=t("dx.pin.mismatch", version=version, pinned=pinned),
+        remediation=t("dx.pin.mismatch_fix", pinned=pinned),
         fix_kind="manual",
     )
 
@@ -151,25 +150,23 @@ def check_helper_installed() -> CheckResult:
     """The privileged helper at /usr/local/libexec/outwarp-priv must exist on Linux."""
     if not sys.platform.startswith("linux"):
         return CheckResult(
-            name="privileged helper",
+            name=t("dx.name.helper"),
             status=Status.SKIP,
-            detail="Linux-only.",
+            detail=t("dx.linux_only"),
         )
     helper = Path(os.environ.get("OUTWARP_HELPER") or str(_DEFAULT_HELPER))
     if helper.exists():
         return CheckResult(
-            name="privileged helper",
+            name=t("dx.name.helper"),
             status=Status.PASS,
             detail=str(helper),
         )
     return CheckResult(
-        name="privileged helper",
+        name=t("dx.name.helper"),
         status=Status.FAIL,
-        detail=f"{helper} not found — wg stats and WireGuard operations will fail.",
-        remediation=(
-            "Re-run the installer: bash <(curl -fsSL https://outwarp.dev/install.sh) client"
-        ),
-        remediation_command="bash <(curl -fsSL https://outwarp.dev/install.sh) client",
+        detail=t("dx.helper.missing", path=helper),
+        remediation=t("dx.rerun_installer", cmd=_INSTALL_CMD),
+        remediation_command=_INSTALL_CMD,
         fix_kind="manual",
     )
 
@@ -186,12 +183,14 @@ def check_helper_version() -> CheckResult:
     client can outrun it; the kill switch then fails to engage (fail-open).
     """
     if not sys.platform.startswith("linux"):
-        return CheckResult(name="helper version", status=Status.SKIP, detail="Linux-only.")
+        return CheckResult(
+            name=t("dx.name.helper_version"), status=Status.SKIP, detail=t("dx.linux_only"),
+        )
     helper = Path(os.environ.get("OUTWARP_HELPER") or str(_DEFAULT_HELPER))
     if not helper.exists():
         return CheckResult(
-            name="helper version", status=Status.SKIP,
-            detail="Helper not found — skipping version check.",
+            name=t("dx.name.helper_version"), status=Status.SKIP,
+            detail=t("dx.helper.skip_version"),
         )
     installed: int | None = None
     try:
@@ -202,18 +201,16 @@ def check_helper_version() -> CheckResult:
         pass
     if installed is not None and installed >= EXPECTED_HELPER_VERSION:
         return CheckResult(
-            name="helper version", status=Status.PASS, detail=f"helper v{installed}",
+            name=t("dx.name.helper_version"), status=Status.PASS,
+            detail=t("dx.helper.version_ok", version=installed),
         )
-    found = "pre-0.12 (no version)" if installed is None else f"v{installed}"
+    found = t("dx.helper.pre012") if installed is None else f"v{installed}"
     return CheckResult(
-        name="helper version",
+        name=t("dx.name.helper_version"),
         status=Status.WARN,
-        detail=(
-            f"helper is {found}, client expects v{EXPECTED_HELPER_VERSION} — "
-            "the kill switch cannot engage until the helper is updated."
-        ),
-        remediation="Re-run the installer to refresh /usr/local/libexec/outwarp-priv.",
-        remediation_command="bash <(curl -fsSL https://outwarp.dev/install.sh) client",
+        detail=t("dx.helper.outdated", found=found, expected=EXPECTED_HELPER_VERSION),
+        remediation=t("dx.helper.refresh"),
+        remediation_command=_INSTALL_CMD,
         fix_kind="manual",
     )
 
@@ -222,16 +219,16 @@ def check_sudoers() -> CheckResult:
     """The helper's sudoers rule must allow passwordless execution."""
     if not sys.platform.startswith("linux"):
         return CheckResult(
-            name="sudoers rule",
+            name=t("dx.name.sudoers"),
             status=Status.SKIP,
-            detail="Linux-only.",
+            detail=t("dx.linux_only"),
         )
     helper = Path(os.environ.get("OUTWARP_HELPER") or str(_DEFAULT_HELPER))
     if not helper.exists():
         return CheckResult(
-            name="sudoers rule",
+            name=t("dx.name.sudoers"),
             status=Status.SKIP,
-            detail="Helper not found — skipping sudoers check.",
+            detail=t("dx.sudoers.skip"),
         )
     # `sudo -l <cmd>` exits 0 only when the rule allows it without a password;
     # it never runs the helper (which has no `version` subcommand — checking
@@ -240,20 +237,17 @@ def check_sudoers() -> CheckResult:
         proc = _run(["sudo", "-n", "-l", str(helper)], timeout=3)
         if proc.returncode == 0:
             return CheckResult(
-                name="sudoers rule",
+                name=t("dx.name.sudoers"),
                 status=Status.PASS,
-                detail="sudo -n works for the helper",
+                detail=t("dx.sudoers.ok"),
             )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     return CheckResult(
-        name="sudoers rule",
+        name=t("dx.name.sudoers"),
         status=Status.FAIL,
-        detail="sudo -n outwarp-priv failed — passwordless sudo not configured.",
-        remediation=(
-            f"Add to /etc/sudoers.d/outwarp: "
-            f"ALL ALL=(root) NOPASSWD: {helper}"
-        ),
+        detail=t("dx.sudoers.failed"),
+        remediation=t("dx.sudoers.fix", rule=f"ALL ALL=(root) NOPASSWD: {helper}"),
         remediation_command=(
             f"echo 'ALL ALL=(root) NOPASSWD: {helper}' "
             f"| sudo tee /etc/sudoers.d/outwarp"
@@ -269,15 +263,15 @@ def check_wireguard_tools() -> CheckResult:
         wgq_path = Path(r"C:\Program Files\WireGuard\wg-quick.exe")
         if wg_path.exists() and wgq_path.exists():
             return CheckResult(
-                name="WireGuard tools",
+                name=t("dx.name.wg_tools"),
                 status=Status.PASS,
-                detail="WireGuard for Windows installed",
+                detail=t("dx.wg.windows_ok"),
             )
         return CheckResult(
-            name="WireGuard tools",
+            name=t("dx.name.wg_tools"),
             status=Status.FAIL,
-            detail="WireGuard for Windows not found at default path.",
-            remediation="Install from https://www.wireguard.com/install/",
+            detail=t("dx.wg.windows_missing"),
+            remediation=t("dx.wg.install_from", url="https://www.wireguard.com/install/"),
             fix_kind="manual",
         )
     wg = shutil.which("wg")
@@ -288,17 +282,17 @@ def check_wireguard_tools() -> CheckResult:
         except Exception:
             version = wg
         return CheckResult(
-            name="WireGuard tools",
+            name=t("dx.name.wg_tools"),
             status=Status.PASS,
             detail=version or wg,
         )
-    missing = [t for t in ("wg", "wg-quick") if not shutil.which(t)]
+    missing = [tool for tool in ("wg", "wg-quick") if not shutil.which(tool)]
     pm_cmd = _wg_install_cmd()
     return CheckResult(
-        name="WireGuard tools",
+        name=t("dx.name.wg_tools"),
         status=Status.FAIL,
-        detail=f"Missing: {', '.join(missing)}",
-        remediation=f"Install wireguard-tools: {pm_cmd}",
+        detail=t("dx.wg.missing", tools=", ".join(missing)),
+        remediation=t("dx.wg.install_tools", cmd=pm_cmd),
         remediation_command=pm_cmd,
         fix_kind="interactive",
     )
@@ -315,20 +309,20 @@ def _wg_install_cmd() -> str:
         return "zypper install wireguard-tools"
     if shutil.which("apk"):
         return "apk add wireguard-tools"
-    return "install wireguard-tools with your package manager"
+    return t("dx.pm.wireguard")
 
 
 def check_nftables() -> CheckResult:
     """The kill switch is an nftables table the helper manages — no `nft`,
     no switch (it used to fail only when the user flipped the toggle)."""
     if shutil.which("nft"):
-        return CheckResult(name="nftables", status=Status.PASS, detail="nft on PATH")
+        return CheckResult(name=t("dx.name.nftables"), status=Status.PASS, detail=t("dx.nft.ok"))
     pm = _wg_install_cmd().replace("wireguard-tools", "nftables")
     return CheckResult(
-        name="nftables",
+        name=t("dx.name.nftables"),
         status=Status.WARN,
-        detail="nft not found — the kill switch cannot engage.",
-        remediation=f"Install nftables: {pm}",
+        detail=t("dx.nft.missing"),
+        remediation=t("dx.nft.install", cmd=pm),
         remediation_command=pm,
         fix_kind="interactive",
     )
@@ -338,9 +332,9 @@ def check_wg_kernel_module() -> CheckResult:
     """WireGuard kernel module must be loadable (Linux only)."""
     if not sys.platform.startswith("linux"):
         return CheckResult(
-            name="WireGuard kernel module",
+            name=t("dx.name.kmod"),
             status=Status.SKIP,
-            detail="Linux-only.",
+            detail=t("dx.linux_only"),
         )
     proc = _run(["modinfo", "wireguard"])
     if proc.returncode == 0:
@@ -349,15 +343,15 @@ def check_wg_kernel_module() -> CheckResult:
             "available",
         )
         return CheckResult(
-            name="WireGuard kernel module",
+            name=t("dx.name.kmod"),
             status=Status.PASS,
             detail=first,
         )
     return CheckResult(
-        name="WireGuard kernel module",
+        name=t("dx.name.kmod"),
         status=Status.FAIL,
-        detail="modinfo wireguard failed — kernel module not present.",
-        remediation="Install wireguard kernel module: apt install wireguard",
+        detail=t("dx.kmod.missing"),
+        remediation=t("dx.kmod.install", cmd="apt install wireguard"),
         remediation_command="apt install wireguard",
         fix_kind="interactive",
     )
@@ -367,9 +361,9 @@ def check_systemd_unit() -> CheckResult:
     """The outwarp-client systemd user unit state (Linux only)."""
     if not sys.platform.startswith("linux"):
         return CheckResult(
-            name="systemd user unit",
+            name=t("dx.name.systemd"),
             status=Status.SKIP,
-            detail="Linux-only.",
+            detail=t("dx.linux_only"),
         )
     proc = _run(["systemctl", "--user", "is-enabled", "outwarp-client.service"])
     enabled = proc.stdout.strip()
@@ -377,16 +371,16 @@ def check_systemd_unit() -> CheckResult:
     active = proc2.stdout.strip()
     if enabled == "enabled" and active == "active":
         return CheckResult(
-            name="systemd user unit",
+            name=t("dx.name.systemd"),
             status=Status.PASS,
-            detail="outwarp-client.service enabled + active",
+            detail=t("dx.unit.ok"),
         )
     if enabled == "enabled" and active != "active":
         return CheckResult(
-            name="systemd user unit",
+            name=t("dx.name.systemd"),
             status=Status.WARN,
-            detail=f"enabled but active={active}",
-            remediation="Start with: systemctl --user start outwarp-client.service",
+            detail=t("dx.unit.not_active", active=active),
+            remediation=t("dx.unit.start", cmd="systemctl --user start outwarp-client.service"),
             remediation_command="systemctl --user start outwarp-client.service",
             fix_kind="auto",
             fix_callable=lambda: subprocess.run(
@@ -396,19 +390,19 @@ def check_systemd_unit() -> CheckResult:
         )
     if enabled in ("disabled", "static", "masked"):
         return CheckResult(
-            name="systemd user unit",
+            name=t("dx.name.systemd"),
             status=Status.WARN,
-            detail=f"status={enabled} — background daemon won't autostart.",
-            remediation="Enable with: outwarp service install",
+            detail=t("dx.unit.disabled", status=enabled),
+            remediation=t("dx.unit.enable", cmd="outwarp service install"),
             remediation_command="outwarp service install",
             fix_kind="manual",
         )
     # Not installed (not-found)
     return CheckResult(
-        name="systemd user unit",
+        name=t("dx.name.systemd"),
         status=Status.WARN,
-        detail="outwarp-client.service not installed.",
-        remediation="Install with: outwarp service install",
+        detail=t("dx.unit.missing"),
+        remediation=t("dx.unit.install", cmd="outwarp service install"),
         remediation_command="outwarp service install",
         fix_kind="manual",
     )
@@ -418,22 +412,22 @@ def check_notify_send() -> CheckResult:
     """notify-send should be available for desktop notifications (Linux only)."""
     if not sys.platform.startswith("linux"):
         return CheckResult(
-            name="notify-send",
+            name=t("dx.name.notify"),
             status=Status.SKIP,
-            detail="Linux-only.",
+            detail=t("dx.linux_only"),
         )
     if shutil.which("notify-send"):
         return CheckResult(
-            name="notify-send",
+            name=t("dx.name.notify"),
             status=Status.PASS,
-            detail="notify-send on PATH",
+            detail=t("dx.notify.ok"),
         )
     pkg = _notify_pkg_cmd()
     return CheckResult(
-        name="notify-send",
+        name=t("dx.name.notify"),
         status=Status.WARN,
-        detail="notify-send not found — desktop notifications will be silent.",
-        remediation=f"Install libnotify: {pkg}",
+        detail=t("dx.notify.missing"),
+        remediation=t("dx.notify.install", cmd=pkg),
         remediation_command=pkg,
         fix_kind="interactive",
     )
@@ -448,7 +442,7 @@ def _notify_pkg_cmd() -> str:
         return "pacman -S libnotify"
     if shutil.which("zypper"):
         return "zypper install libnotify-tools"
-    return "install libnotify with your package manager"
+    return t("dx.pm.libnotify")
 
 
 def check_tray_backend() -> CheckResult:
@@ -463,16 +457,14 @@ def check_tray_backend() -> CheckResult:
 
     state, detail = tray_status()
     if state == "skip":
-        return CheckResult(name="tray", status=Status.SKIP, detail=detail)
+        return CheckResult(name=t("dx.name.tray"), status=Status.SKIP, detail=detail)
     if state == "ok":
-        return CheckResult(name="tray", status=Status.PASS, detail=detail)
+        return CheckResult(name=t("dx.name.tray"), status=Status.PASS, detail=detail)
     return CheckResult(
-        name="tray",
+        name=t("dx.name.tray"),
         status=Status.WARN,
         detail=detail,
-        remediation="`sudo outwarp gui --install` installs the AppIndicator stack "
-                    "and lets this venv see it; on GNOME add the AppIndicator "
-                    "extension. The window and `outwarp tui` work without a tray.",
+        remediation=t("dx.tray.fix"),
         remediation_command="sudo outwarp gui --install",
         fix_kind="interactive",
     )
@@ -488,19 +480,18 @@ def check_hyprland_rule() -> CheckResult:
     )
 
     if not is_hyprland():
-        return CheckResult(name="hyprland", status=Status.SKIP, detail="Not a Hyprland session.")
+        return CheckResult(name=t("dx.name.hyprland"), status=Status.SKIP, detail=t("dx.hypr.not"))
     if hyprland_config_kind() is None:
-        return CheckResult(name="hyprland", status=Status.WARN,
-                           detail="Hyprland session but no ~/.config/hypr/hyprland.{lua,conf}.")
+        return CheckResult(name=t("dx.name.hyprland"), status=Status.WARN,
+                           detail=t("dx.hypr.no_config"))
     if hyprland_rule_installed():
-        return CheckResult(name="hyprland", status=Status.PASS,
-                           detail="Window rule installed (floating, centred).")
+        return CheckResult(name=t("dx.name.hyprland"), status=Status.PASS,
+                           detail=t("dx.hypr.ok"))
     return CheckResult(
-        name="hyprland",
+        name=t("dx.name.hyprland"),
         status=Status.WARN,
-        detail="No window rule for class `outwarp` — the window opens tiled.",
-        remediation="Run `outwarp ui --hyprland-rule` (writes ~/.config/hypr/outwarp.* "
-                    "and hooks it in), or add:\n" + hyprland_rule_snippet().rstrip(),
+        detail=t("dx.hypr.missing"),
+        remediation=t("dx.hypr.fix") + "\n" + hyprland_rule_snippet().rstrip(),
         remediation_command="outwarp ui --hyprland-rule",
         fix_kind="auto",
     )
@@ -512,14 +503,14 @@ def check_config_present() -> CheckResult:
     path = default_config_path()
     if path.exists():
         return CheckResult(
-            name="Profile imported",
+            name=t("dx.name.profile"),
             status=Status.PASS,
             detail=str(path),
         )
     return CheckResult(
-        name="Profile imported",
+        name=t("dx.name.profile"),
         status=Status.FAIL,
-        detail="No profile found — run 'outwarp import <path.owcfg>'.",
+        detail=t("dx.config.missing"),
         remediation="outwarp import <path-to.owcfg>",
         remediation_command="outwarp import <path-to.owcfg>",
         fix_kind="manual",
@@ -564,27 +555,25 @@ def check_duplicate_binaries() -> CheckResult:
               if p.resolve() not in seen]
     if not found:
         return CheckResult(
-            name="binaries",
+            name=t("dx.name.binaries"),
             status=Status.WARN,
-            detail="No `outwarp` on PATH (running from a venv or the source tree).",
+            detail=t("dx.bin.none"),
         )
     versions = {v for _, v in found}
     listing = ", ".join(f"{p} ({v})" for p, v in found)
     if len(found) > 1 and len(versions) > 1:
         return CheckResult(
-            name="binaries",
+            name=t("dx.name.binaries"),
             status=Status.WARN,
-            detail=f"Several client installs answer on PATH: {listing}",
-            remediation="Remove the stale one (pipx uninstall outwarp-client in "
-                        "that venv, or delete /opt/pipx/venvs/outwarp-client) so "
-                        "shells, units and launchers agree on a version.",
+            detail=t("dx.bin.several", listing=listing),
+            remediation=t("dx.bin.fix"),
         )
-    return CheckResult(name="binaries", status=Status.PASS, detail=listing)
+    return CheckResult(name=t("dx.name.binaries"), status=Status.PASS, detail=listing)
 
 
 _LEGACY_NAME_FILES: tuple[tuple[str, Path], ...] = (
-    ("bash completions", Path("/etc/bash_completion.d/outwarp-cli")),
-    ("zsh completions", Path("/usr/share/zsh/site-functions/_outwarp-cli")),
+    ("dx.legacy.bash", Path("/etc/bash_completion.d/outwarp-cli")),
+    ("dx.legacy.zsh", Path("/usr/share/zsh/site-functions/_outwarp-cli")),
 )
 _SYSTEM_LAUNCHER = Path("/usr/share/applications/outwarp.desktop")
 
@@ -598,24 +587,23 @@ def check_legacy_cli_name() -> CheckResult:
 
     stale: list[str] = []
     if unit_uses_legacy_name():
-        stale.append("systemd user unit (ExecStart)")
+        stale.append(t("dx.legacy.unit"))
     try:
         if "outwarp-cli" in _SYSTEM_LAUNCHER.read_text():
-            stale.append(f"launcher {_SYSTEM_LAUNCHER}")
+            stale.append(t("dx.legacy.launcher", path=_SYSTEM_LAUNCHER))
     except OSError:
         pass
-    stale += [f"{label} {path}" for label, path in _LEGACY_NAME_FILES if path.exists()]
+    stale += [f"{t(label)} {path}" for label, path in _LEGACY_NAME_FILES if path.exists()]
     if not stale:
         return CheckResult(
-            name="cli_name", status=Status.PASS,
-            detail="Nothing references the deprecated `outwarp-cli` name.",
+            name=t("dx.name.cli_name"), status=Status.PASS,
+            detail=t("dx.legacy.none"),
         )
     return CheckResult(
-        name="cli_name",
+        name=t("dx.name.cli_name"),
         status=Status.WARN,
-        detail="Still pointing at deprecated `outwarp-cli`: " + "; ".join(stale),
-        remediation="Run `outwarp service install` for the unit and re-run "
-                    "install.sh for the launcher/completions (alias goes away in 1.0).",
+        detail=t("dx.legacy.found", items="; ".join(stale)),
+        remediation=t("dx.legacy.fix"),
         remediation_command="outwarp service install",
     )
 
@@ -628,17 +616,16 @@ def check_gui_stack() -> CheckResult:
     ok, why = gui_available()
     pref = preferred_ui()
     if ok:
-        return CheckResult(name="gui", status=Status.PASS,
-                           detail=f"{why}; preferred_ui={pref}")
+        return CheckResult(name=t("dx.name.gui"), status=Status.PASS,
+                           detail=t("dx.gui.ok", why=why, pref=pref))
     if not desktop_session() and pref != "gui":
-        return CheckResult(name="gui", status=Status.SKIP,
-                           detail=f"No display session; TUI only ({why}).")
+        return CheckResult(name=t("dx.name.gui"), status=Status.SKIP,
+                           detail=t("dx.gui.headless", why=why))
     return CheckResult(
-        name="gui",
+        name=t("dx.name.gui"),
         status=Status.WARN,
-        detail=f"Graphical window not available: {why}",
-        remediation=f"Install the GUI stack: {INSTALL_HINT}  (or `outwarp ui tui` "
-                    "to keep the terminal UI on purpose)",
+        detail=t("dx.gui.missing", why=why),
+        remediation=t("dx.gui.fix", hint=INSTALL_HINT),
         remediation_command=INSTALL_HINT,
         fix_kind="interactive",
     )
@@ -680,7 +667,7 @@ def run_all() -> list[CheckResult]:
                 CheckResult(
                     name=check.key,
                     status=Status.FAIL,
-                    detail=f"Check crashed: {exc}",
+                    detail=t("dx.crashed", error=exc),
                 )
             )
     return results

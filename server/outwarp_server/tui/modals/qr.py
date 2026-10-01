@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Container
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
+from outwarp_server.i18n import t as tr
 from outwarp_server.tui.tokens import DIM
 
 
@@ -15,20 +17,17 @@ def _render_qr_ascii(data: bytes) -> str:
     try:
         import qrcode
     except ImportError:
-        return "[qrcode] library not installed. pip install qrcode."
+        return tr("tui.qr.no_lib")
 
     qr = qrcode.QRCode(border=1, error_correction=qrcode.constants.ERROR_CORRECT_L)
     qr.add_data(data)
     try:
         qr.make()
     except qrcode.exceptions.DataOverflowError:
-        return (
-            "Profile too large to encode in a single QR. "
-            "Transfer the .owcfg file directly."
-        )
+        return tr("tui.qr.too_large")
     matrix = qr.get_matrix()
     if not matrix:
-        return "(empty QR)"
+        return tr("tui.qr.empty")
     # Pad to even number of rows so half-blocks always pair up.
     if len(matrix) % 2:
         matrix.append([False] * len(matrix[0]))
@@ -53,8 +52,8 @@ def _render_qr_ascii(data: bytes) -> str:
 
 class QrModal(ModalScreen[None]):
     BINDINGS = [
-        ("escape", "dismiss", "Back"),
-        ("q", "dismiss", "Back"),
+        ("escape", "dismiss", tr("tui.key.back")),
+        ("q", "dismiss", tr("tui.key.back")),
     ]
 
     def __init__(self, owcfg_path: Path) -> None:
@@ -65,13 +64,13 @@ class QrModal(ModalScreen[None]):
         try:
             data = self._path.read_bytes()
         except OSError as exc:
-            body = f"Cannot read {self._path}: {exc}"
+            body = escape(tr("tui.qr.unreadable", path=self._path, error=exc))
         else:
             body = _render_qr_ascii(data)
         with Container(id="qr-modal"):
-            yield Static(f"[bold]QR for {self._path.name}[/bold]")
+            yield Static(f"[bold]{escape(tr('tui.qr.title', name=self._path.name))}[/bold]")
             yield Static(body)
-            yield Static(f"[{DIM}]Esc to close.[/]")
+            yield Static(f"[{DIM}]{tr('tui.qr.close')}[/]")
 
     def action_dismiss(self) -> None:
         self.dismiss()
