@@ -941,6 +941,27 @@ class Api:
 
     # ── about ─────────────────────────────────────────────────────────────────
 
+    def run_diagnostics(self) -> dict[str, Any]:
+        """The checks behind `outwarp doctor`, for the About screen. Read-only:
+        fixes are not applied from here, the remediation command is shown to copy.
+        Blocking (a few subprocesses), so the bridge calls it on its own thread."""
+        from outwarp.diagnostics import run_all
+
+        results = run_all()
+        return {
+            "ok": True,
+            "results": [
+                {
+                    "name": r.name,
+                    "status": r.status.value,
+                    "detail": r.detail,
+                    "remediation": r.remediation,
+                    "command": r.remediation_command,
+                }
+                for r in results
+            ],
+        }
+
     def get_app_info(self) -> dict[str, Any]:
         """Static metadata for the About screen. Pure read-only — no I/O."""
         import platform as platform_mod

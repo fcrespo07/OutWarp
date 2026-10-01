@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Client window: health checks in About.** The checks behind `outwarp
+  doctor` (profile, wstunnel, WireGuard tools, and on Linux the helper, tray and
+  the rest) can be run from About and show what to do about each failure, with
+  the command to copy. It only reports; nothing is fixed from the window.
 - **Client TUI: check for updates (`u`).** It looks for a newer release and
   tells you to run `sudo outwarp update` (installing needs root, so, like the
   GUI on Linux, it does not do it for you).

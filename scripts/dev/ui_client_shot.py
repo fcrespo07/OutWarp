@@ -39,7 +39,7 @@ ap.add_argument("--lang", default="es")
 ap.add_argument("--width", type=int, default=1000)
 ap.add_argument("--height", type=int, default=700)
 ap.add_argument("--extra-profiles", action="store_true", help="add two fake profiles")
-ap.add_argument("--open", choices=["menu", "details"], help="open the profile menu / details")
+ap.add_argument("--open", choices=["menu", "details", "diag"], help="open the profile menu / details, or run the health checks")
 args = ap.parse_args()
 
 # Isolated config dirs: never touch the real profile store.
@@ -172,6 +172,10 @@ with sync_playwright() as p:
         name = "Cambiar de perfil" if args.lang == "es" else "Switch profile"
         pg.get_by_role("button", name=name).first.click()
         pg.wait_for_timeout(400)
+    elif args.open == "diag":
+        name = "Comprobar" if args.lang == "es" else "Run checks"
+        pg.get_by_role("button", name=name).first.click()
+        pg.wait_for_timeout(2500)
     elif args.open == "details":
         pg.locator("details summary").first.click()
         pg.wait_for_timeout(300)

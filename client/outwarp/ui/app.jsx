@@ -1935,6 +1935,87 @@ const UpdatePanel = ({ T, api, autoCheck }) => {
   return <div style={wrap}><window.Btn kind="ghost" size="sm" onClick={doCheck}>{T.upd_check}</window.Btn></div>;
 };
 
+// ── Health checks (lives inside About) ─────────────────────────────
+// The checks behind `outwarp doctor`. Read-only: a failing check shows its
+// remediation and the command to copy, never runs it.
+const DiagnosticsPanel = ({ T, api }) => {
+  const [state, setState] = useState("idle"); // idle|running|done|error
+  const [results, setResults] = useState([]);
+  const [copied, setCopied] = useState("");
+
+  const run = useCallback(async () => {
+    if (!api) return;
+    setState("running");
+    try {
+      const r = await api.run_diagnostics();
+      if (r && r.ok) { setResults(r.results || []); setState("done"); }
+      else setState("error");
+    } catch (_) { setState("error"); }
+  }, [api]);
+
+  const copy = async (cmd) => {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopied(cmd);
+      setTimeout(() => setCopied(""), 2000);
+    } catch (_) {}
+  };
+
+  const tone = { pass: "good", warn: "warn", fail: "bad", skip: "neutral" };
+  const label = { pass: T.diag_pass, warn: T.diag_warn, fail: T.diag_fail, skip: T.diag_skip };
+  // The remediation often quotes the command; the command gets its own copyable
+  // line, so don't show it twice.
+  const hint = (r) => {
+    if (r.status !== "fail" && r.status !== "warn") return "";
+    let t = r.remediation || "";
+    if (r.command) t = t.replace(r.command, "");
+    return t.replace(/[\s:：]+$/, "");
+  };
+  const problems = results.filter((r) => r.status === "fail" || r.status === "warn").length;
+
+  return (
+    <div>
+      <div style={{
+        fontSize: 11, fontWeight: 600, color: "var(--text-3)",
+        letterSpacing: ".06em", textTransform: "uppercase", margin: "0 4px 8px",
+      }}>{T.diag_title}</div>
+      <div className="ow-card ow-card--md" style={{ overflow: "hidden" }}>
+        <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 200, fontSize: 13, color: "var(--text-2)" }}>
+            {state === "done" ? (problems ? T.diag_issues : T.diag_allOk)
+              : state === "error" ? T.diag_error : T.diag_sub}
+          </div>
+          <window.Btn kind="ghost" size="md" onClick={run} disabled={state === "running"}>
+            {state === "running" ? T.diag_running : state === "done" ? T.diag_rerun : T.diag_run}
+          </window.Btn>
+        </div>
+        {state === "done" && results.map((r, i) => (
+          <div key={`${r.name}-${i}`} style={{
+            padding: "12px 18px", borderTop: "1px solid var(--line)",
+            display: "grid", gridTemplateColumns: "96px 1fr", gap: 14, alignItems: "start",
+          }}>
+            <window.Pill tone={tone[r.status] || "neutral"}>{label[r.status] || r.status}</window.Pill>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>{r.name}</div>
+              {r.detail && <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 2, wordBreak: "break-word" }}>{r.detail}</div>}
+              {hint(r) && (
+                <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>{hint(r)}</div>
+              )}
+              {r.command && (r.status === "fail" || r.status === "warn") && (
+                <button type="button" onClick={() => copy(r.command)} className="ow-link" style={{
+                  marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 11.5, textAlign: "left", wordBreak: "break-all",
+                }}>
+                  {copied === r.command ? `${T.upd_copied} ✓` : `$ ${r.command}`}
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 // ── About ──────────────────────────────────────────────────────────
 const About = ({ T, api, settings }) => {
   const [info, setInfo] = useState(null);
@@ -1997,6 +2078,8 @@ const About = ({ T, api, settings }) => {
           </window.Btn>
         </div>
       </div>
+
+      <DiagnosticsPanel T={T} api={api}/>
 
       <div>
         <div style={{

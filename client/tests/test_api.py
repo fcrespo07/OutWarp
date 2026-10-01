@@ -536,6 +536,26 @@ def test_get_status_coerces_non_string_phase_to_empty():
 
 # --- About: get_app_info / open_url ---
 
+def test_run_diagnostics_returns_plain_rows(monkeypatch):
+    from outwarp.diagnostics import CheckResult, Status
+
+    monkeypatch.setattr(
+        "outwarp.diagnostics.run_all",
+        lambda: [
+            CheckResult("wstunnel binary", Status.PASS, detail="ok"),
+            CheckResult("helper", Status.FAIL, detail="missing",
+                        remediation="Reinstall", remediation_command="sudo outwarp update"),
+        ],
+    )
+    api, _ = _make_api()
+    out = api.run_diagnostics()
+    assert out["ok"] is True
+    assert [r["status"] for r in out["results"]] == ["pass", "fail"]
+    assert out["results"][1]["command"] == "sudo outwarp update"
+    import json
+    json.dumps(out)  # the bridge needs it serialisable
+
+
 def test_get_app_info_returns_metadata():
     api, _ = _make_api()
     info = api.get_app_info()
