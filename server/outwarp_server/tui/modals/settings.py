@@ -32,16 +32,22 @@ class SettingsModal(ModalScreen[None]):
             yield Select(
                 [(tr("tui.set.language_auto"), "auto"),
                  *((LANG_NAMES.get(code, code), code) for code in LANGS)],
-                value=self._settings.get("language", "auto"),
+                value=self._current_language(),
                 allow_blank=False,
                 id="select-language",
             )
             yield Static("", id="settings-status")
 
+    def _current_language(self) -> str:
+        # A value the picker has no option for (hand edit, a newer build's
+        # language) would make Select raise; the rest of the app reads it as auto.
+        lang = self._settings.get("language", "auto")
+        return lang if lang in LANGS else "auto"
+
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id != "select-language" or not isinstance(event.value, str):
             return
-        if self._settings.get("language", "auto") == event.value:
+        if self._current_language() == event.value:
             return
         from outwarp_server.api import _save_settings
 

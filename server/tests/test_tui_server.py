@@ -159,6 +159,22 @@ async def test_settings_modal_saves_language(tmp_path: Path, monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
+async def test_settings_modal_opens_with_an_unknown_language(tmp_path: Path, monkeypatch) -> None:
+    from textual.widgets import Select
+
+    from outwarp_server.tui.modals.settings import SettingsModal
+
+    monkeypatch.setattr("outwarp_server.api._load_settings", lambda: {"language": "fr"})
+    app = OutWarpServerTUI(_write_config(tmp_path))
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert isinstance(app.screen, SettingsModal)
+        assert app.screen.query_one("#select-language", Select).value == "auto"
+
+
+@pytest.mark.asyncio
 async def test_probe_port_reports_closed(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         "outwarp_server.operations.probe_external_port",
