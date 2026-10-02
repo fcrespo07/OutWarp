@@ -2,7 +2,7 @@
 
 Complemento de `CLAUDE.md`. `CLAUDE.md` dice **qué** es OutWarp y qué decisiones no se deshacen. Este fichero dice **cómo se trabaja** en el repo y **dónde se quedó** el trabajo. Está pensado para que un agente nuevo, sin la conversación anterior, siga sin preguntar lo que ya se sabe.
 
-Última actualización: 2026-10-01, con la 0.19.0 publicada.
+Última actualización: 2026-10-02, con la 0.20.0 preparada (pendiente de firma y publicación por el autor).
 
 ---
 
@@ -23,11 +23,12 @@ Complemento de `CLAUDE.md`. `CLAUDE.md` dice **qué** es OutWarp y qué decision
 
 ## 2. Estado a 2026-10-01
 
-- **Publicadas y firmadas hasta la 0.19.0.** `main` = `0a9a10d`. En el código, la versión es `0.19.0` en cuatro sitios: `client/pyproject.toml`, `server/pyproject.toml`, `client/outwarp/__init__.py` y `server/outwarp_server/__init__.py`.
+- **Publicadas y firmadas hasta la 0.19.0; la 0.20.0 está preparada** (versión subida y CHANGELOG fechado el 2026-10-02) y espera a que el autor firme y publique. En el código, la versión es `0.20.0` en cuatro sitios: `client/pyproject.toml`, `server/pyproject.toml`, `client/outwarp/__init__.py` y `server/outwarp_server/__init__.py`.
 - **La numeración del plan se ha desplazado.** La fase 2 (producto) ocupó la 0.17.0, la 0.18.0 y la 0.19.0. La fase 3 (idiomas) ya no sale como 0.19.0, sino como la primera versión después de cerrar la fase 2 (0.20.0 o posterior). El contenido y el orden de las fases no cambian.
 - Qué llevó cada versión reciente, en resumen (el detalle está en `CHANGELOG.md`):
   - **0.17.0**: pantalla Tráfico del panel con datos reales (B-041), primera pasada de pulido (B-042), servidor Windows vía Docker Compose y README y wizard honestos con el anti-DPI.
   - **0.18.0**: inicio del cliente rediseñado (dial con anillo cerrado, B-043; detalles de conexión, ruta y kill switch; selector de perfil), pistas por tipo de error y logo del `.ico` en las tres interfaces.
+  - **0.20.0** (segunda pasada de pulido, PR #10–#12 y #14–#19): textos de la CLI, el wizard y `doctor` en i18n, TUIs sin inglés suelto y con selector de idioma, Ajustes del cliente reagrupados, comprobaciones del `doctor` en Acerca de, B-049. Textos congelados.
   - **0.19.0**:
     - cliente: gráfica de 3 min, nivel de las líneas del registro (B-044), Acerca de, detalles en Perfiles y ancho máximo en ventana grande;
     - panel: gráfica en vivo que se desliza sin saltos;
@@ -54,7 +55,7 @@ Complemento de `CLAUDE.md`. `CLAUDE.md` dice **qué** es OutWarp y qué decision
    Terminaba con la **congelación de textos**, que es condición para empezar las traducciones.
 4. **Pruebas que hace el autor (👤), sin cerrar aún**:
    - Windows real:
-     - actualizar desde 0.19.0 a la siguiente (B-045 solo se ve desde 0.19.0 en adelante, porque la 0.18.0 llevaba el helper viejo);
+     - actualizar desde 0.19.0 a la 0.20.0 (B-045 solo se ve desde 0.19.0 en adelante, porque la 0.18.0 llevaba el helper viejo);
      - instalador sin la página de componentes;
      - `--show-window`;
      - inicio nuevo;

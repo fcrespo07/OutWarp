@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-10-02
+
 ### Added
 - **Client window: health checks in About.** The checks behind `outwarp
   doctor` (profile, wstunnel, WireGuard tools, and on Linux the helper, tray and
