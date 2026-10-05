@@ -367,7 +367,7 @@ Legado (hecho):
 
 ## Estado actual
 
-**Versión actual: `0.20.0`** (preparada el 2026-10-02, pendiente de que el autor la firme y publique; la siguiente sale de `[Unreleased]` en `CHANGELOG.md`). Pendientes por orden: `docs/AGENTS.md` → "Pendiente". El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
+**Versión actual: `0.20.1`** (preparada el 2026-10-05, pendiente de que el autor la firme y publique; la 0.20.0 ya está publicada; la siguiente sale de `[Unreleased]` en `CHANGELOG.md`). Pendientes por orden: `docs/AGENTS.md` → "Pendiente". El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
 
 - **Cliente**: Windows (instalador `.exe`, GUI pywebview + tray) y Linux (`install.sh`, GUI por defecto con escritorio, TUI y `outwarp` headless) completos.
 - **Servidor**: Linux/systemd, Windows (SCM) y Docker/Kubernetes (`platforms/kubernetes.py`, `deploy/`).
