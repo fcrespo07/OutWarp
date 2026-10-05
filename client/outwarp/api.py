@@ -1172,15 +1172,20 @@ class Api:
         # (ignored with DETACHED_PROCESS) so no console flashes.
         flags = subprocess.CREATE_NEW_PROCESS_GROUP | 0x08000000
         attempts: list[tuple[str, list[str], int]] = []
-        try:
-            script = temp / "outwarp-update.cmd"
-            script.write_text(
-                self._update_batch(pid, path, client_exe, temp),
-                encoding="mbcs" if sys.platform == "win32" else "utf-8",
-            )
-            attempts.append(("cmd", ["cmd.exe", "/d", "/c", str(script)], flags))
-        except OSError:
-            log.exception("could not write the update helper script")
+        # cmd.exe cannot raise UAC, so an unelevated client (`outwarp gui` from
+        # a console) goes straight to PowerShell's `-Verb RunAs`.
+        if self._is_elevated():
+            try:
+                script = temp / "outwarp-update.cmd"
+                # cmd.exe reads a batch file in the OEM code page, not ANSI
+                # ("mbcs"): a non-ASCII %TEMP% would otherwise be garbled.
+                script.write_text(
+                    self._update_batch(pid, path, client_exe, temp),
+                    encoding="oem" if sys.platform == "win32" else "utf-8",
+                )
+                attempts.append(("cmd", ["cmd.exe", "/d", "/c", str(script)], flags))
+            except (OSError, UnicodeError):
+                log.exception("could not write the update helper script")
         attempts.append((
             "powershell",
             [
@@ -1190,6 +1195,10 @@ class Api:
             subprocess.DETACHED_PROCESS | flags,
         ))
         for name, argv, creationflags in attempts:
+            # A helper killed after its deadline may still have written the
+            # flag; it must not stand in for the next one.
+            with contextlib.suppress(OSError):
+                ready.unlink()
             try:
                 proc = subprocess.Popen(argv, creationflags=creationflags, close_fds=True)
             except Exception:
@@ -1210,6 +1219,17 @@ class Api:
             with contextlib.suppress(Exception):
                 proc.kill()
         return False
+
+    @staticmethod
+    def _is_elevated() -> bool:
+        if sys.platform != "win32":
+            return True
+        try:
+            import ctypes
+
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())  # type: ignore[attr-defined]
+        except Exception:
+            return False
 
     @staticmethod
     def _update_batch(pid: int, installer: Path, client_exe: str, temp: Path) -> str:

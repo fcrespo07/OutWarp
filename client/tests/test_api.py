@@ -903,7 +903,7 @@ def test_run_update_does_not_quit_if_installer_launch_fails(_mock_check, _mock_d
     assert phases[-1] == "error"
 
 
-def _spawn_helpers(frozen: bool, ready: bool, tmp_path):
+def _spawn_helpers(frozen: bool, ready: bool, tmp_path, elevated: bool = True):
     """Run _launch_installer with Popen mocked; return (result, argvs)."""
     api, _ = _make_api()
     installer = Path(r"C:\Temp\OutWarpSetup-9.9.9.exe")
@@ -922,6 +922,7 @@ def _spawn_helpers(frozen: bool, ready: bool, tmp_path):
          patch("outwarp.api.subprocess.DETACHED_PROCESS", 0x8, create=True), \
          patch("outwarp.api.sys.executable", r"C:\Apps\OutWarp\client\outwarp-gui.exe"), \
          patch("outwarp.api.time.sleep"), \
+         patch.object(Api, "_is_elevated", staticmethod(lambda: elevated)), \
          patch.object(sys, "frozen", frozen, create=True):
         result = api._launch_installer(installer)
     return result, [c.args[0] for c in popen.call_args_list]
@@ -958,6 +959,27 @@ def test_update_falls_back_to_powershell_then_refuses_to_quit(tmp_path):
     ps = argvs[1][-1]
     assert "Wait-Process -Id" in ps and "outwarp-update.ready" in ps
     assert "-Wait -PassThru" in ps
+
+
+def test_update_skips_the_batch_when_the_client_is_not_elevated(tmp_path):
+    """cmd.exe cannot raise UAC; PowerShell's -Verb RunAs can."""
+    ok, argvs = _spawn_helpers(frozen=True, ready=True, tmp_path=tmp_path, elevated=False)
+    assert ok is True
+    assert [a[0] for a in argvs] == ["powershell.exe"]
+
+
+def test_update_falls_back_to_powershell_if_the_batch_cannot_be_encoded(tmp_path):
+    real_write = Path.write_text
+
+    def write(self, *a, **kw):
+        if self.suffix == ".cmd":
+            raise UnicodeEncodeError("oem", "x", 0, 1, "unmappable")
+        return real_write(self, *a, **kw)
+
+    with patch.object(Path, "write_text", write):
+        ok, argvs = _spawn_helpers(frozen=True, ready=True, tmp_path=tmp_path)
+    assert ok is True
+    assert [a[0] for a in argvs] == ["powershell.exe"]
 
 
 def test_emit_disables_window_on_failure_and_skips_logging():
