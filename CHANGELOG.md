@@ -8,11 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] — 2026-10-05
+
 ### Fixed
 - **Windows: "Update" closed the app without installing anything or reopening
   it** (B-050). The helper that runs the installer is now a `.cmd` that confirms
   it is alive before the client quits; if it does not, PowerShell is tried and,
   failing that, the app stays open and shows the error instead of vanishing.
+  The installed client launches that helper, so from 0.19.0 or 0.20.0 the
+  in-app update can still fail: install 0.20.1 by hand with the `.exe`; the fix
+  takes effect on the update after that.
 
 ## [0.20.0] — 2026-10-02
 
