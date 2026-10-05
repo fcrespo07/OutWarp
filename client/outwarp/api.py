@@ -18,6 +18,7 @@ Events fired:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -1146,82 +1147,134 @@ class Api:
 
     def _launch_installer(self, path: Path) -> bool:
         """Spawn a detached helper that waits for THIS process to exit, then
-        runs the installer. Returns True on successful spawn.
+        runs the installer and brings the client back. Returns True only once
+        the helper has confirmed it is running.
 
         We can't just ShellExecute the installer and immediately quit: Inno
         Setup probes our AppMutex (Global\\OutWarpClient, see outwarp.iss) at
         startup, and /VERYSILENT mode has no retry dialog. If the mutex is
-        still held when Inno checks it — and api.shutdown() can take a second
-        or two — Inno silently skips locked files (outwarp-gui.exe and the mapped
-        _internal/*.pyd next to it) and the "updated" install keeps running
-        the old binary. The user sees the app close and reopen at the OLD
-        version. This bit users updating v0.3.0 → v0.4.0.
+        still held when Inno checks it, it aborts or silently skips locked
+        files and the "updated" install keeps running the old binary. So a
+        helper watches our PID and starts Setup once we are gone.
 
-        The fix: have a tiny powershell child watch our PID, wait for it to
-        die, then launch the installer. By that point our mutex is released
-        and the .exe is unmapped, so Inno can replace every file.
+        The helper's first act is to create ``outwarp-update.ready``. If it
+        never does (powershell/cmd blocked, killed at once) we do NOT quit:
+        closing the app with nothing left to install or relaunch it reads as a
+        crash and leaves the user on the old version (B-050).
         """
-        pid = os.getpid()
-        # Single-quote-escape the path for the PS string literal so paths
-        # containing apostrophes (rare but possible under %TEMP%) survive.
-        path_esc = str(path).replace("'", "''")
-        # The client to bring back if Setup's own relaunch did not: the frozen
-        # exe we are running from (the install directory is the same one Setup
-        # overwrites). Empty when not frozen.
+        temp = Path(tempfile.gettempdir())
+        ready = temp / "outwarp-update.ready"
+        with contextlib.suppress(OSError):
+            ready.unlink()
         client_exe = sys.executable if getattr(sys, "frozen", False) else ""
-        client_esc = client_exe.replace("'", "''")
-        client_name = PureWindowsPath(client_exe).stem.replace("'", "''") if client_exe else ""
-        ps_cmd = (
+        pid = os.getpid()
+        # DETACHED_PROCESS so a helper survives our exit; CREATE_NO_WINDOW
+        # (ignored with DETACHED_PROCESS) so no console flashes.
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | 0x08000000
+        attempts: list[tuple[str, list[str], int]] = []
+        try:
+            script = temp / "outwarp-update.cmd"
+            script.write_text(
+                self._update_batch(pid, path, client_exe, temp),
+                encoding="mbcs" if sys.platform == "win32" else "utf-8",
+            )
+            attempts.append(("cmd", ["cmd.exe", "/d", "/c", str(script)], flags))
+        except OSError:
+            log.exception("could not write the update helper script")
+        attempts.append((
+            "powershell",
+            [
+                "powershell.exe", "-NoProfile", "-WindowStyle", "Hidden",
+                "-Command", self._update_powershell(pid, path, client_exe, ready),
+            ],
+            subprocess.DETACHED_PROCESS | flags,
+        ))
+        for name, argv, creationflags in attempts:
+            try:
+                proc = subprocess.Popen(argv, creationflags=creationflags, close_fds=True)
+            except Exception:
+                log.exception("could not spawn the %s update helper", name)
+                continue
+            deadline = time.monotonic() + 6.0
+            while time.monotonic() < deadline:
+                if ready.exists():
+                    log.info("update helper (%s, pid %s) is running", name, proc.pid)
+                    return True
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.1)
+            log.error(
+                "the %s update helper did not confirm (exit code %s); %s",
+                name, proc.poll(), "trying the next one" if name != "powershell" else "giving up",
+            )
+            with contextlib.suppress(Exception):
+                proc.kill()
+        return False
+
+    @staticmethod
+    def _update_batch(pid: int, installer: Path, client_exe: str, temp: Path) -> str:
+        def q(v: object) -> str:
+            return str(v).replace("%", "%%")
+
+        log_file = q(temp / "outwarp-update.log")
+        lines = [
+            "@echo off",
+            f'echo ready> "{q(temp / "outwarp-update.ready")}"',
+            f'echo %date% %time% update: waiting for pid {pid} to exit>> "{log_file}"',
+            ":wait",
+            f'tasklist /FI "PID eq {pid}" /NH 2>nul | find " {pid} " >nul',
+            "if errorlevel 1 goto gone",
+            "ping -n 2 127.0.0.1 >nul",
+            "goto wait",
+            ":gone",
+            "ping -n 2 127.0.0.1 >nul",
+            f'echo %date% %time% update: starting the installer>> "{log_file}"',
+            f'"{q(installer)}" {Api._INSTALLER_SILENT_ARGS} /LOG',
+            f'echo %date% %time% update: installer exited with %errorlevel%>> "{log_file}"',
+        ]
+        if client_exe:
+            name = PureWindowsPath(client_exe).name
+            lines += [
+                "ping -n 6 127.0.0.1 >nul",
+                f'tasklist /FI "IMAGENAME eq {name}" /NH 2>nul | find /I "{name}" >nul',
+                "if not errorlevel 1 goto running",
+                f'echo %date% %time% update: the client is not running, starting it>> "{log_file}"',
+                f'start "" "{q(client_exe)}" --show-window',
+                "goto end",
+                ":running",
+                f'echo %date% %time% update: the client is running>> "{log_file}"',
+                ":end",
+            ]
+        return "\r\n".join(lines) + "\r\n"
+
+    @staticmethod
+    def _update_powershell(pid: int, installer: Path, client_exe: str, ready: Path) -> str:
+        def q(v: object) -> str:
+            return str(v).replace("'", "''")
+
+        client_name = PureWindowsPath(client_exe).stem if client_exe else ""
+        return (
             "$ErrorActionPreference='Continue';"
+            f"Set-Content -Path '{q(ready)}' -Value ready;"
             "$log=Join-Path $env:TEMP 'outwarp-update.log';"
             "function L($m){Add-Content -Path $log -Value ((Get-Date -Format s)+' '+$m)};"
             f"L 'update: waiting for pid {pid} to exit';"
             f"Wait-Process -Id {pid} -ErrorAction SilentlyContinue;"
-            # Brief settle so Windows finishes unmapping the .exe before Inno
-            # opens it for write. Belt-and-braces — Wait-Process already
-            # returns post-exit.
             "Start-Sleep -Milliseconds 750;"
             "L 'update: starting the installer';"
-            # /LOG (no path) makes Setup write "Setup Log <date>.txt" in %TEMP%.
-            f"try{{$p=Start-Process -FilePath '{path_esc}' "
-            f"-ArgumentList '{self._INSTALLER_SILENT_ARGS} /LOG' -Verb RunAs -Wait -PassThru;"
+            f"try{{$p=Start-Process -FilePath '{q(installer)}' "
+            f"-ArgumentList '{Api._INSTALLER_SILENT_ARGS} /LOG' -Verb RunAs -Wait -PassThru;"
             "L ('update: installer exited with '+$p.ExitCode)}"
             "catch{L ('update: installer could not start: '+$_)};"
-            # Setup relaunches the client itself ([Run], IsAutoUpdate). If it
-            # is not running a few seconds later, start it here: an update that
-            # ends with the app gone reads as a crash.
             + (
                 "Start-Sleep -Seconds 5;"
-                f"if(-not (Get-Process -Name '{client_name}' -ErrorAction SilentlyContinue))"
+                f"if(-not (Get-Process -Name '{q(client_name)}' -ErrorAction SilentlyContinue))"
                 "{L 'update: the client is not running, starting it';"
-                f"try{{Start-Process -FilePath '{client_esc}' -ArgumentList '--show-window'}}"
+                f"try{{Start-Process -FilePath '{q(client_exe)}' -ArgumentList '--show-window'}}"
                 "catch{L ('update: could not start the client: '+$_)}}"
-                "else{L 'update: the client is running'}"
                 if client_exe else ""
             )
         )
-        # DETACHED_PROCESS so the helper survives our exit; CREATE_NO_WINDOW
-        # so no console flashes.
-        creationflags = (
-            subprocess.DETACHED_PROCESS
-            | subprocess.CREATE_NEW_PROCESS_GROUP
-            | 0x08000000  # CREATE_NO_WINDOW
-        )
-        try:
-            subprocess.Popen(
-                [
-                    "powershell.exe",
-                    "-NoProfile",
-                    "-WindowStyle", "Hidden",
-                    "-Command", ps_cmd,
-                ],
-                creationflags=creationflags,
-                close_fds=True,
-            )
-        except Exception:
-            log.exception("could not spawn deferred installer launcher")
-            return False
-        return True
 
     def _quit_for_update(self) -> None:
         if self._on_quit is not None:

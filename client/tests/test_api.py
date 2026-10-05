@@ -903,36 +903,61 @@ def test_run_update_does_not_quit_if_installer_launch_fails(_mock_check, _mock_d
     assert phases[-1] == "error"
 
 
-def _installer_command(frozen: bool) -> str:
+def _spawn_helpers(frozen: bool, ready: bool, tmp_path):
+    """Run _launch_installer with Popen mocked; return (result, argvs)."""
     api, _ = _make_api()
-    with patch("outwarp.api.subprocess.Popen") as popen, \
-         patch("outwarp.api.subprocess.DETACHED_PROCESS", 0x8, create=True), \
+    installer = Path(r"C:\Temp\OutWarpSetup-9.9.9.exe")
+
+    def fake_popen(argv, **_kw):
+        if ready:
+            (tmp_path / "outwarp-update.ready").write_text("ready")
+        proc = MagicMock()
+        proc.pid = 4242
+        proc.poll.return_value = None if ready else 1
+        return proc
+
+    with patch("outwarp.api.subprocess.Popen", side_effect=fake_popen) as popen, \
+         patch("outwarp.api.tempfile.gettempdir", return_value=str(tmp_path)), \
          patch("outwarp.api.subprocess.CREATE_NEW_PROCESS_GROUP", 0x200, create=True), \
+         patch("outwarp.api.subprocess.DETACHED_PROCESS", 0x8, create=True), \
          patch("outwarp.api.sys.executable", r"C:\Apps\OutWarp\client\outwarp-gui.exe"), \
+         patch("outwarp.api.time.sleep"), \
          patch.object(sys, "frozen", frozen, create=True):
-        assert api._launch_installer(Path(r"C:\Temp\OutWarpSetup-9.9.9.exe")) is True
-    return popen.call_args.args[0][-1]
+        result = api._launch_installer(installer)
+    return result, [c.args[0] for c in popen.call_args_list]
 
 
-def test_update_helper_runs_the_installer_logs_and_reopens_the_client():
-    """The app closed for an update and nothing came back. The helper now
-    keeps a log in %TEMP%, has Setup write its own, and starts the client
-    itself if Setup's relaunch did not, showing the window."""
-    cmd = _installer_command(frozen=True)
-    assert "Wait-Process -Id" in cmd
+def test_update_helper_is_a_batch_that_installs_logs_and_reopens_the_client(tmp_path):
+    """The app closed for an update and nothing came back (B-045, B-050). The
+    helper is a .cmd (no PowerShell parsing in the way) that confirms it is
+    running, keeps a log, has Setup write its own and starts the client itself
+    if Setup's relaunch did not, showing the window."""
+    ok, argvs = _spawn_helpers(frozen=True, ready=True, tmp_path=tmp_path)
+    assert ok is True
+    assert len(argvs) == 1 and argvs[0][0] == "cmd.exe"
+    cmd = (tmp_path / "outwarp-update.cmd").read_text()
+    assert "outwarp-update.ready" in cmd
     assert "OutWarpSetup-9.9.9.exe" in cmd
     assert "/AUTOUPDATE=1 /LOG" in cmd
     assert "outwarp-update.log" in cmd
-    assert "-Wait -PassThru" in cmd
-    assert "Get-Process -Name 'outwarp-gui'" in cmd
-    assert (
-        r"Start-Process -FilePath 'C:\Apps\OutWarp\client\outwarp-gui.exe' "
-        "-ArgumentList '--show-window'"
-    ) in cmd
+    assert 'IMAGENAME eq outwarp-gui.exe' in cmd
+    assert '"C:\\Apps\\OutWarp\\client\\outwarp-gui.exe" --show-window' in cmd
 
 
-def test_update_helper_does_not_guess_a_client_when_not_frozen():
-    assert "Get-Process" not in _installer_command(frozen=False)
+def test_update_helper_does_not_guess_a_client_when_not_frozen(tmp_path):
+    _spawn_helpers(frozen=False, ready=True, tmp_path=tmp_path)
+    assert "IMAGENAME" not in (tmp_path / "outwarp-update.cmd").read_text()
+
+
+def test_update_falls_back_to_powershell_then_refuses_to_quit(tmp_path):
+    """If no helper confirms it is running the app must stay open: closing
+    with nothing to install or relaunch it is the B-050 symptom."""
+    ok, argvs = _spawn_helpers(frozen=True, ready=False, tmp_path=tmp_path)
+    assert ok is False
+    assert [a[0] for a in argvs] == ["cmd.exe", "powershell.exe"]
+    ps = argvs[1][-1]
+    assert "Wait-Process -Id" in ps and "outwarp-update.ready" in ps
+    assert "-Wait -PassThru" in ps
 
 
 def test_emit_disables_window_on_failure_and_skips_logging():
