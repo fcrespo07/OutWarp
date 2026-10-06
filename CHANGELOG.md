@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.2] — 2026-10-06
+
 ### Changed
 - **Client: sidebar.** Connection, Profiles and Log stay on top; Settings and
   About move to the bottom, apart. The profile card at the bottom now opens a
