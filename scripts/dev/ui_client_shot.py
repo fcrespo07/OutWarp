@@ -6,7 +6,7 @@ what you see is what pywebview would show (minus native window chrome).
 
     python scripts/dev/ui_client_shot.py STATE SCREEN OUT.png \
         [--scheme dark|light] [--lang es|en] [--width 1000] \
-        [--extra-profiles] [--open menu|details]
+        [--extra-profiles] [--open menu|details|sidebar] [--update-badge] [--live-error]
 
 STATE:  connected | connecting | disconnected | failed | empty
 SCREEN: home | import | logs | settings | about
@@ -39,7 +39,10 @@ ap.add_argument("--lang", default="es")
 ap.add_argument("--width", type=int, default=1000)
 ap.add_argument("--height", type=int, default=700)
 ap.add_argument("--extra-profiles", action="store_true", help="add two fake profiles")
-ap.add_argument("--open", choices=["menu", "details", "diag"], help="open the profile menu / details, or run the health checks")
+ap.add_argument("--open", choices=["menu", "details", "diag", "sidebar"],
+                help="open the profile menu / details, run the health checks, or open the sidebar profile switcher")
+ap.add_argument("--update-badge", action="store_true", help="pretend a newer version exists (badge on Settings)")
+ap.add_argument("--live-error", action="store_true", help="push one live ERROR log line (badge on the Log)")
 args = ap.parse_args()
 
 # Isolated config dirs: never touch the real profile store.
@@ -107,7 +110,10 @@ if args.state != "empty":
 
 api = Api(handler, mgr)
 api.bind_window(MagicMock())  # without it the log backfill never runs
-api.set_settings({"language": args.lang, "theme": args.scheme, "kill_switch": True})
+api.set_settings({"language": args.lang, "theme": args.scheme, "kill_switch": True,
+                  "check_updates_on_start": bool(args.update_badge)})
+if args.update_badge:
+    api.check_for_updates = lambda: {"available": True, "latest": "9.9.9"}
 
 if args.extra_profiles:
     _orig = api.list_profiles
@@ -168,7 +174,16 @@ with sync_playwright() as p:
             loc.first.click()
             pg.wait_for_timeout(800)
             break
-    if args.open == "menu":
+    if args.live_error:
+        pg.evaluate(
+            "() => window.dispatchEvent(new CustomEvent('outwarp:log', { detail:"
+            " { seq: 9001, ts: Date.now() / 1000, level: 'error', msg: 'wstunnel exited (code 1)' } }))"
+        )
+        pg.wait_for_timeout(300)
+    if args.open == "sidebar":
+        pg.locator(".ow-sidebar-foot--btn").click()
+        pg.wait_for_timeout(400)
+    elif args.open == "menu":
         name = "Cambiar de perfil" if args.lang == "es" else "Switch profile"
         pg.get_by_role("button", name=name).first.click()
         pg.wait_for_timeout(400)
