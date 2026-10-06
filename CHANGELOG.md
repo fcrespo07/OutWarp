@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Client: sidebar.** Connection, Profiles and Log stay on top; Settings and
+  About move to the bottom, apart. The profile card at the bottom now opens a
+  menu to switch profile without leaving the screen (it asks first if the
+  tunnel is up). Small badges on the icons: tunnel state on Connection, new
+  errors on the Log (cleared on opening it), and a pending update on Settings,
+  which replaces the separate "version available" button. In the narrow icon
+  rail every entry has a tooltip. No existing text changed.
 - **Client: Updates are back at the top of Settings**, above Appearance. The
   rest of the order from the regrouping (Appearance, Connection, Security,
   Startup and window, Advanced) is unchanged.

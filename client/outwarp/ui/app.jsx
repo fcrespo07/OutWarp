@@ -85,6 +85,13 @@ function App() {
   const [logs, setLogs] = useState([]);
   const [settings, setSettings] = useState({ language: "auto", theme: "auto", advanced: false, allow_tls_intercept: false });
   const [screen, setScreen] = useState("home");
+  // Errors logged while another screen was open; cleared on opening the Log.
+  const [unseenErrors, setUnseenErrors] = useState(0);
+  const screenRef = useRef("home");
+  useEffect(() => {
+    screenRef.current = screen;
+    if (screen === "logs") setUnseenErrors(0);
+  }, [screen]);
   const [busyMsg, setBusyMsg] = useState("");
   const [connError, setConnError] = useState("");
   const [attemptInfo, setAttemptInfo] = useState({ attempt: 0, max_attempts: 0 });
@@ -173,7 +180,10 @@ function App() {
       return next.length > HISTORY_POINTS ? next.slice(-HISTORY_POINTS) : next;
     });
   }, []));
-  useBridgeEvent("log",     useCallback((e) => setLogs((l) => [...l.slice(-1999), e]), []));
+  useBridgeEvent("log",     useCallback((e) => {
+    setLogs((l) => [...l.slice(-1999), e]);
+    if (e && e.level === "error" && screenRef.current !== "logs") setUnseenErrors((n) => n + 1);
+  }, []));
   useBridgeEvent("settings", useCallback((d) => setSettings(d), []));
   useBridgeEvent("hostile", useCallback((d) => {
     if (d && d.detected) {
@@ -346,8 +356,12 @@ function App() {
           onScreen={setScreen}
           status={status}
           profileName={active?.name}
+          profiles={profiles}
+          activeId={active?.id}
+          onSwitch={onSwitchProfile}
           advanced={!!settings.advanced}
           update={updateAvail}
+          unseenErrors={unseenErrors}
         />
         <main style={{ overflow: "auto", padding: "28px 36px 36px", minWidth: 0 }} className="ws-scroll">
           {screen === "home" && (
@@ -559,15 +573,79 @@ const ResizeHandles = ({ api }) => (
 );
 
 // ── Sidebar ──────────────────
-const Sidebar = ({ T, screen, onScreen, status, profileName, advanced, update }) => {
-  const items = [
-    ["home",     T.nav_home,     "M3 11 L12 3 L21 11 M5 10 V20 H19 V10"],
-    ["import",   T.nav_profiles, "M12 8 m-4 0 a4 4 0 1 0 8 0 a4 4 0 1 0 -8 0 M4 21 C4 16 8 14 12 14 C16 14 20 16 20 21"],
-    ["logs",     T.nav_logs,     "M5 4 H19 V20 H5 Z M8 8 H16 M8 12 H16 M8 16 H13"],
-    // Sliders: the previous dot-with-four-ticks did not read as "settings".
-    ["settings", T.nav_settings, "M4 6 H13 M17 6 H20 M15 4 V8 M4 12 H7 M11 12 H20 M9 10 V14 M4 18 H14 M18 18 H20 M16 16 V20"],
-    ["about",    T.nav_about,    "M3 12 a9 9 0 1 1 18 0 a9 9 0 1 1 -18 0 M12 8 V13 M12 16 V16.01"],
-  ];
+// Day-to-day destinations on top; Settings and About sit apart at the bottom.
+// Each row can carry a small badge: tunnel state on Connection, new errors on
+// the Log, a pending update on Settings. The profile card opens a switcher.
+const NAV_MAIN = [
+  ["home",     "nav_home",     "M3 11 L12 3 L21 11 M5 10 V20 H19 V10"],
+  ["import",   "nav_profiles", "M12 8 m-4 0 a4 4 0 1 0 8 0 a4 4 0 1 0 -8 0 M4 21 C4 16 8 14 12 14 C16 14 20 16 20 21"],
+  ["logs",     "nav_logs",     "M5 4 H19 V20 H5 Z M8 8 H16 M8 12 H16 M8 16 H13"],
+];
+const NAV_FOOT = [
+  // Sliders: the previous dot-with-four-ticks did not read as "settings".
+  ["settings", "nav_settings", "M4 6 H13 M17 6 H20 M15 4 V8 M4 12 H7 M11 12 H20 M9 10 V14 M4 18 H14 M18 18 H20 M16 16 V20"],
+  ["about",    "nav_about",    "M3 12 a9 9 0 1 1 18 0 a9 9 0 1 1 -18 0 M12 8 V13 M12 16 V16.01"],
+];
+const NavBadge = ({ tone, count }) => (
+  <span className={`ow-badge ow-badge--${tone}${count ? " ow-badge--count" : ""}`} aria-hidden="true">{count ? (count > 9 ? "9+" : count) : ""}</span>
+);
+
+const SidebarProfile = ({ T, profiles, activeId, profileName, tone, pulse, label, advanced, onSwitch, onManage }) => {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  const list = profiles || [];
+  return (
+    <div ref={boxRef} style={{ position: "relative" }}>
+      <button type="button" className="ow-sidebar-foot ow-sidebar-foot--btn" onClick={() => setOpen((o) => !o)}
+        aria-expanded={open} aria-haspopup="menu" title={`${T.profile}: ${profileName || "—"} · ${label}`}
+        style={{
+          appearance: "none", font: "inherit", color: "inherit", textAlign: "left", cursor: "pointer", width: "100%",
+          padding: 12, borderRadius: advanced ? 0 : 12, background: "var(--bg-sunk)",
+          border: "1px solid " + (advanced ? "var(--line-strong)" : "var(--line)"),
+        }}>
+        <div className="ow-sidebar-foot-text ow-sidebar-foot-head" style={{ fontSize: 11, fontWeight: 500, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase" }}>
+          <span style={{ flex: 1 }}>{T.profile}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 14l5-5 5 5"/></svg>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+          <window.StatusDot tone={tone} pulse={pulse}/>
+          <div className="ow-sidebar-foot-text" style={{ fontSize: 13, fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profileName || "—"}</div>
+        </div>
+        <div className="ow-sidebar-foot-text" style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)" }}>{label}</div>
+      </button>
+      {open && (
+        <div className="ow-pop ow-pop--up" role="menu">
+          {list.map((p) => {
+            const on = p.id === activeId;
+            return (
+              <button key={p.id} type="button" role="menuitemradio" aria-checked={on} className="ow-pop-item"
+                onClick={() => { setOpen(false); if (!on) onSwitch(p); }}>
+                <window.StatusDot tone={on ? tone : "neutral"} pulse={on && pulse}/>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                  <span style={{ display: "block", fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>{p.endpoint}</span>
+                </span>
+                {on && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5 9-10"/></svg>}
+              </button>
+            );
+          })}
+          {list.length > 0 && <div className="ow-pop-sep"/>}
+          <button type="button" role="menuitem" className="ow-pop-item" onClick={() => { setOpen(false); onManage(); }}>{T.home_manage}</button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const Sidebar = ({ T, screen, onScreen, status, profileName, profiles, activeId, onSwitch, advanced, update, unseenErrors }) => {
   const tone =
     status === "connected" ? "good" :
     (status === "connecting" || status === "reconnecting") ? "warn" :
@@ -579,6 +657,44 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced, update })
     status === "error" ? T.error :
     status === "empty" ? T.notConnected : T.disconnected;
   const pulse = status === "connecting" || status === "reconnecting" || status === "connected";
+
+  // Badge per row: [tone, count]; the title carries the same news in words.
+  const badgeFor = (id) => {
+    if (id === "home" && status !== "empty" && status !== "disconnected") return { tone, text: label };
+    if (id === "logs" && unseenErrors > 0) return { tone: "bad", count: unseenErrors };
+    if (id === "settings" && update) return { tone: "brand", text: T.upd_sidebar.replace("{v}", update) };
+    return null;
+  };
+  const renderNav = ([id, key, d], i, offset) => {
+    const lbl = T[key];
+    const active = id === screen;
+    const badge = badgeFor(id);
+    const hint = badge && badge.text ? `${lbl} · ${badge.text}` : lbl;
+    return (
+      <button key={id} onClick={() => onScreen(id)}
+        className={`ow-nav${active ? " is-active" : ""}`}
+        title={hint} aria-label={hint} aria-current={active ? "page" : undefined}
+        style={{
+          appearance: "none", border: "none", font: "inherit", textAlign: "left", width: "100%",
+          display: advanced ? "grid" : "flex",
+          gridTemplateColumns: advanced ? "auto 1fr auto" : undefined,
+          alignItems: "center", gap: 10,
+          padding: "9px 10px",
+          borderRadius: advanced ? 0 : 8,
+          fontSize: 13, fontWeight: active ? 600 : 500,
+        }}>
+        <span style={{ position: "relative", display: "inline-flex" }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={active ? "var(--brand)" : "var(--text-3)"} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <path d={d}/>
+          </svg>
+          {badge && <NavBadge tone={badge.tone} count={badge.count}/>}
+        </span>
+        <span className="ow-nav-label">{lbl}</span>
+        {!advanced && id === "settings" && update && <span className="ow-nav-label ow-nav-chip">{"↑ " + update}</span>}
+        {advanced && <span className="ow-nav-num" style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-3)" }}>0{i + offset + 1}</span>}
+      </button>
+    );
+  };
 
   return (
     <aside className="ow-sidebar" style={{
@@ -593,57 +709,17 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, advanced, update })
         </div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: advanced ? 0 : 2 }}>
-        {items.map(([id, lbl, d], i) => {
-          const active = id === screen;
-          return (
-            <button key={id} onClick={() => onScreen(id)}
-              className={`ow-nav${active ? " is-active" : ""}`}
-              style={{
-              appearance: "none", border: "none", font: "inherit", textAlign: "left", width: "100%",
-              display: advanced ? "grid" : "flex",
-              gridTemplateColumns: advanced ? "auto 1fr auto" : undefined,
-              alignItems: "center", gap: 10,
-              padding: "9px 10px",
-              borderRadius: advanced ? 0 : 8,
-              fontSize: 13, fontWeight: active ? 600 : 500,
-            }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={active ? "var(--brand)" : "var(--text-3)"} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                <path d={d}/>
-              </svg>
-              <span className="ow-nav-label">{lbl}</span>
-              {advanced && <span className="ow-nav-num" style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-3)" }}>0{i+1}</span>}
-            </button>
-          );
-        })}
-      </div>
+      <nav style={{ display: "flex", flexDirection: "column", gap: advanced ? 0 : 2 }}>
+        {NAV_MAIN.map((it, i) => renderNav(it, i, 0))}
+      </nav>
 
-      {update && (
-        <button onClick={() => onScreen("settings")} className="ow-nav ow-sidebar-foot-text" style={{
-          appearance: "none", font: "inherit", textAlign: "left", marginTop: "auto", marginBottom: 10,
-          display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: advanced ? 0 : 8,
-          border: "1px solid color-mix(in srgb, var(--brand) 40%, transparent)",
-          background: "color-mix(in srgb, var(--brand) 10%, transparent)", color: "var(--brand)", fontSize: 12, fontWeight: 600 }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-          {T.upd_sidebar.replace("{v}", update)}
-        </button>
-      )}
-      <button type="button" className="ow-sidebar-foot ow-sidebar-foot--btn" onClick={() => onScreen("import")}
-        title={T.home_manage} style={{
-        appearance: "none", font: "inherit", color: "inherit", textAlign: "left", cursor: "pointer",
-        marginTop: update ? 0 : "auto",
-        padding: 12,
-        borderRadius: advanced ? 0 : 12,
-        background: "var(--bg-sunk)",
-        border: "1px solid " + (advanced ? "var(--line-strong)" : "var(--line)"),
-      }}>
-        <div className="ow-sidebar-foot-text" style={{ fontSize: 11, fontWeight: 500, color: "var(--text-3)", letterSpacing: ".06em", textTransform: "uppercase" }}>{T.profile}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-          <window.StatusDot tone={tone} pulse={pulse}/>
-          <div className="ow-sidebar-foot-text" style={{ fontSize: 13, fontWeight: 600 }}>{profileName || "—"}</div>
-        </div>
-        <div className="ow-sidebar-foot-text" style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)" }}>{label}</div>
-      </button>
+      <nav className="ow-nav-foot" style={{ display: "flex", flexDirection: "column", gap: advanced ? 0 : 2, marginTop: "auto", marginBottom: 12 }}>
+        {NAV_FOOT.map((it, i) => renderNav(it, i, NAV_MAIN.length))}
+      </nav>
+
+      <SidebarProfile T={T} profiles={profiles} activeId={activeId} profileName={profileName}
+        tone={tone} pulse={pulse} label={label} advanced={advanced}
+        onSwitch={onSwitch} onManage={() => onScreen("import")}/>
     </aside>
   );
 };

@@ -394,6 +394,20 @@
 .ow-link:hover { text-decoration: underline; }
 .ow-link:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
 
+/* Nav badges: a dot (state / update) or a small count (new errors). */
+.ow-badge { position: absolute; top: -3px; right: -4px; min-width: 8px; height: 8px; border-radius: 999px;
+  box-shadow: 0 0 0 2px var(--bg-2); background: var(--text-3); }
+.ow-badge--good { background: var(--brand-2); }
+.ow-badge--warn { background: var(--brand-warn); }
+.ow-badge--bad { background: var(--brand-bad); }
+.ow-badge--brand { background: var(--brand); }
+.ow-badge--count { top: -6px; right: -9px; min-width: 15px; height: 15px; padding: 0 4px; box-sizing: border-box;
+  display: grid; place-items: center; font-size: 9px; font-weight: 700; line-height: 1; color: #fff; }
+.ow-sidebar-foot-head { display: flex; align-items: center; }
+.ow-nav-chip { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--brand); font-family: var(--font-mono); }
+.ow-nav-foot { padding-top: 10px; border-top: 1px solid var(--line); }
+.ow-sidebar { position: relative; z-index: 5; }
+
 .ow-sidebar-foot--btn:hover { border-color: var(--line-strong) !important; }
 .ow-sidebar-foot--btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
@@ -404,6 +418,8 @@
 .ow-pop-item { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 10px;
   padding: 9px 10px; border-radius: 8px; font-size: 13px; cursor: pointer; color: var(--text); }
 .ow-pop-item:hover, .ow-pop-item:focus-visible { background: var(--chip); }
+/* Same popover, opening upward from the sidebar's profile card. */
+.ow-pop--up { top: auto; bottom: calc(100% + 6px); }
 .ow-pop-sep { height: 1px; background: var(--line); margin: 6px 4px; }
 
 /* Error screen: plain-language hint, raw detail folded away. */
