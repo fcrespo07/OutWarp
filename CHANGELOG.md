@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Client: Updates are back at the top of Settings**, above Appearance. The
+  rest of the order from the regrouping (Appearance, Connection, Security,
+  Startup and window, Advanced) is unchanged.
+
 ## [0.20.1] — 2026-10-05
 
 ### Fixed
