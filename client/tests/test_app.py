@@ -394,3 +394,24 @@ class TestClosingTheWindowKeepsOutWarpRunning:
     def test_never_blocks_a_windows_shutdown(self, tmp_path) -> None:
         cancelled, _, _ = self._run(tmp_path, {"close_to_tray": True}, shutting_down=True)
         assert not cancelled
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_signal_quit_runs_teardown_on_sighup():
+    import os
+    import signal
+    import threading
+
+    from outwarp.app import _install_signal_quit
+
+    done = threading.Event()
+    old = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
+    old_fd = signal.set_wakeup_fd(-1)
+    try:
+        _install_signal_quit(done.set)
+        os.kill(os.getpid(), signal.SIGHUP)
+        assert done.wait(3)
+    finally:
+        signal.set_wakeup_fd(old_fd)
+        for s, h in old.items():
+            signal.signal(s, h)
