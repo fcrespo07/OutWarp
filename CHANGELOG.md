@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Linux client: the GUI now tears the tunnel down on SIGTERM/SIGHUP/SIGINT (e.g. closing the launching terminal) instead of leaving WireGuard up with no transport (#27).
+
 ## [0.20.2] — 2026-10-06
 
 ### Changed

@@ -130,6 +130,7 @@ def _install_signal_quit(on_quit) -> None:
         return
 
     def _watch() -> None:
+        _keep_open = wsock  # the wakeup fd must outlive this function
         data = rsock.recv(1)
         if data:
             log.info("signal %d received, quitting", data[0])
