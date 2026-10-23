@@ -83,11 +83,11 @@ Breaking any of those after 1.0 is a `feat!:` → 2.0, or ships with a migration
       migration, `outwarp profile list|use|remove`, GUI list, tray submenu,
       `P` in the TUI.)* Moved out of "not blocking": it changes the
       `config.json` shape that 1.0 freezes.
-- [ ] **UI in 5 languages**, not just Spanish and English: English,
-      Mandarin Chinese (Simplified), Spanish, French and Portuguese. All
-      surfaces (GUIs, web panel, TUIs, CLI, notifications), system-language
-      detection plus a manual picker, CJK fallback font (Geist has no CJK
-      glyphs), native-speaker review. Moved out of "not blocking".
+- [ ] **UI in 4 languages**, not just Spanish and English: English,
+      Spanish, French and Portuguese. All surfaces (GUIs, web panel, TUIs,
+      CLI, notifications), system-language detection plus a manual picker,
+      native-speaker review. Moved out of "not blocking". *(Simplified
+      Chinese was planned and dropped by the author on 2026-10-23.)*
 - [ ] **General audit right before 1.0** (security, UI/UX, bugs,
       robustness) on the release candidate; critical/high findings fixed
       before shipping, the rest explicitly deferred to 1.x.
@@ -124,7 +124,7 @@ Items marked *(added)* joined the gate with this plan. 👤 marks a task for the
   - Honest README and wizard. *(Done 2026-09-29 except dropping the banner, which happens in the RC.)*
   - 👤 Real-desktop Linux GUI testing (X11/Wayland). *(The clean Omarchy install was dropped on 2026-09-28.)*
 - **Phase 3 — Languages → the first release after phase 2 closes (0.20.0 or later).**
-  - zh-Hans, fr and pt.
+  - fr and pt (Simplified Chinese was dropped on 2026-10-23).
   - *(added)* A missing-key test and long-string layout screenshots.
   - 👤 Native review.
 - **Phase 4 — Freeze → 1.0.0-rc.1.**
