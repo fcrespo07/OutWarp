@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Portuguese (Português, Brazilian).** Same coverage as French: GUIs, tray,
+  notifications, CLI, wizard, `doctor` and TUIs. Pending native-speaker review.
 - **French (Français).** Full translation of the client GUI, the server
   dashboard and web panel, the tray, notifications, the CLI, the `setup`
   wizard, `doctor` and both TUIs. It is picked automatically on French systems
