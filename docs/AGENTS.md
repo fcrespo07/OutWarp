@@ -72,7 +72,7 @@ Complemento de `CLAUDE.md`. `CLAUDE.md` dice **qué** es OutWarp y qué decision
 ### Fases siguientes
 
 Las fases 3, 4 y 5 están tal cual en `CLAUDE.md`:
-- **Fase 3**: zh-Hans, fr y pt, con un test de claves que faltan, capturas con los textos más largos y revisión de nativos.
+- **Fase 3**: fr y pt (el chino se descartó el 2026-10-23), con un test de claves que faltan, capturas con los textos más largos y revisión de nativos.
 - **Fase 4**: contratos y tests de contrato, retirar el alias `outwarp-cli`, tests de actualización en el e2e, smoke test del instalador Windows en CI y auditoría de la RC.
 - **Fase 5**: 1.0.0.
 
