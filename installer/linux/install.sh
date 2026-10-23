@@ -579,7 +579,9 @@ OUTWARP_SKIP_CHECKSUM=1 only if you understand the risk."
     fi
 
     local expected actual
-    expected=$(grep -E "  ${wheel_name}\$" "$sums_tmp" | awk '{print $1}' | head -1)
+    # Strip CR (the Windows release job once wrote the manifest with CRLF) and
+    # tolerate grep finding nothing so the die below stays reachable under pipefail.
+    expected=$(tr -d '\r' < "$sums_tmp" | grep -E "  ${wheel_name}\$" | awk '{print $1}' | head -1 || true)
     rm -f "$sums_tmp"
     if [[ -z "$expected" ]]; then
         die "Wheel '$wheel_name' is not listed in SHA256SUMS.txt - aborting (wrong release or tampered manifest)"

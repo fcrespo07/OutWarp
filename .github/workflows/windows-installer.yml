@@ -111,7 +111,8 @@ jobs:
           if (-not (Test-Path existing.txt)) { New-Item existing.txt -ItemType File | Out-Null }
           $merged = Get-Content existing.txt, installer/windows/output/SHA256SUMS.txt `
             | Where-Object { $_.Trim() -ne "" } | Sort-Object -Unique
-          $merged | Set-Content -Encoding ascii installer/windows/output/SHA256SUMS.txt
+          # LF endings: Set-Content writes CRLF, which breaks the Linux installer's grep.
+          [IO.File]::WriteAllText("installer/windows/output/SHA256SUMS.txt", ($merged -join "`n") + "`n")
           Write-Host "Merged manifest:"
           Get-Content installer/windows/output/SHA256SUMS.txt
 
