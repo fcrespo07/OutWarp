@@ -129,12 +129,21 @@ def _install_signal_quit(on_quit) -> None:
         log.warning("could not install signal handlers", exc_info=True)
         return
 
+    quit_signals = {int(signal.SIGTERM), int(signal.SIGHUP), int(signal.SIGINT)}
+
     def _watch() -> None:
         _keep_open = wsock  # the wakeup fd must outlive this function
-        data = rsock.recv(1)
-        if data:
-            log.info("signal %d received, quitting", data[0])
-            on_quit()
+        # The wakeup fd carries every signal that has a Python handler, ours
+        # or a dependency's (SIGCHLD, SIGWINCH…): only ours mean "quit".
+        while True:
+            data = rsock.recv(64)
+            if not data:
+                return
+            for num in data:
+                if num in quit_signals:
+                    log.info("signal %d received, quitting", num)
+                    on_quit()
+                    return
 
     threading.Thread(target=_watch, name="signal-quit", daemon=True).start()
 
