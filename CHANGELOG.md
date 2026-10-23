@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Linux installer: SHA256 verification no longer exits silently when `SHA256SUMS.txt` has CRLF line endings; the Windows installer job now writes the merged manifest with LF (#26).
+
 ## [0.20.2] — 2026-10-06
 
 ### Changed
