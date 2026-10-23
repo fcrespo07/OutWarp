@@ -16,7 +16,13 @@ import unicodedata
 
 LANGS = ("en", "es", "fr", "pt", "zh")
 # Each language in its own words, for pickers.
-LANG_NAMES = {"en": "English", "es": "Español", "fr": "Français", "pt": "Português", "zh": "简体中文"}
+LANG_NAMES = {
+    "en": "English",
+    "es": "Español",
+    "fr": "Français",
+    "pt": "Português",
+    "zh": "简体中文",
+}
 FALLBACK_LANG = "en"
 
 _ui_lang: str | None = None
