@@ -164,7 +164,7 @@ async def test_settings_modal_opens_with_an_unknown_language(tmp_path: Path, mon
 
     from outwarp_server.tui.modals.settings import SettingsModal
 
-    monkeypatch.setattr("outwarp_server.api._load_settings", lambda: {"language": "fr"})
+    monkeypatch.setattr("outwarp_server.api._load_settings", lambda: {"language": "de"})
     app = OutWarpServerTUI(_write_config(tmp_path))
     async with app.run_test(size=(140, 40)) as pilot:
         await pilot.pause()

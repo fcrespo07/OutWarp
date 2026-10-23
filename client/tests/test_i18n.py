@@ -54,7 +54,7 @@ def test_formats_parameters() -> None:
 
 @pytest.mark.parametrize(("env", "expected"), [
     ({"LANG": "es_ES.UTF-8"}, "es"),
-    ({"LANGUAGE": "fr:es", "LANG": "en_US.UTF-8"}, "es"),
+    ({"LANGUAGE": "de:es", "LANG": "en_US.UTF-8"}, "es"),
     ({"LC_ALL": "C", "LANG": "es_MX.UTF-8"}, "es"),
     ({"LANG": "ja_JP.UTF-8"}, "en"),
 ])

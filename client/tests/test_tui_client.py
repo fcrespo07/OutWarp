@@ -630,7 +630,7 @@ async def test_settings_opens_with_an_unknown_saved_language(
 
     from outwarp.settings import save_settings
 
-    save_settings({"language": "fr"})
+    save_settings({"language": "de"})
     app = OutWarpClientTUI()
     async with app.run_test() as pilot:
         await pilot.pause(0.1)

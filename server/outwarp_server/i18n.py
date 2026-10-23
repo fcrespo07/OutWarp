@@ -14,17 +14,17 @@ import os
 import sys
 import unicodedata
 
-LANGS = ("en", "es")
+LANGS = ("en", "es", "fr")
 # Each language in its own words, for pickers.
-LANG_NAMES = {"en": "English", "es": "Español"}
+LANG_NAMES = {"en": "English", "es": "Español", "fr": "Français"}
 FALLBACK_LANG = "en"
 
 _ui_lang: str | None = None
 
 def _catalog() -> dict[str, dict[str, str]]:
-    from outwarp_server.locales import en, es
+    from importlib import import_module
 
-    return {"en": en.STRINGS, "es": es.STRINGS}
+    return {lang: import_module(f"outwarp_server.locales.{lang}").STRINGS for lang in LANGS}
 
 
 CATALOG = _catalog()
