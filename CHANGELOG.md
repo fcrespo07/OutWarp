@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **French (Français).** Full translation of the client GUI, the server
+  dashboard and web panel, the tray, notifications, the CLI, the `setup`
+  wizard, `doctor` and both TUIs. It is picked automatically on French systems
+  and appears in the language selectors. Pending native-speaker review.
+
 ### Fixed
 
 - Linux client: the GUI now tears the tunnel down on SIGTERM/SIGHUP/SIGINT (e.g. closing the launching terminal) instead of leaving WireGuard up with no transport (#27).

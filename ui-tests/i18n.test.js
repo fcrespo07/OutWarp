@@ -15,7 +15,8 @@ describe("resolveLang", () => {
 
   it("follows the system on auto, by base language", () => {
     expect(i18n.resolveLang("auto", ["es-ES", "en"])).toBe("es");
-    expect(i18n.resolveLang("auto", ["fr-FR", "en-GB"])).toBe("en");
+    expect(i18n.resolveLang("auto", ["fr-FR", "en-GB"])).toBe("fr");
+    expect(i18n.resolveLang("auto", ["de-DE", "en-GB"])).toBe("en");
     expect(i18n.resolveLang(undefined, ["es_MX"])).toBe("es");
   });
 
@@ -46,9 +47,10 @@ describe.each([
   ["client GUI (STR)", () => STR],
   ["server dashboard (DS_STR)", () => DS_STR],
 ])("%s", (_name, table) => {
-  it.each(["en", "es"])("covers every language in OWi18n.LANGS (%s)", (lang) => {
-    expect(i18n.LANGS).toContain(lang);
-    expect(i18n.missingKeys(table(), lang)).toEqual([]);
+  it("covers every language in OWi18n.LANGS", () => {
+    for (const lang of i18n.LANGS) {
+      expect([lang, i18n.missingKeys(table(), lang)]).toEqual([lang, []]);
+    }
   });
 
   it("has no key English lacks", () => {
