@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Simplified Chinese (简体中文).** Same coverage as the other languages. The
+  web UIs already fall back to system CJK fonts (Geist has no CJK glyphs) and
+  the TUIs count wide characters as two cells. Any `zh-*` system language
+  selects it. Pending native-speaker review.
 - **Portuguese (Português, Brazilian).** Same coverage as French: GUIs, tray,
   notifications, CLI, wizard, `doctor` and TUIs. Pending native-speaker review.
 - **French (Français).** Full translation of the client GUI, the server
