@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import signal
+import socket
 import sys
 import threading
 import time
@@ -104,6 +106,46 @@ def _resolve_ui_path() -> str:
     """Absolute path to ui/index.html (works in dev and PyInstaller bundles)."""
     base = Path(sys._MEIPASS) / "ui" if hasattr(sys, "_MEIPASS") else Path(__file__).parent / "ui"
     return str(base / "index.html")
+
+
+def _install_signal_quit(on_quit) -> None:
+    """Route SIGTERM/SIGHUP/SIGINT to the normal quit path (POSIX only).
+
+    Closing the launching terminal sends SIGHUP; without this the process dies
+    with WireGuard up and wstunnel gone, which cuts all connectivity. The GUI
+    toolkit's main loop may never give Python a chance to run a handler, so the
+    C-level wakeup fd feeds a thread that does the teardown.
+    """
+    if sys.platform == "win32":
+        return
+    try:
+        rsock, wsock = socket.socketpair()
+        wsock.setblocking(False)
+        signal.set_wakeup_fd(wsock.fileno(), warn_on_full_buffer=False)
+        # set_wakeup_fd only reports signals that have a Python handler.
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            signal.signal(sig, lambda *_: None)
+    except (ValueError, OSError):
+        log.warning("could not install signal handlers", exc_info=True)
+        return
+
+    quit_signals = {int(signal.SIGTERM), int(signal.SIGHUP), int(signal.SIGINT)}
+
+    def _watch() -> None:
+        _keep_open = wsock  # the wakeup fd must outlive this function
+        # The wakeup fd carries every signal that has a Python handler, ours
+        # or a dependency's (SIGCHLD, SIGWINCH…): only ours mean "quit".
+        while True:
+            data = rsock.recv(64)
+            if not data:
+                return
+            for num in data:
+                if num in quit_signals:
+                    log.info("signal %d received, quitting", num)
+                    on_quit()
+                    return
+
+    threading.Thread(target=_watch, name="signal-quit", daemon=True).start()
 
 
 def main() -> int:
@@ -350,6 +392,7 @@ def main() -> int:
                 manager.start()
                 _stage("tunnel manager started")
 
+        _install_signal_quit(_on_quit)
         listen_for_show_requests(_show_window)
         tray.run()
         _stage("tray running — about to hand off to webview.start()")
