@@ -5,10 +5,10 @@
 // Any key a language lacks falls back to English, so a half-translated
 // language never shows a blank or an `undefined`.
 
-const LANGS = ["en", "es", "fr"];
+const LANGS = ["en", "es", "fr", "pt"];
 const FALLBACK_LANG = "en";
 // Each language's name in itself, for the selector.
-const LANG_NAMES = { en: "English", es: "Español", fr: "Français" };
+const LANG_NAMES = { en: "English", es: "Español", fr: "Français", pt: "Português" };
 
 function resolveLang(pref, systemLangs) {
   if (pref && pref !== "auto" && LANGS.includes(pref)) return pref;
