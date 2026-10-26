@@ -225,10 +225,17 @@ class TrayApp:
     def _quit(self, icon, item) -> None:
         if self._icon is not None:
             self._icon.stop()
-        try:
-            self._on_quit()
-        except Exception:
-            log.exception("on_quit raised")
+
+        def _run() -> None:
+            try:
+                self._on_quit()
+            except Exception:
+                log.exception("on_quit raised")
+
+        # Not on the pystray thread: the teardown takes seconds and ends in a
+        # blocking window.destroy(), and the tray loop has to stay free to
+        # process the stop request, or its non-daemon thread outlives main().
+        threading.Thread(target=_run, name="tray-quit", daemon=True).start()
 
     def stop(self) -> None:
         """Stop the tray icon (called during shutdown)."""

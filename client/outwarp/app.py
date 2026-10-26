@@ -327,16 +327,24 @@ def main() -> int:
                 log.exception("could not show window from tray")
 
         quit_done = threading.Event()
+        quit_finished = threading.Event()
 
         def _on_quit() -> None:
             if quit_done.is_set():
+                # Another thread (the tray's Quit) is already tearing down:
+                # wait for it, so main() never reports a clean shutdown, or
+                # lets the process exit, while the tunnel is still coming down.
+                quit_finished.wait(timeout=30)
                 return
             quit_done.set()
-            log.info("Shutting down OutWarp client")
-            api.shutdown()
-            tray.stop()
-            with contextlib.suppress(Exception):
-                window.destroy()
+            try:
+                log.info("Shutting down OutWarp client")
+                api.shutdown()
+                tray.stop()
+                with contextlib.suppress(Exception):
+                    window.destroy()
+            finally:
+                quit_finished.set()
 
         # Every way of closing the window — the title bar's X, Alt+F4, "Close
         # window" on the taskbar — leaves OutWarp in the tray when that is on.

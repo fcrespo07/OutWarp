@@ -1114,3 +1114,16 @@ class TestCloseButtonKeepsRunning:
         from outwarp.settings import default_settings
 
         assert default_settings()["close_to_tray"] is True
+
+
+def test_window_close_is_a_noop_once_shutdown_started():
+    """A titlebar X during the quit teardown must not hide the window: that
+    left a windowless process behind (#33)."""
+    api, _ = _make_api()
+    api._window = MagicMock()
+    api.tray_available = lambda: True
+    with patch("outwarp.api.get_platform"):
+        api.shutdown()
+    api.window_close()
+    api._window.hide.assert_not_called()
+    api._window.destroy.assert_not_called()

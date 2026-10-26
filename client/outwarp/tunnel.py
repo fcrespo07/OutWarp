@@ -520,7 +520,17 @@ class Tunnel:
             return False, f"wstunnel failed to start: {exc}"
 
         if not self._await_handshake(baseline):
-            return False, "cancelled" if self._cancel.is_set() else "no WireGuard handshake"
+            if self._cancel.is_set():
+                return False, "cancelled"
+            if self._proc is not None and self._proc.poll() is not None:
+                return False, "no WireGuard handshake (wstunnel exited before the handshake)"
+            # wstunnel was still running when the wait ended, so the transport
+            # did not fail outright: nothing answered the handshake behind it.
+            return False, (
+                "no WireGuard handshake (the transport is up but the server's "
+                "WireGuard did not answer; check its WireGuard service and "
+                "that this profile's keys are still valid)"
+            )
         if self._require_ping and not self._await_ping():
             if self._cancel.is_set():
                 return False, "cancelled"

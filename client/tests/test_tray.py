@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock
 
 from PIL import Image
@@ -85,9 +86,14 @@ def test_tray_quit_stops_icon_and_invokes_callback() -> None:
     fake_icon = MagicMock()
     tray._icon = fake_icon
 
+    ran = threading.Event()
+    on_quit.side_effect = lambda: ran.set()
+
     tray._quit(None, None)
 
     fake_icon.stop.assert_called_once()
+    # Off the pystray thread, so its loop can process the stop request.
+    assert ran.wait(2)
     on_quit.assert_called_once()
 
 
