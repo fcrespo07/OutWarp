@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows client: Quit from the tray no longer leaves a windowless `outwarp-gui.exe` running with its tray icon after the single-instance lock is released (which let the next launch start a second instance, #33). The tray's Quit teardown now runs off the tray thread, a window close during shutdown no longer hides the window, and the GUI executable exits the process once `main()` returns.
+- Client: a rung that fails with "no WireGuard handshake" now says whether wstunnel was still running (the server's WireGuard did not answer) or had exited (#33).
 - Linux client: the GUI now tears the tunnel down on SIGTERM/SIGHUP/SIGINT (e.g. closing the launching terminal) instead of leaving WireGuard up with no transport (#27).
 - Linux installer: SHA256 verification no longer exits silently when `SHA256SUMS.txt` has CRLF line endings; the Windows installer job now writes the merged manifest with LF (#26).
 

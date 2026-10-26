@@ -195,6 +195,7 @@ class Api:
         # apply_update() to quit the process after launching the installer so it
         # can replace our files. None in headless/test contexts.
         self._on_quit: Callable[[], None] | None = None
+        self._shutting_down = False
 
         self._lock = threading.Lock()
         self._settings = _load_settings()
@@ -318,7 +319,9 @@ class Api:
                 log.debug("could not say the app went to the tray", exc_info=True)
 
     def window_close(self) -> None:
-        if self._window is None:
+        if self._window is None or self._shutting_down:
+            # Already quitting: hiding the window now would only leave a
+            # windowless process behind (the teardown destroys it anyway).
             return
         if self.hide_on_close():
             self.hide_to_tray()
@@ -1601,6 +1604,7 @@ class Api:
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
     def shutdown(self) -> None:
+        self._shutting_down = True
         self._stop_stats_loop()
         self._stop_latency_loop()
         if self._manager is not None:

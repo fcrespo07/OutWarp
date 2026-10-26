@@ -1,6 +1,17 @@
 """Entry point of the Windows GUI executable (`outwarp-gui.exe`)."""
+import os
 import sys
 
 from outwarp.app import main
 
-sys.exit(main())
+code = main()
+# main() has released the single-instance lock and shut the tunnel down. A
+# non-daemon thread from a dependency (pystray's) must not keep the process
+# alive after that: it would be a zombie with a tray icon and no lock, and the
+# next launch would start a second instance.
+for stream in (sys.stdout, sys.stderr):
+    try:
+        stream.flush()
+    except Exception:
+        pass
+os._exit(code)
