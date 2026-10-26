@@ -453,7 +453,7 @@ def test_connect_fails_when_handshake_never_completes():
     ):
         t = Tunnel(cfg, platform=plat, wstunnel_bin=Path("/fake/wstunnel"),
                    handshake_timeout=0.3)
-        with pytest.raises(TunnelError, match="All connection strategies failed"):
+        with pytest.raises(TunnelError, match="server's WireGuard did not answer"):
             t.connect()
     assert plat.installed is False
 
