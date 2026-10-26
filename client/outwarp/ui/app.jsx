@@ -732,7 +732,7 @@ const Home = (props) => {
   }
   if (status === "connected") return <ConnectedHome {...props}/>;
   if (status === "connecting" || status === "reconnecting") {
-    return <ConnectingHome T={T} active={active} busyMsg={busyMsg} reconnecting={status === "reconnecting"} attemptInfo={attemptInfo} phase={phase}/>;
+    return <ConnectingHome T={T} active={active} busyMsg={busyMsg} reconnecting={status === "reconnecting"} attemptInfo={attemptInfo} phase={phase} onCancel={props.onDisconnect}/>;
   }
   if (status === "error") return <ErrorHome T={T} active={active} connError={connError} onReconnect={onReconnect} onImport={onImport} onLogs={onLogs}/>;
   return <DisconnectedHome {...props}/>;
@@ -860,7 +860,7 @@ const CONNECT_STEPS = [
   ["done",    "step_done"],
 ];
 
-const ConnectingHome = ({ T, active, busyMsg, reconnecting, attemptInfo, phase }) => {
+const ConnectingHome = ({ T, active, busyMsg, reconnecting, attemptInfo, phase, onCancel }) => {
   const showAttempt = reconnecting && attemptInfo && attemptInfo.attempt > 0;
   // -1 when phase is empty (between attempts) so every step renders pending.
   const currentIdx = phase
@@ -889,6 +889,11 @@ const ConnectingHome = ({ T, active, busyMsg, reconnecting, attemptInfo, phase }
           <Dial status={reconnecting ? "reconnecting" : "connecting"} label={reconnecting ? T.reconnecting : T.connecting}/>
         </div>
         <Stepper T={T} currentIdx={currentIdx}/>
+        {onCancel && (
+          <div style={{ marginTop: 18 }}>
+            <window.Btn kind="ghost" size="md" onClick={onCancel}>{T.cancel}</window.Btn>
+          </div>
+        )}
         {busyMsg && (
           <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 14, fontFamily: "var(--font-mono)" }}>
             {busyMsg}

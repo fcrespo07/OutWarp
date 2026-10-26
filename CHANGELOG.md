@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Client GUI: a connection attempt can now be cancelled from the connecting screen (Cancel button) instead of waiting for every retry to fail.
+
 - Linux client: the GUI now tears the tunnel down on SIGTERM/SIGHUP/SIGINT (e.g. closing the launching terminal) instead of leaving WireGuard up with no transport (#27).
 - Linux installer: SHA256 verification no longer exits silently when `SHA256SUMS.txt` has CRLF line endings; the Windows installer job now writes the merged manifest with LF (#26).
 
