@@ -1,4 +1,5 @@
 """Entry point of the Windows GUI executable (`outwarp-gui.exe`)."""
+import contextlib
 import os
 import sys
 
@@ -10,8 +11,6 @@ code = main()
 # alive after that: it would be a zombie with a tray icon and no lock, and the
 # next launch would start a second instance.
 for stream in (sys.stdout, sys.stderr):
-    try:
+    with contextlib.suppress(Exception):
         stream.flush()
-    except Exception:
-        pass
 os._exit(code)
