@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Server: per-client handshake log lines.** `serve` polls `wg show` every 30 s and logs `peer <name>: handshake completed` / `handshake lost`, plus each peer's state at startup, so "tunnel accepted but WireGuard silent" is visible in `serve.log` (#36).
 - **Portuguese (Português, Brazilian).** Same coverage as French: GUIs, tray,
   notifications, CLI, wizard, `doctor` and TUIs. Pending native-speaker review.
 - **French (Français).** Full translation of the client GUI, the server
@@ -18,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Server: the container image sets `OUTWARP_CONFIG_DIR=/data`, so `kubectl exec ... outwarp-server list-clients` (and the other subcommands) find the config without `--config-dir` (#36).
+- Server: `list-clients` folds long client names onto a second line instead of cutting them with an ellipsis (#36).
 - Client GUI: a connection attempt can now be cancelled from the connecting screen (Cancel button) instead of waiting for every retry to fail.
 - Windows client: Quit from the tray no longer leaves a windowless `outwarp-gui.exe` running with its tray icon after the single-instance lock is released (which let the next launch start a second instance, #33). The tray's Quit teardown now runs off the tray thread, a window close during shutdown no longer hides the window, and the GUI executable exits the process once `main()` returns.
 - Client: a rung that fails with "no WireGuard handshake" now says whether wstunnel was still running (the server's WireGuard did not answer) or had exited (#33).
