@@ -46,6 +46,10 @@ WORKDIR /app
 # means "a container supervised by ServerManager", which is true either way.
 ENV OUTWARP_PLATFORM=kubernetes
 
+# Where the config lives for every outwarp-server run in the container, so
+# `kubectl exec ... outwarp-server list-clients` finds it without --config-dir.
+ENV OUTWARP_CONFIG_DIR=/data
+
 COPY . .
 # Production (non-editable) install — no extras needed in a container:
 # Textual TUI and pywebview are desktop-only features.

@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from rich.console import Console
@@ -136,6 +137,22 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     manager.add_listener(_on_state)
     manager.start()
 
+    from outwarp_server.handshake_monitor import HandshakeMonitor
+
+    config_path = _resolve_config_path(args)
+
+    def _enrolled_clients() -> list[tuple[str, str]]:
+        # Reloaded each poll: add-client runs in other processes (kubectl exec).
+        try:
+            current = ServerConfig.load(config_path)
+        except ConfigError:
+            return []
+        return [(c.name, c.public_key) for c in current.clients
+                if c.public_key and c.state == "active"]
+
+    monitor = HandshakeMonitor(get_live_peers, _enrolled_clients)
+    next_monitor = 0.0
+
     # SIGHUP = reload: `outwarp-server restart` run inside the container
     # (docker exec / kubectl exec) sends it, since this process is the only
     # one that owns wstunnel and the enrolment listener (B-030). The handler
@@ -148,6 +165,12 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
     log.info("OutWarp server running. Send SIGTERM or Ctrl+C to stop, SIGHUP to reload.")
     while not stop_event.wait(0.5):
+        if time.monotonic() >= next_monitor:
+            next_monitor = time.monotonic() + 30
+            try:
+                monitor.poll()
+            except Exception:
+                log.debug("handshake monitor poll failed", exc_info=True)
         if reload_event.is_set():
             reload_event.clear()
             log.info("SIGHUP: reloading the configuration and restarting the transport")
@@ -343,7 +366,8 @@ def _cmd_list_clients(args: argparse.Namespace) -> int:
     today = datetime.datetime.now(datetime.UTC).date().isoformat()
 
     table = Table(title=t("sv.list.title"))
-    table.add_column(t("sv.list.col.name"), style="bold")
+    # fold, not ellipsis: two similarly named profiles must stay tellable apart
+    table.add_column(t("sv.list.col.name"), style="bold", overflow="fold")
     table.add_column(t("sv.list.col.address"))
     table.add_column(t("sv.list.col.status"))
     table.add_column(t("sv.list.col.handshake"))
