@@ -1,0 +1,10 @@
+post_install() {
+    echo "==> OutWarp: add your user to the 'outwarp' group, then log out and in:"
+    echo "      sudo gpasswd -a \$USER outwarp"
+    echo "==> Then: outwarp import profile.owcfg && outwarp gui   (or: outwarp tui)"
+    echo "==> Optional graphical window: pacman -S python-pywebview webkit2gtk-4.1 python-gobject"
+}
+
+post_upgrade() {
+    :
+}

@@ -7,6 +7,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from outwarp.helper_path import default_helper
+
 from .base import Platform, PlatformError
 
 # Directory where the privileged helper writes tunnel configs.
@@ -19,7 +21,7 @@ _WG_CONF_DIR = Path("/etc/wireguard-outwarp")
 
 # Default install location of the privileged helper script. The installer
 # drops this; tests / dev environments override via OUTWARP_HELPER.
-_DEFAULT_HELPER = Path("/usr/local/libexec/outwarp-priv")
+_DEFAULT_HELPER = default_helper()
 
 _IP = "ip"
 _DEFAULT_ROUTE_RE = re.compile(r"^default\s+via\s+(\S+)")
