@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux `doctor`: the "re-run the installer" fix pointed at a domain that does not exist and used a syntax `install.sh` never accepted. It now shows the real one-liner (`… | sudo bash -s -- --client` / `--server`).
 - Server: the container image sets `OUTWARP_CONFIG_DIR=/data`, so `kubectl exec ... outwarp-server list-clients` (and the other subcommands) find the config without `--config-dir` (#36).
 - Server: `list-clients` folds long client names onto a second line instead of cutting them with an ellipsis (#36).
 - Client GUI: a connection attempt can now be cancelled from the connecting screen (Cancel button) instead of waiting for every retry to fail.

@@ -67,7 +67,15 @@ For automated / unattended deploys (Intune, Ansible, …) see [`scripts/install-
 curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/linux/install.sh | sudo bash
 ```
 
-The installer will ask whether you want to set up the **client** or the **server** and guide you through the rest. With a desktop session it installs the graphical client (window + tray icon); every install also gets a **Textual TUI** that runs in any terminal (GNOME Terminal, Konsole, Alacritty, kitty, foot, tmux, SSH), which is the interface on headless machines.
+The installer will ask whether you want to set up the **client** or the **server** and guide you through the rest.
+For a one-command client install, skip the questions and import your profile at the same time:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/linux/install.sh | sudo bash -s -- --client --profile ~/laptop.owcfg
+```
+
+(`--server`, `--gui`/`--no-gui` and `-y` are also available; see `install.sh --help`.)
+ With a desktop session it installs the graphical client (window + tray icon); every install also gets a **Textual TUI** that runs in any terminal (GNOME Terminal, Konsole, Alacritty, kitty, foot, tmux, SSH), which is the interface on headless machines.
 
 ```bash
 outwarp tui          # client dashboard: live status, traffic, logs, profile editor

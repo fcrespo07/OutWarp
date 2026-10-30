@@ -45,7 +45,10 @@ class Check:
     runner: Callable[[], CheckResult]
 
 
-_INSTALL_CMD = "bash <(curl -fsSL https://outwarp.dev/install.sh) client"
+_INSTALL_CMD = (
+    "curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/"
+    "installer/linux/install.sh | sudo bash -s -- --client"
+)
 _DEFAULT_HELPER = Path("/usr/local/libexec/outwarp-priv")
 _WSTUNNEL_VERSION_FILE = Path(__file__).parent.parent.parent / "installer" / "wstunnel-version.txt"
 
