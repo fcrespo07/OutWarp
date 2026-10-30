@@ -689,7 +689,10 @@ def check_linux_binaries(config: ServerConfig) -> CheckResult:
             status=Status.FAIL,
             detail=t("dx.linux.bins_nowstunnel"),
             remediation=t("dx.linux.bins_nowstunnel_fix"),
-            remediation_command="bash <(curl -fsSL https://outwarp.dev/install.sh) server",
+            remediation_command=(
+                "curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/"
+                "installer/linux/install.sh | sudo bash -s -- --server"
+            ),
             fix_kind="manual",
         )
     if not wg:
