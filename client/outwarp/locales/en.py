@@ -293,6 +293,7 @@ STRINGS: dict[str, str] = {
     "cli.forget.removed_active": " Active profile: {id}.",
     "cli.tui.missing": "TUI not installed. Reinstall with: pip install 'outwarp-client[tui]'\n  Underlying error: {error}",
     "cli.gui.need_root": "Root required to install packages into the venv. Run: {hint}",
+    "cli.gui.package_managed": "OutWarp is managed by your system package manager. Install the optional graphical window with it: pacman -S python-pywebview webkit2gtk-4.1 python-gobject",
     "cli.gui.unavailable": "GUI not available: {why}. Opening the TUI instead.",
     "cli.ui.set": "preferred_ui = {choice}",
     "cli.ui.preferred": "Preferred UI: {value}",

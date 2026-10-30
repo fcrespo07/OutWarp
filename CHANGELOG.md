@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Linux client: `outwarp update` and `outwarp gui --install` ask for sudo themselves.** On a terminal they re-run through `sudo` instead of failing with "run it with sudo"; without a terminal the old message stays. When OutWarp came from the distro package (prefix `/usr`), `outwarp update` points to the package manager instead of touching the system Python.
+- **Linux installer: one command, no questions.** `install.sh` takes `--client` / `--server`, `--gui` / `--no-gui`, `-y` and `--profile FILE.owcfg` (imports the profile as the desktop user right after installing). `--client` implies no prompts; the graphical window defaults to on when a desktop session is detected. Interactive use is unchanged.
 - **Server: per-client handshake log lines.** `serve` polls `wg show` every 30 s and logs `peer <name>: handshake completed` / `handshake lost`, plus each peer's state at startup, so "tunnel accepted but WireGuard silent" is visible in `serve.log` (#36).
 - **Portuguese (Português, Brazilian).** Same coverage as French: GUIs, tray,
   notifications, CLI, wizard, `doctor` and TUIs. Pending native-speaker review.

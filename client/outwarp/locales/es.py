@@ -292,6 +292,7 @@ STRINGS: dict[str, str] = {
     "cli.forget.removed_active": " Perfil activo: {id}.",
     "cli.tui.missing": "La interfaz de terminal no está instalada. Reinstala con: pip install 'outwarp-client[tui]'\n  Error original: {error}",
     "cli.gui.need_root": "Hace falta root para instalar paquetes en el venv. Ejecuta: {hint}",
+    "cli.gui.package_managed": "OutWarp lo gestiona el gestor de paquetes del sistema. Instala con él la ventana gráfica opcional: pacman -S python-pywebview webkit2gtk-4.1 python-gobject",
     "cli.gui.unavailable": "La ventana gráfica no está disponible: {why}. Se abre la interfaz de terminal.",
     "cli.ui.set": "preferred_ui = {choice}",
     "cli.ui.preferred": "Interfaz preferida: {value}",

@@ -611,8 +611,8 @@ def _reexec_with_sudo() -> None:
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return
     sudo = shutil.which("sudo")
-    exe = shutil.which("outwarp") or sys.argv[0]
-    if not sudo or not os.path.isabs(exe):
+    exe = sys.argv[0] if os.path.isabs(sys.argv[0]) else shutil.which("outwarp")
+    if not sudo or not exe or not os.path.isabs(exe):
         return
     os.execv(sudo, [sudo, exe, *sys.argv[1:]])
 
@@ -633,6 +633,9 @@ def _cmd_gui(args: argparse.Namespace) -> int:
     from outwarp import ui_choice
 
     if getattr(args, "install", False):
+        if _package_managed():
+            _err(t("cli.gui.package_managed"))
+            return 2
         if sys.platform == "linux" and os.geteuid() != 0:
             _reexec_with_sudo()
             _err(t("cli.gui.need_root", hint=ui_choice.INSTALL_HINT))

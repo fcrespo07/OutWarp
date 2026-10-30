@@ -292,6 +292,7 @@ STRINGS: dict[str, str] = {
     "cli.forget.removed_active": " Perfil ativo: {id}.",
     "cli.tui.missing": "TUI não instalada. Reinstale com: pip install 'outwarp-client[tui]'\n  Erro de origem: {error}",
     "cli.gui.need_root": "É preciso ser root para instalar pacotes no venv. Execute: {hint}",
+    "cli.gui.package_managed": "O OutWarp é gerido pelo gestor de pacotes do sistema. Instale com ele a janela gráfica opcional: pacman -S python-pywebview webkit2gtk-4.1 python-gobject",
     "cli.gui.unavailable": "GUI indisponível: {why}. Abrindo a TUI.",
     "cli.ui.set": "preferred_ui = {choice}",
     "cli.ui.preferred": "Interface preferida: {value}",
