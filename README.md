@@ -76,6 +76,10 @@ sudo outwarp-server tui  # server admin: clients table, add/revoke, doctor check
 
 Both TUIs share the same backend as the headless CLI subcommands (`connect`, `add-client`, etc.) so any scripts you already have keep working unchanged.
 
+#### Arch Linux / Omarchy
+
+The client has a `PKGBUILD` in [`packaging/arch/`](packaging/arch/) (`makepkg -si`). It installs the pinned wstunnel and lets members of the `outwarp` group run the privileged helper without a password: `sudo gpasswd -a $USER outwarp`, then log in again. The server still uses `install.sh` or Docker.
+
 ### macOS
 
 > macOS support is out of scope. The dispatch tables only cover Windows and Linux.
