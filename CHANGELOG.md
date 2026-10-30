@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Arch Linux package.** `packaging/arch/PKGBUILD` builds the client from the release tag: pinned wstunnel bundled, the privileged helper in `/usr/lib/outwarp/`, and a sudoers rule for the `outwarp` group instead of a per-user entry (`sudo gpasswd -a $USER outwarp`). The client looks for the helper in both `/usr/local/libexec` and `/usr/lib/outwarp`. Not yet submitted to the AUR.
+- **Linux installer: one command, no questions.** `install.sh` takes `--client` / `--server`, `--gui` / `--no-gui`, `-y` and `--profile FILE.owcfg` (imports the profile as the desktop user right after installing). `--client` implies no prompts; the graphical window defaults to on when a desktop session is detected. Interactive use is unchanged.
 - **Server: per-client handshake log lines.** `serve` polls `wg show` every 30 s and logs `peer <name>: handshake completed` / `handshake lost`, plus each peer's state at startup, so "tunnel accepted but WireGuard silent" is visible in `serve.log` (#36).
 - **Portuguese (Português, Brazilian).** Same coverage as French: GUIs, tray,
   notifications, CLI, wizard, `doctor` and TUIs. Pending native-speaker review.
