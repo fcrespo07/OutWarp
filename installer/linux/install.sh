@@ -12,8 +12,20 @@
 #   1. Local (from a clone):    sudo bash installer/linux/install.sh
 #   2. Remote (via curl pipe):  curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/installer/linux/install.sh | sudo bash
 #
+# Flags (pass after `bash -s --` when piping from curl):
+#   --client | --server                   Skip the component prompt
+#   --profile FILE.owcfg                  Client: import this profile right after
+#                                         installing (as the desktop user)
+#   --gui | --no-gui                      Client: force or skip the graphical window
+#                                         (default: on when a desktop session is found)
+#   -y, --yes                             Never ask anything; use the defaults
+#   -h, --help                            Show this help
+#
+# One-liner for a desktop client:
+#   curl -fsSL <url>/install.sh | sudo bash -s -- --client --profile ~/laptop.owcfg
+#
 # Environment overrides:
-#   OUTWARP_COMPONENT=server|client       Skip the interactive prompt
+#   OUTWARP_COMPONENT=server|client       Same as --client / --server
 #   OUTWARP_VERSION=v0.5.5                Pin a specific OutWarp release tag
 #                                         (default: latest from GitHub Releases)
 #   OUTWARP_REPO_DIR=/path/to/clone       Dev mode: install from local source
@@ -812,7 +824,7 @@ want_client_gui() {
     esac
     local default="n"
     desktop_session_detected && default="y"
-    if [[ -r /dev/tty ]]; then
+    if [[ "$ASSUME_YES" != "1" && -r /dev/tty ]]; then
         local reply
         reply=$(ask "Install the graphical window + tray icon too? (the terminal UI is always installed) [y/n]" "$default")
         case "$reply" in
@@ -940,6 +952,8 @@ resolve_target_user() {
         TARGET_USER="$SUDO_USER"
     elif [[ -n "${OUTWARP_USER:-}" ]]; then
         TARGET_USER="$OUTWARP_USER"
+    elif [[ "$ASSUME_YES" == "1" ]]; then
+        TARGET_USER="${USER:-}"
     else
         echo
         TARGET_USER=$(ask "Desktop user that will run the tray app" "${USER:-}")
@@ -1320,6 +1334,7 @@ install_client() {
     install_hyprland_rule
     # Register shell completions (bash, zsh) for outwarp.
     install_client_completions
+    import_profile
 
     cat <<EOF
 
@@ -1378,10 +1393,63 @@ pick_component() {
     esac
 }
 
+usage() {
+    cat <<'USAGE'
+Usage: install.sh [--client | --server] [--profile FILE.owcfg] [--gui | --no-gui] [-y]
+
+  --client / --server   Skip the component prompt
+  --profile FILE        Client: import this .owcfg right after installing
+  --gui / --no-gui      Client: force or skip the graphical window
+                        (default: on when a desktop session is detected)
+  -y, --yes             Never ask anything; use the defaults
+
+Piped from curl, pass flags after `bash -s --`:
+  curl -fsSL <url>/install.sh | sudo bash -s -- --client --profile ~/laptop.owcfg
+USAGE
+}
+
+ASSUME_YES=0
+PROFILE_FILE=""
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --client) OUTWARP_COMPONENT=client; ASSUME_YES=1 ;;
+            --server) OUTWARP_COMPONENT=server ;;
+            --profile)
+                [[ $# -ge 2 ]] || die "--profile needs a file path"
+                PROFILE_FILE="$2"; shift ;;
+            --profile=*) PROFILE_FILE="${1#--profile=}" ;;
+            --gui) OUTWARP_CLIENT_GUI=1 ;;
+            --no-gui) OUTWARP_CLIENT_GUI=0 ;;
+            -y|--yes) ASSUME_YES=1 ;;
+            -h|--help) usage; exit 0 ;;
+            *) die "Unknown option: $1 (try --help)" ;;
+        esac
+        shift
+    done
+    if [[ -n "$PROFILE_FILE" ]]; then
+        [[ "${OUTWARP_COMPONENT:-client}" == "client" ]] || die "--profile only applies to --client"
+        OUTWARP_COMPONENT=client
+        [[ -r "$PROFILE_FILE" ]] || die "Cannot read profile: $PROFILE_FILE"
+        PROFILE_FILE=$(readlink -f "$PROFILE_FILE")
+    fi
+}
+
+import_profile() {
+    [[ -n "$PROFILE_FILE" ]] || return 0
+    info "Importing profile ${BOLD}$(basename "$PROFILE_FILE")${RESET}"
+    if run_as_target_user "$CLIENT_BIN_LINK" import "$PROFILE_FILE"; then
+        ok "Profile imported - open OutWarp from your launcher and press Connect."
+    else
+        warn "Import failed; retry with: outwarp import $PROFILE_FILE"
+    fi
+}
+
 # ----------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------
 main() {
+    parse_args "$@"
     banner
     require_root_or_sudo
     detect_distro
