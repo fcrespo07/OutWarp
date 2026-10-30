@@ -18,6 +18,8 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
+from outwarp.helper_path import default_helper
+
 log = logging.getLogger(__name__)
 
 
@@ -32,7 +34,7 @@ class TunnelStats:
 
 
 _DEFAULT_WIN_WG = Path(r"C:\Program Files\WireGuard\wg.exe")
-_DEFAULT_HELPER = Path("/usr/local/libexec/outwarp-priv")
+_DEFAULT_HELPER = default_helper()
 
 
 def _find_wg() -> Path | None:

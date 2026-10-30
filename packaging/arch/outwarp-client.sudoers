@@ -1,0 +1,6 @@
+# Members of the "outwarp" group may run the OutWarp privileged helper
+# without a password. The helper validates its inputs.
+# The TUI polls "dump" at 1 Hz, so skip the syslog line and PAM session.
+Cmnd_Alias OUTWARP_HELPER = /usr/lib/outwarp/outwarp-priv
+Defaults!OUTWARP_HELPER !syslog, !pam_session
+%outwarp ALL=(root) NOPASSWD: OUTWARP_HELPER
