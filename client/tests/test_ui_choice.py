@@ -154,6 +154,7 @@ def test_cli_launch_opens_tui_in_a_terminal_without_tty(monkeypatch) -> None:
 def test_cli_gui_install_requires_root(capsys, monkeypatch) -> None:
     from outwarp import cli
 
+    monkeypatch.setattr(cli, "_package_managed", lambda: False)
     monkeypatch.setattr(os, "geteuid", lambda: 1000)
     assert cli.main(["gui", "--install"]) == 2
     assert ui_choice.INSTALL_HINT in capsys.readouterr().err

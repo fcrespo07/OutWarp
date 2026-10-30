@@ -598,6 +598,30 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if any(r.status == Status.FAIL for r in results) else 0
 
 
+def _reexec_with_sudo() -> None:
+    """Re-run the current command through ``sudo`` instead of asking the user to.
+
+    Only when there is a terminal to type the password into; returns (so the
+    caller prints its usual "root required" error) otherwise. Uses the
+    absolute path of the entry point because sudo's secure_path often omits
+    /usr/local/bin.
+    """
+    import shutil
+
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return
+    sudo = shutil.which("sudo")
+    exe = sys.argv[0] if os.path.isabs(sys.argv[0]) else shutil.which("outwarp")
+    if not sudo or not exe or not os.path.isabs(exe):
+        return
+    os.execv(sudo, [sudo, exe, *sys.argv[1:]])
+
+
+def _package_managed() -> bool:
+    """Installed by the distro package manager (venv-less, prefix ``/usr``)."""
+    return sys.platform == "linux" and Path(sys.prefix) == Path("/usr")
+
+
 def _cmd_gui(args: argparse.Namespace) -> int:
     """Delegate to outwarp.app:main — the pywebview tray entry-point.
 
@@ -609,7 +633,11 @@ def _cmd_gui(args: argparse.Namespace) -> int:
     from outwarp import ui_choice
 
     if getattr(args, "install", False):
+        if _package_managed():
+            _err(t("cli.gui.package_managed"))
+            return 2
         if sys.platform == "linux" and os.geteuid() != 0:
+            _reexec_with_sudo()
             _err(t("cli.gui.need_root", hint=ui_choice.INSTALL_HINT))
             return 2
         return ui_choice.install_gui(echo=_print)
@@ -748,7 +776,11 @@ def _cmd_update(args: argparse.Namespace) -> int:
     # the Python wheel flow, so anchor the gate on the platform explicitly.
     # On Windows the installer ships the GUI wheel separately and there's no
     # ``outwarp update`` flow yet.
+    if _package_managed():
+        _err(t("cli.update.package_managed"))
+        return 1
     if sys.platform == "linux" and os.geteuid() != 0:
+        _reexec_with_sudo()
         _err(t("cli.update.need_root"))
         return 1
 
