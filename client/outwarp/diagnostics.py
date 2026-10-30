@@ -12,6 +12,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
+from outwarp.helper_path import default_helper
 from outwarp.i18n import t
 
 log = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ _INSTALL_CMD = (
     "curl -fsSL https://raw.githubusercontent.com/fcrespo07/OutWarp/main/"
     "installer/linux/install.sh | sudo bash -s -- --client"
 )
-_DEFAULT_HELPER = Path("/usr/local/libexec/outwarp-priv")
+_DEFAULT_HELPER = default_helper()
 _WSTUNNEL_VERSION_FILE = Path(__file__).parent.parent.parent / "installer" / "wstunnel-version.txt"
 
 

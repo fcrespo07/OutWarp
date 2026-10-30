@@ -23,7 +23,7 @@ Complemento de `CLAUDE.md`. `CLAUDE.md` dice **qué** es OutWarp y qué decision
 
 ## 2. Estado a 2026-10-01
 
-- **Publicadas y firmadas hasta la 0.20.1; la 0.20.2 está preparada** (versión subida y CHANGELOG fechado el 2026-10-06) y espera a que el autor firme y publique. En el código, la versión es `0.20.2` en cuatro sitios: `client/pyproject.toml`, `server/pyproject.toml`, `client/outwarp/__init__.py` y `server/outwarp_server/__init__.py`.
+- **Publicadas y firmadas hasta la 0.20.1; la 0.20.2 está preparada** (versión subida y CHANGELOG fechado el 2026-10-06) y espera a que el autor firme y publique. En el código, la versión es `0.20.2` en cinco sitios: `client/pyproject.toml`, `server/pyproject.toml`, `client/outwarp/__init__.py`, `server/outwarp_server/__init__.py` y `pkgver` en `packaging/arch/PKGBUILD` (un test lo vigila).
 - **La numeración del plan se ha desplazado.** La fase 2 (producto) ocupó la 0.17.0, la 0.18.0 y la 0.19.0. La fase 3 (idiomas) ya no sale como 0.19.0, sino como la primera versión después de cerrar la fase 2 (0.20.0 o posterior). El contenido y el orden de las fases no cambian.
 - Qué llevó cada versión reciente, en resumen (el detalle está en `CHANGELOG.md`):
   - **0.17.0**: pantalla Tráfico del panel con datos reales (B-041), primera pasada de pulido (B-042), servidor Windows vía Docker Compose y README y wizard honestos con el anti-DPI.

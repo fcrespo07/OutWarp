@@ -1,0 +1,57 @@
+# Maintainer: Ferran Crespo <fcrespo@fcrespo.dev>
+#
+# OutWarp client for Arch Linux. Server: use installer/linux/install.sh or Docker.
+# pkgver follows client/pyproject.toml; bump it (and updpkgsums) per release.
+pkgname=outwarp-client
+_wstunnel=10.5.2
+pkgver=0.20.2
+pkgrel=1
+pkgdesc='WireGuard-over-WebSocket (wstunnel) VPN tunnel client with tray, GUI and TUI'
+arch=('x86_64' 'aarch64')
+url='https://github.com/fcrespo07/OutWarp'
+license=('LicenseRef-PolyForm-Noncommercial-1.0.0')
+conflicts=('wstunnel')
+provides=("wstunnel=$_wstunnel")
+depends=('python' 'python-pystray' 'python-pillow' 'python-platformdirs'
+         'python-textual' 'python-rich' 'python-argcomplete'
+         'wireguard-tools' 'nftables' 'sudo')
+makedepends=('python-build' 'python-installer' 'python-hatchling')
+optdepends=('python-pywebview: graphical window'
+            'webkit2gtk-4.1: graphical window'
+            'python-gobject: graphical window and tray')
+install=outwarp-client.install
+# wstunnel is pinned (installer/wstunnel-version.txt): client and server must
+# run the same version, so it is bundled and replaces the distro package.
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
+        outwarp-client.sysusers outwarp-client.sudoers outwarp-client.desktop)
+source_x86_64=("wstunnel-$_wstunnel-amd64.tar.gz::https://github.com/erebe/wstunnel/releases/download/v$_wstunnel/wstunnel_${_wstunnel}_linux_amd64.tar.gz")
+source_aarch64=("wstunnel-$_wstunnel-arm64.tar.gz::https://github.com/erebe/wstunnel/releases/download/v$_wstunnel/wstunnel_${_wstunnel}_linux_arm64.tar.gz")
+noextract=("wstunnel-$_wstunnel-amd64.tar.gz" "wstunnel-$_wstunnel-arm64.tar.gz")
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP')
+sha256sums_x86_64=('7687e4354e91e856beb8d1d3bbf86f990f4cf752be639ad6d1f21b57c8191cf8')
+sha256sums_aarch64=('ce6438391db8a83e22f204ae6cdcc87f96451409b90e76858997bb1a9cd85088')
+
+build() {
+  cd "OutWarp-$pkgver/client"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "OutWarp-$pkgver"
+  python -m installer --destdir="$pkgdir" client/dist/*.whl
+
+  install -Dm755 installer/linux/outwarp-priv "$pkgdir/usr/lib/outwarp/outwarp-priv"
+  install -Dm440 "$srcdir/outwarp-client.sudoers" "$pkgdir/etc/sudoers.d/outwarp"
+  install -Dm644 "$srcdir/outwarp-client.sysusers" "$pkgdir/usr/lib/sysusers.d/outwarp.conf"
+  install -Dm644 "$srcdir/outwarp-client.desktop" "$pkgdir/usr/share/applications/outwarp.desktop"
+  install -Dm644 client/outwarp/resources/app_icon.png "$pkgdir/usr/share/pixmaps/outwarp.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 THIRD_PARTY_LICENSES "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_LICENSES"
+
+  case "$CARCH" in
+    x86_64)  _wst="wstunnel-$_wstunnel-amd64.tar.gz" ;;
+    aarch64) _wst="wstunnel-$_wstunnel-arm64.tar.gz" ;;
+  esac
+  bsdtar -xf "$srcdir/$_wst" -C "$srcdir" wstunnel
+  install -Dm755 "$srcdir/wstunnel" "$pkgdir/usr/bin/wstunnel"
+}
