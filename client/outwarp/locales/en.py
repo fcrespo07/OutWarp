@@ -318,6 +318,7 @@ STRINGS: dict[str, str] = {
     "cli.update.run_hint": "Run 'sudo outwarp update' to install.",
     "cli.update.no_wheel_in": "No Linux wheel found in release v{latest} - see {url}",
     "cli.update.need_root": "Root required to upgrade the venv. Run: sudo outwarp update",
+    "cli.update.package_managed": "OutWarp is managed by your system package manager. Update it with it (e.g. yay -Syu outwarp-client).",
     "cli.update.downloading": "Downloading {name}...",
     "cli.update.download_failed": "Download failed: {error}",
     "cli.update.integrity_failed": "Integrity check failed: {detail}",

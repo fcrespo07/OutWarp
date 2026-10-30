@@ -317,6 +317,7 @@ STRINGS: dict[str, str] = {
     "cli.update.run_hint": "Exécuter 'sudo outwarp update' pour l'installer.",
     "cli.update.no_wheel_in": "Aucun wheel Linux dans la version v{latest} - voir {url}",
     "cli.update.need_root": "Droits root requis pour mettre à jour le venv. Exécuter : sudo outwarp update",
+    "cli.update.package_managed": "OutWarp est géré par le gestionnaire de paquets du système. Mettez-le à jour avec lui (p. ex. yay -Syu outwarp-client).",
     "cli.update.downloading": "Téléchargement de {name}...",
     "cli.update.download_failed": "Échec du téléchargement : {error}",
     "cli.update.integrity_failed": "Échec de la vérification d'intégrité : {detail}",
