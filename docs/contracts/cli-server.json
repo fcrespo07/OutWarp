@@ -1,0 +1,282 @@
+{
+  "commands": {
+    "add-client": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "days",
+          "flags": [
+            "--days"
+          ],
+          "nargs": null,
+          "required": false
+        },
+        {
+          "choices": null,
+          "dest": "embed_key",
+          "flags": [
+            "--embed-key"
+          ],
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "choices": null,
+          "dest": "enroll_ttl",
+          "flags": [
+            "--enroll-ttl"
+          ],
+          "nargs": null,
+          "required": false
+        }
+      ],
+      "positionals": [
+        {
+          "choices": null,
+          "dest": "name",
+          "nargs": null,
+          "required": true
+        }
+      ]
+    },
+    "admin-token": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "rotate",
+          "flags": [
+            "--rotate"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": []
+    },
+    "disable-client": {
+      "documented": true,
+      "options": [],
+      "positionals": [
+        {
+          "choices": null,
+          "dest": "name",
+          "nargs": null,
+          "required": true
+        }
+      ]
+    },
+    "doctor": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "enable-client": {
+      "documented": true,
+      "options": [],
+      "positionals": [
+        {
+          "choices": null,
+          "dest": "name",
+          "nargs": null,
+          "required": true
+        }
+      ]
+    },
+    "enroll-listener": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "gui": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "init": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "list-clients": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "prune-expired": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "yes",
+          "flags": [
+            "--yes",
+            "-y"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": []
+    },
+    "renew-cert": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "new_key",
+          "flags": [
+            "--new-key"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": []
+    },
+    "restart": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "revoke-client": {
+      "documented": true,
+      "options": [],
+      "positionals": [
+        {
+          "choices": null,
+          "dest": "name",
+          "nargs": null,
+          "required": true
+        }
+      ]
+    },
+    "rotate-client": {
+      "documented": true,
+      "options": [],
+      "positionals": [
+        {
+          "choices": null,
+          "dest": "name",
+          "nargs": null,
+          "required": true
+        }
+      ]
+    },
+    "serve": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "setup": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "status": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "tui": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "uninstall": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "yes",
+          "flags": [
+            "--yes",
+            "-y"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": []
+    },
+    "update": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "check_only",
+          "flags": [
+            "--check-only"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": []
+    },
+    "web": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "cert",
+          "flags": [
+            "--cert"
+          ],
+          "nargs": null,
+          "required": false
+        },
+        {
+          "choices": null,
+          "dest": "host",
+          "flags": [
+            "--host"
+          ],
+          "nargs": null,
+          "required": false
+        },
+        {
+          "choices": null,
+          "dest": "key",
+          "flags": [
+            "--key"
+          ],
+          "nargs": null,
+          "required": false
+        },
+        {
+          "choices": null,
+          "dest": "port",
+          "flags": [
+            "--port"
+          ],
+          "nargs": null,
+          "required": false
+        }
+      ],
+      "positionals": []
+    }
+  },
+  "options": [
+    {
+      "choices": null,
+      "dest": "config_dir",
+      "flags": [
+        "--config-dir"
+      ],
+      "nargs": null,
+      "required": false
+    },
+    {
+      "choices": null,
+      "dest": "version",
+      "flags": [
+        "--version"
+      ],
+      "nargs": 0,
+      "required": false
+    }
+  ],
+  "positionals": []
+}
