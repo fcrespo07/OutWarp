@@ -235,6 +235,10 @@ const STR = {
     home_change: "Cambiar",
     home_switch: "Cambiar de perfil",
     home_manage: "Gestionar perfiles",
+    profile_none: "Sin perfil",
+    empty_noFileTitle: "¿No tienes un .owcfg?",
+    empty_noFileBody: "OutWarp se conecta a un servidor OutWarp: pídele el archivo a quien lo gestiona. Si el servidor es tuyo, créalo con «outwarp-server add-client <nombre>».",
+    set_tlsInterceptOn: "Activo: no se comprueba el certificado del servidor. El tráfico sigue cifrado por WireGuard, pero quien controla la red puede ver que usas OutWarp y cortar la conexión. Desactívalo al salir de esa red.",
     sec_pin: "Certificado anclado a tu servidor",
     sec_ca: "Certificado verificado por una CA",
     ks_on: "Activo: corta si cae el túnel",
@@ -476,6 +480,10 @@ const STR = {
     home_change: "Change",
     home_switch: "Switch profile",
     home_manage: "Manage profiles",
+    profile_none: "No profile",
+    empty_noFileTitle: "No .owcfg yet?",
+    empty_noFileBody: "OutWarp connects to an OutWarp server: ask whoever runs it for the file. If the server is yours, create it with “outwarp-server add-client <name>”.",
+    set_tlsInterceptOn: "On: the server certificate is not checked. Traffic is still encrypted by WireGuard, but whoever runs the network can see you use OutWarp and cut the connection. Turn it off when you leave that network.",
     sec_pin: "Certificate pinned to your server",
     sec_ca: "Certificate verified by a CA",
     ks_on: "On: blocks if the tunnel drops",
@@ -717,6 +725,10 @@ const STR = {
     home_change: "Changer",
     home_switch: "Changer de profil",
     home_manage: "Gérer les profils",
+    profile_none: "Aucun profil",
+    empty_noFileTitle: "Pas encore de .owcfg ?",
+    empty_noFileBody: "OutWarp se connecte à un serveur OutWarp : demandez le fichier à la personne qui le gère. Si le serveur est le vôtre, créez-le avec « outwarp-server add-client <nom> ».",
+    set_tlsInterceptOn: "Activé : le certificat du serveur n’est pas vérifié. Le trafic reste chiffré par WireGuard, mais qui contrôle le réseau peut voir que vous utilisez OutWarp et couper la connexion. Désactivez-le en quittant ce réseau.",
     sec_pin: "Certificat épinglé sur votre serveur",
     sec_ca: "Certificat vérifié par une CA",
     ks_on: "Activé : coupe si le tunnel tombe",
@@ -958,6 +970,10 @@ const STR = {
     home_change: "Alterar",
     home_switch: "Trocar de perfil",
     home_manage: "Gerenciar perfis",
+    profile_none: "Nenhum perfil",
+    empty_noFileTitle: "Ainda não tem um .owcfg?",
+    empty_noFileBody: "O OutWarp se conecta a um servidor OutWarp: peça o arquivo a quem o administra. Se o servidor for seu, crie-o com “outwarp-server add-client <nome>”.",
+    set_tlsInterceptOn: "Ativo: o certificado do servidor não é verificado. O tráfego continua criptografado pelo WireGuard, mas quem controla a rede pode ver que você usa o OutWarp e cortar a conexão. Desative ao sair dessa rede.",
     sec_pin: "Certificado fixado ao seu servidor",
     sec_ca: "Certificado verificado por uma CA",
     ks_on: "Ativado: corta se o túnel cair",
@@ -1044,7 +1060,21 @@ const routeLabel = (route, T) => {
   return route.label || route.id;
 };
 
-window.OWfmt = { fmtBps, fmtBytes, fmtAgo, fmtDuration, classifyError, routeLabel };
+// A profile's expiry ("YYYY-MM-DD") in the UI language's date format. Parsed
+// as a local date so it never shifts a day with the time zone; anything that
+// is not a plain date is shown as it came.
+const fmtDate = (value, lang) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ""));
+  if (!m) return value || "";
+  try {
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return new Intl.DateTimeFormat(lang || "es", { dateStyle: "medium" }).format(d);
+  } catch (_) {
+    return value;
+  }
+};
+
+window.OWfmt = { fmtBps, fmtBytes, fmtAgo, fmtDuration, fmtDate, classifyError, routeLabel };
 
 // hook to read tweaks from a parent
 const useUiState = (initial) => {
