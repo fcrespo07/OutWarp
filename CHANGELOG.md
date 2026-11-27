@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wizard, `doctor` and both TUIs. It is picked automatically on French systems
   and appears in the language selectors. Pending native-speaker review.
 
+### Removed
+- **The `outwarp-cli` alias is gone** (it was the pre-1.0 command name, deprecated since 0.15.0). Use `outwarp`. A systemd user unit still pointing at `outwarp-cli` stops working after the update: run `outwarp service install` once to rewrite it (`outwarp doctor` flags it). `install.sh` migrates it by itself.
+
 ### Fixed
 
 - Linux `doctor`: the "re-run the installer" fix pointed at a domain that does not exist and used a syntax `install.sh` never accepted. It now shows the real one-liner (`… | sudo bash -s -- --client` / `--server`).

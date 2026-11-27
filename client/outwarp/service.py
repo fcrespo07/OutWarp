@@ -165,15 +165,13 @@ def _resolve_daemon_executable() -> Path:
     The venv that runs this code wins: ``<venv>/bin/outwarp`` next to the
     interpreter (an in-place ``outwarp update`` creates it but never a new
     PATH shim, and with two venvs on a box PATH order picked the wrong one).
-    Then ``outwarp`` on PATH, then the deprecated ``outwarp-cli`` alias, then
-    argv[0] (test/dev scenarios)."""
+    Then ``outwarp`` on PATH, then argv[0] (test/dev scenarios)."""
     sibling = Path(sys.executable).with_name("outwarp")
     if sibling.exists() and os.access(sibling, os.X_OK):
         return sibling.resolve()
-    for name in ("outwarp", "outwarp-cli"):
-        exe = shutil.which(name)
-        if exe:
-            return Path(exe).resolve()
+    exe = shutil.which("outwarp")
+    if exe:
+        return Path(exe).resolve()
     return Path(sys.argv[0]).resolve()
 
 

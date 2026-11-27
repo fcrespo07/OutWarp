@@ -323,15 +323,16 @@ class TestUnitUsesLegacyName:
     def test_missing_unit_is_not_legacy(self, tmp_path: Path) -> None:
         assert service.unit_uses_legacy_name(tmp_path / "nope.service") is False
 
-    def test_resolves_new_name_before_alias(self, monkeypatch, tmp_path: Path) -> None:
-        # No sibling `outwarp` next to the interpreter → PATH order decides.
+    def test_does_not_fall_back_to_the_retired_alias(self, monkeypatch, tmp_path: Path) -> None:
+        # No sibling `outwarp` next to the interpreter → PATH decides, and the
+        # retired `outwarp-cli` name is never consulted.
         monkeypatch.setattr(service.sys, "executable", str(tmp_path / "python"))
         order: list[str] = []
 
         def fake_which(name: str) -> str | None:
             order.append(name)
-            return "/usr/local/bin/outwarp-cli" if name == "outwarp-cli" else None
+            return None
 
         monkeypatch.setattr(service.shutil, "which", fake_which)
-        assert service._resolve_daemon_executable() == Path("/usr/local/bin/outwarp-cli").resolve()
-        assert order == ["outwarp", "outwarp-cli"]
+        service._resolve_daemon_executable()
+        assert order == ["outwarp"]

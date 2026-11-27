@@ -305,22 +305,3 @@ def test_gui_subcommand_falls_back_to_tui_with_a_reason(isolated_config, capsys)
     tui.assert_called_once()
     app_main.assert_not_called()
     assert "pywebview not installed" in capsys.readouterr().err
-
-
-def test_legacy_alias_warns_once_and_delegates(monkeypatch, capsys) -> None:
-    """``outwarp-cli`` (pre-1.0 name) must behave exactly like ``outwarp`` and
-    only add one stderr line pointing at the new name."""
-    from outwarp import cli
-
-    seen: list[list[str] | None] = []
-
-    def fake_main(argv=None):
-        seen.append(argv)
-        return 7
-
-    monkeypatch.setattr(cli, "main", fake_main)
-    assert cli.main_legacy_alias(["status"]) == 7
-    assert seen == [["status"]]
-    err = capsys.readouterr().err
-    assert "deprecated" in err and "outwarp-cli" in err
-    assert err.count("\n") == 1
