@@ -1,0 +1,117 @@
+name: Windows installer smoke
+
+# Builds the client installer and drives it the way a user (or the in-app
+# updater) does: silent install, `outwarp --version`, `outwarp doctor`, silent
+# uninstall. Catches an installer that builds but does not install, an exe that
+# crashes on start, or an uninstaller that leaves files behind: none of that is
+# covered by the unit tests. Windows only; it does not connect a tunnel.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "installer/**"
+      - "client/**"
+      - "server/**"
+      - "scripts/fetch_bundled_binaries.py"
+      - "scripts/build_ui.py"
+      - ".github/workflows/installer-smoke.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "installer/**"
+      - "client/**"
+      - "server/**"
+      - "scripts/fetch_bundled_binaries.py"
+      - "scripts/build_ui.py"
+      - ".github/workflows/installer-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: client installer (silent install / doctor / uninstall)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: Install Inno Setup 6
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build the client installer
+        shell: pwsh
+        run: python installer/windows/build/build.py --editions client
+
+      - name: Silent install
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem installer/windows/output -Filter "OutWarpSetup-Client-*.exe" | Select-Object -First 1
+          if (-not $setup) { throw "client installer not found" }
+          $dir = Join-Path $env:RUNNER_TEMP "outwarp-smoke"
+          $log = Join-Path $env:RUNNER_TEMP "setup.log"
+          $p = Start-Process $setup.FullName -Wait -PassThru -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/DIR=$dir", "/LOG=$log")
+          if (Test-Path $log) { Get-Content $log | Select-Object -Last 40 }
+          if ($p.ExitCode -ne 0) { throw "setup exited with $($p.ExitCode)" }
+          $exe = Join-Path $dir "client\outwarp.exe"
+          if (-not (Test-Path $exe)) { throw "outwarp.exe not installed at $exe" }
+          "OUTWARP_DIR=$dir" >> $env:GITHUB_ENV
+          "OUTWARP_EXE=$exe" >> $env:GITHUB_ENV
+
+      - name: outwarp --version matches the build
+        shell: pwsh
+        run: |
+          $out = & $env:OUTWARP_EXE --version
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) { throw "--version exited with $LASTEXITCODE" }
+          $want = (Select-String -Path client/outwarp/__init__.py -Pattern '__version__\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          if ("$out" -notmatch [regex]::Escape($want)) { throw "expected version $want, got: $out" }
+
+      - name: outwarp --help lists the documented commands
+        shell: pwsh
+        run: |
+          $out = (& $env:OUTWARP_EXE --help) -join "`n"
+          foreach ($c in "import", "connect", "status", "profile", "logs", "doctor", "update", "uninstall") {
+            if ($out -notmatch "\b$c\b") { throw "'$c' missing from --help" }
+          }
+
+      - name: outwarp doctor runs
+        shell: pwsh
+        run: |
+          # Exit code 1 only means some check failed (no server profile on a CI
+          # box); what matters is that the frozen exe starts and reports.
+          $out = (& $env:OUTWARP_EXE doctor 2>&1) -join "`n"
+          Write-Host $out
+          if ($LASTEXITCODE -gt 1) { throw "doctor crashed (exit $LASTEXITCODE)" }
+          if ($out -match "Traceback") { throw "doctor printed a traceback" }
+
+      - name: Silent uninstall leaves nothing behind
+        shell: pwsh
+        run: |
+          $unins = Get-ChildItem $env:OUTWARP_DIR -Filter "unins*.exe" | Select-Object -First 1
+          if (-not $unins) { throw "uninstaller not found in $env:OUTWARP_DIR" }
+          $p = Start-Process $unins.FullName -Wait -PassThru -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART")
+          if ($p.ExitCode -ne 0) { throw "uninstaller exited with $($p.ExitCode)" }
+          Start-Sleep -Seconds 3
+          if (Test-Path (Join-Path $env:OUTWARP_DIR "client\outwarp.exe")) { throw "outwarp.exe still present after uninstall" }
+          $left = if (Test-Path $env:OUTWARP_DIR) { Get-ChildItem $env:OUTWARP_DIR -Recurse -File | Select-Object -First 20 } else { @() }
+          if ($left) { $left | ForEach-Object { Write-Host "left: $($_.FullName)" }; throw "files left after uninstall" }
