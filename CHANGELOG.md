@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 - README: known limitation for Windows standard users who elevate with another account.
+
 ### Changed
 - **Client GUI: plainer texts and a cancellable connect button.** While connecting or retrying, clicking the connect button cancels the attempt and stops the retries (it used to ignore clicks). The Connection subtitle follows the state instead of always saying the traffic is encrypted; the kill switch line no longer claims nothing leaves while you are disconnected; the connecting steps, the import hint, "last contact with the server" and the About text speak the user's language; failed connections tell people who do not run the server whom to ask; the platform string in About only shows in advanced mode. Installer: missing accents in three Spanish texts.
 
