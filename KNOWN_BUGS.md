@@ -13,6 +13,18 @@ Leyenda de estado:
 
 ## Resueltos
 
+### ✅ B-052 — Windows: «Iniciar al arrancar Windows» no arrancaba nada (cliente y servidor)
+**Síntomas:** Hallazgo de la revisión de UX en Windows (2026-11-27), por lectura del código; sin reporte del autor. Ni las casillas «Iniciar OutWarp Client/Server al arrancar Windows» del instalador ni el ajuste «Iniciar al iniciar sesión» del cliente hacían que OutWarp arrancase al entrar en Windows.
+**Causa raíz:** `outwarp-gui.exe` y `outwarp-server-gui.exe` piden elevación en su manifiesto (`uac_admin=True`, B-027). Windows no lanza programas que requieren elevación desde la carpeta Inicio ni desde `HKCU\…\Run` al iniciar sesión: los salta sin aviso. El instalador ponía un acceso directo en la carpeta Inicio y el cliente escribía el valor `Run`. Además, las tareas `schtasks` de B-034 heredaban los valores por defecto del Programador de tareas: no arrancan con batería y se cortan a las 72 h.
+**Fix (2026-11-27):** una tarea programada por usuario `\OutWarp\StartClient-<usuario>` (y `StartServer-<usuario>` desde el instalador) al iniciar sesión, «con los privilegios más altos», con batería, sin límite de tiempo y prioridad normal (`platforms/windows.py`, `outwarp.iss`). El cliente pasa a la tarea una entrada vieja al arrancar y, si la tarea la creó el instalador, activa su ajuste. Una actualización silenciosa no la vuelve a crear (respeta que el usuario la quitara). El desinstalador borra las tareas y el valor `Run`; las de B-034 pasan a arrancar con batería.
+**Prevención:** un ejecutable con `uac_admin` solo arranca al iniciar sesión con una tarea programada. Tests en `client/tests/test_platforms.py` y `test_installer_iss.py`. Pendiente 👤: probarlo en Windows real (instalador y ajuste).
+
+### ✅ B-051 — GUI del cliente: "No se pudo iniciar la interfaz — d.get_status is not a function"
+**Síntomas:** Reportado por el autor (2026-11-27, Windows, 0.20.2). Al abrir la ventana sale la pantalla "No se pudo iniciar la interfaz" con `d.get_status is not a function`. Es intermitente: depende de lo rápido que arranque el WebView.
+**Causa raíz:** `waitForBridge()` daba el puente por listo en cuanto existía `window.pywebview.api`, pero pywebview crea ese objeto antes de colgarle los métodos de Python (llegan justo antes de `pywebviewready`). La primera llamada, `get_status()`, caía en esa ventana.
+**Fix (2026-11-27):** `waitForBridge()` espera a que `api.get_status` sea una función (`client/outwarp/ui/app.jsx`, bundle regenerado). La GUI de escritorio del servidor tenía el mismo patrón en `waitForPywebview()` (`server/outwarp_server/ui/transport.js`) y se corrigió igual.
+**Prevención:** no usar la existencia de `window.pywebview.api` como señal de "listo"; comprobar un método concreto o esperar `pywebviewready`.
+
 ### ✅ B-001 — `uninstall` no existía y faltaban métodos en la ABC de plataforma
 **Síntomas:** No había forma limpia de revertir `setup`. La interfaz `ServerPlatform` tampoco exponía la operación.
 **Causa raíz:** Comando y métodos no implementados.
