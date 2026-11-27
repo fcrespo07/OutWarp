@@ -441,6 +441,7 @@ STRINGS: dict[str, str] = {
     "dx.name.gui": "gui",
     "dx.wstunnel.missing": "wstunnel não encontrado no PATH.",
     "dx.reinstall": "Reinstale o OutWarp: {cmd}",
+    "dx.reinstall_windows": "Reinstale o OutWarp com o instalador do Windows (inclui o wstunnel).",
     "dx.wstunnel.version_failed": "Encontrado em {path}, mas a verificação de versão falhou: {error}",
     "dx.pin.linux_only": "A verificação da versão fixada é só para Linux.",
     "dx.pin.no_file": "wstunnel-version.txt não encontrado — pulando a verificação da versão fixada.",

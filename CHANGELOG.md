@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0rc2] — 2026-11-27
+
+Second release candidate. **Use it instead of 1.0.0rc1**: the rc1 Windows installers crashed at start (`No module named 'outwarp.locales'`, see Fixed). Same frozen contracts as rc1.
+
 ### Added
 - **Upgrade guide** (`docs/UPGRADE-1.0.md`): what changes going from 0.x to 1.0 and what to run on each platform.
 
@@ -18,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Client GUI: plainer texts and a cancellable connect button.** While connecting or retrying, clicking the connect button cancels the attempt and stops the retries (it used to ignore clicks). The Connection subtitle follows the state instead of always saying the traffic is encrypted; the kill switch line no longer claims nothing leaves while you are disconnected; the connecting steps, the import hint, "last contact with the server" and the About text speak the user's language; failed connections tell people who do not run the server whom to ask; the platform string in About only shows in advanced mode. Installer: missing accents in three Spanish texts.
 
 ### Fixed
+- **`outwarp doctor` on Windows reported "wstunnel not found on PATH" even though the installer bundles it**, and suggested the Linux `install.sh` command. The check now uses the same lookup as the tunnel (install folder, user data, `PATH`) and, on Windows, suggests reinstalling with the installer.
 - **Importing an invalid `.owcfg` in the GUI showed a raw English validation message in every language.** It now starts with a translated "this file is not a valid OutWarp profile" line and keeps the technical detail after it.
 - **Windows installer: a full install (client + server) now offers to launch both apps at the end**, instead of only the server.
 - **Windows: the installed client and server crashed at start** with `No module named 'outwarp.locales'` (found by the new installer smoke test). The translation tables were loaded with a dynamic import that PyInstaller does not follow; they are now imported statically. Affects the v1.0.0rc1 Windows installers.
