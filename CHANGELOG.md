@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Windows: the installed client and server crashed at start** with `No module named 'outwarp.locales'` (found by the new installer smoke test). The translation tables were loaded with a dynamic import that PyInstaller does not follow; they are now imported statically. Affects the v1.0.0rc1 Windows installers.
+
 ## [1.0.0rc1] — 2026-11-27
 
 First release candidate of 1.0.0 (a pre-release: it is never offered as the "latest" release). The contracts listed in `docs/contracts/` are frozen from here.
