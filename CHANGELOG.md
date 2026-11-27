@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Windows installer: its own texts follow the wizard language.** Setup types, components, tasks and the final launch options were in Spanish on an English wizard; they now have English and Spanish versions (the Spanish wording is unchanged).
 - **Windows: "start at login" now works for the client and the server GUI.** Both require elevation, and Windows silently skips elevated programs in the Startup folder and the `Run` key at logon, so neither the installer's "start with Windows" boxes nor the client's setting ever launched anything. They are now a per-user scheduled task "with highest privileges" (no UAC prompt, runs on battery, no time limit). The client moves an existing entry over on its next start and its setting shows a task the installer created; the uninstaller removes the tasks. The B-034 recovery tasks also run on battery now.
 
 ## [1.0.0rc1] — 2026-11-27

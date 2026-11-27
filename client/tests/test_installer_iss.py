@@ -126,3 +126,19 @@ def test_uninstaller_removes_start_at_login() -> None:
     run = _joined("UninstallRun")
     assert "$_.TaskName -like 'Start*'" in run and "Unregister-ScheduledTask" in run
     assert r"CurrentVersion\Run /v OutWarp /f" in run
+
+
+def test_wizard_texts_are_translated_for_both_languages() -> None:
+    """English Windows showed the installer's own texts in Spanish."""
+    text = _ISS.read_text(encoding="utf-8")
+    for section in ("Types", "Components", "Tasks", "Run"):
+        for line in _joined(section).splitlines():
+            if line.lstrip().startswith(";"):
+                continue
+            for field in ("Description", "GroupDescription", "StatusMsg"):
+                m = re.search(rf'\b{field}: "([^"]*)"', line)
+                assert not m or m.group(1).startswith("{cm:"), line
+    keys = set(re.findall(r"\{cm:(\w+)\}", text))
+    msgs = _section("CustomMessages")
+    for key in keys:
+        assert f"english.{key}=" in msgs and f"spanish.{key}=" in msgs, key
