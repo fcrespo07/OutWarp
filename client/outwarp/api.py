@@ -625,7 +625,7 @@ class Api:
             # ever touches disk.
             parsed = ClientConfig.loads(file_content)
         except ConfigError as exc:
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": t("api.invalid_owcfg", detail=exc)}
         if parsed.is_expired():
             return {"ok": False, "error": t("api.profile_expired", date=parsed.expires_at)}
         try:
@@ -638,7 +638,7 @@ class Api:
             # active one (outwarp/profiles.py).
             cfg, trust_verdict = import_owcfg_text_with_verdict(file_content)
         except ConfigError as exc:
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": t("api.invalid_owcfg", detail=exc)}
         except Exception as exc:
             log.exception("import_profile failed")
             return {"ok": False, "error": str(exc)}
