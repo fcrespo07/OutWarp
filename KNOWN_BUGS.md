@@ -22,7 +22,7 @@ Leyenda de estado:
 ### ✅ B-051 — GUI del cliente: "No se pudo iniciar la interfaz — d.get_status is not a function"
 **Síntomas:** Reportado por el autor (2026-11-27, Windows, 0.20.2). Al abrir la ventana sale la pantalla "No se pudo iniciar la interfaz" con `d.get_status is not a function`. Es intermitente: depende de lo rápido que arranque el WebView.
 **Causa raíz:** `waitForBridge()` daba el puente por listo en cuanto existía `window.pywebview.api`, pero pywebview crea ese objeto antes de colgarle los métodos de Python (llegan justo antes de `pywebviewready`). La primera llamada, `get_status()`, caía en esa ventana.
-**Fix (2026-11-27):** `waitForBridge()` espera a que `api.get_status` sea una función (`client/outwarp/ui/app.jsx`, bundle regenerado).
+**Fix (2026-11-27):** `waitForBridge()` espera a que `api.get_status` sea una función (`client/outwarp/ui/app.jsx`, bundle regenerado). La GUI de escritorio del servidor tenía el mismo patrón en `waitForPywebview()` (`server/outwarp_server/ui/transport.js`) y se corrigió igual.
 **Prevención:** no usar la existencia de `window.pywebview.api` como señal de "listo"; comprobar un método concreto o esperar `pywebviewready`.
 
 ### ✅ B-001 — `uninstall` no existía y faltaban métodos en la ABC de plataforma
