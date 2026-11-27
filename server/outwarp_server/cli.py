@@ -1275,10 +1275,8 @@ def _tolerate_console_encoding() -> None:
     """A redirected stdout on Windows is cp1252 and cannot encode the status
     glyphs (\u2717, \u2713); a print must never crash the command."""
     for stream in (sys.stdout, sys.stderr):
-        try:
+        with contextlib.suppress(AttributeError, ValueError):
             stream.reconfigure(errors="replace")
-        except (AttributeError, ValueError):
-            pass
 
 
 def main(argv: list[str] | None = None) -> int:
