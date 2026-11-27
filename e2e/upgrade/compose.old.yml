@@ -1,0 +1,15 @@
+services:
+  server:
+    image: outwarp-upgrade-server:old
+    build:
+      context: .
+      dockerfile: old-server.Dockerfile
+      args:
+        OLD_VERSION: ${OLD_VERSION:-0.20.2}
+  client:
+    image: outwarp-upgrade-client:old
+    build:
+      context: ../..
+      dockerfile: e2e/upgrade/old-client.Dockerfile
+      args:
+        OLD_VERSION: ${OLD_VERSION:-0.20.2}

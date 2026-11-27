@@ -1,0 +1,53 @@
+# Runtime shape of the upgrade run (e2e/upgrade.sh). Which images run is chosen
+# by an overlay: compose.old.yml (release being upgraded from) or compose.new.yml
+# (this checkout). The named volumes are what survive the swap: the server's
+# /data (clients.sqlite, server_config.json, keys, cert) and the client's /root
+# (its profile store).
+name: outwarp-upgrade
+
+networks:
+  owtest:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+
+volumes:
+  shared: {}
+  server-data: {}
+  client-home: {}
+
+services:
+  server:
+    cap_add: [NET_ADMIN, NET_RAW]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      OUTWARP_ENDPOINT: "172.31.0.10"
+      OUTWARP_PORT: "443"
+      OUTWARP_WG_PORT: "51820"
+      OUTWARP_SUBNET: "10.98.0.0/24"
+      OUTWARP_SERVER_ADDRESS: "10.98.0.1/24"
+    volumes:
+      - shared:/shared
+      - server-data:/data
+    networks:
+      owtest:
+        ipv4_address: 172.31.0.10
+
+  client:
+    cap_add: [NET_ADMIN, NET_RAW]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    environment:
+      OUTWARP_HELPER: /usr/local/libexec/outwarp-priv
+      XDG_CONFIG_HOME: /root/.config
+      XDG_STATE_HOME: /root/.local/state
+    volumes:
+      - shared:/shared
+      - client-home:/root
+    networks:
+      owtest:
+        ipv4_address: 172.31.0.20
+    command: ["sleep", "infinity"]
+    depends_on: [server]
