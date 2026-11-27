@@ -75,7 +75,9 @@ def _refresh_version_info(version: str) -> None:
     template the files, we just rewrite the two version-bearing fields each
     time. Idempotent — re-running with the same version is a no-op.
     """
-    parts = version.split(".")
+    # A pre-release suffix ("1.0.0rc1") has no place in the numeric
+    # FileVersion tuple; the full string stays in the Inno AppVersion.
+    parts = re.sub(r"(rc|a|b)\d+$", "", version).split(".")
     if len(parts) != 3:
         raise SystemExit(
             f"unexpected version format: {version!r} (need MAJOR.MINOR.PATCH)"

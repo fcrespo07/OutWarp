@@ -55,7 +55,8 @@ _SERVER_WHEEL_RE = re.compile(r"^outwarp[_-]server-[0-9].*\.whl$", re.IGNORECASE
 
 
 def _parse_version(s: str) -> tuple[int, ...]:
-    s = s.strip().lstrip("vV")
+    s = re.sub(r"[.-]?(?:rc|a|b)[.-]?\d+\s*$", "", s.strip(), flags=re.IGNORECASE)
+    s = s.lstrip("vV")
     parts: list[int] = []
     for chunk in s.split("."):
         m = re.match(r"\d+", chunk)
@@ -69,10 +70,18 @@ def _is_newer(latest: str, current: str) -> bool:
     lv, cv = _parse_version(latest), _parse_version(current)
     if not lv:
         return False
+    # Pad to equal length so (0, 1) compares correctly against (0, 1, 0) and
+    # numeric components compare as ints (0.1.10 > 0.1.9).
     n = max(len(lv), len(cv))
     lv += (0,) * (n - len(lv))
     cv += (0,) * (n - len(cv))
-    return lv > cv
+    # A pre-release ("1.0.0rc1", "1.0.0-rc.2") sorts before its final release.
+    return (lv, _pre_rank(latest)) > (cv, _pre_rank(current))
+
+
+def _pre_rank(s: str) -> tuple[int, int]:
+    m = re.search(r"(?:rc|a|b)[.-]?(\d+)\s*$", s.strip(), re.IGNORECASE)
+    return (0, int(m.group(1))) if m else (1, 0)
 
 
 def check_for_update(current: str, *, timeout: float = 5.0) -> dict[str, Any]:

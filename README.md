@@ -1,7 +1,5 @@
 # OutWarp
 
-> **⚠️ This project is under active development and not yet ready for production use.**
-
 OutWarp is a cross-platform tool (client + server) that creates a **WireGuard tunnel over WebSocket** using [wstunnel](https://github.com/erebe/wstunnel) as the transport layer. It is for networks that block UDP (so plain WireGuard does not work) but let HTTPS out: hotel and guest Wi-Fi, mobile data behind CGNAT, firewalls that only open port 443.
 
 It is **not** a censorship-circumvention tool. It does not hide that you are running a tunnel from a network that looks closely; see [What it gets through](#what-it-gets-through) before you rely on it.

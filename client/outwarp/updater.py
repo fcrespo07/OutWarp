@@ -102,7 +102,8 @@ LINUX_UPDATE_COMMAND = (
 def _parse_version(s: str) -> tuple[int, ...]:
     """Parse 'v0.1.10' / '0.1.10' into (0, 1, 10). Stops at the first chunk
     that doesn't start with a digit so a '-rc1' style suffix is ignored."""
-    s = s.strip().lstrip("vV")
+    s = re.sub(r"[.-]?(?:rc|a|b)[.-]?\d+\s*$", "", s.strip(), flags=re.IGNORECASE)
+    s = s.lstrip("vV")
     parts: list[int] = []
     for chunk in s.split("."):
         m = re.match(r"\d+", chunk)
@@ -121,7 +122,13 @@ def _is_newer(latest: str, current: str) -> bool:
     n = max(len(lv), len(cv))
     lv += (0,) * (n - len(lv))
     cv += (0,) * (n - len(cv))
-    return lv > cv
+    # A pre-release ("1.0.0rc1", "1.0.0-rc.2") sorts before its final release.
+    return (lv, _pre_rank(latest)) > (cv, _pre_rank(current))
+
+
+def _pre_rank(s: str) -> tuple[int, int]:
+    m = re.search(r"(?:rc|a|b)[.-]?(\d+)\s*$", s.strip(), re.IGNORECASE)
+    return (0, int(m.group(1))) if m else (1, 0)
 
 
 def check_for_update(
