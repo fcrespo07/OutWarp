@@ -43,20 +43,53 @@ const fmtClock = (epoch) => {
 // Replaces window.confirm so destructive actions match the app's design.
 // useConfirmState returns [confirm, dialogElement]: render the element inside
 // the themed tree, then `await confirm({...})` resolves to a boolean.
+// Keyboard focus for a modal while `open`: it moves to the dialog's last
+// button (the main action; the first, Cancel, when `safeFirst` because the
+// action destroys something), Tab cycles inside it, and on close it goes back to
+// what had it, so keys never reach the page behind the overlay.
+function useModalFocus(boxRef, open, safeFirst = false) {
+  useEffect(() => {
+    if (!open || !boxRef.current) return undefined;
+    const box = boxRef.current;
+    const prev = document.activeElement;
+    const buttons = () => Array.from(box.querySelectorAll("button:not([disabled])"));
+    const initial = buttons();
+    if (initial.length) initial[safeFirst ? 0 : initial.length - 1].focus();
+    const onKey = (e) => {
+      if (e.key !== "Tab") return;
+      const all = buttons();
+      if (!all.length) return;
+      const first = all[0], last = all[all.length - 1];
+      if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+      else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      if (prev && prev.focus && document.contains(prev)) prev.focus();
+    };
+  }, [boxRef, open, safeFirst]);
+}
+
 const ConfirmDialog = ({ title, message, confirmLabel, cancelLabel, danger, onResult }) => {
+  const boxRef = useRef(null);
+  useModalFocus(boxRef, true, !!danger);
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === "Escape") onResult(false);
-      else if (e.key === "Enter") onResult(true);
+      if (e.key === "Escape") { e.preventDefault(); onResult(false); }
+      // A focused button already answers Enter with its own click.
+      else if (e.key === "Enter" && !(e.target && e.target.tagName === "BUTTON")) { e.preventDefault(); onResult(true); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onResult]);
   return (
-    <div className="ow-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onResult(false); }}>
-      <div className="ow-modal" role="dialog" aria-modal="true">
-        {title && <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>{title}</div>}
-        <div style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.55 }}>{message}</div>
+    <div className="ow-overlay ow-overlay--dim" onMouseDown={(e) => { if (e.target === e.currentTarget) onResult(false); }}>
+      <div ref={boxRef} className="ow-modal" role="dialog" aria-modal="true"
+        aria-labelledby={title ? "ow-confirm-title" : undefined} aria-describedby="ow-confirm-body">
+        {title && <div id="ow-confirm-title" style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>{title}</div>}
+        <div id="ow-confirm-body" style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.55 }}>{message}</div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
           <window.Btn kind="ghost" size="md" onClick={() => onResult(false)}>{cancelLabel}</window.Btn>
           <window.Btn kind={danger ? "danger" : "primary"} size="md" onClick={() => onResult(true)}>{confirmLabel}</window.Btn>
@@ -1610,6 +1643,16 @@ const ProfileEditor = ({ T, api, active, confirm, onUpdated, onClose }) => {
     setAck(false);
   }, [active]);
 
+  const warnRef = useRef(null);
+  const editorRef = useRef(null);
+  useModalFocus(warnRef, !ack && !!form);
+  // Once the warning is accepted, start on the first field.
+  useEffect(() => {
+    if (!ack || !editorRef.current) return;
+    const first = editorRef.current.querySelector("input:not([disabled])");
+    if (first) first.focus();
+  }, [ack]);
+
   useEffect(() => {
     if (ack || !form) return undefined;
     const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
@@ -1675,7 +1718,7 @@ const ProfileEditor = ({ T, api, active, confirm, onUpdated, onClose }) => {
           className="ow-overlay ow-overlay--dim"
           onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
         >
-          <div className="ow-modal" role="alertdialog" aria-modal="true" aria-labelledby="ow-edit-warn-title" aria-describedby="ow-edit-warn-body">
+          <div ref={warnRef} className="ow-modal" role="alertdialog" aria-modal="true" aria-labelledby="ow-edit-warn-title" aria-describedby="ow-edit-warn-body">
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand-warn)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3 L22 20 H2 Z"/><path d="M12 10 V14 M12 17 V17.5"/></svg>
               <div id="ow-edit-warn-title" style={{ fontSize: 15, fontWeight: 600, color: "var(--brand-warn)" }}>{T.edit_disclaimerTitle}</div>
@@ -1689,7 +1732,7 @@ const ProfileEditor = ({ T, api, active, confirm, onUpdated, onClose }) => {
         </div>
       )}
 
-      <div className="ow-form-grid">
+      <div ref={editorRef} className="ow-form-grid">
         {field(T.edit_name, "name", { mono: false })}
         {field(T.edit_mtu, "mtu", { hint: T.edit_mtuHint })}
         {field(T.edit_clientIp, "client_address", { hint: T.edit_clientIpHint })}

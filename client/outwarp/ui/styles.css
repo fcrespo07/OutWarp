@@ -321,6 +321,7 @@
   background: var(--bg-2); border: 1px solid var(--line-strong);
   border-radius: var(--radius-md); box-shadow: var(--shadow);
   width: min(420px, calc(100vw - 48px)); padding: 20px;
+  max-height: calc(100vh - 48px); overflow: auto;
   animation: ow-pop-in .14s ease-out;
 }
 
