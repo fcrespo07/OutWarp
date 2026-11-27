@@ -171,17 +171,14 @@ Name: "{autodesktop}\OutWarp Server"; Filename: "{app}\server\{#ServerGuiExe}"; 
     IconFilename: "{app}\server\_internal\resources\app_icon.ico"
 #endif
 
-; Startup shortcuts — point to Startup folder so the apps launch on login.
-#if HasClient
-Name: "{autostartup}\OutWarp Client"; Filename: "{app}\client\{#ClientExeName}"; \
-    WorkingDir: "{app}\client"; Tasks: startupclient; \
-    IconFilename: "{app}\client\_internal\resources\app_icon.ico"
-#endif
-#if HasServer
-Name: "{autostartup}\OutWarp Server"; Filename: "{app}\server\{#ServerGuiExe}"; \
-    WorkingDir: "{app}\server"; Tasks: startupserver; Components: server; \
-    IconFilename: "{app}\server\_internal\resources\app_icon.ico"
-#endif
+; No Startup-folder shortcuts: both GUIs require elevation, and Windows skips
+; elevated programs in the Startup folder and the Run key at logon. "Start at
+; login" is a scheduled task with highest privileges instead (see [Run]).
+
+[InstallDelete]
+; Startup shortcuts written by installers before 1.0.0rc2 (they never started).
+Type: files; Name: "{autostartup}\OutWarp Client.lnk"
+Type: files; Name: "{autostartup}\OutWarp Server.lnk"
 
 ; No [Registry] PATH entry by default: the server finds wstunnel.exe next to
 ; its bundle (see server_manager._find_wstunnel) without needing PATH, and the
@@ -196,6 +193,12 @@ Filename: "{tmp}\wireguard-installer.exe"; Parameters: "/S"; \
     Components: wireguard; Check: NeedsWireGuardInstall; Flags: waituntilterminated
 
 #if HasServer
+; Start at login for the server GUI, which runs the Windows transport: same
+; mechanism as the client's (see below).
+Filename: "powershell.exe"; \
+    Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""$u = $env:USERDOMAIN + '\' + $env:USERNAME; $a = New-ScheduledTaskAction -Execute '{app}\server\{#ServerGuiExe}' -WorkingDirectory '{app}\server'; $t = New-ScheduledTaskTrigger -AtLogOn -User $u; $p = New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Highest; $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -Priority 5; Register-ScheduledTask -TaskPath '\OutWarp\' -TaskName ('StartServer-' + $env:USERNAME) -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null"""; \
+    StatusMsg: "{cm:RegisteringStartup}"; Flags: runhidden; Tasks: startupserver; Check: ShouldRegisterServerStartup
+
 ; Launch the server GUI at the end of setup (which kicks the setup wizard
 ; on first run if there's no server_config.json yet).
 ; shellexec (not the default CreateProcess): both apps ship a
@@ -221,6 +224,20 @@ Filename: "schtasks.exe"; \
 Filename: "schtasks.exe"; \
     Parameters: "/Create /F /TN ""OutWarp\RecoverTunnelLogon"" /SC ONLOGON /RU SYSTEM /RL HIGHEST /TR ""\""{app}\client\outwarp.exe\"" recover-tunnel"""; \
     Flags: runhidden; Components: client
+; schtasks /Create leaves Task Scheduler's defaults: no start on battery (a
+; laptop booting unplugged kept its stale tunnel) and a 72 h limit. Fix both.
+Filename: "powershell.exe"; \
+    Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 10); foreach ($n in 'RecoverTunnelBoot','RecoverTunnelLogon') {{ Set-ScheduledTask -TaskPath '\OutWarp\' -TaskName $n -Settings $s | Out-Null }"""; \
+    Flags: runhidden; Components: client
+
+; Start at login: an elevated logon task for the user running Setup, with the
+; same name and settings the client registers from Settings
+; (platforms/windows.py, _autostart_task_name), so the app sees it and turns
+; its "start at login" setting on. A silent in-app update leaves the user's
+; choice alone (they may have switched it off in Settings since).
+Filename: "powershell.exe"; \
+    Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""$u = $env:USERDOMAIN + '\' + $env:USERNAME; $a = New-ScheduledTaskAction -Execute '{app}\client\{#ClientExeName}' -WorkingDirectory '{app}\client'; $t = New-ScheduledTaskTrigger -AtLogOn -User $u; $p = New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Highest; $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -Priority 5; Register-ScheduledTask -TaskPath '\OutWarp\' -TaskName ('StartClient-' + $env:USERNAME) -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null"""; \
+    StatusMsg: "{cm:RegisteringStartup}"; Flags: runhidden; Tasks: startupclient; Check: ShouldRegisterClientStartup
 
 ; Launch the client at the end of setup if only the client was selected.
 Filename: "{app}\client\{#ClientExeName}"; Parameters: "--show-window"; \
@@ -238,6 +255,12 @@ Filename: "{app}\client\{#ClientExeName}"; Parameters: "--show-window"; \
 #endif
 
 [UninstallRun]
+; Start-at-login tasks (any user) and the Run value older clients wrote.
+Filename: "powershell.exe"; \
+    Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""Get-ScheduledTask -TaskPath '\OutWarp\' -ErrorAction SilentlyContinue | Where-Object {{ $_.TaskName -like 'Start*' } | Unregister-ScheduledTask -Confirm:$false"""; \
+    Flags: runhidden; RunOnceId: "StartupTasks"
+Filename: "reg.exe"; Parameters: "delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v OutWarp /f"; \
+    Flags: runhidden; RunOnceId: "LegacyRunValue"
 ; Best-effort: stop the WireGuard tunnel service the server creates.
 Filename: "sc.exe"; Parameters: "stop WireGuardTunnel$OutWarp-Server"; \
     Flags: runhidden; RunOnceId: "StopWGServer"
@@ -277,10 +300,36 @@ Type: files; Name: "{commonappdata}\WireGuard\*.outwarp-client"
 ; Logs + configs live under per-user %LOCALAPPDATA%\OutWarp and are kept
 ; intentionally so reinstalling preserves the user's profile / clients.
 
+[CustomMessages]
+english.RegisteringStartup=Setting up start at login...
+spanish.RegisteringStartup=Configurando el inicio al iniciar sesión...
+
 [Code]
+var
+  LegacyClientStartup, LegacyServerStartup: Boolean;
+
 function IsAutoUpdate: Boolean;
 begin
   Result := ExpandConstant('{param:autoupdate|0}') = '1';
+end;
+
+function InitializeSetup: Boolean;
+begin
+  { Seen before [InstallDelete] removes them: a silent update still moves a
+    start-at-login set up by an older installer onto the logon task. }
+  LegacyClientStartup := FileExists(ExpandConstant('{autostartup}\OutWarp Client.lnk'));
+  LegacyServerStartup := FileExists(ExpandConstant('{autostartup}\OutWarp Server.lnk'));
+  Result := True;
+end;
+
+function ShouldRegisterClientStartup: Boolean;
+begin
+  Result := (not IsAutoUpdate) or LegacyClientStartup;
+end;
+
+function ShouldRegisterServerStartup: Boolean;
+begin
+  Result := (not IsAutoUpdate) or LegacyServerStartup;
 end;
 
 function HasWireGuardBundle: Boolean;

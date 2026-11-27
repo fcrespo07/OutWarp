@@ -36,21 +36,30 @@ _DEFAULT_MUTEX_NAME = MUTEX_NAME
 _SingleInstanceLock = TunnelOwnerLock
 
 def _refresh_windows_autostart(settings: dict) -> None:
-    """Re-point the login entry at the running exe when start-at-boot is on.
+    """Keep the start-at-login registration and the setting in step.
 
-    Before 0.15.0 the tray app was `outwarp.exe`; it is `outwarp-gui.exe` now
-    and `outwarp.exe` is the console CLI (B-027). The registry value written by
-    the old version would still work (a bare CLI hands over to the GUI) but
-    flashes a console at every login, so rewrite it. Idempotent.
+    With start-at-boot on, re-register it for the running exe. That moves
+    entries from older versions onto the current mechanism: a Run value
+    pointing at `outwarp.exe` (before 0.15.0, B-027) or at `outwarp-gui.exe`,
+    which Windows never starts at logon because the GUI requires elevation.
+    With it off but a logon task present, the installer's "start at login"
+    box created it: turn the setting on so Settings shows the truth.
+    Idempotent; never blocks startup.
     """
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
-        return
-    if not bool(settings.get("start_at_boot", False)):
         return
     try:
         from outwarp.platforms import get_platform
 
-        get_platform().install_autostart([sys.executable])
+        plat = get_platform()
+        if bool(settings.get("start_at_boot", False)):
+            plat.install_autostart([sys.executable])
+        elif plat.is_autostart_installed():
+            from outwarp.settings import save_settings
+
+            settings["start_at_boot"] = True
+            save_settings(settings)
+            log.info("start at login was set up by the installer; setting turned on")
     except Exception as exc:  # noqa: BLE001 — never block startup on this
         log.warning("could not refresh the autostart entry: %s", exc)
 
