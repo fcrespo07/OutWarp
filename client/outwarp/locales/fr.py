@@ -20,6 +20,7 @@ STRINGS: dict[str, str] = {
     "notify.failed": "Échec de connexion : {error}",
     "notify.reconnecting": "Connexion perdue — reconnexion...",
     "api.profile_expired": "Ce profil a expiré le {date}. Demander un nouveau profil à l'administrateur du serveur.",
+    "api.invalid_owcfg": "Ce fichier n'est pas un profil OutWarp valide. Détail : {detail}",
     "api.save_failed": "impossible d'enregistrer la configuration : {error}",
     "api.no_original": "Aucune configuration d'origine n'est enregistrée pour ce profil. Réimporter le .owcfg pour la restaurer.",
     "api.update_integrity": "La vérification d'intégrité a échoué ({detail}). La mise à jour ne sera pas appliquée.",
