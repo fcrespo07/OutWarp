@@ -4,7 +4,7 @@
 # pkgver follows client/pyproject.toml; bump it (and updpkgsums) per release.
 pkgname=outwarp-client
 _wstunnel=10.5.2
-pkgver=1.0.0rc1
+pkgver=1.0.0rc2
 pkgrel=1
 pkgdesc='WireGuard-over-WebSocket (wstunnel) VPN tunnel client with tray, GUI and TUI'
 arch=('x86_64' 'aarch64')

@@ -14,6 +14,7 @@ from typing import Literal
 
 from outwarp.helper_path import default_helper
 from outwarp.i18n import t
+from outwarp.tunnel import TunnelError, find_wstunnel
 
 log = logging.getLogger(__name__)
 
@@ -62,13 +63,19 @@ def _run(cmd: list[str], timeout: float = 5.0) -> subprocess.CompletedProcess[st
 
 def check_wstunnel_binary() -> CheckResult:
     """wstunnel must be on PATH or in a known location."""
-    wstunnel = shutil.which("wstunnel")
+    try:
+        wstunnel = str(find_wstunnel())
+    except TunnelError:
+        wstunnel = ""
     if not wstunnel:
-        # Check common install location
-        candidate = Path("/usr/local/bin/wstunnel")
-        if candidate.exists():
-            wstunnel = str(candidate)
-    if not wstunnel:
+        if sys.platform == "win32":
+            return CheckResult(
+                name=t("dx.name.wstunnel"),
+                status=Status.FAIL,
+                detail=t("dx.wstunnel.missing"),
+                remediation=t("dx.reinstall_windows"),
+                fix_kind="manual",
+            )
         return CheckResult(
             name=t("dx.name.wstunnel"),
             status=Status.FAIL,

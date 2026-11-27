@@ -367,7 +367,7 @@ Legado (hecho):
 
 ## Estado actual
 
-**Versión actual: `1.0.0rc1`** (primera release candidate, preparada el 2026-11-27, pendiente de que el autor la firme y la publique como pre-release; la última estable es la 0.20.2). `publish_release.py` publica las etiquetas rc como pre-release y nunca como `latest`. El resto de lo que sale de `[Unreleased]` en `CHANGELOG.md`. Pendientes por orden: `docs/AGENTS.md` → "Pendiente". El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
+**Versión actual: `1.0.0rc2`** (segunda release candidate, preparada el 2026-11-27, pendiente de que el autor la firme y la publique como pre-release; la `1.0.0rc1` salió con los instaladores de Windows rotos —`No module named 'outwarp.locales'`— y no hay que usarla; la última estable es la 0.20.2). `publish_release.py` publica las etiquetas rc como pre-release y nunca como `latest`. El resto de lo que sale de `[Unreleased]` en `CHANGELOG.md`. Pendientes por orden: `docs/AGENTS.md` → "Pendiente". El detalle de cada versión está en `CHANGELOG.md` (raíz); los bugs, abiertos y resueltos, en `KNOWN_BUGS.md`. Esta sección solo recoge lo que un agente necesita saber **hoy** para no romper decisiones ya tomadas.
 
 - **Cliente**: Windows (instalador `.exe`, GUI pywebview + tray) y Linux (`install.sh`, GUI por defecto con escritorio, TUI y `outwarp` headless) completos.
 - **Servidor**: Linux/systemd, Windows (SCM) y Docker/Kubernetes (`platforms/kubernetes.py`, `deploy/`).
