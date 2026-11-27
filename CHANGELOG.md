@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Upgrade guide** (`docs/UPGRADE-1.0.md`): what changes going from 0.x to 1.0 and what to run on each platform.
+
 ## [1.0.0rc1] — 2026-11-27
 
 First release candidate of 1.0.0 (a pre-release: it is never offered as the "latest" release). The contracts listed in `docs/contracts/` are frozen from here.
