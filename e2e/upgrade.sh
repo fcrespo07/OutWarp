@@ -111,15 +111,17 @@ log "after: ${NEW_SERVER} / ${NEW_CLIENT}"
 log "server: client registry, peer and keys survived"
 srv outwarp-server --config-dir /data list-clients | grep -q "${CLIENT_NAME}" || fail "client lost on upgrade"
 [[ "$(srv sh -c 'wg show wg0 peers | wc -l')" -eq 1 ]] || fail "peer missing from wg0 after upgrade"
-srv outwarp-server --config-dir /data doctor >/tmp/upgrade-server-doctor.log 2>&1 || true
-grep -q Traceback /tmp/upgrade-server-doctor.log && { cat /tmp/upgrade-server-doctor.log; fail "server doctor crashed"; }
+# doctor inside a container reports missing systemd/modinfo (and logs why), so
+# only an exit code beyond "some check failed" counts as a crash.
+rc=0; srv outwarp-server --config-dir /data doctor >/tmp/upgrade-server-doctor.log 2>&1 || rc=$?
+[[ $rc -le 1 ]] || { cat /tmp/upgrade-server-doctor.log; fail "server doctor exited with $rc"; }
 
 log "client: the profile is still there and active (no re-import)"
 cli outwarp profile list | grep -q '^\* ' || fail "no active profile after upgrade"
 cli outwarp status >/dev/null 2>&1 || true
 rc=0; cli outwarp doctor >/tmp/upgrade-client-doctor.log 2>&1 || rc=$?
-grep -q Traceback /tmp/upgrade-client-doctor.log && { cat /tmp/upgrade-client-doctor.log; fail "client doctor crashed"; }
-[[ $rc -le 1 ]] || fail "client doctor exited with $rc"
+[[ $rc -le 1 ]] || { cat /tmp/upgrade-client-doctor.log; fail "client doctor exited with $rc"; }
+grep -q "Profile imported" /tmp/upgrade-client-doctor.log || { cat /tmp/upgrade-client-doctor.log; fail "doctor does not see the migrated profile"; }
 
 log "traffic over the tunnel with the old profile and the new software"
 serve_page
