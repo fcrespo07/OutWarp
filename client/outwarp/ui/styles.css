@@ -313,6 +313,10 @@
   display: grid; place-items: center;
   animation: ow-fade-in .12s ease-out;
 }
+.ow-overlay--dim {
+  background: color-mix(in srgb, #000 48%, transparent);
+  backdrop-filter: blur(3px);
+}
 .ow-modal {
   background: var(--bg-2); border: 1px solid var(--line-strong);
   border-radius: var(--radius-md); box-shadow: var(--shadow);
