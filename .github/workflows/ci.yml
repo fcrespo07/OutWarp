@@ -227,3 +227,19 @@ jobs:
 
       - name: Run e2e
         run: e2e/run.sh
+
+  e2e-upgrade:
+    name: upgrade e2e (0.x -> this checkout)
+    runs-on: ubuntu-latest
+    # The last published release sets up a server and a client; their images are
+    # then swapped for this checkout's with the data volumes kept. Catches a
+    # change that cannot read what real users already have on disk (client
+    # registry, keys, cert, imported profile). See e2e/upgrade.sh.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Kernel WireGuard module available?
+        run: sudo modprobe wireguard && lsmod | grep -q wireguard
+
+      - name: Run upgrade e2e
+        run: e2e/upgrade.sh

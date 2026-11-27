@@ -1,0 +1,10 @@
+services:
+  server:
+    image: outwarp-upgrade-server:new
+    build:
+      context: ../../server
+  client:
+    image: outwarp-upgrade-client:new
+    build:
+      context: ../..
+      dockerfile: e2e/client.Dockerfile
