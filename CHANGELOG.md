@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0rc1] — 2026-11-27
+
+First release candidate of 1.0.0 (a pre-release: it is never offered as the "latest" release). The contracts listed in `docs/contracts/` are frozen from here.
+
+### Changed
+- The updaters now sort a pre-release before its final release (`1.0.0rc1` < `1.0.0`), so an RC install is offered 1.0.0 when it ships; `publish_release.py` publishes RC tags as pre-releases, not as latest. The README no longer says the project is not ready for production.
+
 ### Added
 - **Contract tests for 1.0.** CI now fails if the documented `outwarp` / `outwarp-server` CLI surface or the `.owcfg` / `config.json` shape changes by accident (`docs/contracts/`).
 - **Linux client: `outwarp update` and `outwarp gui --install` ask for sudo themselves.** On a terminal they re-run through `sudo` instead of failing with "run it with sudo"; without a terminal the old message stays. When OutWarp came from the distro package (prefix `/usr`), `outwarp update` points to the package manager instead of touching the system Python.

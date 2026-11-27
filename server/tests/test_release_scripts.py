@@ -88,6 +88,13 @@ def test_publishes_a_complete_signed_draft(keys) -> None:
     assert ["release", "edit", TAG, "--draft=false", "--latest"] in gh.calls
 
 
+def test_release_candidate_tags_are_prereleases() -> None:
+    assert publish_release.is_prerelease("v1.0.0rc1")
+    assert publish_release.is_prerelease("v1.0.0-rc.2")
+    assert not publish_release.is_prerelease("v1.0.0")
+    assert not publish_release.is_prerelease("v0.20.2")
+
+
 def test_refuses_an_already_published_release(keys) -> None:
     gh = _signed_draft(keys)
     gh.draft = False

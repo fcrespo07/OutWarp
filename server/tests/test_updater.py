@@ -229,3 +229,12 @@ class TestManifestSignature:
         with patch("outwarp_server.updater.urllib.request.urlopen", return_value=resp):
             info = updater.check_for_update("0.1.0")
         assert info["signature_url"] == "https://e/sig"
+
+
+def test_release_candidate_is_older_than_its_final() -> None:
+    assert updater._is_newer("1.0.0", "1.0.0rc1")
+    assert updater._is_newer("v1.0.0", "1.0.0-rc.2")
+    assert updater._is_newer("1.0.0rc2", "1.0.0rc1")
+    assert not updater._is_newer("1.0.0rc1", "1.0.0")
+    assert not updater._is_newer("1.0.0rc1", "1.0.0rc1")
+    assert updater._is_newer("1.0.1", "1.0.0")

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -94,7 +95,16 @@ def publish(tag: str, *, assume_yes: bool = False, gh: Gh = run_gh,
         reply = ask(f"\nPublish {tag}? It cannot be changed afterwards. [y/N]: ")
         if reply.strip().lower() not in ("y", "yes", "s", "si", "sí"):
             raise ReleaseError("aborted")
-    gh(["release", "edit", tag, "--draft=false", "--latest"])
+    # A pre-release (v1.0.0rc1) must not become "latest": both updaters read
+    # /releases/latest, so stable users would be offered the RC.
+    if is_prerelease(tag):
+        gh(["release", "edit", tag, "--draft=false", "--prerelease", "--latest=false"])
+    else:
+        gh(["release", "edit", tag, "--draft=false", "--latest"])
+
+
+def is_prerelease(tag: str) -> bool:
+    return bool(re.search(r"(rc|a|b)[.-]?\d+$", tag))
 
 
 def main(argv: list[str] | None = None) -> int:
