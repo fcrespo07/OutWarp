@@ -20,7 +20,11 @@
   function waitForPywebview() {
     return new Promise((resolve) => {
       const tick = () => {
-        if (window.pywebview && window.pywebview.api) return resolve(window.pywebview.api);
+        // pywebview creates window.pywebview.api before it attaches the Python
+        // methods (they land just before "pywebviewready"), so wait for a real
+        // method instead of just the object.
+        const api = window.pywebview && window.pywebview.api;
+        if (api && typeof api.get_status === "function") return resolve(api);
         setTimeout(tick, 30);
       };
       tick();
