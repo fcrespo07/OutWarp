@@ -6,7 +6,7 @@ what you see is what pywebview would show (minus native window chrome).
 
     python scripts/dev/ui_client_shot.py STATE SCREEN OUT.png \
         [--scheme dark|light] [--lang es|en] [--width 1000] \
-        [--extra-profiles] [--open menu|details|sidebar] [--update-badge] [--live-error]
+        [--extra-profiles] [--open menu|details|sidebar|edit] [--update-badge] [--live-error]
 
 STATE:  connected | connecting | disconnected | failed | empty
 SCREEN: home | import | logs | settings | about
@@ -39,7 +39,7 @@ ap.add_argument("--lang", default="es")
 ap.add_argument("--width", type=int, default=1000)
 ap.add_argument("--height", type=int, default=700)
 ap.add_argument("--extra-profiles", action="store_true", help="add two fake profiles")
-ap.add_argument("--open", choices=["menu", "details", "diag", "sidebar"],
+ap.add_argument("--open", choices=["menu", "details", "diag", "sidebar", "edit"],
                 help="open the profile menu / details, run the health checks, or open the sidebar profile switcher")
 ap.add_argument("--update-badge", action="store_true", help="pretend a newer version exists (badge on Settings)")
 ap.add_argument("--live-error", action="store_true", help="push one live ERROR log line (badge on the Log)")
@@ -191,6 +191,11 @@ with sync_playwright() as p:
         name = "Comprobar" if args.lang == "es" else "Run checks"
         pg.get_by_role("button", name=name).first.click()
         pg.wait_for_timeout(2500)
+    elif args.open == "edit":
+        name = {"es": "Modificar conexión", "fr": "Modifier la connexion", "pt": "Modificar conexão"}.get(
+            args.lang, "Modify connection")
+        pg.get_by_role("button", name=name).first.click()
+        pg.wait_for_timeout(500)
     elif args.open == "details":
         pg.locator("details summary").first.click()
         pg.wait_for_timeout(300)

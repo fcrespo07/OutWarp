@@ -1610,6 +1610,13 @@ const ProfileEditor = ({ T, api, active, confirm, onUpdated, onClose }) => {
     setAck(false);
   }, [active]);
 
+  useEffect(() => {
+    if (ack || !form) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [ack, form, onClose]);
+
   if (!form) return null;
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -1664,19 +1671,20 @@ const ProfileEditor = ({ T, api, active, confirm, onUpdated, onClose }) => {
       </div>
 
       {!ack && (
-        <div style={{
-          background: "color-mix(in srgb, var(--brand-warn) 12%, transparent)",
-          border: "1px solid color-mix(in srgb, var(--brand-warn) 45%, transparent)",
-          borderRadius: 10, padding: 14,
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand-warn)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3 L22 20 H2 Z"/><path d="M12 10 V14 M12 17 V17.5"/></svg>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--brand-warn)" }}>{T.edit_disclaimerTitle}</div>
-          </div>
-          <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.55 }}>{T.edit_disclaimerBody}</div>
-          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-            <window.Btn kind="ghost" size="sm" onClick={() => { setMsg(""); setErr(""); setAck(true); }}>{T.edit_disclaimerAck}</window.Btn>
-            <window.Btn kind="ghost" size="sm" onClick={onClose}>{T.edit_cancel}</window.Btn>
+        <div
+          className="ow-overlay ow-overlay--dim"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
+        >
+          <div className="ow-modal" role="alertdialog" aria-modal="true" aria-labelledby="ow-edit-warn-title" aria-describedby="ow-edit-warn-body">
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand-warn)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3 L22 20 H2 Z"/><path d="M12 10 V14 M12 17 V17.5"/></svg>
+              <div id="ow-edit-warn-title" style={{ fontSize: 15, fontWeight: 600, color: "var(--brand-warn)" }}>{T.edit_disclaimerTitle}</div>
+            </div>
+            <div id="ow-edit-warn-body" style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.55 }}>{T.edit_disclaimerBody}</div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+              <window.Btn kind="ghost" size="md" onClick={onClose}>{T.edit_cancel}</window.Btn>
+              <window.Btn kind="primary" size="md" onClick={() => { setMsg(""); setErr(""); setAck(true); }}>{T.edit_disclaimerAck}</window.Btn>
+            </div>
           </div>
         </div>
       )}
