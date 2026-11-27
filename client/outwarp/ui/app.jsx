@@ -831,7 +831,7 @@ const ConnectionDetails = ({ T, active, killSwitch, route, onSettings }) => (
 
 const DisconnectedHome = ({ T, active, profiles, killSwitch, onConnect, onSwitch, onImport, onSettings }) => (
   <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-    <Header title={T.nav_home} sub={T.home_ribbon}/>
+    <Header title={T.nav_home} sub={T.home_subOff}/>
     <section className="ow-hero">
       <div className="ow-hero-grid">
         <div style={{ minWidth: 0 }}>
@@ -873,7 +873,7 @@ const ConnectingHome = ({ T, active, busyMsg, reconnecting, attemptInfo, phase, 
     : -1;
   return (
     <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <Header title={T.nav_home} sub={T.home_ribbon}/>
+      <Header title={T.nav_home} sub={T.home_subConnecting}/>
       <section className="ow-hero">
         <div className="ow-hero-grid">
           <div>
@@ -891,7 +891,8 @@ const ConnectingHome = ({ T, active, busyMsg, reconnecting, attemptInfo, phase, 
               </div>
             )}
           </div>
-          <Dial status={reconnecting ? "reconnecting" : "connecting"} label={reconnecting ? T.reconnecting : T.connecting}/>
+          <Dial status={reconnecting ? "reconnecting" : "connecting"} label={reconnecting ? T.reconnecting : T.connecting}
+            onClick={onCancel} hint={onCancel ? T.dial_cancelHint : undefined} ariaLabel={onCancel ? T.cancel : undefined}/>
         </div>
         <Stepper T={T} currentIdx={currentIdx}/>
         {onCancel && (
@@ -1033,7 +1034,7 @@ const ErrorHome = ({ T, active, connError, killSwitch, onReconnect, onDisconnect
   }[kind] || T.error_genericBody;
   return (
     <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <Header title={T.nav_home} sub={T.home_ribbon}/>
+      <Header title={T.nav_home} sub={T.home_subError}/>
       <section className="ow-hero" style={{ padding: 28 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
           <window.StatusDot tone="bad"/>
@@ -1045,6 +1046,9 @@ const ErrorHome = ({ T, active, connError, killSwitch, onReconnect, onDisconnect
           <span style={{ color: "var(--brand-warn)" }}>{HomeIcon(<><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></>, 18)}</span>
           <span>{hint}</span>
         </div>
+        {kind !== "network" && kind !== "blocked" && (
+          <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 8 }}>{T.err_notAdmin}</div>
+        )}
         {/* With the kill switch on, FAILED keeps every connection blocked: say
             so, and offer the way out (Disconnect releases it). */}
         {killSwitch && (
@@ -1237,13 +1241,16 @@ const PowerGlyph = ({ size = 30, color = "currentColor" }) => (
 // The dial is the primary connect/disconnect control, not decoration.
 // - disconnected/empty: a real button; clicking calls onClick (connect).
 // - connected: a button labelled with the disconnect action.
-// - connecting/reconnecting: non-interactive, ring spins as a progress hint.
+// - connecting/reconnecting: the ring spins and a click cancels the attempt
+//   (stop() also ends the retry schedule).
 // State (Connected/…) is shown by the hero's StatusDot + pill; the dial label
 // is always the *action* the click performs, mirroring Mullvad/Proton.
-const Dial = ({ status = "disconnected", onClick, label }) => {
+const Dial = ({ status = "disconnected", onClick, label, hint, ariaLabel }) => {
   const connected = status === "connected";
   const busy = status === "connecting" || status === "reconnecting";
-  const interactive = !!onClick && !busy;
+  // While connecting or retrying the dial cancels (the caller passes onCancel),
+  // so a user who does not want to wait is never stuck in the retry loop.
+  const interactive = !!onClick;
   const puckColor = connected ? "#fff" : "var(--text)";
 
   const body = (
@@ -1285,6 +1292,7 @@ const Dial = ({ status = "disconnected", onClick, label }) => {
             ? <window.WSLogoMark size={34} colors={["rgba(255,255,255,.45)", "rgba(255,255,255,.72)", "#fff"]}/>
             : <PowerGlyph size={30} color={busy ? "var(--brand-warn)" : "var(--brand)"}/>}
           {label && <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "-0.01em" }}>{label}</span>}
+          {hint && <span style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: -3 }}>{hint}</span>}
         </div>
       </div>
     </>
@@ -1292,7 +1300,7 @@ const Dial = ({ status = "disconnected", onClick, label }) => {
 
   if (interactive) {
     return (
-      <button type="button" className="ow-dial" role="button" aria-label={label} onClick={onClick}>
+      <button type="button" className="ow-dial" role="button" aria-label={ariaLabel || label} onClick={onClick}>
         {body}
       </button>
     );
@@ -2155,9 +2163,11 @@ const About = ({ T, api, settings }) => {
         <window.WSWordmark size={22} color="var(--text)" accent="var(--brand)"/>
         <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <window.Pill tone="brand">{T.about_version} {info.version}</window.Pill>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-3)" }}>
-            {info.platform} · Python {info.python}
-          </span>
+          {settings?.advanced && (
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-3)" }}>
+              {info.platform} · Python {info.python}
+            </span>
+          )}
         </div>
         <div style={{
           marginTop: 14, fontSize: 13, color: "var(--text-2)", lineHeight: 1.6,

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Client GUI: plainer texts and a cancellable connect button.** While connecting or retrying, clicking the connect button cancels the attempt and stops the retries (it used to ignore clicks). The Connection subtitle follows the state instead of always saying the traffic is encrypted; the kill switch line no longer claims nothing leaves while you are disconnected; the connecting steps, the import hint, "last contact with the server" and the About text speak the user's language; failed connections tell people who do not run the server whom to ask; the platform string in About only shows in advanced mode. Installer: missing accents in three Spanish texts.
+
 ### Fixed
 - **Windows: the installed client and server crashed at start** with `No module named 'outwarp.locales'` (found by the new installer smoke test). The translation tables were loaded with a dynamic import that PyInstaller does not follow; they are now imported statically. Affects the v1.0.0rc1 Windows installers.
 - **Windows: `outwarp doctor` (and any command printing ✓/✗) crashed with `UnicodeEncodeError` when its output was redirected** (cp1252). Output now degrades to `?` instead of failing.
