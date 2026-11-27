@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import contextlib
+import getpass
 import logging
+import ntpath
+import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 from .base import Platform, PlatformError
 
@@ -26,10 +32,14 @@ _TUNNEL_OWNER_IMAGES = ("outwarp-gui.exe", "wstunnel.exe")
 _IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-# HKCU is the right hive for per-user autostart: HKLM\…\Run would require
-# admin to write and would launch OutWarp for every user on the box.
+# Start at login is a scheduled task, not a Run entry: outwarp-gui.exe asks for
+# elevation in its manifest, and Windows silently skips elevated programs in
+# HKCU\…\Run and the Startup folder at logon. A task "with highest
+# privileges" for the user starts it elevated with no UAC prompt. The Run value
+# is what versions before 1.0.0rc2 wrote; it is removed on every change.
 _AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _AUTOSTART_VALUE = "OutWarp"
+_AUTOSTART_TASK_PREFIX = r"\OutWarp\StartClient-"
 
 # Kill switch = the firewall profile's default *outbound* action flipped to
 # Block, plus two allow rules: outbound to the endpoint(s) so wstunnel can
@@ -68,6 +78,89 @@ def _quote_arg(arg: str) -> str:
 def _run(*args: str, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(*args, capture_output=True, text=True,
                           creationflags=_NO_WINDOW, **kwargs)
+
+
+def _current_user_id() -> str:
+    user = os.environ.get("USERNAME") or getpass.getuser()
+    domain = os.environ.get("USERDOMAIN")
+    return f"{domain}\\{user}" if domain else user
+
+
+def _autostart_task_name() -> str:
+    """One task per user; the installer's PowerShell registration uses the
+    same name (``outwarp.iss``), so the app sees and manages it."""
+    return _AUTOSTART_TASK_PREFIX + (os.environ.get("USERNAME") or getpass.getuser())
+
+
+def _autostart_task_xml(command: list[str], user_id: str) -> str:
+    """Task definition for start at login. Task Scheduler's defaults are wrong
+    for a tray app: it would not start on battery, would be killed after 72 h
+    and would run at below-normal priority."""
+    exe = xml_escape(command[0])
+    args = xml_escape(" ".join(_quote_arg(a) for a in command[1:]))
+    user = xml_escape(user_id)
+    workdir = ntpath.dirname(command[0])
+    workdir_el = (
+        f"\n      <WorkingDirectory>{xml_escape(workdir)}</WorkingDirectory>" if workdir else ""
+    )
+    return f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Starts OutWarp Client when you sign in.</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>{user}</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{user}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>5</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{exe}</Command>
+      <Arguments>{args}</Arguments>{workdir_el}
+    </Exec>
+  </Actions>
+</Task>
+"""
+
+
+def _remove_legacy_run_value() -> None:
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE
+        ) as key:
+            winreg.DeleteValue(key, _AUTOSTART_VALUE)
+    except FileNotFoundError:
+        return
+    except (OSError, ImportError) as exc:
+        log.warning("could not remove the old Run autostart entry: %s", exc)
 
 
 # Windows SCM service state codes (SERVICE_STATUS.dwCurrentState).
@@ -269,47 +362,43 @@ class WindowsPlatform(Platform):
     def install_autostart(self, command: list[str]) -> None:
         if not command:
             raise PlatformError("install_autostart: empty command")
-        import winreg
-
-        value = " ".join(_quote_arg(a) for a in command)
+        xml = _autostart_task_xml(command, _current_user_id())
+        fd, tmp = tempfile.mkstemp(prefix="outwarp-autostart-", suffix=".xml")
+        os.close(fd)
         try:
-            with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE
-            ) as key:
-                winreg.SetValueEx(key, _AUTOSTART_VALUE, 0, winreg.REG_SZ, value)
+            # schtasks /XML only reads UTF-16 reliably.
+            Path(tmp).write_text(xml, encoding="utf-16")
+            result = _run(["schtasks", "/Create", "/F", "/TN", _autostart_task_name(),
+                           "/XML", tmp])
         except OSError as exc:
+            raise PlatformError(f"Failed to register the logon task: {exc}") from exc
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
             raise PlatformError(
-                f"Failed to register autostart in HKCU\\{_AUTOSTART_KEY}: {exc}"
-            ) from exc
+                f"Failed to register the logon task (rc={result.returncode}): {detail}"
+            )
+        _remove_legacy_run_value()
 
     def uninstall_autostart(self) -> None:
-        import winreg
-
-        try:
-            with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE
-            ) as key:
-                winreg.DeleteValue(key, _AUTOSTART_VALUE)
-        except FileNotFoundError:
-            return  # already absent — nothing to do
-        except OSError as exc:
+        _remove_legacy_run_value()
+        if not self.is_autostart_installed():
+            return
+        result = _run(["schtasks", "/Delete", "/F", "/TN", _autostart_task_name()])
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
             raise PlatformError(
-                f"Failed to unregister autostart from HKCU\\{_AUTOSTART_KEY}: {exc}"
-            ) from exc
+                f"Failed to remove the logon task (rc={result.returncode}): {detail}"
+            )
 
     def is_autostart_installed(self) -> bool:
-        import winreg
-
         try:
-            with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY, 0, winreg.KEY_READ
-            ) as key:
-                winreg.QueryValueEx(key, _AUTOSTART_VALUE)
-        except FileNotFoundError:
-            return False
+            result = _run(["schtasks", "/Query", "/TN", _autostart_task_name()])
         except OSError:
             return False
-        return True
+        return result.returncode == 0
 
     # ── kill switch ───────────────────────────────────────────────────────
 

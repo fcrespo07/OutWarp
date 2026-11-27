@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Windows: "start at login" now works for the client and the server GUI.** Both require elevation, and Windows silently skips elevated programs in the Startup folder and the `Run` key at logon, so neither the installer's "start with Windows" boxes nor the client's setting ever launched anything. They are now a per-user scheduled task "with highest privileges" (no UAC prompt, runs on battery, no time limit). The client moves an existing entry over on its next start and its setting shows a task the installer created; the uninstaller removes the tasks. The B-034 recovery tasks also run on battery now.
+
 ## [1.0.0rc1] — 2026-11-27
 
 First release candidate of 1.0.0 (a pre-release: it is never offered as the "latest" release). The contracts listed in `docs/contracts/` are frozen from here.
