@@ -330,7 +330,6 @@ STRINGS: dict[str, str] = {
     "cli.recover.removed": "Túnel(is) órfão(s) removido(s): {names}",
     "cli.tunnel_error": "Erro no túnel: {error}",
     "cli.interrupted": "Interrompido.",
-    "cli.deprecated_alias": "outwarp-cli está obsoleto e será removido na 1.0.0 — use `outwarp` (execute `outwarp service install` / rode install.sh de novo para migrar unidades, iniciadores e completions).",
     "cli.help.description": "Cliente OutWarp — túnel WireGuard sobre WebSocket (modo console)",
     "cli.help.import": "Importa um perfil .owcfg",
     "cli.help.import_path": "Caminho do arquivo .owcfg",

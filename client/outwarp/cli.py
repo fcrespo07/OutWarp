@@ -886,17 +886,6 @@ _COMMANDS = {
 }
 
 
-def main_legacy_alias(argv: list[str] | None = None) -> int:
-    """``outwarp-cli`` — the pre-1.0 command name, kept one release as an alias.
-
-    Behaves exactly like ``outwarp`` (same parser, same exit codes) and prints
-    a single stderr line so scripts and units still pointing at the old name
-    keep working while their owners notice. Removed in 1.0.0.
-    """
-    _err(t("cli.deprecated_alias"))
-    return main(argv)
-
-
 def _launch_windows_gui() -> int:
     """Bare `outwarp` on Windows opens the app, as it did before 0.15.0.
 
