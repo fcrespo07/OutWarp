@@ -592,7 +592,7 @@ def test_linux_remove_host_route_no_op_when_helper_missing(tmp_path, monkeypatch
     p.remove_host_route("203.0.113.42")  # must not raise
 
 
-# --- WindowsPlatform: autostart (HKCU\…\Run) ---
+# --- WindowsPlatform: autostart (logon task; legacy HKCU\…\Run value) ---
 
 class _FakeWinreg:
     """In-memory stand-in for the stdlib winreg module.
@@ -632,65 +632,118 @@ class _FakeWinreg:
         del self.values[name]
 
 
-def test_windows_install_autostart_writes_run_key():
-    p = WindowsPlatform()
-    fake = _FakeWinreg()
-    with patch.dict(sys.modules, {"winreg": fake}):
-        p.install_autostart([r"C:\Program Files\OutWarp\outwarp.exe"])
-    # Path with a space gets quoted so cmd.exe parses it as one argv item.
-    assert fake.values["OutWarp"] == r'"C:\Program Files\OutWarp\outwarp.exe"'
+class _FakeSchtasks:
+    """Records schtasks calls; keeps the set of registered task names."""
+
+    def __init__(self, fail_create: bool = False) -> None:
+        self.tasks: dict[str, str] = {}
+        self.calls: list[list[str]] = []
+        self.fail_create = fail_create
+
+    def __call__(self, argv, **_kw):
+        self.calls.append(list(argv))
+        assert argv[0] == "schtasks"
+        verb, name = argv[1], argv[argv.index("/TN") + 1]
+        rc = 0
+        if verb == "/Create":
+            if self.fail_create:
+                return subprocess.CompletedProcess(argv, 1, "", "ERROR: Access is denied.")
+            xml_path = argv[argv.index("/XML") + 1]
+            with open(xml_path, encoding="utf-16") as fh:
+                self.tasks[name] = fh.read()
+        elif verb == "/Query":
+            rc = 0 if name in self.tasks else 1
+        elif verb == "/Delete":
+            rc = 0 if self.tasks.pop(name, None) is not None else 1
+        return subprocess.CompletedProcess(argv, rc, "", "")
 
 
-def test_windows_install_autostart_joins_multi_arg_command():
-    p = WindowsPlatform()
-    fake = _FakeWinreg()
-    with patch.dict(sys.modules, {"winreg": fake}):
-        p.install_autostart([r"C:\Python\python.exe", "-m", "outwarp"])
-    # No spaces in any argv item → no quoting added; just space-joined for cmd.
-    assert fake.values["OutWarp"] == r"C:\Python\python.exe -m outwarp"
+@pytest.fixture
+def win_autostart(monkeypatch):
+    from outwarp.platforms import windows as win
+
+    monkeypatch.setenv("USERNAME", "ana")
+    monkeypatch.setenv("USERDOMAIN", "DESKTOP-1")
+    fake_reg = _FakeWinreg()
+    fake_sch = _FakeSchtasks()
+    monkeypatch.setattr(win, "_run", fake_sch)
+    with patch.dict(sys.modules, {"winreg": fake_reg}):
+        yield WindowsPlatform(), fake_sch, fake_reg
 
 
-def test_windows_install_autostart_quotes_argv_item_with_space():
-    p = WindowsPlatform()
-    fake = _FakeWinreg()
-    with patch.dict(sys.modules, {"winreg": fake}):
-        p.install_autostart([r"C:\Program Files\Python\python.exe", "-m", "outwarp"])
-    # The path with a space must be quoted so cmd.exe parses it as one item.
-    assert fake.values["OutWarp"] == r'"C:\Program Files\Python\python.exe" -m outwarp'
+_TASK = r"\OutWarp\StartClient-ana"
 
 
-def test_windows_install_autostart_overwrites_existing():
-    p = WindowsPlatform()
-    fake = _FakeWinreg()
-    fake.values["OutWarp"] = "old-value"
-    with patch.dict(sys.modules, {"winreg": fake}):
-        p.install_autostart(["new.exe"])
-    assert fake.values["OutWarp"] == "new.exe"
+def test_windows_install_autostart_registers_an_elevated_logon_task(win_autostart):
+    p, sch, _reg = win_autostart
+    p.install_autostart([r"C:\Program Files\OutWarp\client\outwarp-gui.exe"])
+    xml = sch.tasks[_TASK]
+    # Elevated programs in Run / Startup are skipped at logon; a task with
+    # highest privileges is what starts outwarp-gui.exe.
+    assert "<RunLevel>HighestAvailable</RunLevel>" in xml
+    assert "<LogonType>InteractiveToken</LogonType>" in xml
+    assert xml.count("<UserId>DESKTOP-1\\ana</UserId>") == 2
+    assert r"<Command>C:\Program Files\OutWarp\client\outwarp-gui.exe</Command>" in xml
+    assert r"<WorkingDirectory>C:\Program Files\OutWarp\client</WorkingDirectory>" in xml
 
 
-def test_windows_uninstall_autostart_removes_value():
-    p = WindowsPlatform()
-    fake = _FakeWinreg()
-    fake.values["OutWarp"] = "x"
-    with patch.dict(sys.modules, {"winreg": fake}):
-        p.uninstall_autostart()
-    assert "OutWarp" not in fake.values
+def test_windows_autostart_task_overrides_the_task_scheduler_defaults(win_autostart):
+    p, sch, _reg = win_autostart
+    p.install_autostart(["outwarp-gui.exe"])
+    xml = sch.tasks[_TASK]
+    assert "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>" in xml
+    assert "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>" in xml
+    assert "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>" in xml
+    assert "<Priority>5</Priority>" in xml
 
 
-def test_windows_uninstall_autostart_idempotent_when_absent():
-    p = WindowsPlatform()
-    fake = _FakeWinreg()  # empty
-    with patch.dict(sys.modules, {"winreg": fake}):
-        p.uninstall_autostart()  # must not raise
+def test_windows_autostart_task_quotes_and_escapes_arguments(win_autostart):
+    p, sch, _reg = win_autostart
+    p.install_autostart([r"C:\Py\python.exe", "-m", "outwarp", r"C:\a b\x&y"])
+    assert r'<Arguments>-m outwarp "C:\a b\x&amp;y"</Arguments>' in sch.tasks[_TASK]
 
 
-def test_windows_is_autostart_installed_reflects_value_presence():
-    p = WindowsPlatform()
-    fake = _FakeWinreg()
-    with patch.dict(sys.modules, {"winreg": fake}):
-        assert p.is_autostart_installed() is False
-        fake.values["OutWarp"] = "anything"
-        assert p.is_autostart_installed() is True
+def test_windows_install_autostart_removes_the_legacy_run_value(win_autostart):
+    p, _sch, reg = win_autostart
+    reg.values["OutWarp"] = r'"C:\OutWarp\client\outwarp-gui.exe"'
+    p.install_autostart(["outwarp-gui.exe"])
+    assert "OutWarp" not in reg.values
+
+
+def test_windows_install_autostart_failure_raises_and_keeps_the_run_value(monkeypatch):
+    from outwarp.platforms import windows as win
+
+    monkeypatch.setattr(win, "_run", _FakeSchtasks(fail_create=True))
+    reg = _FakeWinreg()
+    reg.values["OutWarp"] = "old"
+    with (
+        patch.dict(sys.modules, {"winreg": reg}),
+        pytest.raises(PlatformError, match="Access is denied"),
+    ):
+        WindowsPlatform().install_autostart(["outwarp-gui.exe"])
+    assert reg.values["OutWarp"] == "old"
+
+
+def test_windows_uninstall_autostart_removes_task_and_run_value(win_autostart):
+    p, sch, reg = win_autostart
+    p.install_autostart(["outwarp-gui.exe"])
+    reg.values["OutWarp"] = "x"
+    p.uninstall_autostart()
+    assert _TASK not in sch.tasks
+    assert "OutWarp" not in reg.values
+
+
+def test_windows_uninstall_autostart_idempotent_when_absent(win_autostart):
+    p, sch, _reg = win_autostart
+    p.uninstall_autostart()  # must not raise
+    assert not any(c[1] == "/Delete" for c in sch.calls)
+
+
+def test_windows_is_autostart_installed_reflects_the_task(win_autostart):
+    p, _sch, _reg = win_autostart
+    assert p.is_autostart_installed() is False
+    p.install_autostart(["outwarp-gui.exe"])
+    assert p.is_autostart_installed() is True
 
 
 def test_windows_install_autostart_rejects_empty_command():

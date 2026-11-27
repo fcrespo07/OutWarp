@@ -79,3 +79,66 @@ def test_the_client_is_relaunched_with_its_window_shown() -> None:
     launches = [ln for ln in entries if "postinstall" in ln and "ClientExeName" in ln]
     assert len(launches) == 2, "interactive launch and auto-update relaunch"
     assert all('Parameters: "--show-window"' in ln for ln in launches)
+
+
+def _joined(name: str) -> str:
+    return re.sub(r"\\\n\s*", " ", _section(name))
+
+
+def test_no_startup_folder_shortcuts_for_the_elevated_guis() -> None:
+    """B-052: both GUIs require elevation and Windows skips elevated programs
+    in the Startup folder at logon, so "start at login" never worked."""
+    assert "{autostartup}" not in _section("Icons")
+    deleted = _section("InstallDelete")
+    assert r"{autostartup}\OutWarp Client.lnk" in deleted
+    assert r"{autostartup}\OutWarp Server.lnk" in deleted
+
+
+def test_start_at_login_is_an_elevated_logon_task_matching_the_client() -> None:
+    from outwarp.platforms import windows as win
+
+    run = _joined("Run")
+    for task, prefix in (("startupclient", "StartClient-"), ("startupserver", "StartServer-")):
+        line = next(ln for ln in run.splitlines() if f"Tasks: {task}" in ln and "powershell" in ln)
+        assert "-AtLogOn" in line and "-RunLevel Highest" in line
+        assert "-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries" in line
+        assert "-ExecutionTimeLimit ([TimeSpan]::Zero)" in line
+        assert f"-TaskPath '\\OutWarp\\' -TaskName ('{prefix}' + $env:USERNAME)" in line
+    assert win._AUTOSTART_TASK_PREFIX == "\\OutWarp\\StartClient-"
+
+
+def test_a_silent_update_does_not_re_enable_start_at_login() -> None:
+    run = _joined("Run")
+    line = next(ln for ln in run.splitlines() if "Tasks: startupclient" in ln)
+    assert "Check: ShouldRegisterClientStartup" in line
+    code = _ISS.read_text(encoding="utf-8")
+    assert "Result := (not IsAutoUpdate) or LegacyClientStartup;" in code
+
+
+def test_recover_tunnel_tasks_also_run_on_battery() -> None:
+    run = _joined("Run")
+    line = next(ln for ln in run.splitlines() if "Set-ScheduledTask" in ln)
+    assert "-AllowStartIfOnBatteries" in line
+    assert "'RecoverTunnelBoot','RecoverTunnelLogon'" in line
+
+
+def test_uninstaller_removes_start_at_login() -> None:
+    run = _joined("UninstallRun")
+    assert "$_.TaskName -like 'Start*'" in run and "Unregister-ScheduledTask" in run
+    assert r"CurrentVersion\Run /v OutWarp /f" in run
+
+
+def test_wizard_texts_are_translated_for_both_languages() -> None:
+    """English Windows showed the installer's own texts in Spanish."""
+    text = _ISS.read_text(encoding="utf-8")
+    for section in ("Types", "Components", "Tasks", "Run"):
+        for line in _joined(section).splitlines():
+            if line.lstrip().startswith(";"):
+                continue
+            for field in ("Description", "GroupDescription", "StatusMsg"):
+                m = re.search(rf'\b{field}: "([^"]*)"', line)
+                assert not m or m.group(1).startswith("{cm:"), line
+    keys = set(re.findall(r"\{cm:(\w+)\}", text))
+    msgs = _section("CustomMessages")
+    for key in keys:
+        assert f"english.{key}=" in msgs and f"spanish.{key}=" in msgs, key

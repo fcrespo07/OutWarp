@@ -24,9 +24,14 @@ FALLBACK_LANG = "en"
 _ui_lang: str | None = None
 
 def _catalog() -> dict[str, dict[str, str]]:
-    from importlib import import_module
+    # Static imports on purpose: PyInstaller only bundles what it can see, and
+    # a dynamic import_module() left the frozen Windows exe without its locales
+    # (it crashed at start with "No module named 'outwarp.locales'").
+    from outwarp.locales import en, es, fr, pt
 
-    return {lang: import_module(f"outwarp.locales.{lang}").STRINGS for lang in LANGS}
+    tables = {"en": en, "es": es, "fr": fr, "pt": pt}
+    assert set(tables) == set(LANGS), "LANGS and the locale imports drifted apart"
+    return {lang: tables[lang].STRINGS for lang in LANGS}
 
 
 CATALOG = _catalog()
