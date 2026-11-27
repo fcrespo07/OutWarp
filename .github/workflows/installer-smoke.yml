@@ -105,6 +105,8 @@ jobs:
           # doctor logs a traceback for a check that cannot run on this box; only
           # an import failure of the frozen exe itself is a crash.
           if ($out -match "No module named") { throw "doctor hit a missing module in the frozen exe" }
+          # pwsh ends the step with the last native exit code (1 = some check failed, expected here).
+          exit 0
 
       - name: Silent uninstall leaves nothing behind
         shell: pwsh
