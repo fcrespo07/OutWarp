@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Upgrade guide** (`docs/UPGRADE-1.0.md`): what changes going from 0.x to 1.0 and what to run on each platform.
+
 ### Documentation
 - README: known limitation for Windows standard users who elevate with another account.
 
