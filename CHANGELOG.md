@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Client GUI: import and update errors in the window's language.** An empty, oversized or expired `.owcfg`, a release with no Windows installer and an installer that could not be launched were reported in English whatever the interface language.
+
 ## [1.0.0rc1] — 2026-11-27
 
 First release candidate of 1.0.0 (a pre-release: it is never offered as the "latest" release). The contracts listed in `docs/contracts/` are frozen from here.
