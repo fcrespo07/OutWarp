@@ -589,7 +589,7 @@ const NAV_MAIN = [
 const NAV_FOOT = [
   // Sliders: the previous dot-with-four-ticks did not read as "settings".
   ["settings", "nav_settings", "M4 6 H13 M17 6 H20 M15 4 V8 M4 12 H7 M11 12 H20 M9 10 V14 M4 18 H14 M18 18 H20 M16 16 V20"],
-  ["about",    "nav_about",    "M3 12 a9 9 0 1 1 18 0 a9 9 0 1 1 -18 0 M12 8 V13 M12 16 V16.01"],
+  ["about",    "nav_about",    "M3 12 a9 9 0 1 1 18 0 a9 9 0 1 1 -18 0 M12 11 V16 M12 8 V8.01"],
 ];
 const NavBadge = ({ tone, count }) => (
   <span className={`ow-badge ow-badge--${tone}${count ? " ow-badge--count" : ""}`} aria-hidden="true">{count ? (count > 9 ? "9+" : count) : ""}</span>
@@ -739,7 +739,7 @@ const Home = (props) => {
   if (status === "connecting" || status === "reconnecting") {
     return <ConnectingHome T={T} active={active} busyMsg={busyMsg} reconnecting={status === "reconnecting"} attemptInfo={attemptInfo} phase={phase} onCancel={props.onDisconnect}/>;
   }
-  if (status === "error") return <ErrorHome T={T} active={active} connError={connError} onReconnect={onReconnect} onImport={onImport} onLogs={onLogs}/>;
+  if (status === "error") return <ErrorHome T={T} active={active} connError={connError} killSwitch={props.killSwitch} onReconnect={onReconnect} onDisconnect={props.onDisconnect} onImport={onImport} onLogs={onLogs}/>;
   return <DisconnectedHome {...props}/>;
 };
 
@@ -1025,7 +1025,7 @@ const ConnectedHome = ({ T, lang, active, stats, history, advanced, route, killS
 
 // Plain-language hint first, from the kind of failure; the raw message the
 // tunnel raised stays one click away under "Technical details".
-const ErrorHome = ({ T, active, connError, onReconnect, onImport, onLogs }) => {
+const ErrorHome = ({ T, active, connError, killSwitch, onReconnect, onDisconnect, onImport, onLogs }) => {
   const kind = window.OWfmt.classifyError(connError);
   const hint = {
     unreachable: T.err_hint_unreachable, cert: T.err_hint_cert, token: T.err_hint_token,
@@ -1045,6 +1045,14 @@ const ErrorHome = ({ T, active, connError, onReconnect, onImport, onLogs }) => {
           <span style={{ color: "var(--brand-warn)" }}>{HomeIcon(<><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></>, 18)}</span>
           <span>{hint}</span>
         </div>
+        {/* With the kill switch on, FAILED keeps every connection blocked: say
+            so, and offer the way out (Disconnect releases it). */}
+        {killSwitch && (
+          <div className="ow-hint" style={{ marginTop: 10 }}>
+            <span style={{ color: "var(--brand-bad)" }}><IconShield size={18}/></span>
+            <span>{T.err_ksBlocking}</span>
+          </div>
+        )}
         {connError && (
           <details className="ow-raw" style={{ marginTop: 12 }}>
             <summary>{T.err_details}</summary>
@@ -1053,6 +1061,7 @@ const ErrorHome = ({ T, active, connError, onReconnect, onImport, onLogs }) => {
         )}
         <div style={{ marginTop: 18, display: "flex", gap: 8, flexWrap: "wrap" }}>
           <window.Btn kind="primary" size="md" onClick={onReconnect}>{T.retry}</window.Btn>
+          {onDisconnect && <window.Btn kind="ghost" size="md" onClick={onDisconnect}>{T.disconnect}</window.Btn>}
           <window.Btn kind="ghost" size="md" icon={<IconLogs size={14}/>} onClick={onLogs}>{T.err_viewLog}</window.Btn>
           {(kind === "token" || kind === "expired" || kind === "cert") &&
             <window.Btn kind="ghost" size="md" onClick={onImport}>{T.error_importNew}</window.Btn>}
