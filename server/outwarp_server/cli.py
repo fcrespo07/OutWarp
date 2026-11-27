@@ -1271,7 +1271,16 @@ _COMMANDS: dict[str, callable] = {
 }
 
 
+def _tolerate_console_encoding() -> None:
+    """A redirected stdout on Windows is cp1252 and cannot encode the status
+    glyphs (\u2717, \u2713); a print must never crash the command."""
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(AttributeError, ValueError):
+            stream.reconfigure(errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _tolerate_console_encoding()
     parser = build_parser()
     try:
         import argcomplete
