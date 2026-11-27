@@ -289,12 +289,14 @@ class TestRefreshWindowsAutostart:
     """B-027: the login entry of pre-0.15.0 installs points at outwarp.exe,
     which is the console CLI now."""
 
-    def _run(self, monkeypatch, *, platform: str, frozen: bool, start_at_boot: bool):
+    def _run(self, monkeypatch, *, platform: str, frozen: bool, start_at_boot: bool,
+             installed: bool = False):
         from unittest.mock import MagicMock
 
         from outwarp import app
 
         plat = MagicMock()
+        plat.is_autostart_installed.return_value = installed
         monkeypatch.setattr(app.sys, "platform", platform)
         if frozen:
             monkeypatch.setattr(app.sys, "frozen", True, raising=False)
@@ -310,8 +312,20 @@ class TestRefreshWindowsAutostart:
         plat.install_autostart.assert_called_once_with([r"C:\OutWarp\client\outwarp-gui.exe"])
 
     def test_leaves_it_alone_when_start_at_boot_is_off(self, monkeypatch) -> None:
-        plat = self._run(monkeypatch, platform="win32", frozen=True, start_at_boot=False)
+        saved = []
+        monkeypatch.setattr("outwarp.settings.save_settings", lambda s: saved.append(dict(s)))
+        plat = self._run(monkeypatch, platform="win32", frozen=True, start_at_boot=False,
+                         installed=False)
         plat.install_autostart.assert_not_called()
+        assert saved == []
+
+    def test_turns_the_setting_on_when_the_installer_registered_it(self, monkeypatch) -> None:
+        saved = []
+        monkeypatch.setattr("outwarp.settings.save_settings", lambda s: saved.append(dict(s)))
+        plat = self._run(monkeypatch, platform="win32", frozen=True, start_at_boot=False,
+                         installed=True)
+        plat.install_autostart.assert_not_called()
+        assert saved and saved[0]["start_at_boot"] is True
 
     def test_only_touches_frozen_windows_builds(self, monkeypatch) -> None:
         plat = self._run(monkeypatch, platform="win32", frozen=False, start_at_boot=True)
