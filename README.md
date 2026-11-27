@@ -36,6 +36,7 @@ Client and server can run on different operating systems.
 - **Deep packet inspection**: see the table above. On a network that fingerprints TLS clients or inspects WebSocket upgrades, OutWarp does not connect.
 - **Unsigned Windows installer**: SmartScreen and UAC warn about an unknown publisher (details below). Releases are signed with minisign instead, and the in-app updater verifies that signature.
 - **TCP inside TCP**: WireGuard rides a TCP connection, so on a lossy link one lost packet stalls everything behind it. It is slower than plain WireGuard over UDP wherever UDP is allowed.
+- **Windows standard users**: the client app runs elevated (it installs the tunnel service). If a user without administrator rights elevates with another account's credentials, the app runs as that account, so settings, profiles and the start-at-logon task belong to the administrator, not to the standard user. Run it from an administrator account.
 - **One tunnel at a time** per client, and no split tunnelling yet.
 - **The server needs one public TCP port** reachable from the internet (a VPS, or port forwarding at home). CGNAT on the server side does not work.
 

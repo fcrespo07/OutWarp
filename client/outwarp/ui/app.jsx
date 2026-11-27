@@ -11,7 +11,12 @@ const { useState, useEffect, useCallback, useRef } = React;
 function waitForBridge() {
   return new Promise((resolve) => {
     const tick = () => {
-      if (window.pywebview && window.pywebview.api) return resolve(window.pywebview.api);
+      // pywebview creates window.pywebview.api before it has attached the
+      // Python methods to it (they arrive just before "pywebviewready"), so
+      // checking only for the object lets the first call hit
+      // "get_status is not a function". Wait until a real method exists.
+      const api = window.pywebview && window.pywebview.api;
+      if (api && typeof api.get_status === "function") return resolve(api);
       setTimeout(tick, 30);
     };
     tick();

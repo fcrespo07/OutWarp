@@ -617,21 +617,17 @@ class Api:
     def import_profile(self, file_content: str) -> dict[str, Any]:
         """Accept an .owcfg payload as text. Stores it as the active config."""
         if not isinstance(file_content, str) or not file_content.strip():
-            return {"ok": False, "error": "Empty or invalid .owcfg content"}
+            return {"ok": False, "error": t("api.owcfg_empty")}
         if len(file_content.encode("utf-8", "ignore")) > self._MAX_OWCFG_BYTES:
-            return {"ok": False, "error": "This file is too large to be a valid .owcfg"}
+            return {"ok": False, "error": t("api.owcfg_too_large")}
         try:
             # Parse first so an already-expired profile is rejected before it
             # ever touches disk.
             parsed = ClientConfig.loads(file_content)
         except ConfigError as exc:
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": t("api.invalid_owcfg", detail=exc)}
         if parsed.is_expired():
-            return {
-                "ok": False,
-                "error": f"This profile expired on {parsed.expires_at}. "
-                         "Ask the server administrator for a new one.",
-            }
+            return {"ok": False, "error": t("api.profile_expired", date=parsed.expires_at)}
         try:
             # Pass the resolved path explicitly so a test patching
             # ``outwarp.api.default_config_path`` actually redirects the write
@@ -642,7 +638,7 @@ class Api:
             # active one (outwarp/profiles.py).
             cfg, trust_verdict = import_owcfg_text_with_verdict(file_content)
         except ConfigError as exc:
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": t("api.invalid_owcfg", detail=exc)}
         except Exception as exc:
             log.exception("import_profile failed")
             return {"ok": False, "error": str(exc)}
@@ -1074,7 +1070,7 @@ class Api:
         if not url:
             self._emit("update", {
                 "phase": "error",
-                "error": "the latest release has no Windows installer asset",
+                "error": t("api.update_no_asset"),
             })
             return
 
@@ -1132,7 +1128,7 @@ class Api:
         if not self._launch_installer(dest):
             self._emit("update", {
                 "phase": "error",
-                "error": "could not launch the installer (elevation declined?)",
+                "error": t("api.update_launch_failed"),
             })
             return
 
