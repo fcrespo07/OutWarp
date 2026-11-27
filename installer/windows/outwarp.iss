@@ -94,38 +94,38 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 ; [Types] entirely, which is the v0.4.1 client-installer bug.
 #if Edition == "full"
 [Types]
-Name: "client";  Description: "Solo cliente (conecta a un servidor OutWarp existente)"
-Name: "server";  Description: "Solo servidor (acepta conexiones de clientes OutWarp)"
-Name: "full";    Description: "Cliente + servidor"
+Name: "client";  Description: "{cm:TypeClient}"
+Name: "server";  Description: "{cm:TypeServer}"
+Name: "full";    Description: "{cm:TypeBoth}"
 #else
 [Types]
-Name: "full";    Description: "Instalación completa"
+Name: "full";    Description: "{cm:TypeFull}"
 #endif
 
 [Components]
 #if Edition == "full"
-Name: "client";        Description: "OutWarp Client (tray app)";                 Types: client full
-Name: "server";        Description: "OutWarp Server (interfaz gráfica)";         Types: server full
-Name: "wstunnel";      Description: "wstunnel.exe (transporte WebSocket)";       Types: client server full; Flags: fixed
-Name: "wireguard";     Description: "WireGuard for Windows (driver + tools)";    Types: client server full
+Name: "client";        Description: "{cm:CompClient}";                 Types: client full
+Name: "server";        Description: "{cm:CompServer}";         Types: server full
+Name: "wstunnel";      Description: "{cm:CompWstunnel}";       Types: client server full; Flags: fixed
+Name: "wireguard";     Description: "{cm:CompWireGuard}";    Types: client server full
 #elif Edition == "client"
-Name: "client";        Description: "OutWarp Client (tray app)";                 Types: full; Flags: fixed
-Name: "wstunnel";      Description: "wstunnel.exe (transporte WebSocket)";       Types: full; Flags: fixed
-Name: "wireguard";     Description: "WireGuard for Windows (driver + tools)";    Types: full; Flags: fixed
+Name: "client";        Description: "{cm:CompClient}";                 Types: full; Flags: fixed
+Name: "wstunnel";      Description: "{cm:CompWstunnel}";       Types: full; Flags: fixed
+Name: "wireguard";     Description: "{cm:CompWireGuard}";    Types: full; Flags: fixed
 #elif Edition == "server"
-Name: "server";        Description: "OutWarp Server (interfaz gráfica)";         Types: full; Flags: fixed
-Name: "wstunnel";      Description: "wstunnel.exe (transporte WebSocket)";       Types: full; Flags: fixed
-Name: "wireguard";     Description: "WireGuard for Windows (driver + tools)";    Types: full; Flags: fixed
+Name: "server";        Description: "{cm:CompServer}";         Types: full; Flags: fixed
+Name: "wstunnel";      Description: "{cm:CompWstunnel}";       Types: full; Flags: fixed
+Name: "wireguard";     Description: "{cm:CompWireGuard}";    Types: full; Flags: fixed
 #endif
 
 [Tasks]
-Name: "desktopicon";     Description: "Crear acceso directo en el escritorio"; GroupDescription: "Accesos directos:"; Flags: checkablealone
+Name: "desktopicon";     Description: "{cm:TaskDesktop}"; GroupDescription: "{cm:GroupShortcuts}"; Flags: checkablealone
 #if HasClient
-Name: "startupclient";   Description: "Iniciar OutWarp Client al arrancar Windows"; GroupDescription: "Arranque automatico:"; Components: client
+Name: "startupclient";   Description: "{cm:TaskStartClient}"; GroupDescription: "{cm:GroupAutostart}"; Components: client
 #endif
 #if HasServer
-Name: "startupserver";   Description: "Iniciar OutWarp Server al arrancar Windows"; GroupDescription: "Arranque automatico:"; Components: server
-Name: "runwizard";       Description: "Ejecutar el asistente de configuracion al finalizar"; GroupDescription: "Post-instalacion:"; Components: server
+Name: "startupserver";   Description: "{cm:TaskStartServer}"; GroupDescription: "{cm:GroupAutostart}"; Components: server
+Name: "runwizard";       Description: "{cm:TaskRunWizard}"; GroupDescription: "{cm:GroupPostInstall}"; Components: server
 #endif
 
 [Files]
@@ -189,7 +189,7 @@ Type: files; Name: "{autostartup}\OutWarp Server.lnk"
 [Run]
 ; Install WireGuard if the user opted in and it's not already present.
 Filename: "{tmp}\wireguard-installer.exe"; Parameters: "/S"; \
-    StatusMsg: "Instalando WireGuard for Windows..."; \
+    StatusMsg: "{cm:InstallingWireGuard}"; \
     Components: wireguard; Check: NeedsWireGuardInstall; Flags: waituntilterminated
 
 #if HasServer
@@ -207,7 +207,7 @@ Filename: "powershell.exe"; \
 ; "code 740 (operation requires elevation)". ShellExecuteEx honours the
 ; manifest and elevates. shellexec also implies no-wait, so `nowait` is dropped.
 Filename: "{app}\server\{#ServerGuiExe}"; \
-    Description: "Lanzar OutWarp Server y abrir el asistente"; \
+    Description: "{cm:LaunchServer}"; \
     Flags: postinstall skipifsilent shellexec; \
     Tasks: runwizard
 #endif
@@ -241,7 +241,7 @@ Filename: "powershell.exe"; \
 
 ; Launch the client at the end of setup if only the client was selected.
 Filename: "{app}\client\{#ClientExeName}"; Parameters: "--show-window"; \
-    Description: "Lanzar OutWarp Client"; \
+    Description: "{cm:LaunchClient}"; \
     Flags: postinstall skipifsilent shellexec; \
     Components: client; Check: NotInstallingServer
 
@@ -301,6 +301,43 @@ Type: files; Name: "{commonappdata}\WireGuard\*.outwarp-client"
 ; intentionally so reinstalling preserves the user's profile / clients.
 
 [CustomMessages]
+; Wizard texts (Spanish verbatim from before; English for every other system language).
+english.TypeClient=Client only (connects to an existing OutWarp server)
+english.TypeServer=Server only (accepts connections from OutWarp clients)
+english.TypeBoth=Client + server
+english.TypeFull=Full installation
+english.CompClient=OutWarp Client (tray app)
+english.CompServer=OutWarp Server (graphical interface)
+english.CompWstunnel=wstunnel.exe (WebSocket transport)
+english.CompWireGuard=WireGuard for Windows (driver + tools)
+english.TaskDesktop=Create a desktop shortcut
+english.GroupShortcuts=Shortcuts:
+english.TaskStartClient=Start OutWarp Client when Windows starts
+english.TaskStartServer=Start OutWarp Server when Windows starts
+english.GroupAutostart=Automatic start:
+english.TaskRunWizard=Run the setup wizard when finished
+english.GroupPostInstall=After installation:
+english.InstallingWireGuard=Installing WireGuard for Windows...
+english.LaunchServer=Launch OutWarp Server and open the wizard
+english.LaunchClient=Launch OutWarp Client
+spanish.TypeClient=Solo cliente (conecta a un servidor OutWarp existente)
+spanish.TypeServer=Solo servidor (acepta conexiones de clientes OutWarp)
+spanish.TypeBoth=Cliente + servidor
+spanish.TypeFull=Instalación completa
+spanish.CompClient=OutWarp Client (tray app)
+spanish.CompServer=OutWarp Server (interfaz gráfica)
+spanish.CompWstunnel=wstunnel.exe (transporte WebSocket)
+spanish.CompWireGuard=WireGuard for Windows (driver + tools)
+spanish.TaskDesktop=Crear acceso directo en el escritorio
+spanish.GroupShortcuts=Accesos directos:
+spanish.TaskStartClient=Iniciar OutWarp Client al arrancar Windows
+spanish.TaskStartServer=Iniciar OutWarp Server al arrancar Windows
+spanish.GroupAutostart=Arranque automatico:
+spanish.TaskRunWizard=Ejecutar el asistente de configuracion al finalizar
+spanish.GroupPostInstall=Post-instalacion:
+spanish.InstallingWireGuard=Instalando WireGuard for Windows...
+spanish.LaunchServer=Lanzar OutWarp Server y abrir el asistente
+spanish.LaunchClient=Lanzar OutWarp Client
 english.RegisteringStartup=Setting up start at login...
 spanish.RegisteringStartup=Configurando el inicio al iniciar sesión...
 
