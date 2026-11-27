@@ -239,11 +239,12 @@ Filename: "powershell.exe"; \
     Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""$u = $env:USERDOMAIN + '\' + $env:USERNAME; $a = New-ScheduledTaskAction -Execute '{app}\client\{#ClientExeName}' -WorkingDirectory '{app}\client'; $t = New-ScheduledTaskTrigger -AtLogOn -User $u; $p = New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Highest; $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -Priority 5; Register-ScheduledTask -TaskPath '\OutWarp\' -TaskName ('StartClient-' + $env:USERNAME) -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null"""; \
     StatusMsg: "{cm:RegisteringStartup}"; Flags: runhidden; Tasks: startupclient; Check: ShouldRegisterClientStartup
 
-; Launch the client at the end of setup if only the client was selected.
+; Launch the client at the end of setup. With client + server both launch
+; entries are offered, as two checkboxes.
 Filename: "{app}\client\{#ClientExeName}"; Parameters: "--show-window"; \
     Description: "{cm:LaunchClient}"; \
     Flags: postinstall skipifsilent shellexec; \
-    Components: client; Check: NotInstallingServer
+    Components: client
 
 ; Silent in-app auto-update relaunch: the client passes /AUTOUPDATE=1 (see
 ; Api._launch_installer) and runs Setup /VERYSILENT. This entry omits
@@ -384,11 +385,6 @@ end;
 function NeedsWireGuardInstall: Boolean;
 begin
   Result := HasWireGuardBundle and (not IsWireGuardInstalled);
-end;
-
-function NotInstallingServer: Boolean;
-begin
-  Result := not WizardIsComponentSelected('server');
 end;
 
 { The client-only and server-only installers have a single install type and

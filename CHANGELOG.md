@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Importing an invalid `.owcfg` in the GUI showed a raw English validation message in every language.** It now starts with a translated "this file is not a valid OutWarp profile" line and keeps the technical detail after it.
+- **Windows installer: a full install (client + server) now offers to launch both apps at the end**, instead of only the server.
 - **Windows: the installed client and server crashed at start** with `No module named 'outwarp.locales'` (found by the new installer smoke test). The translation tables were loaded with a dynamic import that PyInstaller does not follow; they are now imported statically. Affects the v1.0.0rc1 Windows installers.
 - **Windows: `outwarp doctor` (and any command printing ✓/✗) crashed with `UnicodeEncodeError` when its output was redirected** (cp1252). Output now degrades to `?` instead of failing.
 - **Windows installer: its own texts follow the wizard language.** Setup types, components, tasks and the final launch options were in Spanish on an English wizard; they now have English and Spanish versions (the Spanish wording is unchanged).
