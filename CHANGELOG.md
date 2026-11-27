@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Windows: the installed client and server crashed at start** with `No module named 'outwarp.locales'` (found by the new installer smoke test). The translation tables were loaded with a dynamic import that PyInstaller does not follow; they are now imported statically. Affects the v1.0.0rc1 Windows installers.
+- **Windows: `outwarp doctor` (and any command printing ✓/✗) crashed with `UnicodeEncodeError` when its output was redirected** (cp1252). Output now degrades to `?` instead of failing.
 
 ## [1.0.0rc1] — 2026-11-27
 
