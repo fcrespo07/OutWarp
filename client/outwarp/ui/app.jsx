@@ -247,6 +247,14 @@ function App() {
     document.documentElement.lang = lang;
     if (api && api.set_ui_language) api.set_ui_language(lang);
   }, [api, lang]);
+  // A file dropped where no drop zone takes it would make the webview open it
+  // in place of the app (an .owcfg shown as raw JSON, private key included).
+  useEffect(() => {
+    const block = (e) => { if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) e.preventDefault(); };
+    window.addEventListener("dragover", block);
+    window.addEventListener("drop", block);
+    return () => { window.removeEventListener("dragover", block); window.removeEventListener("drop", block); };
+  }, []);
 
   const active = profiles.find((p) => p.active) || profiles.find((p) => p.id === activeId)
     || profiles[0] || null;
@@ -392,6 +400,8 @@ function App() {
               killSwitch={!!settings.kill_switch}
               profiles={profiles}
               onSwitch={onSwitchProfile}
+              api={api}
+              onImported={async (p) => { setActiveId(p.id); await refreshProfiles(); }}
             />
           )}
           {screen === "import"  && <Import T={T} api={api} active={active} profiles={profiles} confirm={confirm} onImported={async (p) => { setActiveId(p.id); await refreshProfiles(); setScreen("home"); }} onRemove={onRemoveProfile} onSwitch={onSwitchProfile} onProfilesChanged={refreshProfiles}/>}
@@ -610,7 +620,7 @@ const SidebarProfile = ({ T, profiles, activeId, profileName, tone, pulse, label
   return (
     <div ref={boxRef} style={{ position: "relative" }}>
       <button type="button" className="ow-sidebar-foot ow-sidebar-foot--btn" onClick={() => setOpen((o) => !o)}
-        aria-expanded={open} aria-haspopup="menu" title={`${T.profile}: ${profileName || "—"} · ${label}`}
+        aria-expanded={open} aria-haspopup="menu" title={`${T.profile}: ${profileName || T.profile_none} · ${label}`}
         style={{
           appearance: "none", font: "inherit", color: "inherit", textAlign: "left", cursor: "pointer", width: "100%",
           padding: 12, borderRadius: advanced ? 0 : 12, background: "var(--bg-sunk)",
@@ -622,7 +632,7 @@ const SidebarProfile = ({ T, profiles, activeId, profileName, tone, pulse, label
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
           <window.StatusDot tone={tone} pulse={pulse}/>
-          <div className="ow-sidebar-foot-text" style={{ fontSize: 13, fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profileName || "—"}</div>
+          <div className="ow-sidebar-foot-text" style={{ fontSize: 13, fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profileName || T.profile_none}</div>
         </div>
         <div className="ow-sidebar-foot-text" style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2, fontFamily: "var(--font-mono)" }}>{label}</div>
       </button>
@@ -733,31 +743,60 @@ const Sidebar = ({ T, screen, onScreen, status, profileName, profiles, activeId,
 const Home = (props) => {
   const { T, status, active, busyMsg, connError, attemptInfo, phase, onReconnect, onImport, onLogs } = props;
   if (status === "empty" || !active) {
-    return <EmptyHome T={T} onImport={onImport}/>;
+    return <EmptyHome T={T} api={props.api} onImport={onImport} onImported={props.onImported}/>;
   }
   if (status === "connected") return <ConnectedHome {...props}/>;
   if (status === "connecting" || status === "reconnecting") {
     return <ConnectingHome T={T} active={active} busyMsg={busyMsg} reconnecting={status === "reconnecting"} attemptInfo={attemptInfo} phase={phase} onCancel={props.onDisconnect}/>;
   }
-  if (status === "error") return <ErrorHome T={T} active={active} connError={connError} killSwitch={props.killSwitch} onReconnect={onReconnect} onDisconnect={props.onDisconnect} onImport={onImport} onLogs={onLogs}/>;
+  if (status === "error") return <ErrorHome T={T} active={active} connError={connError} killSwitch={props.killSwitch} profiles={props.profiles} onReconnect={onReconnect} onDisconnect={props.onDisconnect} onImport={onImport} onLogs={onLogs} onSwitch={props.onSwitch}/>;
   return <DisconnectedHome {...props}/>;
 };
 
-const EmptyHome = ({ T, onImport }) => (
+// The card says "drop the .owcfg here", so dropping one has to import it
+// (it used to do nothing).
+const EmptyHome = ({ T, api, onImport, onImported }) => {
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const onDrop = async (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files?.[0];
+    if (!f || !api || busy) return;
+    setError("");
+    setBusy(true);
+    try {
+      const r = await api.import_profile(await f.text());
+      if (r && r.ok) onImported(r.profile);
+      else setError((r && r.error) || T.errorUnknown);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
   <div className="ow-screen" style={{ display: "flex", flexDirection: "column", gap: 24, maxWidth: 720 }}>
     <Header title={T.welcomeTitle} sub={T.welcomeSub}/>
-    <section style={{ background: "var(--bg-2)", border: "1.5px dashed var(--line-strong)", borderRadius: "var(--radius-lg)", padding: 36, textAlign: "center" }}>
+    <section onDragOver={(e) => e.preventDefault()} onDrop={onDrop}
+      style={{ background: "var(--bg-2)", border: "1.5px dashed var(--line-strong)", borderRadius: "var(--radius-lg)", padding: 36, textAlign: "center" }}>
       <div style={{ width: 56, height: 56, borderRadius: 14, background: "color-mix(in srgb, var(--brand) 12%, transparent)", color: "var(--brand)", display: "grid", placeItems: "center", margin: "0 auto" }}>
         <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16 V4 M6 10 L12 4 L18 10"/><path d="M4 20 H20"/></svg>
       </div>
       <div style={{ fontSize: 16, fontWeight: 600, marginTop: 12 }}>{T.importDrop}</div>
       <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>{T.importHint}</div>
       <div style={{ marginTop: 18 }}>
-        <window.Btn kind="primary" size="md" onClick={onImport}>{T.importFile}</window.Btn>
+        <window.Btn kind="primary" size="md" onClick={onImport} disabled={busy}>{T.importFile}</window.Btn>
       </div>
+      {error && <div role="alert" style={{ marginTop: 14, fontSize: 12.5, color: "var(--brand-bad)" }}>{error}</div>}
     </section>
+    {/* First launch with nothing to import: say where the file comes from. */}
+    <div className="ow-hint">
+      <span style={{ color: "var(--text-3)" }}>{HomeIcon(<><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></>, 18)}</span>
+      <span><b>{T.empty_noFileTitle}</b> {T.empty_noFileBody}</span>
+    </div>
   </div>
-);
+  );
+};
 
 // A menu to switch to another profile without going through the Profiles
 // screen; with only one profile it links to Profiles to import another.
@@ -772,7 +811,8 @@ const ProfileSwitcher = ({ T, active, profiles, onSwitch, onManage }) => {
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
   }, [open]);
-  const others = (profiles || []).filter((p) => p.id !== active.id);
+  const list = profiles || [];
+  const others = list.filter((p) => p.id !== active.id);
   return (
     <div ref={boxRef} style={{ position: "relative", display: "inline-block" }}>
       <window.Btn kind="ghost" size="md" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu"
@@ -782,15 +822,20 @@ const ProfileSwitcher = ({ T, active, profiles, onSwitch, onManage }) => {
       </window.Btn>
       {open && (
         <div className="ow-pop" role="menu" style={{ textAlign: "left" }}>
-          {others.map((p) => (
-            <button key={p.id} type="button" role="menuitem" className="ow-pop-item" onClick={() => { setOpen(false); onSwitch(p); }}>
+          {(others.length ? list : []).map((p) => {
+            const on = p.id === active.id;
+            return (
+            <button key={p.id} type="button" role="menuitemradio" aria-checked={on} className="ow-pop-item"
+              onClick={() => { setOpen(false); if (!on) onSwitch(p); }}>
               <window.StatusDot tone="neutral"/>
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ display: "block", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
                 <span style={{ display: "block", fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>{p.endpoint}</span>
               </span>
+              {on && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>}
             </button>
-          ))}
+            );
+          })}
           {others.length > 0 && <div className="ow-pop-sep"/>}
           <button type="button" role="menuitem" className="ow-pop-item" onClick={() => { setOpen(false); onManage(); }}>{T.home_manage}</button>
         </div>
@@ -824,7 +869,7 @@ const ConnectionDetails = ({ T, active, killSwitch, route, onSettings }) => (
       {route
         ? <DetailItem icon={HomeIcon(<path d="M4 12h16M14 6l6 6-6 6"/>, 15)} k={T.home_route} v={window.OWfmt.routeLabel(route, T)}/>
         : <DetailItem icon={HomeIcon(<><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></>, 15)}
-            k={T.home_expires} v={active.expires_at || T.home_never} tone={active.expired ? "var(--brand-bad)" : undefined}/>}
+            k={T.home_expires} v={active.expires_at ? window.OWfmt.fmtDate(active.expires_at, document.documentElement.lang) : T.home_never} tone={active.expired ? "var(--brand-bad)" : undefined}/>}
     </div>
   </section>
 );
@@ -1026,7 +1071,7 @@ const ConnectedHome = ({ T, lang, active, stats, history, advanced, route, killS
 
 // Plain-language hint first, from the kind of failure; the raw message the
 // tunnel raised stays one click away under "Technical details".
-const ErrorHome = ({ T, active, connError, killSwitch, onReconnect, onDisconnect, onImport, onLogs }) => {
+const ErrorHome = ({ T, active, connError, killSwitch, profiles, onReconnect, onDisconnect, onImport, onLogs, onSwitch }) => {
   const kind = window.OWfmt.classifyError(connError);
   const hint = {
     unreachable: T.err_hint_unreachable, cert: T.err_hint_cert, token: T.err_hint_token,
@@ -1069,6 +1114,10 @@ const ErrorHome = ({ T, active, connError, killSwitch, onReconnect, onDisconnect
           <window.Btn kind="ghost" size="md" icon={<IconLogs size={14}/>} onClick={onLogs}>{T.err_viewLog}</window.Btn>
           {(kind === "token" || kind === "expired" || kind === "cert") &&
             <window.Btn kind="ghost" size="md" onClick={onImport}>{T.error_importNew}</window.Btn>}
+          {/* The failure may be this server's: let the user try another
+              profile without going through Profiles. */}
+          {onSwitch && (profiles || []).length > 1 &&
+            <ProfileSwitcher T={T} active={active} profiles={profiles} onSwitch={onSwitch} onManage={onImport}/>}
         </div>
       </section>
     </div>
@@ -1187,7 +1236,7 @@ const Stat = ({ label, value, sub, trend }) => (
   <div className="ow-card" style={{ padding: 14 }}>
     <div style={{ fontSize: 11, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 600 }}>{label}</div>
     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginTop: 6 }}>
-      <div style={{ fontSize: 22, fontWeight: 600, fontFamily: "var(--font-mono)" }}>{value}</div>
+      <div className="ow-stat-value" title={typeof value === "string" ? value : undefined}>{value}</div>
       {trend}
     </div>
     {sub && <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4, fontFamily: "var(--font-mono)" }}>{sub}</div>}
@@ -1523,7 +1572,7 @@ const ProfileRow = ({ T, profile, onEdit, onUse, onRemove }) => (
         }}>{profile.endpoint}</div>
         <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 3 }}>
           {profile.tls_verify === "ca" ? T.sec_ca : T.sec_pin}
-          {profile.expires_at ? ` · ${T.home_expires} ${profile.expires_at}` : ""}
+          {profile.expires_at ? ` · ${T.home_expires} ${window.OWfmt.fmtDate(profile.expires_at, document.documentElement.lang)}` : ""}
         </div>
       </div>
     </div>
@@ -1766,7 +1815,7 @@ const SettingsCard = ({ title, children }) => (
   </div>
 );
 
-const SettingsRow = ({ title, sub, control, isLast }) => (
+const SettingsRow = ({ title, sub, warn, control, isLast }) => (
   <div style={{
     display: "grid", gridTemplateColumns: "1fr auto", gap: 16,
     alignItems: "center", padding: "14px 0",
@@ -1775,6 +1824,10 @@ const SettingsRow = ({ title, sub, control, isLast }) => (
     <div>
       <div style={{ fontSize: 13, fontWeight: 500 }}>{title}</div>
       {sub && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2, lineHeight: 1.45 }}>{sub}</div>}
+      {warn && <div role="note" style={{ fontSize: 12, color: "var(--brand-warn)", marginTop: 6, lineHeight: 1.45, display: "flex", gap: 6, alignItems: "flex-start" }}>
+        <span aria-hidden="true" style={{ flex: "none", marginTop: 1 }}>{HomeIcon(<><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></>, 14)}</span>
+        <span>{warn}</span>
+      </div>}
     </div>
     <div>{control}</div>
   </div>
@@ -1839,7 +1892,7 @@ const Settings = ({ T, api, settings, onSetting }) => {
       { title: T.set_killSwitch, sub: T.set_killSwitchSub, control: (
         <window.Toggle on={!!settings.kill_switch} onChange={(v) => apply("kill_switch", v)}/>
       )},
-      { title: T.set_tlsIntercept, sub: T.set_tlsInterceptSub, control: (
+      { title: T.set_tlsIntercept, sub: T.set_tlsInterceptSub, warn: settings.allow_tls_intercept ? T.set_tlsInterceptOn : null, control: (
         <window.Toggle on={!!settings.allow_tls_intercept} onChange={(v) => apply("allow_tls_intercept", v)}/>
       )},
     ]},
@@ -1903,7 +1956,7 @@ const Settings = ({ T, api, settings, onSetting }) => {
       {groups.map((g) => (
         <SettingsCard key={g.key} title={g.title}>
           {g.rows.map((r, i) => (
-            <SettingsRow key={r.title} title={r.title} sub={r.sub}
+            <SettingsRow key={r.title} title={r.title} sub={r.sub} warn={r.warn}
               control={r.control} isLast={i === g.rows.length - 1}/>
           ))}
         </SettingsCard>

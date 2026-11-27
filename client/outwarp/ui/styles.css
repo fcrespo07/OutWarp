@@ -430,7 +430,9 @@
   font-family: var(--font-mono); font-size: 11.5px; white-space: pre-wrap; word-break: break-word; color: var(--text-2); max-width: 620px; }
 
 /* ── Responsive grids ─────────────────────────────────────────────────── */
-.ow-stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.ow-stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+/* Stat values stay on one line ("326.6 KB/s" used to break in two). */
+.ow-stat-value { font-size: 22px; font-weight: 600; font-family: var(--font-mono); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ow-info-grid  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .ow-hero-grid  { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; }
 /* Profile-editor field grid — two columns, one when cramped. */
@@ -439,7 +441,8 @@
 /* Narrow window: stack the hero, halve the stat strip, single-column tiles.
    Threshold sits above the 760px window min_size so the reflow is reachable. */
 @media (max-width: 860px) {
-  .ow-stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .ow-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ow-stat-value { font-size: 19px; }
   .ow-info-grid  { grid-template-columns: 1fr; }
   .ow-hero-grid  { grid-template-columns: 1fr; justify-items: center; text-align: center; }
   .ow-hero-grid .ow-hero-actions, .ow-hero-grid .ow-chips, .ow-hero-grid .ow-hero-status { justify-content: center; }

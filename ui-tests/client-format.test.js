@@ -14,6 +14,13 @@ describe("client formatters", () => {
     expect(OWfmt.fmtBytes(5 * 1024 ** 3)).toBe("5.00 GB");
   });
 
+  it("formats an expiry date in the UI language without shifting the day", () => {
+    expect(OWfmt.fmtDate("2027-01-31", "en")).toBe("Jan 31, 2027");
+    expect(OWfmt.fmtDate("2027-01-31", "es")).toMatch(/^31 ene 2027$/);
+    expect(OWfmt.fmtDate("not a date", "en")).toBe("not a date");
+    expect(OWfmt.fmtDate("", "en")).toBe("");
+  });
+
   it("formats durations as a clock", () => {
     expect(OWfmt.fmtDuration(59)).toBe("00:00:59");
     expect(OWfmt.fmtDuration(-5)).toBe("00:00:00");
