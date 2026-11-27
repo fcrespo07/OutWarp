@@ -60,12 +60,9 @@ gui-linux = [
 
 [project.scripts]
 # `outwarp` is the client command (the server keeps its `-server` suffix;
-# Windows already shipped `outwarp.exe`). `outwarp-cli` is the pre-1.0 name:
-# it stays one release as a deprecated alias because systemd units,
-# .desktop files and shell completions on existing installs point at it and
-# the in-venv updater does not rewrite them. Drop the alias in 1.0.0.
+# Windows already shipped `outwarp.exe`). The pre-1.0 `outwarp-cli` alias was
+# retired in 1.0.0.
 outwarp = "outwarp.cli:main"
-outwarp-cli = "outwarp.cli:main_legacy_alias"
 
 [tool.hatch.build.targets.wheel]
 packages = ["outwarp"]

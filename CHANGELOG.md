@@ -16,6 +16,7 @@ First release candidate of 1.0.0 (a pre-release: it is never offered as the "lat
 - The updaters now sort a pre-release before its final release (`1.0.0rc1` < `1.0.0`), so an RC install is offered 1.0.0 when it ships; `publish_release.py` publishes RC tags as pre-releases, not as latest. The README no longer says the project is not ready for production.
 
 ### Added
+- **Contract tests for 1.0.** CI now fails if the documented `outwarp` / `outwarp-server` CLI surface or the `.owcfg` / `config.json` shape changes by accident (`docs/contracts/`).
 - **Linux client: `outwarp update` and `outwarp gui --install` ask for sudo themselves.** On a terminal they re-run through `sudo` instead of failing with "run it with sudo"; without a terminal the old message stays. When OutWarp came from the distro package (prefix `/usr`), `outwarp update` points to the package manager instead of touching the system Python.
 - **Arch Linux package.** `packaging/arch/PKGBUILD` builds the client from the release tag: pinned wstunnel bundled, the privileged helper in `/usr/lib/outwarp/`, and a sudoers rule for the `outwarp` group instead of a per-user entry (`sudo gpasswd -a $USER outwarp`). The client looks for the helper in both `/usr/local/libexec` and `/usr/lib/outwarp`. It builds from the release tag, so it only works from the first release that contains it (not 0.20.2). Not yet submitted to the AUR.
 - **Linux installer: one command, no questions.** `install.sh` takes `--client` / `--server`, `--gui` / `--no-gui`, `-y` and `--profile FILE.owcfg` (imports the profile as the desktop user right after installing). `--client` implies no prompts; the graphical window defaults to on when a desktop session is detected. Interactive use is unchanged.
@@ -26,6 +27,9 @@ First release candidate of 1.0.0 (a pre-release: it is never offered as the "lat
   dashboard and web panel, the tray, notifications, the CLI, the `setup`
   wizard, `doctor` and both TUIs. It is picked automatically on French systems
   and appears in the language selectors. Pending native-speaker review.
+
+### Removed
+- **The `outwarp-cli` alias is gone** (it was the pre-1.0 command name, deprecated since 0.15.0). Use `outwarp`. A systemd user unit still pointing at `outwarp-cli` stops working after the update: run `outwarp service install` once to rewrite it (`outwarp doctor` flags it). `install.sh` migrates it by itself.
 
 ### Fixed
 

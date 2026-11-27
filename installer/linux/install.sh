@@ -72,8 +72,8 @@ readonly GITHUB_REPO_URL="https://github.com/${GITHUB_REPO}"
 readonly PIPX_HOME="/opt/pipx"
 readonly PIPX_BIN_DIR="/usr/local/bin"
 readonly CLIENT_BIN_LINK="${PIPX_BIN_DIR}/outwarp"
-# Pre-1.0 name of the client command; the wheel still ships it as a
-# deprecated alias for one release (see client/pyproject.toml).
+# Pre-1.0 name of the client command. The alias was retired in 1.0.0; the
+# link is only kept here so upgrades and uninstalls remove the stale one.
 readonly CLIENT_CLI_BIN_LINK="${PIPX_BIN_DIR}/outwarp-cli"
 readonly SERVER_BIN_LINK="${PIPX_BIN_DIR}/outwarp-server"
 readonly SERVER_GUI_BIN_LINK="${PIPX_BIN_DIR}/outwarp-server-gui"
@@ -1312,9 +1312,10 @@ install_client() {
     # upgraders during the --pip-args incident).
     migrate_legacy_install "client"
 
-    # `outwarp` is the client command; the wheel also exposes the deprecated
-    # `outwarp-cli` alias until 1.0. Old `outwarp-uninstall` bins are removed
+    # `outwarp` is the client command; the pre-1.0 `outwarp-cli` alias is gone,
+    # so drop its now-dangling link. Old `outwarp-uninstall` bins are removed
     # automatically by `pipx reinstall` on upgrade.
+    ${SUDO} rm -f "$CLIENT_CLI_BIN_LINK"
     [[ -x "$CLIENT_BIN_LINK" ]] \
         || die "pipx finished but $CLIENT_BIN_LINK is missing - investigate /usr/local/bin/"
     ok "outwarp installed: ${BOLD}$(${SUDO} ${CLIENT_BIN_LINK} --version 2>/dev/null | awk '{print $2}')${RESET}"

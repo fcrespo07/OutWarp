@@ -1,0 +1,255 @@
+{
+  "commands": {
+    "connect": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "allow_tls_intercept",
+          "flags": [
+            "--allow-tls-intercept"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": []
+    },
+    "daemon": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "allow_tls_intercept",
+          "flags": [
+            "--allow-tls-intercept"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": []
+    },
+    "doctor": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "forget-profile": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "yes",
+          "flags": [
+            "--yes",
+            "-y"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": []
+    },
+    "gui": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "install",
+          "flags": [
+            "--install"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": []
+    },
+    "import": {
+      "documented": true,
+      "options": [],
+      "positionals": [
+        {
+          "choices": null,
+          "dest": "path",
+          "nargs": null,
+          "required": true
+        }
+      ]
+    },
+    "launch": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "logs": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "follow",
+          "flags": [
+            "--follow",
+            "-f"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": []
+    },
+    "profile": {
+      "commands": {
+        "list": {
+          "documented": true,
+          "options": [],
+          "positionals": []
+        },
+        "remove": {
+          "documented": true,
+          "options": [
+            {
+              "choices": null,
+              "dest": "yes",
+              "flags": [
+                "--yes",
+                "-y"
+              ],
+              "nargs": 0,
+              "required": false
+            }
+          ],
+          "positionals": [
+            {
+              "choices": null,
+              "dest": "id",
+              "nargs": null,
+              "required": true
+            }
+          ]
+        },
+        "show": {
+          "documented": true,
+          "options": [],
+          "positionals": []
+        },
+        "use": {
+          "documented": true,
+          "options": [],
+          "positionals": [
+            {
+              "choices": null,
+              "dest": "id",
+              "nargs": null,
+              "required": true
+            }
+          ]
+        }
+      },
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "recover-tunnel": {
+      "documented": false,
+      "options": [],
+      "positionals": []
+    },
+    "service": {
+      "documented": true,
+      "options": [],
+      "positionals": [
+        {
+          "choices": [
+            "install",
+            "status",
+            "uninstall"
+          ],
+          "dest": "action",
+          "nargs": null,
+          "required": true
+        }
+      ]
+    },
+    "status": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "tui": {
+      "documented": true,
+      "options": [],
+      "positionals": []
+    },
+    "ui": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "hyprland_rule",
+          "flags": [
+            "--hyprland-rule"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": [
+        {
+          "choices": [
+            "auto",
+            "gui",
+            "tui"
+          ],
+          "dest": "choice",
+          "nargs": "?",
+          "required": false
+        }
+      ]
+    },
+    "uninstall": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "yes",
+          "flags": [
+            "--yes",
+            "-y"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": []
+    },
+    "update": {
+      "documented": true,
+      "options": [
+        {
+          "choices": null,
+          "dest": "check_only",
+          "flags": [
+            "--check-only"
+          ],
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "positionals": []
+    }
+  },
+  "options": [
+    {
+      "choices": null,
+      "dest": "version",
+      "flags": [
+        "--version"
+      ],
+      "nargs": 0,
+      "required": false
+    }
+  ],
+  "positionals": []
+}
