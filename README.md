@@ -44,6 +44,8 @@ Client and server can run on different operating systems.
 
 ## Installation
 
+Upgrading from 0.x? See [Upgrading to 1.0](docs/UPGRADE-1.0.md).
+
 ### Windows (client or server)
 
 1. Go to the [latest release](https://github.com/fcrespo07/OutWarp/releases/latest) and download **`OutWarpSetup-x.y.z.exe`**.
